@@ -1,0 +1,11 @@
+.build/
+GhosttyKit.xcframework/
+GhosttyKit/ghostty.h
+Resources/ghostty/
+Resources/terminfo/
+
+# Per-plugin runtime state written into the plugins root (dot-prefixed so
+# discovery and the watcher ignore them). Never a shipped fixture.
+plugins/.disabled.json
+plugins/.settings.json
+plugins/.storage.json

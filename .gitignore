@@ -1,0 +1,27 @@
+# Build artifacts
+.build/
+poc/.build/
+
+# Prebuilt GhosttyKit — downloaded by poc/scripts/setup-ghosttykit.sh, never committed.
+# Only the script and GhosttyKit/module.modulemap are tracked (see CLAUDE.md).
+poc/GhosttyKit.xcframework/
+poc/GhosttyKit/ghostty.h
+poc/Resources/
+
+# Vendored reference repos — cloned external codebases studied during design
+# (each is its own git repo; ~672 MB). Not this project's source.
+refrerences/
+
+# Agent / tooling runtime state
+.omc/
+.repowise/
+.repowise-workspace/
+.repowise-workspace.yaml
+.claude/
+.codex/
+.mcp.json
+.remember/
+skills-lock.json
+
+# macOS
+.DS_Store

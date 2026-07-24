@@ -1,0 +1,8 @@
+{
+  "name": "git",
+  "version": "0.1.0",
+  "permissions": ["process.exec"],
+  "settings": [
+    { "key": "repoPath", "label": "Repository path", "type": "string", "default": "~" }
+  ]
+}

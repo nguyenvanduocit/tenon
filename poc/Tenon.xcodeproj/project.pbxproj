@@ -1,0 +1,1065 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 77;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		068921FF98BAA45193FE279B /* TenonCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71419D9C95E459C67BB35B01 /* TenonCore.framework */; };
+		073761E2EA9525E5AADE56EB /* PluginCapabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 89F795FD0ABECB47952B587D /* PluginCapabilityTests.swift */; };
+		0F21FC9C5669304BA7777E36 /* PluginManifest.swift in Sources */ = {isa = PBXBuildFile; fileRef = BADC72C03774EEB652AD9411 /* PluginManifest.swift */; };
+		0F238B6639487B236585F2F1 /* PluginPlatformTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CA65C83261AAE38CE8857AD /* PluginPlatformTests.swift */; };
+		11A372C226B8E17DA8F01F39 /* README.md in Resources */ = {isa = PBXBuildFile; fileRef = E212D4767F3E910547604224 /* README.md */; };
+		188119F5575B3A049C5B8B1B /* AVFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F3AFB2CF6A5BEC1572EF72BA /* AVFoundation.framework */; };
+		1EA215CA111A7B0F5CBA6631 /* TenonCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 71419D9C95E459C67BB35B01 /* TenonCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		2FA4236C1133F33FB6F97277 /* PluginRuntime.swift in Sources */ = {isa = PBXBuildFile; fileRef = AA0D4C12B9F7CEB018843B20 /* PluginRuntime.swift */; };
+		31B886004367E61ED9568EE3 /* TenonCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71419D9C95E459C67BB35B01 /* TenonCore.framework */; };
+		32431F9EBECAA2D3616600C8 /* PluginWatcher.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9C06670AA4F6B1FE66C43B9F /* PluginWatcher.swift */; };
+		38394B294AFFC1624B3009A1 /* SidebarResizeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 201F14B9A29F377D8E314F07 /* SidebarResizeTests.swift */; };
+		3B7EE781AF674D7CB4461313 /* CoreText.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = EF3C9115AFC50866F3BD626E /* CoreText.framework */; };
+		3C38BA19156C238373F0ECDA /* ghostty in Resources */ = {isa = PBXBuildFile; fileRef = 475A08DBA6538158DE0F4F70 /* ghostty */; };
+		434DF19DC7AA6E9F344EA34B /* Speech.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 4DDF90083767821145667094 /* Speech.framework */; };
+		48955AACF0A365A2231ED82C /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = BFAA9110693CED794F37CB39 /* libsqlite3.tbd */; };
+		4A0E1904239F78310A739E5B /* PluginHostTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7D798A4F04C7746511F7AC1B /* PluginHostTests.swift */; };
+		4F33FC2DFADA15FB583F2742 /* SpatialLayoutTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0B6D544F6BE2677E70DF2580 /* SpatialLayoutTests.swift */; };
+		52D3955D3CFCCE599238F56A /* SpatialCanvasView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 90CA25C44B86875BE59CF7BD /* SpatialCanvasView.swift */; };
+		557177278A07AD1323CCC7B9 /* WorkspaceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = DB6E612418F757638F9226CF /* WorkspaceTests.swift */; };
+		55888DF93C8F584AC61AD260 /* TerminalSurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3AC10A230E9107AA5C8737B0 /* TerminalSurface.swift */; };
+		627A178F4B079FFAE20A6A17 /* libc++.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 1619BCC66C955E4A84BB9630 /* libc++.tbd */; };
+		74FA8569E8071C225E435DF8 /* AppKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71D8F4A239B4515B6457AD78 /* AppKit.framework */; };
+		76E566FD557398C6C76D2671 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 06B479E6869AC70266BE960D /* ContentView.swift */; };
+		7BD8386CA141D22920C4F093 /* SpatialLayout.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38B65DCB7BFC09C79C7E062F /* SpatialLayout.swift */; };
+		837E66D58C6B8B9C7771FD36 /* PluginHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1553F0802A7127A65CFF3AC4 /* PluginHost.swift */; };
+		85F8A97A22DCE0CC198CD4DC /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB93C5655A19F059996B2ABD /* CoreAudio.framework */; };
+		8EE8E58264A42A6DF334AFCA /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6576C0ECAC52B479D21D31E /* IOKit.framework */; };
+		95000BE8F0DBC7FA28E78FE4 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6C3533F805F83796630E9DD /* GhosttyKit.xcframework */; };
+		997417D2A18B25BF7F0DFFFA /* PluginViewsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4F383869B4C1B76C89A0B800 /* PluginViewsTests.swift */; };
+		9F0957F91F22E8939DA0871C /* SurfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F4702C8910563CDFC9FA0B0 /* SurfacePool.swift */; };
+		A03B7D17C0E4150509B8E2DA /* plugins in Resources */ = {isa = PBXBuildFile; fileRef = BB2AE978B85DD02EFDD44D32 /* plugins */; };
+		AC0FAD9276A252BBD31045A0 /* DragRouter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6B6F55B6189B13D572CF3F30 /* DragRouter.swift */; };
+		ACDE8FA2667C8F578E35ED32 /* WorkspaceStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = F719BBC46D14DAD0ABEE4CCC /* WorkspaceStore.swift */; };
+		B10FC692EA690C786DCFD56D /* MetalKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 0834227E443C605C4479BDB3 /* MetalKit.framework */; };
+		B2F1B9420D5FC88BE3A37EC4 /* TenonTheme.swift in Sources */ = {isa = PBXBuildFile; fileRef = B3B0BB4AEAFB5EC509E399CC /* TenonTheme.swift */; };
+		B57DC4EFCB1ACAEA943577D1 /* TenonCore.framework in Embed Frameworks */ = {isa = PBXBuildFile; fileRef = 71419D9C95E459C67BB35B01 /* TenonCore.framework */; settings = {ATTRIBUTES = (CodeSignOnCopy, RemoveHeadersOnCopy, ); }; };
+		B8ED768C7C89731DFDE8F654 /* Metal.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 317F51E81E2DAF563C6A41A6 /* Metal.framework */; };
+		C461EF4F3D0901FD8121CBA7 /* SidebarResize.swift in Sources */ = {isa = PBXBuildFile; fileRef = D6271A5E54761018B008CA64 /* SidebarResize.swift */; };
+		D3F1F29EDE34E910A8F4CC97 /* ShippedPluginsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBA8ADDB6C57C662E0CCC28C /* ShippedPluginsTests.swift */; };
+		D7493843FD5C6CEBB95E8D55 /* SettingsStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = A835C637F30851C59727410D /* SettingsStore.swift */; };
+		D786E1DA0A4E68D0E9B3392E /* UserNotifications.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = B3451C80D1160FE0CD356881 /* UserNotifications.framework */; };
+		DABFA4D50F3732BF75804595 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5F941A01D3FEBF9B4F710641 /* SettingsView.swift */; };
+		E4C67A00131813334718A691 /* Carbon.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1B3ED1B0D72F5A9146EFFE15 /* Carbon.framework */; };
+		E7BDD260B2A106578B925334 /* TenonApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2FC82FD1D9DDA105F04A4F23 /* TenonApp.swift */; };
+		E99F4FF8DCE9ADD6E165B5E9 /* BuiltInSlotViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB63A5C153223126D7E546CF /* BuiltInSlotViews.swift */; };
+		EDBB16EEA212E6004B45EDEA /* PluginPolicyTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1CD81747FE1D3AB76971237B /* PluginPolicyTests.swift */; };
+		EE3EB3F570EA2F503A8D8AF5 /* GhosttySurfaceSmokeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EEA9FA23B2D8B6F389D1EA4B /* GhosttySurfaceSmokeTests.swift */; };
+		EED48ED0BC6E2BFE08BCBAB7 /* Workspace.swift in Sources */ = {isa = PBXBuildFile; fileRef = 39DC526C69DFA8687F62B2B9 /* Workspace.swift */; };
+		F1BA53CA53B69EC209EAA0C9 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 738BE4706169E06B87EFB757 /* Foundation.framework */; };
+		F49822A2AAF34F4133D42AB0 /* GhosttySurface.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D038649FE75FC07C644CF99 /* GhosttySurface.swift */; };
+		F8B69A71F8AAE1F0E8850A54 /* CoreGraphics.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D84039CEC406180CE3D53A78 /* CoreGraphics.framework */; };
+		F94477A4D848D5F06517BB59 /* QuartzCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 33BB169E9D92BBBA6C49AA23 /* QuartzCore.framework */; };
+		FC11302940A1C351BBEFE54C /* SpatialCanvasInteractionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8CF0EBC60D55E07BF54B1E8 /* SpatialCanvasInteractionTests.swift */; };
+		FC7EEA54FF5F773F1AF6C2D4 /* terminfo in Resources */ = {isa = PBXBuildFile; fileRef = 72911428FBED419EA1739B8B /* terminfo */; };
+		FDCDE098D26C89C869D1579F /* TenonWorkspaceFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = A4EC14B0CBDE582B13DB35C7 /* TenonWorkspaceFlowUITests.swift */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXContainerItemProxy section */
+		15D8566BFCE025DB66CFC7F1 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6B913653068E02B6925FE804 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 634FB0FDB8CEFE2B63C94CD6;
+			remoteInfo = Tenon;
+		};
+		42FEE0EAD910CFB148CB58E9 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6B913653068E02B6925FE804 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 634FB0FDB8CEFE2B63C94CD6;
+			remoteInfo = Tenon;
+		};
+		4F1D148AFDC45EEB77935BC8 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6B913653068E02B6925FE804 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = 634FB0FDB8CEFE2B63C94CD6;
+			remoteInfo = Tenon;
+		};
+		8AD2D55DF88C80D237AE1626 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6B913653068E02B6925FE804 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF62AAC30B98FB2FFB683D83;
+			remoteInfo = TenonCore;
+		};
+		F5D32D658379A56BF15562FE /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = 6B913653068E02B6925FE804 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = BF62AAC30B98FB2FFB683D83;
+			remoteInfo = TenonCore;
+		};
+/* End PBXContainerItemProxy section */
+
+/* Begin PBXCopyFilesBuildPhase section */
+		A2E50BC498DD800867D6A04C /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				1EA215CA111A7B0F5CBA6631 /* TenonCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		EDB3B33A1688FA64D1AA414F /* Embed Frameworks */ = {
+			isa = PBXCopyFilesBuildPhase;
+			buildActionMask = 2147483647;
+			dstPath = "";
+			dstSubfolderSpec = 10;
+			files = (
+				B57DC4EFCB1ACAEA943577D1 /* TenonCore.framework in Embed Frameworks */,
+			);
+			name = "Embed Frameworks";
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXCopyFilesBuildPhase section */
+
+/* Begin PBXFileReference section */
+		06B479E6869AC70266BE960D /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		0834227E443C605C4479BDB3 /* MetalKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MetalKit.framework; path = System/Library/Frameworks/MetalKit.framework; sourceTree = SDKROOT; };
+		0B6D544F6BE2677E70DF2580 /* SpatialLayoutTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialLayoutTests.swift; sourceTree = "<group>"; };
+		1553F0802A7127A65CFF3AC4 /* PluginHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginHost.swift; sourceTree = "<group>"; };
+		1619BCC66C955E4A84BB9630 /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
+		1B3ED1B0D72F5A9146EFFE15 /* Carbon.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Carbon.framework; path = System/Library/Frameworks/Carbon.framework; sourceTree = SDKROOT; };
+		1CD81747FE1D3AB76971237B /* PluginPolicyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginPolicyTests.swift; sourceTree = "<group>"; };
+		201F14B9A29F377D8E314F07 /* SidebarResizeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarResizeTests.swift; sourceTree = "<group>"; };
+		2FC82FD1D9DDA105F04A4F23 /* TenonApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenonApp.swift; sourceTree = "<group>"; };
+		317F51E81E2DAF563C6A41A6 /* Metal.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Metal.framework; path = System/Library/Frameworks/Metal.framework; sourceTree = SDKROOT; };
+		33BB169E9D92BBBA6C49AA23 /* QuartzCore.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = QuartzCore.framework; path = System/Library/Frameworks/QuartzCore.framework; sourceTree = SDKROOT; };
+		38B65DCB7BFC09C79C7E062F /* SpatialLayout.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialLayout.swift; sourceTree = "<group>"; };
+		39DC526C69DFA8687F62B2B9 /* Workspace.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Workspace.swift; sourceTree = "<group>"; };
+		3AC10A230E9107AA5C8737B0 /* TerminalSurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalSurface.swift; sourceTree = "<group>"; };
+		3D038649FE75FC07C644CF99 /* GhosttySurface.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttySurface.swift; sourceTree = "<group>"; };
+		475A08DBA6538158DE0F4F70 /* ghostty */ = {isa = PBXFileReference; lastKnownFileType = folder; name = ghostty; path = Resources/ghostty; sourceTree = SOURCE_ROOT; };
+		4DDF90083767821145667094 /* Speech.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Speech.framework; path = System/Library/Frameworks/Speech.framework; sourceTree = SDKROOT; };
+		4F383869B4C1B76C89A0B800 /* PluginViewsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginViewsTests.swift; sourceTree = "<group>"; };
+		5F941A01D3FEBF9B4F710641 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		6B6F55B6189B13D572CF3F30 /* DragRouter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DragRouter.swift; sourceTree = "<group>"; };
+		71419D9C95E459C67BB35B01 /* TenonCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TenonCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
+		71D8F4A239B4515B6457AD78 /* AppKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppKit.framework; path = System/Library/Frameworks/AppKit.framework; sourceTree = SDKROOT; };
+		72911428FBED419EA1739B8B /* terminfo */ = {isa = PBXFileReference; lastKnownFileType = folder; name = terminfo; path = Resources/terminfo; sourceTree = SOURCE_ROOT; };
+		738BE4706169E06B87EFB757 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
+		7D798A4F04C7746511F7AC1B /* PluginHostTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginHostTests.swift; sourceTree = "<group>"; };
+		80DF19405F89B6019D267984 /* Tenon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tenon.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		82A49C3C43D25D41BFE929F7 /* TenonIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TenonIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		89F795FD0ABECB47952B587D /* PluginCapabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginCapabilityTests.swift; sourceTree = "<group>"; };
+		8CA65C83261AAE38CE8857AD /* PluginPlatformTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginPlatformTests.swift; sourceTree = "<group>"; };
+		90CA25C44B86875BE59CF7BD /* SpatialCanvasView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialCanvasView.swift; sourceTree = "<group>"; };
+		9C06670AA4F6B1FE66C43B9F /* PluginWatcher.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginWatcher.swift; sourceTree = "<group>"; };
+		9F4702C8910563CDFC9FA0B0 /* SurfacePool.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfacePool.swift; sourceTree = "<group>"; };
+		A4EC14B0CBDE582B13DB35C7 /* TenonWorkspaceFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenonWorkspaceFlowUITests.swift; sourceTree = "<group>"; };
+		A835C637F30851C59727410D /* SettingsStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsStore.swift; sourceTree = "<group>"; };
+		AA0D4C12B9F7CEB018843B20 /* PluginRuntime.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginRuntime.swift; sourceTree = "<group>"; };
+		AB63A5C153223126D7E546CF /* BuiltInSlotViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BuiltInSlotViews.swift; sourceTree = "<group>"; };
+		AB93C5655A19F059996B2ABD /* CoreAudio.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreAudio.framework; path = System/Library/Frameworks/CoreAudio.framework; sourceTree = SDKROOT; };
+		B0B847A6A02D4F78C713D52D /* TenonAppTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TenonAppTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		B3451C80D1160FE0CD356881 /* UserNotifications.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = UserNotifications.framework; path = System/Library/Frameworks/UserNotifications.framework; sourceTree = SDKROOT; };
+		B3B0BB4AEAFB5EC509E399CC /* TenonTheme.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TenonTheme.swift; sourceTree = "<group>"; };
+		BADC72C03774EEB652AD9411 /* PluginManifest.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginManifest.swift; sourceTree = "<group>"; };
+		BB2AE978B85DD02EFDD44D32 /* plugins */ = {isa = PBXFileReference; lastKnownFileType = folder; path = plugins; sourceTree = SOURCE_ROOT; };
+		BFAA9110693CED794F37CB39 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
+		C8CF0EBC60D55E07BF54B1E8 /* SpatialCanvasInteractionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialCanvasInteractionTests.swift; sourceTree = "<group>"; };
+		D6271A5E54761018B008CA64 /* SidebarResize.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarResize.swift; sourceTree = "<group>"; };
+		D6576C0ECAC52B479D21D31E /* IOKit.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = IOKit.framework; path = System/Library/Frameworks/IOKit.framework; sourceTree = SDKROOT; };
+		D6C3533F805F83796630E9DD /* GhosttyKit.xcframework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.xcframework; path = GhosttyKit.xcframework; sourceTree = "<group>"; };
+		D84039CEC406180CE3D53A78 /* CoreGraphics.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreGraphics.framework; path = System/Library/Frameworks/CoreGraphics.framework; sourceTree = SDKROOT; };
+		DB6E612418F757638F9226CF /* WorkspaceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTests.swift; sourceTree = "<group>"; };
+		E212D4767F3E910547604224 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		EBA8ADDB6C57C662E0CCC28C /* ShippedPluginsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShippedPluginsTests.swift; sourceTree = "<group>"; };
+		EEA9FA23B2D8B6F389D1EA4B /* GhosttySurfaceSmokeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GhosttySurfaceSmokeTests.swift; sourceTree = "<group>"; };
+		EF3C9115AFC50866F3BD626E /* CoreText.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreText.framework; path = System/Library/Frameworks/CoreText.framework; sourceTree = SDKROOT; };
+		EFD0E92251805F36A68CDEEE /* TenonCoreTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TenonCoreTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F3AFB2CF6A5BEC1572EF72BA /* AVFoundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AVFoundation.framework; path = System/Library/Frameworks/AVFoundation.framework; sourceTree = SDKROOT; };
+		F64897CECBF90F979841061C /* TenonUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TenonUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		F719BBC46D14DAD0ABEE4CCC /* WorkspaceStore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceStore.swift; sourceTree = "<group>"; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		17D6A7581CBA4771DBF59EC9 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				31B886004367E61ED9568EE3 /* TenonCore.framework in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		F33FC48C57B7C977A53AD075 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				068921FF98BAA45193FE279B /* TenonCore.framework in Frameworks */,
+				95000BE8F0DBC7FA28E78FE4 /* GhosttyKit.xcframework in Frameworks */,
+				74FA8569E8071C225E435DF8 /* AppKit.framework in Frameworks */,
+				188119F5575B3A049C5B8B1B /* AVFoundation.framework in Frameworks */,
+				E4C67A00131813334718A691 /* Carbon.framework in Frameworks */,
+				85F8A97A22DCE0CC198CD4DC /* CoreAudio.framework in Frameworks */,
+				F8B69A71F8AAE1F0E8850A54 /* CoreGraphics.framework in Frameworks */,
+				3B7EE781AF674D7CB4461313 /* CoreText.framework in Frameworks */,
+				F1BA53CA53B69EC209EAA0C9 /* Foundation.framework in Frameworks */,
+				8EE8E58264A42A6DF334AFCA /* IOKit.framework in Frameworks */,
+				B8ED768C7C89731DFDE8F654 /* Metal.framework in Frameworks */,
+				B10FC692EA690C786DCFD56D /* MetalKit.framework in Frameworks */,
+				F94477A4D848D5F06517BB59 /* QuartzCore.framework in Frameworks */,
+				434DF19DC7AA6E9F344EA34B /* Speech.framework in Frameworks */,
+				D786E1DA0A4E68D0E9B3392E /* UserNotifications.framework in Frameworks */,
+				627A178F4B079FFAE20A6A17 /* libc++.tbd in Frameworks */,
+				48955AACF0A365A2231ED82C /* libsqlite3.tbd in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		1A43CB03544D8BC90FC7A397 /* TenonIntegrationTests */ = {
+			isa = PBXGroup;
+			children = (
+				EEA9FA23B2D8B6F389D1EA4B /* GhosttySurfaceSmokeTests.swift */,
+			);
+			name = TenonIntegrationTests;
+			path = Tests/TenonIntegrationTests;
+			sourceTree = "<group>";
+		};
+		2B642965BBBC5F6F7892F03B /* TenonAppTests */ = {
+			isa = PBXGroup;
+			children = (
+				201F14B9A29F377D8E314F07 /* SidebarResizeTests.swift */,
+				C8CF0EBC60D55E07BF54B1E8 /* SpatialCanvasInteractionTests.swift */,
+			);
+			name = TenonAppTests;
+			path = Tests/TenonAppTests;
+			sourceTree = "<group>";
+		};
+		436ACDAB7C0A95F273092ABD /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				80DF19405F89B6019D267984 /* Tenon.app */,
+				B0B847A6A02D4F78C713D52D /* TenonAppTests.xctest */,
+				71419D9C95E459C67BB35B01 /* TenonCore.framework */,
+				EFD0E92251805F36A68CDEEE /* TenonCoreTests.xctest */,
+				82A49C3C43D25D41BFE929F7 /* TenonIntegrationTests.xctest */,
+				F64897CECBF90F979841061C /* TenonUITests.xctest */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+		6ED28E391B0578221C089C07 /* Frameworks */ = {
+			isa = PBXGroup;
+			children = (
+				71D8F4A239B4515B6457AD78 /* AppKit.framework */,
+				F3AFB2CF6A5BEC1572EF72BA /* AVFoundation.framework */,
+				1B3ED1B0D72F5A9146EFFE15 /* Carbon.framework */,
+				AB93C5655A19F059996B2ABD /* CoreAudio.framework */,
+				D84039CEC406180CE3D53A78 /* CoreGraphics.framework */,
+				EF3C9115AFC50866F3BD626E /* CoreText.framework */,
+				738BE4706169E06B87EFB757 /* Foundation.framework */,
+				D6C3533F805F83796630E9DD /* GhosttyKit.xcframework */,
+				D6576C0ECAC52B479D21D31E /* IOKit.framework */,
+				1619BCC66C955E4A84BB9630 /* libc++.tbd */,
+				BFAA9110693CED794F37CB39 /* libsqlite3.tbd */,
+				317F51E81E2DAF563C6A41A6 /* Metal.framework */,
+				0834227E443C605C4479BDB3 /* MetalKit.framework */,
+				33BB169E9D92BBBA6C49AA23 /* QuartzCore.framework */,
+				4DDF90083767821145667094 /* Speech.framework */,
+				B3451C80D1160FE0CD356881 /* UserNotifications.framework */,
+			);
+			name = Frameworks;
+			sourceTree = "<group>";
+		};
+		89E7ADA49C57ED22A4F6D8CF = {
+			isa = PBXGroup;
+			children = (
+				475A08DBA6538158DE0F4F70 /* ghostty */,
+				BB2AE978B85DD02EFDD44D32 /* plugins */,
+				72911428FBED419EA1739B8B /* terminfo */,
+				CD9B9D42CE36439750BE8808 /* TenonApp */,
+				2B642965BBBC5F6F7892F03B /* TenonAppTests */,
+				C267E5E8F70F11912BBF4743 /* TenonCore */,
+				F3357AC7793297ABF379B40F /* TenonCoreTests */,
+				1A43CB03544D8BC90FC7A397 /* TenonIntegrationTests */,
+				A16FD2AE384A95E28F5C281D /* TenonUITests */,
+				6ED28E391B0578221C089C07 /* Frameworks */,
+				436ACDAB7C0A95F273092ABD /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		A16FD2AE384A95E28F5C281D /* TenonUITests */ = {
+			isa = PBXGroup;
+			children = (
+				E212D4767F3E910547604224 /* README.md */,
+				A4EC14B0CBDE582B13DB35C7 /* TenonWorkspaceFlowUITests.swift */,
+			);
+			name = TenonUITests;
+			path = Tests/TenonUITests;
+			sourceTree = "<group>";
+		};
+		C267E5E8F70F11912BBF4743 /* TenonCore */ = {
+			isa = PBXGroup;
+			children = (
+				1553F0802A7127A65CFF3AC4 /* PluginHost.swift */,
+				BADC72C03774EEB652AD9411 /* PluginManifest.swift */,
+				AA0D4C12B9F7CEB018843B20 /* PluginRuntime.swift */,
+				9C06670AA4F6B1FE66C43B9F /* PluginWatcher.swift */,
+				A835C637F30851C59727410D /* SettingsStore.swift */,
+				38B65DCB7BFC09C79C7E062F /* SpatialLayout.swift */,
+				39DC526C69DFA8687F62B2B9 /* Workspace.swift */,
+				F719BBC46D14DAD0ABEE4CCC /* WorkspaceStore.swift */,
+			);
+			name = TenonCore;
+			path = Sources/TenonCore;
+			sourceTree = "<group>";
+		};
+		CD9B9D42CE36439750BE8808 /* TenonApp */ = {
+			isa = PBXGroup;
+			children = (
+				AB63A5C153223126D7E546CF /* BuiltInSlotViews.swift */,
+				06B479E6869AC70266BE960D /* ContentView.swift */,
+				6B6F55B6189B13D572CF3F30 /* DragRouter.swift */,
+				3D038649FE75FC07C644CF99 /* GhosttySurface.swift */,
+				5F941A01D3FEBF9B4F710641 /* SettingsView.swift */,
+				D6271A5E54761018B008CA64 /* SidebarResize.swift */,
+				90CA25C44B86875BE59CF7BD /* SpatialCanvasView.swift */,
+				9F4702C8910563CDFC9FA0B0 /* SurfacePool.swift */,
+				2FC82FD1D9DDA105F04A4F23 /* TenonApp.swift */,
+				B3B0BB4AEAFB5EC509E399CC /* TenonTheme.swift */,
+				3AC10A230E9107AA5C8737B0 /* TerminalSurface.swift */,
+			);
+			name = TenonApp;
+			path = Sources/TenonApp;
+			sourceTree = "<group>";
+		};
+		F3357AC7793297ABF379B40F /* TenonCoreTests */ = {
+			isa = PBXGroup;
+			children = (
+				89F795FD0ABECB47952B587D /* PluginCapabilityTests.swift */,
+				7D798A4F04C7746511F7AC1B /* PluginHostTests.swift */,
+				8CA65C83261AAE38CE8857AD /* PluginPlatformTests.swift */,
+				1CD81747FE1D3AB76971237B /* PluginPolicyTests.swift */,
+				4F383869B4C1B76C89A0B800 /* PluginViewsTests.swift */,
+				EBA8ADDB6C57C662E0CCC28C /* ShippedPluginsTests.swift */,
+				0B6D544F6BE2677E70DF2580 /* SpatialLayoutTests.swift */,
+				DB6E612418F757638F9226CF /* WorkspaceTests.swift */,
+			);
+			name = TenonCoreTests;
+			path = Tests/TenonCoreTests;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		28E3302D79D442EC84FB5873 /* TenonUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 57268DBEFAAEBC20761F11E1 /* Build configuration list for PBXNativeTarget "TenonUITests" */;
+			buildPhases = (
+				AAB127C4CF8829A83CF26B1F /* Sources */,
+				0DBA8370478F6A766B223AF0 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0F4F8E76B372034DA9EFAADB /* PBXTargetDependency */,
+			);
+			name = TenonUITests;
+			packageProductDependencies = (
+			);
+			productName = TenonUITests;
+			productReference = F64897CECBF90F979841061C /* TenonUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
+		6062272BFE44C61EAD644868 /* TenonIntegrationTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 924D5538130411335E4574A9 /* Build configuration list for PBXNativeTarget "TenonIntegrationTests" */;
+			buildPhases = (
+				D50B65406AB3D934376E6BBE /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				6DFF31348D5E6999C70AF1EA /* PBXTargetDependency */,
+			);
+			name = TenonIntegrationTests;
+			packageProductDependencies = (
+			);
+			productName = TenonIntegrationTests;
+			productReference = 82A49C3C43D25D41BFE929F7 /* TenonIntegrationTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		634FB0FDB8CEFE2B63C94CD6 /* Tenon */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 2965C97BA1B0E3169348B71C /* Build configuration list for PBXNativeTarget "Tenon" */;
+			buildPhases = (
+				AE01434B59B227D41F13ED57 /* Sources */,
+				E270192713F508CE403858F5 /* Resources */,
+				F33FC48C57B7C977A53AD075 /* Frameworks */,
+				EDB3B33A1688FA64D1AA414F /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				0D2DBE14F4CC29BB107DAE61 /* PBXTargetDependency */,
+			);
+			name = Tenon;
+			packageProductDependencies = (
+			);
+			productName = Tenon;
+			productReference = 80DF19405F89B6019D267984 /* Tenon.app */;
+			productType = "com.apple.product-type.application";
+		};
+		BF62AAC30B98FB2FFB683D83 /* TenonCore */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 4171786CDDE0EBEFA6024A2C /* Build configuration list for PBXNativeTarget "TenonCore" */;
+			buildPhases = (
+				74023EEA00E0E2CF56E4BB01 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = TenonCore;
+			packageProductDependencies = (
+			);
+			productName = TenonCore;
+			productReference = 71419D9C95E459C67BB35B01 /* TenonCore.framework */;
+			productType = "com.apple.product-type.framework";
+		};
+		C5FC7A2AABD6C99D0351D653 /* TenonCoreTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 42F80AEBBD9ECE9D7BEDC4D7 /* Build configuration list for PBXNativeTarget "TenonCoreTests" */;
+			buildPhases = (
+				1527EC9086C25CF55DB6658C /* Sources */,
+				17D6A7581CBA4771DBF59EC9 /* Frameworks */,
+				A2E50BC498DD800867D6A04C /* Embed Frameworks */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				F955CEF118FC5A6763B73037 /* PBXTargetDependency */,
+			);
+			name = TenonCoreTests;
+			packageProductDependencies = (
+			);
+			productName = TenonCoreTests;
+			productReference = EFD0E92251805F36A68CDEEE /* TenonCoreTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+		D4F321BF094CA31ED288763A /* TenonAppTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 9F6971889A633E6AB4292B4F /* Build configuration list for PBXNativeTarget "TenonAppTests" */;
+			buildPhases = (
+				8AFBF1E028AFC36D21EB6372 /* Sources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				ABB13E9DBACDA8B3DECCA774 /* PBXTargetDependency */,
+			);
+			name = TenonAppTests;
+			packageProductDependencies = (
+			);
+			productName = TenonAppTests;
+			productReference = B0B847A6A02D4F78C713D52D /* TenonAppTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		6B913653068E02B6925FE804 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = YES;
+				LastUpgradeCheck = 1430;
+				TargetAttributes = {
+					28E3302D79D442EC84FB5873 = {
+						TestTargetID = 634FB0FDB8CEFE2B63C94CD6;
+					};
+				};
+			};
+			buildConfigurationList = 53F7C585D92815071C1EDF43 /* Build configuration list for PBXProject "Tenon" */;
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				Base,
+				en,
+			);
+			mainGroup = 89E7ADA49C57ED22A4F6D8CF;
+			minimizedProjectReferenceProxies = 1;
+			preferredProjectObjectVersion = 77;
+			productRefGroup = 436ACDAB7C0A95F273092ABD /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				634FB0FDB8CEFE2B63C94CD6 /* Tenon */,
+				D4F321BF094CA31ED288763A /* TenonAppTests */,
+				BF62AAC30B98FB2FFB683D83 /* TenonCore */,
+				C5FC7A2AABD6C99D0351D653 /* TenonCoreTests */,
+				6062272BFE44C61EAD644868 /* TenonIntegrationTests */,
+				28E3302D79D442EC84FB5873 /* TenonUITests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		0DBA8370478F6A766B223AF0 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				11A372C226B8E17DA8F01F39 /* README.md in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		E270192713F508CE403858F5 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				3C38BA19156C238373F0ECDA /* ghostty in Resources */,
+				A03B7D17C0E4150509B8E2DA /* plugins in Resources */,
+				FC7EEA54FF5F773F1AF6C2D4 /* terminfo in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		1527EC9086C25CF55DB6658C /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				073761E2EA9525E5AADE56EB /* PluginCapabilityTests.swift in Sources */,
+				4A0E1904239F78310A739E5B /* PluginHostTests.swift in Sources */,
+				0F238B6639487B236585F2F1 /* PluginPlatformTests.swift in Sources */,
+				EDBB16EEA212E6004B45EDEA /* PluginPolicyTests.swift in Sources */,
+				997417D2A18B25BF7F0DFFFA /* PluginViewsTests.swift in Sources */,
+				D3F1F29EDE34E910A8F4CC97 /* ShippedPluginsTests.swift in Sources */,
+				4F33FC2DFADA15FB583F2742 /* SpatialLayoutTests.swift in Sources */,
+				557177278A07AD1323CCC7B9 /* WorkspaceTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		74023EEA00E0E2CF56E4BB01 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				837E66D58C6B8B9C7771FD36 /* PluginHost.swift in Sources */,
+				0F21FC9C5669304BA7777E36 /* PluginManifest.swift in Sources */,
+				2FA4236C1133F33FB6F97277 /* PluginRuntime.swift in Sources */,
+				32431F9EBECAA2D3616600C8 /* PluginWatcher.swift in Sources */,
+				D7493843FD5C6CEBB95E8D55 /* SettingsStore.swift in Sources */,
+				7BD8386CA141D22920C4F093 /* SpatialLayout.swift in Sources */,
+				EED48ED0BC6E2BFE08BCBAB7 /* Workspace.swift in Sources */,
+				ACDE8FA2667C8F578E35ED32 /* WorkspaceStore.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		8AFBF1E028AFC36D21EB6372 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				38394B294AFFC1624B3009A1 /* SidebarResizeTests.swift in Sources */,
+				FC11302940A1C351BBEFE54C /* SpatialCanvasInteractionTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AAB127C4CF8829A83CF26B1F /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				FDCDE098D26C89C869D1579F /* TenonWorkspaceFlowUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AE01434B59B227D41F13ED57 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				E99F4FF8DCE9ADD6E165B5E9 /* BuiltInSlotViews.swift in Sources */,
+				76E566FD557398C6C76D2671 /* ContentView.swift in Sources */,
+				AC0FAD9276A252BBD31045A0 /* DragRouter.swift in Sources */,
+				F49822A2AAF34F4133D42AB0 /* GhosttySurface.swift in Sources */,
+				DABFA4D50F3732BF75804595 /* SettingsView.swift in Sources */,
+				C461EF4F3D0901FD8121CBA7 /* SidebarResize.swift in Sources */,
+				52D3955D3CFCCE599238F56A /* SpatialCanvasView.swift in Sources */,
+				9F0957F91F22E8939DA0871C /* SurfacePool.swift in Sources */,
+				E7BDD260B2A106578B925334 /* TenonApp.swift in Sources */,
+				B2F1B9420D5FC88BE3A37EC4 /* TenonTheme.swift in Sources */,
+				55888DF93C8F584AC61AD260 /* TerminalSurface.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		D50B65406AB3D934376E6BBE /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				EE3EB3F570EA2F503A8D8AF5 /* GhosttySurfaceSmokeTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		0D2DBE14F4CC29BB107DAE61 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF62AAC30B98FB2FFB683D83 /* TenonCore */;
+			targetProxy = F5D32D658379A56BF15562FE /* PBXContainerItemProxy */;
+		};
+		0F4F8E76B372034DA9EFAADB /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 634FB0FDB8CEFE2B63C94CD6 /* Tenon */;
+			targetProxy = 15D8566BFCE025DB66CFC7F1 /* PBXContainerItemProxy */;
+		};
+		6DFF31348D5E6999C70AF1EA /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 634FB0FDB8CEFE2B63C94CD6 /* Tenon */;
+			targetProxy = 4F1D148AFDC45EEB77935BC8 /* PBXContainerItemProxy */;
+		};
+		ABB13E9DBACDA8B3DECCA774 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = 634FB0FDB8CEFE2B63C94CD6 /* Tenon */;
+			targetProxy = 42FEE0EAD910CFB148CB58E9 /* PBXContainerItemProxy */;
+		};
+		F955CEF118FC5A6763B73037 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = BF62AAC30B98FB2FFB683D83 /* TenonCore */;
+			targetProxy = 8AD2D55DF88C80D237AE1626 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
+
+/* Begin XCBuildConfiguration section */
+		1097F219019CC291BF0BE47B /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.integration-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
+			};
+			name = Release;
+		};
+		2C873EA3596B0F7CA8D6A04F /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon.core;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Release;
+		};
+		3731F4E38CF0824EA00AB8C0 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.ui-tests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Tenon;
+			};
+			name = Debug;
+		};
+		4963459249340E1A73EF98F6 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.core-tests";
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		49FE9522613C8743140F53E6 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.core-tests";
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+		6A5E183B37F24515AA69E513 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.app-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
+			};
+			name = Debug;
+		};
+		6C57162C6F4B6942A07BA66D /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_OPTIMIZATION_LEVEL = "-O";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		92ABCF18D03B9B660B2B2AD9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.integration-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
+			};
+			name = Debug;
+		};
+		937139D2D9E468147BCF5834 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+					"@loader_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.app-tests";
+				SDKROOT = macosx;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
+			};
+			name = Release;
+		};
+		B099D38A2B7ACBCE55ABD6AD /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				COMBINE_HIDPI_IMAGES = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/Frameworks",
+					"@loader_path/Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.ui-tests";
+				SDKROOT = macosx;
+				TEST_TARGET_NAME = Tenon;
+			};
+			name = Release;
+		};
+		BA9AF081DA0EF24E30CAA3E2 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++14";
+				CLANG_CXX_LIBRARY = "libc++";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu11;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"$(inherited)",
+					"DEBUG=1",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SDKROOT = macosx;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = DEBUG;
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		C9E486662381000F3A89AD40 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_IDENTITY = "";
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEFINES_MODULE = YES;
+				DYLIB_COMPATIBILITY_VERSION = 1;
+				DYLIB_CURRENT_VERSION = 1;
+				DYLIB_INSTALL_NAME_BASE = "@rpath";
+				GENERATE_INFOPLIST_FILE = YES;
+				INSTALL_PATH = "$(LOCAL_LIBRARY_DIR)/Frameworks";
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon.core;
+				SDKROOT = macosx;
+				SKIP_INSTALL = YES;
+				VERSIONING_SYSTEM = "apple-generic";
+			};
+			name = Debug;
+		};
+		CB650C8882FE61D05B18D8F9 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon;
+				PRODUCT_MODULE_NAME = TenonApp;
+				PRODUCT_NAME = Tenon;
+				SDKROOT = macosx;
+			};
+			name = Debug;
+		};
+		E919D040F0145BEFC5DA799E /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				FRAMEWORK_SEARCH_PATHS = (
+					"$(inherited)",
+					"\".\"",
+				);
+				GENERATE_INFOPLIST_FILE = YES;
+				LD_RUNPATH_SEARCH_PATHS = (
+					"$(inherited)",
+					"@executable_path/../Frameworks",
+				);
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MARKETING_VERSION = 0.1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon;
+				PRODUCT_MODULE_NAME = TenonApp;
+				PRODUCT_NAME = Tenon;
+				SDKROOT = macosx;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		2965C97BA1B0E3169348B71C /* Build configuration list for PBXNativeTarget "Tenon" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				CB650C8882FE61D05B18D8F9 /* Debug */,
+				E919D040F0145BEFC5DA799E /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		4171786CDDE0EBEFA6024A2C /* Build configuration list for PBXNativeTarget "TenonCore" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				C9E486662381000F3A89AD40 /* Debug */,
+				2C873EA3596B0F7CA8D6A04F /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		42F80AEBBD9ECE9D7BEDC4D7 /* Build configuration list for PBXNativeTarget "TenonCoreTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				4963459249340E1A73EF98F6 /* Debug */,
+				49FE9522613C8743140F53E6 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		53F7C585D92815071C1EDF43 /* Build configuration list for PBXProject "Tenon" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				BA9AF081DA0EF24E30CAA3E2 /* Debug */,
+				6C57162C6F4B6942A07BA66D /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		57268DBEFAAEBC20761F11E1 /* Build configuration list for PBXNativeTarget "TenonUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				3731F4E38CF0824EA00AB8C0 /* Debug */,
+				B099D38A2B7ACBCE55ABD6AD /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		924D5538130411335E4574A9 /* Build configuration list for PBXNativeTarget "TenonIntegrationTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				92ABCF18D03B9B660B2B2AD9 /* Debug */,
+				1097F219019CC291BF0BE47B /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		9F6971889A633E6AB4292B4F /* Build configuration list for PBXNativeTarget "TenonAppTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				6A5E183B37F24515AA69E513 /* Debug */,
+				937139D2D9E468147BCF5834 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = 6B913653068E02B6925FE804 /* Project object */;
+}

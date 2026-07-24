@@ -1,0 +1,144 @@
+name: Tenon
+
+options:
+  minimumXcodeGenVersion: 2.45.4
+  deploymentTarget:
+    macOS: "14.0"
+
+settings:
+  base:
+    SWIFT_VERSION: "5.0"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+
+targets:
+  TenonCore:
+    type: framework
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TenonCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.core
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
+  Tenon:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TenonApp
+      - path: Resources/ghostty
+        type: folder
+        buildPhase: resources
+      - path: Resources/terminfo
+        type: folder
+        buildPhase: resources
+      - path: plugins
+        type: folder
+        buildPhase: resources
+    dependencies:
+      - target: TenonCore
+      - framework: GhosttyKit.xcframework
+        embed: false
+      - sdk: AppKit.framework
+      - sdk: AVFoundation.framework
+      - sdk: Carbon.framework
+      - sdk: CoreAudio.framework
+      - sdk: CoreGraphics.framework
+      - sdk: CoreText.framework
+      - sdk: Foundation.framework
+      - sdk: IOKit.framework
+      - sdk: Metal.framework
+      - sdk: MetalKit.framework
+      - sdk: QuartzCore.framework
+      - sdk: Speech.framework
+      - sdk: UserNotifications.framework
+      - sdk: libc++.tbd
+      - sdk: libsqlite3.tbd
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon
+        PRODUCT_NAME: Tenon
+        PRODUCT_MODULE_NAME: TenonApp
+        GENERATE_INFOPLIST_FILE: YES
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        COMBINE_HIDPI_IMAGES: YES
+
+  TenonCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TenonCoreTests
+    dependencies:
+      - target: TenonCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.core-tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  TenonAppTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TenonAppTests
+    dependencies:
+      - target: Tenon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.app-tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  TenonIntegrationTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TenonIntegrationTests
+    dependencies:
+      - target: Tenon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.integration-tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  # Black-box end-to-end tests that drive the real app through the Accessibility
+  # tree (XCUITest). Unlike the unit bundles it launches Tenon.app and simulates
+  # a user: ⌘T / ⌘D / ⌘W keyboard flows and pointer drags on the spatial canvas.
+  # It compiles on its own (imports only XCTest); running it builds Tenon first.
+  # The identifiers it queries are the contract in Tests/TenonUITests/README.md
+  # and are published by ContentView/SpatialCanvasView.
+  TenonUITests:
+    type: bundle.ui-testing
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TenonUITests
+    dependencies:
+      - target: Tenon
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.ui-tests
+        GENERATE_INFOPLIST_FILE: YES
+        TEST_TARGET_NAME: Tenon
+
+schemes:
+  Tenon:
+    build:
+      targets:
+        Tenon: all
+    run:
+      config: Debug
+    test:
+      config: Debug
+      targets:
+        - TenonCoreTests
+        - TenonAppTests
+        - TenonIntegrationTests
+        - TenonUITests
+    archive:
+      config: Release

@@ -1,0 +1,2090 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenon — Spatial layout prototype</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --ink: #090b0e;
+      --chrome: #101318;
+      --chrome-raised: #171b21;
+      --panel: #0d1014;
+      --panel-raised: #13171c;
+      --line: #282e36;
+      --line-bright: #3a424d;
+      --text: #e8ebef;
+      --muted: #8e96a2;
+      --amber: #e6a33a;
+      --amber-soft: rgba(230, 163, 58, 0.18);
+      --amber-line: rgba(238, 178, 77, 0.82);
+      --red: #ed6a5e;
+      --green: #61c28b;
+      --blue: #72a7f2;
+      --sidebar-width: 232px;
+      --radius: 9px;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", sans-serif;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    html,
+    body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: var(--ink);
+      color: var(--text);
+    }
+
+    button,
+    input {
+      font: inherit;
+    }
+
+    button {
+      color: inherit;
+    }
+
+    button:focus-visible,
+    [tabindex]:focus-visible {
+      outline: 2px solid var(--amber);
+      outline-offset: 2px;
+    }
+
+    .app {
+      display: grid;
+      grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
+      width: 100vw;
+      height: 100vh;
+      min-width: 0;
+      background: var(--ink);
+    }
+
+    .sidebar {
+      position: relative;
+      display: flex;
+      flex-direction: column;
+      min-width: 0;
+      min-height: 0;
+      padding-top: 8px;
+      border-right: 1px solid #252a31;
+      background: #111419;
+      overflow: hidden;
+    }
+
+    .section-label {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 8px 13px 7px 15px;
+      color: #747d89;
+      font-size: 10px;
+      font-weight: 650;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .icon-button,
+    .quiet-button,
+    .tool-button,
+    .add-tab {
+      display: inline-grid;
+      place-items: center;
+      border: 0;
+      background: transparent;
+      cursor: pointer;
+    }
+
+    .icon-button {
+      width: 24px;
+      height: 24px;
+      border-radius: 5px;
+      color: #87909b;
+      font-size: 17px;
+      line-height: 1;
+    }
+
+    .icon-button:hover {
+      color: var(--text);
+      background: #252a31;
+    }
+
+    .workspace-list {
+      display: flex;
+      flex: 1;
+      flex-direction: column;
+      gap: 2px;
+      min-height: 0;
+      padding: 0 8px;
+      overflow-y: auto;
+    }
+
+    .workspace-button {
+      position: relative;
+      display: grid;
+      grid-template-columns: 30px minmax(0, 1fr) auto;
+      align-items: center;
+      width: 100%;
+      min-height: 46px;
+      padding: 5px 8px;
+      border: 1px solid transparent;
+      border-radius: 7px;
+      background: transparent;
+      color: #a9b0ba;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .workspace-button:hover {
+      background: #191d23;
+      color: var(--text);
+    }
+
+    .workspace-button.active {
+      border-color: #343b45;
+      background: #22272e;
+      color: var(--text);
+      box-shadow: inset 3px 0 var(--amber);
+    }
+
+    .workspace-icon {
+      display: grid;
+      place-items: center;
+      width: 24px;
+      height: 24px;
+      border: 1px solid #3a424c;
+      border-radius: 5px;
+      background: #15191e;
+      color: #aeb6c1;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 10px;
+      font-weight: 600;
+    }
+
+    .workspace-name {
+      overflow: hidden;
+      font-size: 12px;
+      font-weight: 540;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .workspace-meta {
+      color: #656d78;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 9px;
+    }
+
+    .shell {
+      display: grid;
+      grid-template-rows: 43px minmax(0, 1fr) 24px;
+      min-width: 0;
+      min-height: 0;
+      background: #090b0e;
+    }
+
+    .tabbar {
+      position: relative;
+      z-index: 30;
+      display: flex;
+      align-items: stretch;
+      min-width: 0;
+      padding: 0 8px;
+      border-bottom: 1px solid #282d34;
+      background: #111419;
+      overflow: visible;
+    }
+
+    .tabs {
+      display: flex;
+      flex: 1;
+      align-self: stretch;
+      gap: 2px;
+      min-width: 0;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+
+    .tabs::-webkit-scrollbar {
+      display: none;
+    }
+
+    .tab {
+      position: relative;
+      display: grid;
+      grid-template-columns: minmax(0, 1fr) auto;
+      align-items: center;
+      min-width: 142px;
+      max-width: 210px;
+      height: 35px;
+      margin-top: 8px;
+      padding-right: 6px;
+      border: 1px solid transparent;
+      border-bottom: 0;
+      border-radius: 7px 7px 0 0;
+      background: transparent;
+      color: #858e99;
+    }
+
+    .tab:hover {
+      background: #171b20;
+      color: #b9c0c8;
+    }
+
+    .tab.active {
+      border-color: #2d333b;
+      background: #0d1014;
+      color: var(--text);
+    }
+
+    .tab.active::after {
+      content: "";
+      position: absolute;
+      right: 0;
+      bottom: -1px;
+      left: 0;
+      height: 1px;
+      background: #0d1014;
+    }
+
+    .tab-activation {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr);
+      align-items: center;
+      align-self: stretch;
+      gap: 7px;
+      min-width: 0;
+      padding: 0 5px 0 11px;
+      border: 0;
+      background: transparent;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .tab-icon {
+      width: 13px;
+      color: #737d88;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .tab-name {
+      overflow: hidden;
+      font-size: 11px;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .tab-close {
+      display: grid;
+      place-items: center;
+      width: 17px;
+      height: 17px;
+      padding: 0;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #5e6671;
+      cursor: pointer;
+    }
+
+    .tab-close:hover {
+      background: #2b3138;
+      color: #d6d9de;
+    }
+
+    .add-tab {
+      flex: 0 0 29px;
+      width: 29px;
+      height: 29px;
+      margin: 0;
+      border-radius: 6px;
+      color: #858e99;
+      font-size: 18px;
+    }
+
+    .add-tab:hover {
+      background: #23282f;
+      color: var(--text);
+    }
+
+    .tabbar-actions {
+      position: relative;
+      display: flex;
+      flex: 0 0 auto;
+      align-items: center;
+      gap: 6px;
+      padding-left: 8px;
+    }
+
+    .add-slot-wrapper {
+      position: relative;
+      flex: 0 0 auto;
+    }
+
+    .tool-button {
+      grid-auto-flow: column;
+      gap: 6px;
+      height: 27px;
+      padding: 0 9px;
+      border: 1px solid #303740;
+      border-radius: 6px;
+      background: #171b20;
+      color: #a6aeb8;
+      font-size: 10px;
+      font-weight: 550;
+      white-space: nowrap;
+      box-shadow: inset 0 1px rgba(255, 255, 255, 0.025);
+    }
+
+    .tool-button:hover {
+      border-color: #414a55;
+      background: #1c2127;
+      color: var(--text);
+    }
+
+    .tool-button.primary {
+      border-color: #6e542b;
+      background: #2a2114;
+      color: #f0bd6d;
+    }
+
+    .tool-glyph {
+      color: #77818c;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 12px;
+    }
+
+    .primary .tool-glyph {
+      color: var(--amber);
+    }
+
+    .tabbar-divider {
+      width: 1px;
+      height: 18px;
+      margin: 0 2px;
+      background: #2b3037;
+    }
+
+    .add-menu {
+      position: absolute;
+      z-index: 100;
+      top: 36px;
+      right: 0;
+      width: 212px;
+      padding: 6px;
+      border: 1px solid #3b434d;
+      border-radius: 9px;
+      background: rgba(27, 31, 37, 0.98);
+      box-shadow: 0 18px 50px rgba(0, 0, 0, 0.48), inset 0 1px rgba(255, 255, 255, 0.04);
+      backdrop-filter: blur(16px);
+    }
+
+    .add-menu[hidden] {
+      display: none;
+    }
+
+    .menu-label {
+      padding: 6px 8px 7px;
+      color: #68717c;
+      font-size: 9px;
+      font-weight: 650;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+    }
+
+    .menu-item {
+      display: grid;
+      grid-template-columns: 28px 1fr;
+      gap: 8px;
+      width: 100%;
+      padding: 7px 8px;
+      border: 0;
+      border-radius: 6px;
+      background: transparent;
+      color: #c8cdd3;
+      text-align: left;
+      cursor: pointer;
+    }
+
+    .menu-item:hover,
+    .menu-item:focus-visible {
+      background: #2a3038;
+      color: #fff;
+    }
+
+    .menu-icon {
+      display: grid;
+      place-items: center;
+      width: 26px;
+      height: 26px;
+      border: 1px solid #424a55;
+      border-radius: 5px;
+      background: #13171c;
+      color: var(--amber);
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .menu-name {
+      display: block;
+      margin-top: 1px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+
+    .menu-detail {
+      display: block;
+      margin-top: 2px;
+      color: #737c87;
+      font-size: 9px;
+    }
+
+    .stage {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      background:
+        radial-gradient(circle at 50% 10%, rgba(56, 64, 75, 0.09), transparent 42%),
+        #090b0e;
+    }
+
+    .canvas {
+      position: absolute;
+      inset: 8px;
+      overflow: hidden;
+      border: 1px solid #20252b;
+      border-radius: 10px;
+      background-color: #080a0d;
+      background-image:
+        linear-gradient(to right, rgba(81, 91, 103, 0.075) 1px, transparent 1px),
+        linear-gradient(to bottom, rgba(81, 91, 103, 0.075) 1px, transparent 1px);
+      background-size: calc(100% / 12) calc(100% / 12);
+      box-shadow: inset 0 0 40px rgba(0, 0, 0, 0.3);
+      user-select: none;
+    }
+
+    .slot {
+      position: absolute;
+      z-index: 2;
+      display: grid;
+      grid-template-rows: 31px minmax(0, 1fr);
+      min-width: 0;
+      min-height: 0;
+      overflow: hidden;
+      border: 1px solid #303741;
+      border-radius: var(--radius);
+      background: var(--panel);
+      box-shadow: 0 7px 24px rgba(0, 0, 0, 0.24), inset 0 1px rgba(255, 255, 255, 0.025);
+      transition: border-color 100ms ease, box-shadow 100ms ease;
+    }
+
+    .slot:hover {
+      border-color: #404954;
+    }
+
+    .slot.active {
+      z-index: 4;
+      border-color: #987038;
+      box-shadow: 0 0 0 1px rgba(230, 163, 58, 0.22), 0 9px 28px rgba(0, 0, 0, 0.32);
+    }
+
+    .slot.dragging,
+    .slot.resizing {
+      z-index: 10;
+      opacity: 0.74;
+      transition: none;
+    }
+
+    .slot-header {
+      display: grid;
+      grid-template-columns: auto minmax(0, 1fr) auto;
+      align-items: center;
+      gap: 7px;
+      padding: 0 7px 0 9px;
+      border-bottom: 1px solid #272d34;
+      background: linear-gradient(#181c22, #14181d);
+      cursor: grab;
+      touch-action: none;
+    }
+
+    .slot-header:active {
+      cursor: grabbing;
+    }
+
+    .slot-kind {
+      display: grid;
+      place-items: center;
+      width: 16px;
+      height: 16px;
+      border: 1px solid #3d4651;
+      border-radius: 4px;
+      color: #8e98a4;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 8px;
+    }
+
+    .slot-title {
+      overflow: hidden;
+      color: #acb3bc;
+      font-size: 10px;
+      font-weight: 570;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+
+    .slot-actions {
+      display: flex;
+      gap: 2px;
+    }
+
+    .slot-action {
+      display: grid;
+      place-items: center;
+      width: 19px;
+      height: 19px;
+      padding: 0;
+      border: 0;
+      border-radius: 4px;
+      background: transparent;
+      color: #5d6671;
+      cursor: pointer;
+    }
+
+    .slot-action:hover {
+      background: #2a3037;
+      color: #d8dce1;
+    }
+
+    .slot-body {
+      position: relative;
+      min-width: 0;
+      min-height: 0;
+      overflow: auto;
+      background: #0c0f13;
+      user-select: text;
+    }
+
+    .resize-handle {
+      position: absolute;
+      z-index: 8;
+      padding: 0;
+      border: 0;
+      background: transparent;
+      touch-action: none;
+    }
+
+    .resize-handle:focus-visible { outline-offset: -3px; }
+    .resize-handle[data-resize-direction="n"] { top: 0; right: 12px; left: 12px; height: 6px; cursor: ns-resize; }
+    .resize-handle[data-resize-direction="e"] { top: 12px; right: 0; bottom: 12px; width: 6px; cursor: ew-resize; }
+    .resize-handle[data-resize-direction="s"] { right: 12px; bottom: 0; left: 12px; height: 6px; cursor: ns-resize; }
+    .resize-handle[data-resize-direction="w"] { top: 12px; bottom: 12px; left: 0; width: 6px; cursor: ew-resize; }
+    .resize-handle[data-resize-direction="ne"] { top: 0; right: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+    .resize-handle[data-resize-direction="nw"] { top: 0; left: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+    .resize-handle[data-resize-direction="se"] { right: 0; bottom: 0; width: 12px; height: 12px; cursor: nwse-resize; }
+    .resize-handle[data-resize-direction="sw"] { bottom: 0; left: 0; width: 12px; height: 12px; cursor: nesw-resize; }
+
+    .drop-preview {
+      position: absolute;
+      z-index: 3;
+      display: none;
+      border: 1px solid var(--amber-line);
+      border-radius: 7px;
+      background: var(--amber-soft);
+      pointer-events: none;
+    }
+
+    .drop-preview.visible {
+      display: block;
+    }
+
+    .drop-preview.transaction-preview {
+      z-index: 11;
+    }
+
+    .drop-preview.invalid {
+      border-color: rgba(237, 106, 94, 0.86);
+      background: rgba(237, 106, 94, 0.13);
+    }
+
+    .terminal {
+      min-height: 100%;
+      padding: 10px 12px 24px;
+      color: #bac1c9;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 11px;
+      line-height: 1.7;
+    }
+
+    .term-line {
+      min-width: max-content;
+      white-space: pre;
+    }
+
+    .term-prompt { color: var(--green); }
+    .term-path { color: var(--blue); }
+    .term-muted { color: #666f79; }
+    .term-accent { color: #e9b766; }
+
+    .cursor {
+      display: inline-block;
+      width: 7px;
+      height: 14px;
+      margin-left: 2px;
+      vertical-align: -2px;
+      background: #d8dce1;
+      animation: blink 1.05s steps(1) infinite;
+    }
+
+    @keyframes blink {
+      50% { opacity: 0; }
+    }
+
+    .files {
+      min-height: 100%;
+      padding: 8px 7px 20px;
+      color: #9da5af;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 10px;
+    }
+
+    .file-row {
+      display: grid;
+      grid-template-columns: 17px minmax(0, 1fr) auto;
+      align-items: center;
+      min-width: 210px;
+      height: 25px;
+      padding: 0 6px;
+      border-radius: 4px;
+    }
+
+    .file-row:hover,
+    .file-row.selected {
+      background: #1b2026;
+      color: #d1d5da;
+    }
+
+    .file-row.child { padding-left: 20px; }
+    .file-symbol { color: #68727d; }
+    .file-symbol.folder { color: #d6a655; }
+    .file-status { color: #609b79; font-size: 9px; }
+
+    .diff {
+      min-width: 430px;
+      min-height: 100%;
+      padding: 8px 0 20px;
+      color: #aeb5be;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 9px;
+      line-height: 1.65;
+    }
+
+    .diff-stat {
+      display: flex;
+      gap: 12px;
+      padding: 1px 12px 8px;
+      color: #737c87;
+    }
+
+    .diff-line {
+      display: grid;
+      grid-template-columns: 34px 34px minmax(0, 1fr);
+      min-height: 17px;
+    }
+
+    .diff-line.add { background: rgba(60, 135, 89, 0.14); }
+    .diff-line.remove { background: rgba(161, 71, 69, 0.14); }
+    .line-no { padding-right: 8px; color: #505964; text-align: right; }
+    .line-code { padding-left: 9px; white-space: pre; }
+    .add .line-code { color: #9bc6a7; }
+    .remove .line-code { color: #d39c98; }
+
+    .docs {
+      min-width: 250px;
+      max-width: 660px;
+      padding: 16px 18px 30px;
+      color: #aeb5bd;
+      font-size: 11px;
+      line-height: 1.6;
+    }
+
+    .docs-kicker {
+      color: var(--amber);
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 8px;
+      letter-spacing: 0.11em;
+      text-transform: uppercase;
+    }
+
+    .docs h2 {
+      margin: 7px 0 8px;
+      color: #eef0f2;
+      font-size: 18px;
+      letter-spacing: -0.025em;
+    }
+
+    .docs p { margin: 0 0 10px; }
+
+    .docs code {
+      padding: 2px 5px;
+      border: 1px solid #303740;
+      border-radius: 4px;
+      background: #15191e;
+      color: #d4a85e;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 9px;
+    }
+
+    .web-preview {
+      min-width: 300px;
+      min-height: 100%;
+      background: #f1eee7;
+      color: #171a1e;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    }
+
+    .web-bar {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      height: 27px;
+      padding: 0 8px;
+      border-bottom: 1px solid #d5d0c7;
+      background: #e4e0d8;
+    }
+
+    .web-dot {
+      width: 5px;
+      height: 5px;
+      border-radius: 50%;
+      background: #9b968d;
+    }
+
+    .web-address {
+      flex: 1;
+      height: 17px;
+      padding: 2px 8px;
+      border: 1px solid #cbc5bb;
+      border-radius: 4px;
+      background: #f4f1eb;
+      color: #77736d;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 7px;
+    }
+
+    .web-content {
+      display: grid;
+      place-content: center;
+      min-height: calc(100% - 27px);
+      padding: 24px;
+      text-align: center;
+    }
+
+    .web-content strong {
+      font-size: clamp(20px, 3vw, 42px);
+      letter-spacing: -0.055em;
+    }
+
+    .web-content span {
+      max-width: 350px;
+      margin: 7px auto 0;
+      color: #73706a;
+      font-size: 9px;
+      line-height: 1.5;
+    }
+
+    .empty-state {
+      position: absolute;
+      inset: 0;
+      display: grid;
+      place-content: center;
+      color: #626b76;
+      text-align: center;
+    }
+
+    .empty-state strong {
+      display: block;
+      margin-bottom: 6px;
+      color: #9ba3ad;
+      font-size: 13px;
+    }
+
+    .empty-state span {
+      font-size: 10px;
+    }
+
+    .statusbar {
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 0 10px;
+      border-top: 1px solid #22272d;
+      background: #101318;
+      color: #606975;
+      font-family: "SFMono-Regular", "SF Mono", Menlo, monospace;
+      font-size: 8px;
+    }
+
+    .status-spacer { flex: 1; }
+    .status-live { color: #6f9e82; }
+    #selection-hint { white-space: nowrap; }
+
+    .toast {
+      position: fixed;
+      z-index: 200;
+      right: 18px;
+      bottom: 36px;
+      max-width: 320px;
+      padding: 9px 12px;
+      border: 1px solid #414953;
+      border-radius: 7px;
+      background: #1b2026;
+      color: #cdd2d8;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.45);
+      font-size: 10px;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(6px);
+      transition: opacity 150ms ease, transform 150ms ease;
+    }
+
+    .toast.show {
+      opacity: 1;
+      transform: translateY(0);
+    }
+
+    @media (max-width: 1040px) {
+      :root { --sidebar-width: 192px; }
+      .tab { min-width: 120px; }
+      .tool-button .button-copy { display: none; }
+      .tool-button { width: 29px; padding: 0; }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      *,
+      *::before,
+      *::after {
+        scroll-behavior: auto !important;
+        animation-duration: 0.01ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.01ms !important;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="app" aria-label="Tenon spatial workspace prototype">
+    <aside class="sidebar" aria-label="Workspaces">
+      <div class="section-label">
+        <span>Workspaces</span>
+        <button class="icon-button" id="add-workspace" type="button" aria-label="Add workspace" title="Add workspace">+</button>
+      </div>
+      <nav class="workspace-list" id="workspace-list"></nav>
+    </aside>
+
+    <section class="shell" aria-label="Active workspace">
+      <header class="tabbar">
+        <div class="tabs" id="tabs" role="tablist" aria-label="Workspace tabs"></div>
+        <div class="tabbar-actions" aria-label="Tab and layout actions">
+          <button class="add-tab" id="add-tab" type="button" aria-label="New tab" title="New tab">+</button>
+          <div class="tabbar-divider" aria-hidden="true"></div>
+          <div class="add-slot-wrapper">
+            <button class="tool-button primary" id="add-slot" type="button" aria-haspopup="menu" aria-expanded="false">
+              <span class="tool-glyph">+</span>
+              <span class="button-copy">Add slot</span>
+            </button>
+            <div class="add-menu" id="add-menu" role="menu" hidden>
+              <div class="menu-label">Open in a new slot</div>
+              <button class="menu-item" type="button" role="menuitem" data-slot-type="terminal">
+                <span class="menu-icon">&gt;_</span>
+                <span><span class="menu-name">Terminal</span><span class="menu-detail">Ghostty session</span></span>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-slot-type="files">
+                <span class="menu-icon">⌘F</span>
+                <span><span class="menu-name">Files</span><span class="menu-detail">Browse the workspace</span></span>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-slot-type="diff">
+                <span class="menu-icon">±</span>
+                <span><span class="menu-name">Diff</span><span class="menu-detail">Review working changes</span></span>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-slot-type="docs">
+                <span class="menu-icon">#</span>
+                <span><span class="menu-name">Docs</span><span class="menu-detail">Keep reference nearby</span></span>
+              </button>
+              <button class="menu-item" type="button" role="menuitem" data-slot-type="web">
+                <span class="menu-icon">◎</span>
+                <span><span class="menu-name">Web preview</span><span class="menu-detail">Preview localhost</span></span>
+              </button>
+            </div>
+          </div>
+          <button class="tool-button" id="split-horizontal" type="button" title="Split left and right (⌘D)">
+            <span class="tool-glyph">◫</span>
+            <span class="button-copy">Split</span>
+          </button>
+          <button class="tool-button" id="split-vertical" type="button" title="Split top and bottom (⌘⇧D)">
+            <span class="tool-glyph">⬒</span>
+            <span class="button-copy">Stack</span>
+          </button>
+        </div>
+      </header>
+
+      <section class="stage" aria-label="Spatial layout">
+        <div class="canvas" id="canvas" role="tabpanel" tabindex="0">
+          <div class="drop-preview" id="drop-preview" aria-hidden="true"></div>
+          <div class="drop-preview" id="swap-preview" aria-hidden="true"></div>
+        </div>
+      </section>
+
+      <footer class="statusbar">
+        <span class="status-live">● GHOSTTY</span>
+        <span id="slot-count">1 slot</span>
+        <span id="selection-hint">12 × 12 layout grid</span>
+        <span class="status-spacer"></span>
+        <span>drag header to move</span>
+        <span>drag any edge to resize</span>
+      </footer>
+    </section>
+  </main>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script>
+    (() => {
+      "use strict";
+
+      const GRID_COLUMNS = 12;
+      const GRID_ROWS = 12;
+      const MIN_COLUMNS = 3;
+      const MIN_ROWS = 3;
+
+      const slotCatalog = {
+        terminal: { title: "Ghostty — zsh", icon: ">_" },
+        files: { title: "Files — tenon", icon: "F" },
+        diff: { title: "Changes — working tree", icon: "±" },
+        docs: { title: "Docs — workspace layout", icon: "#" },
+        web: { title: "Preview — localhost:4321", icon: "◎" }
+      };
+
+      const resizeDirections = [
+        { value: "n", label: "north edge" },
+        { value: "e", label: "east edge" },
+        { value: "s", label: "south edge" },
+        { value: "w", label: "west edge" },
+        { value: "ne", label: "northeast corner" },
+        { value: "nw", label: "northwest corner" },
+        { value: "se", label: "southeast corner" },
+        { value: "sw", label: "southwest corner" }
+      ];
+
+      let nextWorkspaceId = 3;
+      let nextTabId = 4;
+      let nextSlotId = 6;
+      let toastTimer = null;
+      let pointerSession = null;
+
+      const state = {
+        activeWorkspaceId: "workspace-1",
+        workspaces: [
+          {
+            id: "workspace-1",
+            name: "Tenon",
+            path: "~/projects/tenon",
+            activeTabId: "tab-1",
+            tabs: [
+              {
+                id: "tab-1",
+                name: "main",
+                activeSlotId: "slot-1",
+                slots: [
+                  { id: "slot-1", type: "terminal", x: 0, y: 0, w: 12, h: 12 }
+                ]
+              },
+              {
+                id: "tab-2",
+                name: "layout sketch",
+                activeSlotId: "slot-2",
+                slots: [
+                  { id: "slot-2", type: "terminal", x: 0, y: 0, w: 7, h: 12 },
+                  { id: "slot-3", type: "files", x: 7, y: 0, w: 5, h: 5 },
+                  { id: "slot-4", type: "diff", x: 7, y: 5, w: 5, h: 7 }
+                ]
+              }
+            ]
+          },
+          {
+            id: "workspace-2",
+            name: "Risk agent",
+            path: "~/projects/riskagent",
+            activeTabId: "tab-3",
+            tabs: [
+              {
+                id: "tab-3",
+                name: "broker-pilot",
+                activeSlotId: "slot-5",
+                slots: [
+                  { id: "slot-5", type: "terminal", x: 0, y: 0, w: 12, h: 12 }
+                ]
+              }
+            ]
+          }
+        ]
+      };
+
+      const elements = {
+        workspaceList: document.querySelector("#workspace-list"),
+        tabs: document.querySelector("#tabs"),
+        canvas: document.querySelector("#canvas"),
+        preview: document.querySelector("#drop-preview"),
+        swapPreview: document.querySelector("#swap-preview"),
+        addWorkspace: document.querySelector("#add-workspace"),
+        addTab: document.querySelector("#add-tab"),
+        addSlot: document.querySelector("#add-slot"),
+        addMenu: document.querySelector("#add-menu"),
+        splitHorizontal: document.querySelector("#split-horizontal"),
+        splitVertical: document.querySelector("#split-vertical"),
+        slotCount: document.querySelector("#slot-count"),
+        selectionHint: document.querySelector("#selection-hint"),
+        toast: document.querySelector("#toast")
+      };
+
+      function activeWorkspace() {
+        return state.workspaces.find((workspace) => workspace.id === state.activeWorkspaceId);
+      }
+
+      function activeTab() {
+        const workspace = activeWorkspace();
+        return workspace.tabs.find((tab) => tab.id === workspace.activeTabId);
+      }
+
+      function activeSlot() {
+        const tab = activeTab();
+        return tab.slots.find((slot) => slot.id === tab.activeSlotId) || tab.slots[0];
+      }
+
+      function rectsOverlap(a, b) {
+        return a.x < b.x + b.w &&
+          a.x + a.w > b.x &&
+          a.y < b.y + b.h &&
+          a.y + a.h > b.y;
+      }
+
+      function layoutRectsAreValid(rects) {
+        return rects.every((rect, index) => {
+          const insideGrid = rect.x >= 0 &&
+            rect.y >= 0 &&
+            rect.x + rect.w <= GRID_COLUMNS &&
+            rect.y + rect.h <= GRID_ROWS &&
+            rect.w >= MIN_COLUMNS &&
+            rect.h >= MIN_ROWS;
+          if (!insideGrid) return false;
+
+          return rects.slice(index + 1).every((other) => !rectsOverlap(rect, other));
+        });
+      }
+
+      function findBestEmptyRect(slots, selectedSlot) {
+        let best = null;
+        const selectedCenterX = selectedSlot ? selectedSlot.x * 2 + selectedSlot.w : 0;
+        const selectedCenterY = selectedSlot ? selectedSlot.y * 2 + selectedSlot.h : 0;
+
+        for (let y = 0; y <= GRID_ROWS - MIN_ROWS; y += 1) {
+          for (let x = 0; x <= GRID_COLUMNS - MIN_COLUMNS; x += 1) {
+            for (let h = MIN_ROWS; h <= GRID_ROWS - y; h += 1) {
+              for (let w = MIN_COLUMNS; w <= GRID_COLUMNS - x; w += 1) {
+                const candidate = { x, y, w, h };
+                if (slots.some((slot) => rectsOverlap(candidate, slot))) continue;
+
+                const area = w * h;
+                const centerDeltaX = selectedSlot ? x * 2 + w - selectedCenterX : 0;
+                const centerDeltaY = selectedSlot ? y * 2 + h - selectedCenterY : 0;
+                const distance = centerDeltaX * centerDeltaX + centerDeltaY * centerDeltaY;
+                const shortSide = Math.min(w, h);
+
+                // Exact priority: area desc, center distance asc, short side desc,
+                // topmost, leftmost, then width and height desc for a total order.
+                const isBetter = !best ||
+                  area > best.area ||
+                  (area === best.area && distance < best.distance) ||
+                  (area === best.area && distance === best.distance && shortSide > best.shortSide) ||
+                  (area === best.area && distance === best.distance && shortSide === best.shortSide && y < best.y) ||
+                  (area === best.area && distance === best.distance && shortSide === best.shortSide && y === best.y && x < best.x) ||
+                  (area === best.area && distance === best.distance && shortSide === best.shortSide && y === best.y && x === best.x && w > best.w) ||
+                  (area === best.area && distance === best.distance && shortSide === best.shortSide && y === best.y && x === best.x && w === best.w && h > best.h);
+
+                if (isBetter) best = { x, y, w, h, area, distance, shortSide };
+              }
+            }
+          }
+        }
+
+        return best ? { x: best.x, y: best.y, w: best.w, h: best.h } : null;
+      }
+
+      function buildCloseLayoutTransaction(slots, deletedSlotId) {
+        const deleted = slots.find((slot) => slot.id === deletedSlotId);
+        const remaining = slots
+          .filter((slot) => slot.id !== deletedSlotId)
+          .map((slot) => ({ ...slot }));
+
+        if (!deleted) {
+          return { proposal: remaining, absorbedSlotIds: [], direction: null };
+        }
+
+        const holeRight = deleted.x + deleted.w;
+        const holeBottom = deleted.y + deleted.h;
+        const directions = ["left", "top", "right", "bottom"];
+
+        for (const direction of directions) {
+          const verticalEdge = direction === "left" || direction === "right";
+          const neighbors = remaining.filter((slot) => {
+            if (direction === "left") {
+              return slot.x + slot.w === deleted.x &&
+                slot.y >= deleted.y &&
+                slot.y + slot.h <= holeBottom;
+            }
+            if (direction === "top") {
+              return slot.y + slot.h === deleted.y &&
+                slot.x >= deleted.x &&
+                slot.x + slot.w <= holeRight;
+            }
+            if (direction === "right") {
+              return slot.x === holeRight &&
+                slot.y >= deleted.y &&
+                slot.y + slot.h <= holeBottom;
+            }
+            return slot.y === holeBottom &&
+              slot.x >= deleted.x &&
+              slot.x + slot.w <= holeRight;
+          });
+
+          const rangeStart = verticalEdge ? deleted.y : deleted.x;
+          const rangeEnd = verticalEdge ? holeBottom : holeRight;
+          const intervals = neighbors
+            .map((slot) => ({
+              start: verticalEdge ? slot.y : slot.x,
+              end: verticalEdge ? slot.y + slot.h : slot.x + slot.w
+            }))
+            .sort((a, b) => a.start - b.start || a.end - b.end);
+
+          let cursor = rangeStart;
+          let tilesVacancy = intervals.length > 0;
+          for (const interval of intervals) {
+            if (interval.start !== cursor || interval.end <= interval.start) {
+              tilesVacancy = false;
+              break;
+            }
+            cursor = interval.end;
+          }
+          if (!tilesVacancy || cursor !== rangeEnd) continue;
+
+          const absorbedSlotIds = neighbors.map((slot) => slot.id);
+          const absorbed = new Set(absorbedSlotIds);
+          const proposal = remaining.map((slot) => {
+            if (!absorbed.has(slot.id)) return { ...slot };
+            if (direction === "left") return { ...slot, w: slot.w + deleted.w };
+            if (direction === "top") return { ...slot, h: slot.h + deleted.h };
+            if (direction === "right") return { ...slot, x: deleted.x, w: slot.w + deleted.w };
+            return { ...slot, y: deleted.y, h: slot.h + deleted.h };
+          });
+
+          if (layoutRectsAreValid(proposal)) {
+            return { proposal, absorbedSlotIds, direction };
+          }
+        }
+
+        return { proposal: remaining, absorbedSlotIds: [], direction: null };
+      }
+
+      function isValidRect(candidate, movingSlotId) {
+        const insideGrid = candidate.x >= 0 &&
+          candidate.y >= 0 &&
+          candidate.x + candidate.w <= GRID_COLUMNS &&
+          candidate.y + candidate.h <= GRID_ROWS &&
+          candidate.w >= MIN_COLUMNS &&
+          candidate.h >= MIN_ROWS;
+
+        if (!insideGrid) return false;
+
+        return activeTab().slots.every((slot) => {
+          return slot.id === movingSlotId || !rectsOverlap(candidate, slot);
+        });
+      }
+
+      function isValidSwap(movingSlotId, targetSlotId) {
+        const slots = activeTab().slots;
+        const moving = slots.find((slot) => slot.id === movingSlotId);
+        const target = slots.find((slot) => slot.id === targetSlotId);
+        if (!moving || !target || moving.id === target.id) return false;
+
+        const proposed = slots.map((slot) => {
+          if (slot.id === moving.id) return { ...slot, x: target.x, y: target.y, w: target.w, h: target.h };
+          if (slot.id === target.id) return { ...slot, x: moving.x, y: moving.y, w: moving.w, h: moving.h };
+          return slot;
+        });
+
+        return layoutRectsAreValid(proposed);
+      }
+
+      function showToast(message) {
+        window.clearTimeout(toastTimer);
+        elements.toast.textContent = message;
+        elements.toast.classList.add("show");
+        toastTimer = window.setTimeout(() => elements.toast.classList.remove("show"), 2200);
+      }
+
+      function slotStyle(rect) {
+        return [
+          `left: calc(${rect.x} * 100% / ${GRID_COLUMNS} + 3px)`,
+          `top: calc(${rect.y} * 100% / ${GRID_ROWS} + 3px)`,
+          `width: calc(${rect.w} * 100% / ${GRID_COLUMNS} - 6px)`,
+          `height: calc(${rect.h} * 100% / ${GRID_ROWS} - 6px)`
+        ].join(";");
+      }
+
+      function renderWorkspaces() {
+        elements.workspaceList.replaceChildren();
+        state.workspaces.forEach((workspace) => {
+          const button = document.createElement("button");
+          button.type = "button";
+          button.className = `workspace-button${workspace.id === state.activeWorkspaceId ? " active" : ""}`;
+          button.dataset.workspaceId = workspace.id;
+          button.setAttribute("aria-current", workspace.id === state.activeWorkspaceId ? "page" : "false");
+          button.innerHTML = `
+            <span class="workspace-icon" aria-hidden="true">${escapeHtml(workspace.name.slice(0, 2).toUpperCase())}</span>
+            <span class="workspace-name">${escapeHtml(workspace.name)}</span>
+            <span class="workspace-meta">${workspace.tabs.length}</span>
+          `;
+          elements.workspaceList.append(button);
+        });
+      }
+
+      function renderTabs() {
+        const workspace = activeWorkspace();
+        elements.tabs.replaceChildren();
+
+        workspace.tabs.forEach((tab) => {
+          const isActive = tab.id === workspace.activeTabId;
+          const wrapper = document.createElement("div");
+          wrapper.className = `tab${isActive ? " active" : ""}`;
+          wrapper.innerHTML = `
+            <button
+              class="tab-activation"
+              id="tab-control-${tab.id}"
+              data-tab-id="${tab.id}"
+              type="button"
+              role="tab"
+              aria-controls="canvas"
+              aria-selected="${isActive ? "true" : "false"}"
+              tabindex="${isActive ? "0" : "-1"}"
+            >
+              <span class="tab-icon" aria-hidden="true">&gt;_</span>
+              <span class="tab-name">${escapeHtml(tab.name)}</span>
+            </button>
+            <button class="tab-close" data-close-tab="${tab.id}" type="button" aria-label="Close ${escapeHtml(tab.name)} tab">×</button>
+          `;
+          elements.tabs.append(wrapper);
+        });
+
+        elements.canvas.setAttribute("aria-labelledby", `tab-control-${workspace.activeTabId}`);
+      }
+
+      function renderSlots() {
+        const tab = activeTab();
+        elements.canvas.querySelectorAll(".slot, .empty-state").forEach((node) => node.remove());
+
+        if (tab.slots.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          empty.innerHTML = "<div><strong>This tab is open.</strong><span>Add a slot to start a terminal or tool.</span></div>";
+          elements.canvas.append(empty);
+        }
+
+        tab.slots.forEach((slot) => {
+          const catalog = slotCatalog[slot.type];
+          const article = document.createElement("article");
+          article.className = `slot${slot.id === tab.activeSlotId ? " active" : ""}`;
+          article.dataset.slotId = slot.id;
+          article.tabIndex = 0;
+          article.setAttribute("aria-label", catalog.title);
+          article.setAttribute("style", slotStyle(slot));
+          article.innerHTML = `
+            <header class="slot-header" data-drag-handle="${slot.id}">
+              <span class="slot-kind" aria-hidden="true">${catalog.icon}</span>
+              <span class="slot-title">${catalog.title}</span>
+              <span class="slot-actions">
+                <button class="slot-action" type="button" data-close-slot="${slot.id}" aria-label="Close ${catalog.title}" title="Close slot">×</button>
+              </span>
+            </header>
+            <div class="slot-body">${slotBody(slot.type)}</div>
+            ${resizeDirections.map((direction) => `
+              <button
+                class="resize-handle"
+                data-resize-handle="${slot.id}"
+                data-resize-direction="${direction.value}"
+                type="button"
+                aria-label="Resize ${catalog.title} from the ${direction.label}"
+                title="Resize from the ${direction.label}"
+              ></button>
+            `).join("")}
+          `;
+          elements.canvas.append(article);
+        });
+
+        elements.slotCount.textContent = `${tab.slots.length} ${tab.slots.length === 1 ? "slot" : "slots"}`;
+        const selected = activeSlot();
+        elements.selectionHint.textContent = selected
+          ? `${selected.w} × ${selected.h} · column ${selected.x + 1}, row ${selected.y + 1}`
+          : "12 × 12 layout grid";
+      }
+
+      function render() {
+        renderWorkspaces();
+        renderTabs();
+        renderSlots();
+      }
+
+      function escapeHtml(value) {
+        return String(value)
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+          .replaceAll("'", "&#039;");
+      }
+
+      function slotBody(type) {
+        const bodies = {
+          terminal: `
+            <div class="terminal">
+              <div class="term-line"><span class="term-muted">Last login: Thu Jul 24 15:31 on ttys004</span></div>
+              <div class="term-line"><span class="term-prompt">tenon</span> <span class="term-path">~/projects/tenon</span> <span class="term-accent">main</span> % codex</div>
+              <div class="term-line"></div>
+              <div class="term-line"><span class="term-accent">╭─ Tenon session</span></div>
+              <div class="term-line">│ Working tree loaded · 14 files indexed</div>
+              <div class="term-line"><span class="term-accent">╰─</span> What do you want to build?</div>
+              <div class="term-line"></div>
+              <div class="term-line"><span class="term-prompt">›</span> Make the layout feel spatial and direct<span class="cursor"></span></div>
+            </div>
+          `,
+          files: `
+            <div class="files">
+              <div class="file-row"><span class="file-symbol folder">▾</span><span>tenon</span><span></span></div>
+              <div class="file-row child selected"><span class="file-symbol folder">▾</span><span>prototypes</span><span></span></div>
+              <div class="file-row child"><span class="file-symbol">◇</span><span>index.html</span><span class="file-status">M</span></div>
+              <div class="file-row child"><span class="file-symbol folder">▸</span><span>docs</span><span></span></div>
+              <div class="file-row child"><span class="file-symbol folder">▸</span><span>poc</span><span></span></div>
+              <div class="file-row child"><span class="file-symbol">#</span><span>README.md</span><span></span></div>
+              <div class="file-row child"><span class="file-symbol">#</span><span>VISION.md</span><span></span></div>
+            </div>
+          `,
+          diff: `
+            <div class="diff">
+              <div class="diff-stat"><span>Workspace.swift</span><span style="color:#61a77b">+18</span><span style="color:#bd716c">−7</span></div>
+              <div class="diff-line"><span class="line-no">42</span><span class="line-no">42</span><span class="line-code">struct SlotFrame: Equatable {</span></div>
+              <div class="diff-line remove"><span class="line-no">43</span><span class="line-no"></span><span class="line-code">-  let splitDirection: Axis</span></div>
+              <div class="diff-line add"><span class="line-no"></span><span class="line-no">43</span><span class="line-code">+  var column: Int</span></div>
+              <div class="diff-line add"><span class="line-no"></span><span class="line-no">44</span><span class="line-code">+  var row: Int</span></div>
+              <div class="diff-line add"><span class="line-no"></span><span class="line-no">45</span><span class="line-code">+  var width: Int</span></div>
+              <div class="diff-line add"><span class="line-no"></span><span class="line-no">46</span><span class="line-code">+  var height: Int</span></div>
+              <div class="diff-line"><span class="line-no">44</span><span class="line-no">47</span><span class="line-code">}</span></div>
+            </div>
+          `,
+          docs: `
+            <div class="docs">
+              <div class="docs-kicker">Layout behavior</div>
+              <h2>Slots stay where you put them.</h2>
+              <p>Each tab owns a twelve-column spatial canvas. Drag a slot by its header, then resize it from any edge or corner.</p>
+              <p>Use <code>⌘D</code> for a side-by-side split and <code>⌘⇧D</code> for a stacked split.</p>
+            </div>
+          `,
+          web: `
+            <div class="web-preview">
+              <div class="web-bar"><span class="web-dot"></span><span class="web-dot"></span><span class="web-address">localhost:4321</span></div>
+              <div class="web-content"><strong>Build without leaving.</strong><span>The preview lives beside the terminal that created it.</span></div>
+            </div>
+          `
+        };
+        return bodies[type];
+      }
+
+      function selectSlot(slotId) {
+        activeTab().activeSlotId = slotId;
+        renderSlots();
+      }
+
+      function switchWorkspace(workspaceId) {
+        state.activeWorkspaceId = workspaceId;
+        closeAddMenu();
+        render();
+      }
+
+      function switchTab(tabId) {
+        activeWorkspace().activeTabId = tabId;
+        closeAddMenu();
+        renderTabs();
+        renderSlots();
+      }
+
+      function addWorkspace() {
+        const id = `workspace-${nextWorkspaceId++}`;
+        const tabId = `tab-${nextTabId++}`;
+        const slotId = `slot-${nextSlotId++}`;
+        state.workspaces.push({
+          id,
+          name: `Workspace ${state.workspaces.length + 1}`,
+          path: "~/projects",
+          activeTabId: tabId,
+          tabs: [{
+            id: tabId,
+            name: "main",
+            activeSlotId: slotId,
+            slots: [{ id: slotId, type: "terminal", x: 0, y: 0, w: 12, h: 12 }]
+          }]
+        });
+        state.activeWorkspaceId = id;
+        render();
+        showToast("Workspace created with a full-size terminal.");
+      }
+
+      function addTab() {
+        const workspace = activeWorkspace();
+        const tabId = `tab-${nextTabId++}`;
+        const slotId = `slot-${nextSlotId++}`;
+        workspace.tabs.push({
+          id: tabId,
+          name: `terminal ${workspace.tabs.length + 1}`,
+          activeSlotId: slotId,
+          slots: [{ id: slotId, type: "terminal", x: 0, y: 0, w: 12, h: 12 }]
+        });
+        workspace.activeTabId = tabId;
+        render();
+        showToast("New tab opened with Ghostty.");
+      }
+
+      function closeTab(tabId) {
+        const workspace = activeWorkspace();
+        if (workspace.tabs.length === 1) {
+          showToast("A workspace keeps at least one tab open.");
+          return;
+        }
+
+        const index = workspace.tabs.findIndex((tab) => tab.id === tabId);
+        workspace.tabs.splice(index, 1);
+        if (workspace.activeTabId === tabId) {
+          workspace.activeTabId = workspace.tabs[Math.max(0, index - 1)].id;
+        }
+        render();
+      }
+
+      function closeSlot(slotId) {
+        const tab = activeTab();
+        const index = tab.slots.findIndex((slot) => slot.id === slotId);
+        if (index === -1) return;
+
+        const previousActiveSlotId = tab.activeSlotId;
+        const transaction = buildCloseLayoutTransaction(tab.slots, slotId);
+        tab.slots = transaction.proposal;
+        const previousActiveStillExists = tab.slots.some((slot) => slot.id === previousActiveSlotId);
+        tab.activeSlotId = previousActiveStillExists
+          ? previousActiveSlotId
+          : transaction.absorbedSlotIds[0] ||
+            tab.slots[Math.max(0, index - 1)]?.id ||
+            null;
+        renderSlots();
+      }
+
+      function splitSelected(direction, newType = "terminal") {
+        const tab = activeTab();
+        const slot = activeSlot();
+
+        if (!slot) {
+          const slotId = `slot-${nextSlotId++}`;
+          tab.slots.push({ id: slotId, type: newType, x: 0, y: 0, w: 12, h: 12 });
+          tab.activeSlotId = slotId;
+          renderSlots();
+          return true;
+        }
+
+        const horizontal = direction === "horizontal";
+        const available = horizontal ? slot.w : slot.h;
+        const minimum = horizontal ? MIN_COLUMNS : MIN_ROWS;
+        if (available < minimum * 2) {
+          showToast(`This slot is too small to ${horizontal ? "split" : "stack"}. Resize it first.`);
+          return false;
+        }
+
+        const firstSize = Math.ceil(available / 2);
+        const secondSize = available - firstSize;
+        const newSlot = {
+          id: `slot-${nextSlotId++}`,
+          type: newType,
+          x: horizontal ? slot.x + firstSize : slot.x,
+          y: horizontal ? slot.y : slot.y + firstSize,
+          w: horizontal ? secondSize : slot.w,
+          h: horizontal ? slot.h : secondSize
+        };
+
+        if (horizontal) slot.w = firstSize;
+        else slot.h = firstSize;
+
+        tab.slots.push(newSlot);
+        tab.activeSlotId = newSlot.id;
+        renderSlots();
+        return true;
+      }
+
+      function addSlot(type) {
+        const tab = activeTab();
+        const slot = activeSlot();
+        const emptyRect = findBestEmptyRect(tab.slots, slot);
+
+        if (emptyRect) {
+          const slotId = `slot-${nextSlotId++}`;
+          tab.slots.push({ id: slotId, type, ...emptyRect });
+          tab.activeSlotId = slotId;
+          renderSlots();
+          showToast(`${slotCatalog[type].title} opened in available space.`);
+          closeAddMenu();
+          return;
+        }
+
+        let direction = "horizontal";
+        if (slot && slot.w < MIN_COLUMNS * 2 && slot.h >= MIN_ROWS * 2) direction = "vertical";
+        const didSplit = splitSelected(direction, type);
+        if (didSplit) showToast(`${slotCatalog[type].title} opened beside the active slot.`);
+        closeAddMenu();
+      }
+
+      function openAddMenu() {
+        elements.addMenu.hidden = false;
+        elements.addSlot.setAttribute("aria-expanded", "true");
+        elements.addMenu.querySelector(".menu-item").focus();
+      }
+
+      function closeAddMenu() {
+        elements.addMenu.hidden = true;
+        elements.addSlot.setAttribute("aria-expanded", "false");
+      }
+
+      function gridMetrics() {
+        const bounds = elements.canvas.getBoundingClientRect();
+        return {
+          bounds,
+          columnWidth: bounds.width / GRID_COLUMNS,
+          rowHeight: bounds.height / GRID_ROWS
+        };
+      }
+
+      function positionPreview(element, rect, valid) {
+        element.classList.add("visible");
+        element.classList.toggle("invalid", !valid);
+        element.setAttribute("style", slotStyle(rect));
+      }
+
+      function clearPreview(element) {
+        element.classList.remove("visible", "invalid");
+        element.removeAttribute("style");
+      }
+
+      function clearTransactionPreviews() {
+        elements.canvas.querySelectorAll(".transaction-preview").forEach((preview) => preview.remove());
+      }
+
+      function showPreview(rect, valid) {
+        clearTransactionPreviews();
+        positionPreview(elements.preview, rect, valid);
+        clearPreview(elements.swapPreview);
+      }
+
+      function showSwapPreview(movingDestination, targetDestination, valid) {
+        clearTransactionPreviews();
+        positionPreview(elements.preview, movingDestination, valid);
+        positionPreview(elements.swapPreview, targetDestination, valid);
+      }
+
+      function showResizeTransaction(transaction) {
+        clearPreview(elements.preview);
+        clearPreview(elements.swapPreview);
+        clearTransactionPreviews();
+
+        transaction.affectedSlotIds.forEach((slotId) => {
+          const rect = transaction.rects[slotId];
+          if (!rect || rect.w <= 0 || rect.h <= 0) return;
+
+          const preview = document.createElement("div");
+          preview.className = "drop-preview transaction-preview";
+          preview.setAttribute("aria-hidden", "true");
+          positionPreview(preview, rect, transaction.valid);
+          elements.canvas.append(preview);
+        });
+      }
+
+      function hidePreview() {
+        clearPreview(elements.preview);
+        clearPreview(elements.swapPreview);
+        clearTransactionPreviews();
+      }
+
+      function slotAtPointer(event, movingSlotId, metrics) {
+        const column = Math.floor((event.clientX - metrics.bounds.left) / metrics.columnWidth);
+        const row = Math.floor((event.clientY - metrics.bounds.top) / metrics.rowHeight);
+        if (column < 0 || column >= GRID_COLUMNS || row < 0 || row >= GRID_ROWS) return null;
+
+        return activeTab().slots.find((slot) => {
+          return slot.id !== movingSlotId &&
+            column >= slot.x &&
+            column < slot.x + slot.w &&
+            row >= slot.y &&
+            row < slot.y + slot.h;
+        }) || null;
+      }
+
+      function resizedRect(origin, direction, deltaColumns, deltaRows) {
+        let left = origin.x;
+        let right = origin.x + origin.w;
+        let top = origin.y;
+        let bottom = origin.y + origin.h;
+
+        if (direction.includes("w")) {
+          left = Math.max(0, Math.min(right - MIN_COLUMNS, origin.x + deltaColumns));
+        }
+        if (direction.includes("e")) {
+          right = Math.max(left + MIN_COLUMNS, Math.min(GRID_COLUMNS, origin.x + origin.w + deltaColumns));
+        }
+        if (direction.includes("n")) {
+          top = Math.max(0, Math.min(bottom - MIN_ROWS, origin.y + deltaRows));
+        }
+        if (direction.includes("s")) {
+          bottom = Math.max(top + MIN_ROWS, Math.min(GRID_ROWS, origin.y + origin.h + deltaRows));
+        }
+
+        return { x: left, y: top, w: right - left, h: bottom - top };
+      }
+
+      function spansOverlap(startA, sizeA, startB, sizeB) {
+        return startA < startB + sizeB && startA + sizeA > startB;
+      }
+
+      function buildResizeTransaction(slots, movingSlotId, direction, deltaColumns, deltaRows) {
+        const moving = slots.find((slot) => slot.id === movingSlotId);
+        const originalRects = Object.fromEntries(slots.map((slot) => [
+          slot.id,
+          { x: slot.x, y: slot.y, w: slot.w, h: slot.h }
+        ]));
+
+        if (!moving) {
+          return { valid: false, detached: false, rects: originalRects, affectedSlotIds: [] };
+        }
+
+        const movingCandidate = resizedRect(moving, direction, deltaColumns, deltaRows);
+        const activeOnlyRects = {
+          ...originalRects,
+          [moving.id]: movingCandidate
+        };
+        const coupledRects = Object.fromEntries(
+          Object.entries(activeOnlyRects).map(([slotId, rect]) => [slotId, { ...rect }])
+        );
+        const affectedSlotIds = new Set([moving.id]);
+
+        const originalRight = moving.x + moving.w;
+        const originalBottom = moving.y + moving.h;
+        const horizontalDelta = direction.includes("e")
+          ? movingCandidate.x + movingCandidate.w - originalRight
+          : direction.includes("w")
+            ? movingCandidate.x - moving.x
+            : 0;
+        const verticalDelta = direction.includes("s")
+          ? movingCandidate.y + movingCandidate.h - originalBottom
+          : direction.includes("n")
+            ? movingCandidate.y - moving.y
+            : 0;
+
+        slots.forEach((neighbor) => {
+          if (neighbor.id === moving.id) return;
+
+          if (
+            direction.includes("e") &&
+            horizontalDelta !== 0 &&
+            neighbor.x === originalRight &&
+            spansOverlap(moving.y, moving.h, neighbor.y, neighbor.h)
+          ) {
+            coupledRects[neighbor.id] = {
+              ...coupledRects[neighbor.id],
+              x: neighbor.x + horizontalDelta,
+              w: neighbor.w - horizontalDelta
+            };
+            affectedSlotIds.add(neighbor.id);
+          }
+
+          if (
+            direction.includes("w") &&
+            horizontalDelta !== 0 &&
+            neighbor.x + neighbor.w === moving.x &&
+            spansOverlap(moving.y, moving.h, neighbor.y, neighbor.h)
+          ) {
+            coupledRects[neighbor.id] = {
+              ...coupledRects[neighbor.id],
+              w: neighbor.w + horizontalDelta
+            };
+            affectedSlotIds.add(neighbor.id);
+          }
+
+          if (
+            direction.includes("s") &&
+            verticalDelta !== 0 &&
+            neighbor.y === originalBottom &&
+            spansOverlap(moving.x, moving.w, neighbor.x, neighbor.w)
+          ) {
+            coupledRects[neighbor.id] = {
+              ...coupledRects[neighbor.id],
+              y: neighbor.y + verticalDelta,
+              h: neighbor.h - verticalDelta
+            };
+            affectedSlotIds.add(neighbor.id);
+          }
+
+          if (
+            direction.includes("n") &&
+            verticalDelta !== 0 &&
+            neighbor.y + neighbor.h === moving.y &&
+            spansOverlap(moving.x, moving.w, neighbor.x, neighbor.w)
+          ) {
+            coupledRects[neighbor.id] = {
+              ...coupledRects[neighbor.id],
+              h: neighbor.h + verticalDelta
+            };
+            affectedSlotIds.add(neighbor.id);
+          }
+        });
+
+        const coupledProposal = slots.map((slot) => ({ ...slot, ...coupledRects[slot.id] }));
+        if (layoutRectsAreValid(coupledProposal)) {
+          return {
+            valid: true,
+            detached: false,
+            rects: coupledRects,
+            affectedSlotIds: [...affectedSlotIds]
+          };
+        }
+
+        const activeOnlyProposal = slots.map((slot) => ({ ...slot, ...activeOnlyRects[slot.id] }));
+        if (layoutRectsAreValid(activeOnlyProposal)) {
+          return {
+            valid: true,
+            detached: true,
+            rects: activeOnlyRects,
+            affectedSlotIds: [moving.id]
+          };
+        }
+
+        return {
+          valid: false,
+          detached: false,
+          rects: activeOnlyRects,
+          affectedSlotIds: [moving.id]
+        };
+      }
+
+      function applyRectSnapshot(slots, rects) {
+        slots.forEach((slot) => {
+          if (rects[slot.id]) Object.assign(slot, rects[slot.id]);
+        });
+      }
+
+      function beginPointerSession(event, mode, slotId, resizeDirection = null) {
+        if (event.button !== 0) return;
+        const slot = activeTab().slots.find((item) => item.id === slotId);
+        if (!slot) return;
+
+        event.preventDefault();
+        activeTab().activeSlotId = slotId;
+        const metrics = gridMetrics();
+        const slots = activeTab().slots;
+        const originalRects = Object.fromEntries(slots.map((item) => [
+          item.id,
+          { x: item.x, y: item.y, w: item.w, h: item.h }
+        ]));
+        const resizeTransaction = mode === "resize"
+          ? buildResizeTransaction(slots, slotId, resizeDirection, 0, 0)
+          : null;
+        pointerSession = {
+          pointerId: event.pointerId,
+          mode,
+          slotId,
+          startClientX: event.clientX,
+          startClientY: event.clientY,
+          origin: { x: slot.x, y: slot.y, w: slot.w, h: slot.h },
+          candidate: { x: slot.x, y: slot.y, w: slot.w, h: slot.h },
+          swapTargetId: null,
+          resizeDirection,
+          resizeTransaction,
+          originalRects,
+          metrics
+        };
+
+        elements.canvas.querySelectorAll(".slot").forEach((element) => {
+          element.classList.toggle("active", element.dataset.slotId === slotId);
+        });
+        const slotElement = elements.canvas.querySelector(`[data-slot-id="${slotId}"]`);
+        slotElement.classList.add(mode === "move" ? "dragging" : "resizing");
+        event.currentTarget.setPointerCapture(event.pointerId);
+        if (resizeTransaction) showResizeTransaction(resizeTransaction);
+        else showPreview(pointerSession.candidate, true);
+      }
+
+      function updatePointerSession(event) {
+        if (!pointerSession || event.pointerId !== pointerSession.pointerId) return;
+        const { origin, mode, metrics, resizeDirection } = pointerSession;
+        const deltaColumns = Math.round((event.clientX - pointerSession.startClientX) / metrics.columnWidth);
+        const deltaRows = Math.round((event.clientY - pointerSession.startClientY) / metrics.rowHeight);
+
+        if (mode === "resize") {
+          const transaction = buildResizeTransaction(
+            activeTab().slots,
+            pointerSession.slotId,
+            resizeDirection,
+            deltaColumns,
+            deltaRows
+          );
+          pointerSession.resizeTransaction = transaction;
+          pointerSession.candidate = transaction.rects[pointerSession.slotId];
+          pointerSession.swapTargetId = null;
+          showResizeTransaction(transaction);
+          return;
+        }
+
+        const candidate = {
+          x: Math.max(0, Math.min(GRID_COLUMNS - origin.w, origin.x + deltaColumns)),
+          y: Math.max(0, Math.min(GRID_ROWS - origin.h, origin.y + deltaRows)),
+          w: origin.w,
+          h: origin.h
+        };
+        pointerSession.candidate = candidate;
+        pointerSession.swapTargetId = null;
+
+        const swapTarget = slotAtPointer(event, pointerSession.slotId, metrics);
+        if (swapTarget) {
+          const validSwap = isValidSwap(pointerSession.slotId, swapTarget.id);
+          pointerSession.swapTargetId = swapTarget.id;
+          showSwapPreview(swapTarget, origin, validSwap);
+          return;
+        }
+
+        showPreview(candidate, isValidRect(candidate, pointerSession.slotId));
+      }
+
+      function endPointerSession(event) {
+        if (!pointerSession || event.pointerId !== pointerSession.pointerId) return;
+        const { slotId, mode, candidate, origin, swapTargetId, resizeTransaction, originalRects } = pointerSession;
+        const slots = activeTab().slots;
+        const slot = slots.find((item) => item.id === slotId);
+        let valid = false;
+
+        if (mode === "resize" && resizeTransaction?.valid) {
+          applyRectSnapshot(slots, resizeTransaction.rects);
+          valid = true;
+        } else if (mode === "move" && swapTargetId && slot && isValidSwap(slotId, swapTargetId)) {
+          const target = slots.find((item) => item.id === swapTargetId);
+          const targetOrigin = { x: target.x, y: target.y, w: target.w, h: target.h };
+          Object.assign(slot, targetOrigin);
+          Object.assign(target, origin);
+          valid = true;
+          showToast("Slots swapped.");
+        } else if (mode === "move" && !swapTargetId && slot && isValidRect(candidate, slotId)) {
+          Object.assign(slot, candidate);
+          valid = true;
+        }
+
+        if (!valid) {
+          showToast(mode === "resize"
+            ? "That resize would break the layout. Every slot was restored."
+            : "That position overlaps another slot. The layout was restored.");
+          applyRectSnapshot(slots, originalRects);
+        }
+
+        pointerSession = null;
+        hidePreview();
+        renderSlots();
+      }
+
+      elements.workspaceList.addEventListener("click", (event) => {
+        const button = event.target.closest("[data-workspace-id]");
+        if (button) switchWorkspace(button.dataset.workspaceId);
+      });
+
+      elements.tabs.addEventListener("click", (event) => {
+        const close = event.target.closest("[data-close-tab]");
+        if (close) {
+          event.stopPropagation();
+          closeTab(close.dataset.closeTab);
+          return;
+        }
+        const tab = event.target.closest("[data-tab-id]");
+        if (tab) switchTab(tab.dataset.tabId);
+      });
+
+      elements.tabs.addEventListener("keydown", (event) => {
+        const close = event.target.closest("[data-close-tab]");
+        if (close && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          closeTab(close.dataset.closeTab);
+          return;
+        }
+
+        const tab = event.target.closest("[data-tab-id]");
+        if (tab && (event.key === "Enter" || event.key === " ")) {
+          event.preventDefault();
+          switchTab(tab.dataset.tabId);
+          return;
+        }
+
+        if (tab && (event.key === "ArrowLeft" || event.key === "ArrowRight")) {
+          event.preventDefault();
+          const tabs = activeWorkspace().tabs;
+          const currentIndex = tabs.findIndex((item) => item.id === tab.dataset.tabId);
+          const step = event.key === "ArrowRight" ? 1 : -1;
+          const nextIndex = (currentIndex + step + tabs.length) % tabs.length;
+          switchTab(tabs[nextIndex].id);
+          elements.tabs.querySelector(`[data-tab-id="${tabs[nextIndex].id}"]`)?.focus();
+        }
+      });
+
+      elements.canvas.addEventListener("pointerdown", (event) => {
+        closeAddMenu();
+
+        const close = event.target.closest("[data-close-slot]");
+        if (close) return;
+
+        const resizeHandle = event.target.closest("[data-resize-handle]");
+        if (resizeHandle) {
+          beginPointerSession(
+            event,
+            "resize",
+            resizeHandle.dataset.resizeHandle,
+            resizeHandle.dataset.resizeDirection
+          );
+          return;
+        }
+
+        const dragHandle = event.target.closest("[data-drag-handle]");
+        if (dragHandle) {
+          beginPointerSession(event, "move", dragHandle.dataset.dragHandle);
+          return;
+        }
+
+        const slot = event.target.closest("[data-slot-id]");
+        if (slot) selectSlot(slot.dataset.slotId);
+      });
+
+      elements.canvas.addEventListener("click", (event) => {
+        const close = event.target.closest("[data-close-slot]");
+        if (close) {
+          event.stopPropagation();
+          closeSlot(close.dataset.closeSlot);
+        }
+      });
+
+      elements.canvas.addEventListener("focusin", (event) => {
+        if (event.target.closest("[data-close-slot]")) return;
+
+        const slot = event.target.closest("[data-slot-id]");
+        if (slot && activeTab().activeSlotId !== slot.dataset.slotId) {
+          activeTab().activeSlotId = slot.dataset.slotId;
+          elements.canvas.querySelectorAll(".slot").forEach((node) => {
+            node.classList.toggle("active", node.dataset.slotId === slot.dataset.slotId);
+          });
+        }
+      });
+
+      elements.canvas.addEventListener("keydown", (event) => {
+        const handle = event.target.closest("[data-resize-handle]");
+        if (!handle || !["ArrowLeft", "ArrowRight", "ArrowUp", "ArrowDown"].includes(event.key)) return;
+
+        const slot = activeTab().slots.find((item) => item.id === handle.dataset.resizeHandle);
+        if (!slot) return;
+
+        const direction = handle.dataset.resizeDirection;
+        const horizontalKey = event.key === "ArrowLeft" || event.key === "ArrowRight";
+        const verticalKey = event.key === "ArrowUp" || event.key === "ArrowDown";
+        const ownsHorizontalEdge = direction.includes("e") || direction.includes("w");
+        const ownsVerticalEdge = direction.includes("n") || direction.includes("s");
+
+        if ((horizontalKey && !ownsHorizontalEdge) || (verticalKey && !ownsVerticalEdge)) return;
+
+        event.preventDefault();
+        const deltaColumns = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
+        const deltaRows = event.key === "ArrowUp" ? -1 : event.key === "ArrowDown" ? 1 : 0;
+        const transaction = buildResizeTransaction(
+          activeTab().slots,
+          slot.id,
+          direction,
+          deltaColumns,
+          deltaRows
+        );
+
+        if (transaction.valid) {
+          applyRectSnapshot(activeTab().slots, transaction.rects);
+          renderSlots();
+          elements.canvas
+            .querySelector(`[data-resize-handle="${slot.id}"][data-resize-direction="${direction}"]`)
+            ?.focus();
+        } else {
+          showToast("The shared edge cannot move farther in that direction.");
+        }
+      });
+
+      window.addEventListener("pointermove", updatePointerSession);
+      window.addEventListener("pointerup", endPointerSession);
+      window.addEventListener("pointercancel", endPointerSession);
+
+      elements.addWorkspace.addEventListener("click", addWorkspace);
+      elements.addTab.addEventListener("click", addTab);
+      elements.splitHorizontal.addEventListener("click", () => splitSelected("horizontal"));
+      elements.splitVertical.addEventListener("click", () => splitSelected("vertical"));
+
+      elements.addSlot.addEventListener("click", () => {
+        if (elements.addMenu.hidden) openAddMenu();
+        else closeAddMenu();
+      });
+
+      elements.addMenu.addEventListener("click", (event) => {
+        const item = event.target.closest("[data-slot-type]");
+        if (item) addSlot(item.dataset.slotType);
+      });
+
+      document.addEventListener("click", (event) => {
+        if (!elements.addMenu.hidden && !event.target.closest("#add-slot") && !event.target.closest("#add-menu")) {
+          closeAddMenu();
+        }
+      });
+
+      document.addEventListener("keydown", (event) => {
+        if (event.metaKey && event.key.toLowerCase() === "d") {
+          event.preventDefault();
+          splitSelected(event.shiftKey ? "vertical" : "horizontal");
+          return;
+        }
+
+        if (event.key === "Escape") {
+          closeAddMenu();
+          if (pointerSession) {
+            applyRectSnapshot(activeTab().slots, pointerSession.originalRects);
+            pointerSession = null;
+            hidePreview();
+            renderSlots();
+          }
+        }
+      });
+
+      render();
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,8 @@
+{
+  "name": "file-explorer",
+  "version": "0.1.0",
+  "permissions": ["filesystem.read", "terminal.write"],
+  "settings": [
+    { "key": "rootPath", "label": "Root path", "type": "string", "default": "~" }
+  ]
+}
