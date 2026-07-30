@@ -26,13 +26,22 @@ All commands run from `poc/`:
 
 ```bash
 ./scripts/setup-ghosttykit.sh   # once per clone: downloads the pinned GhosttyKit.xcframework (~130 MB)
-swift run tenon-poc     # build + launch the app (opens a window; needs a GUI session)
+swift run tenon         # build + launch the app (opens a window; needs a GUI session)
 swift test              # headless test suite, ~1s — the evidence bar for the PoC
 swift test --filter testEditingTheClockPluginOnDiskHotReloadsIt   # single test by name
 swift build             # compile check only
 ```
 
 Environment variables: `TENON_STUB_TERMINAL=1` (stub terminal pane, no PTY — plugin loop unchanged), `TENON_PLUGINS_DIR=/path` (point the host at a different plugin folder).
+
+Builds live in two trees inside the gitignored `poc/.build`: `arm64-apple-macosx/`
+(SwiftPM) and `xcode/` — one derived data path shared by every configuration. The
+dependency graph is checked out once, into `checkouts/` + `repositories/`, which every
+`xcodebuild` invocation reads by carrying `-clonedSourcePackagesDirPath .build`; omit
+that flag and Xcode silently clones a second 616 MB copy. `./scripts/prune-build-cache.sh`
+collects any other build tree that appears (`DEEP=1` drops both real ones too, keeping
+the dependencies), and `../dev.sh` / `../install.sh` run it before they build, so the
+cache stops at a few gigabytes instead of growing without bound.
 
 No lint/format configuration exists yet.
 

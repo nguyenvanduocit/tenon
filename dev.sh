@@ -5,9 +5,18 @@
 # app; environment overrides work too, e.g.:
 #   TENON_STUB_TERMINAL=1 ./dev.sh   # stub terminal pane, no PTY
 #   TENON_PLUGINS_DIR=/path ./dev.sh # point the host at a different plugins dir
+#   CLEAN=1 ./dev.sh                 # discard both build trees first (deps survive)
 set -euo pipefail
 
 cd "$(dirname "$0")/poc"
+
+# Collect duplicate build trees before making more of them. Keeps this run's
+# incremental caches, so the edit-run loop stays seconds long.
+if [ -n "${CLEAN:-}" ]; then
+    DEEP=1 ./scripts/prune-build-cache.sh
+else
+    ./scripts/prune-build-cache.sh
+fi
 
 # One-time (per clone) fetch of the pinned GhosttyKit.xcframework (~130 MB).
 # The setup script is idempotent — a no-op once the framework is already in place.

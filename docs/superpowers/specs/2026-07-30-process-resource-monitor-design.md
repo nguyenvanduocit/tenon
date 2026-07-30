@@ -498,6 +498,7 @@ xcodebuild \
   -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   -only-testing:TenonCoreTests/ProcessTelemetryTests \
   -only-testing:TenonCoreTests/ProcessTelemetryCoordinatorTests \
   test
@@ -507,6 +508,7 @@ xcodebuild \
   -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   -only-testing:TenonAppTests/TerminalProcessProjectionTests \
   test
 
@@ -515,6 +517,7 @@ xcodebuild \
   -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   -only-testing:TenonIntegrationTests/GhosttyProcessTelemetrySmokeTests \
   test
 
@@ -523,6 +526,7 @@ xcodebuild \
   -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   -only-testing:TenonUITests/ProcessMonitorFlowUITests \
   test
 
@@ -531,6 +535,7 @@ xcodebuild \
   -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   test
 
 xcodebuild \
@@ -538,11 +543,12 @@ xcodebuild \
   -scheme Tenon \
   -configuration Release \
   -destination 'platform=macOS,arch=arm64' \
-  -derivedDataPath .build/xcode-release \
+  -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   build
 
 codesign --verify --deep --strict \
-  .build/xcode-release/Build/Products/Release/Tenon.app
+  .build/xcode/Build/Products/Release/Tenon.app
 ```
 
 `swift test` proves the new core suite but not App, Integration, or UI targets. Those

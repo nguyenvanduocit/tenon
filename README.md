@@ -54,6 +54,7 @@ xcodebuild \
   -scheme Tenon \
   -configuration Debug \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   build
 open .build/xcode/Build/Products/Debug/Tenon.app
 ```

@@ -33,6 +33,7 @@ xcodebuild \
   -scheme Tenon \
   -configuration Debug \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   build
 ```
 
@@ -58,7 +59,14 @@ Runtime overrides:
   meaningful process working directory, then the user's home directory when
   LaunchServices supplies `/`.
 - `TENON_PLUGINS_DIR` points at a development plugin catalog. Installed builds
-  copy bundled plugins to Application Support automatically.
+  copy bundled plugins to Application Support automatically. Plugins loaded from
+  this catalog ask before their gated actions run: the host grants silent
+  standing consent only to the inventory it controls, and an arbitrary user
+  directory is not that.
+- `TENON_TRUST_PLUGIN_INVENTORY=1` stands a `TENON_PLUGINS_DIR` catalog in for
+  the app bundle, so plugins you are developing carry the same standing consent
+  the bundled ones do and stop prompting. The value is matched exactly — `1`
+  grants it, every other value including `true` leaves the catalog untrusted.
 - `TENON_STUB_TERMINAL=1` replaces the PTY-backed surface with deterministic
   content for UI tests and shell smoke runs.
 
@@ -93,6 +101,7 @@ xcodebuild \
   -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
+  -clonedSourcePackagesDirPath .build \
   test
 ```
 
