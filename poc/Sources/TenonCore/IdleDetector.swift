@@ -4,7 +4,7 @@ import Foundation
 /// counts as idle after `stableSamples` consecutive identical readings. The
 /// provider owns the cancellation-aware polling clock; this value owns only
 /// the decision and stays headless-testable.
-public struct IdleDetector {
+public struct IdleDetector: Sendable {
     public let stableSamples: Int
     private var lastSample: String?
     private var streak: Int = 0
