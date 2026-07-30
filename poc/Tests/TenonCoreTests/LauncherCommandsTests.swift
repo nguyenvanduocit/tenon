@@ -100,7 +100,7 @@ final class LauncherCommandsTests: XCTestCase {
 
     private func shippedLauncherIntentIDs() throws -> Set<String> {
         var ids: Set<String> = []
-        for directory in try PluginLoader.discover(in: Self.pluginsRoot) {
+        for directory in PluginLoader.discover(in: Self.pluginsRoot) {
             let manifest = try PluginLoader.loadManifest(at: directory)
             for provision in manifest.intents.provides where provision.palette?.launcher == true {
                 ids.insert(provision.name.rawValue)

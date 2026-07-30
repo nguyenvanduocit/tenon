@@ -1,6 +1,15 @@
 // swift-tools-version: 6.1
 import PackageDescription
 
+// Every first-party Swift target treats warnings as errors — the boundary law's
+// "Swift 6 warnings-as-errors build" criterion (T-020). `.unsafeFlags` because
+// `.treatAllWarnings(as:)` needs tools-version 6.2; acceptable for the same reason
+// as the GhosttyKit linker flags below — tenon is an app, never a versioned SwiftPM
+// dependency. Vendored packages, dependency packages, and the GhosttyKit C shim are
+// deliberately outside the flag: their diagnostics (including the two prebuilt ImGui
+// linker warnings) are not ours to fail the build on.
+let warningsAsErrors: [SwiftSetting] = [.unsafeFlags(["-warnings-as-errors"])]
+
 let package = Package(
     name: "Tenon",
     platforms: [.macOS(.v14)],
@@ -43,11 +52,16 @@ let package = Package(
             name: "TenonIntentCore",
             dependencies: [
                 .product(name: "JSONSchema", package: "swift-json-schema"),
-            ]
+            ],
+            swiftSettings: warningsAsErrors
         ),
 
         // Headless plugin host. No AppKit / SwiftUI — this is what `swift test` exercises.
-        .target(name: "TenonCore", dependencies: ["TenonIntentCore"]),
+        .target(
+            name: "TenonCore",
+            dependencies: ["TenonIntentCore"],
+            swiftSettings: warningsAsErrors
+        ),
 
         // Thin C shim over the prebuilt GhosttyKit.xcframework (the Muxy pattern).
         // ghostty.h is synced from the xcframework by scripts/setup-ghosttykit.sh;
@@ -73,6 +87,7 @@ let package = Package(
                 // mark is loaded, because SwiftPM does not run `actool`.
                 .process("Assets.xcassets"),
             ],
+            swiftSettings: warningsAsErrors,
             linkerSettings: [
                 // The prebuilt static library inside the xcframework. `.unsafeFlags`
                 // is the Muxy pattern too — acceptable because tenon is an
@@ -105,15 +120,24 @@ let package = Package(
             dependencies: ["TenonIntentCore", "TenonCore"],
             swiftSettings: [
                 .define("TENON_CLI_IMPORTS_CORE_MODULE"),
-            ]
+            ] + warningsAsErrors
         ),
 
-        .testTarget(name: "TenonIntentCoreTests", dependencies: ["TenonIntentCore"]),
+        .testTarget(
+            name: "TenonIntentCoreTests",
+            dependencies: ["TenonIntentCore"],
+            swiftSettings: warningsAsErrors
+        ),
         .testTarget(
             name: "TenonCoreTests",
-            dependencies: ["TenonIntentCore", "TenonCore"]
+            dependencies: ["TenonIntentCore", "TenonCore"],
+            swiftSettings: warningsAsErrors
         ),
-        .testTarget(name: "TenonAppStateTests", dependencies: ["TenonApp"]),
+        .testTarget(
+            name: "TenonAppStateTests",
+            dependencies: ["TenonApp"],
+            swiftSettings: warningsAsErrors
+        ),
     ],
     swiftLanguageModes: [.v6]
 )

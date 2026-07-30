@@ -554,7 +554,7 @@ public actor WorkspaceCatalogStore {
         guard scheduled == nil else { return }
         scheduled = Task { [debounce] in
             try? await Task.sleep(for: debounce)
-            await self.commitScheduledWrite()
+            self.commitScheduledWrite()
         }
     }
 
