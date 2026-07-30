@@ -3,10 +3,16 @@ import SwiftUI
 import TenonCore
 
 /// Dev-only offscreen snapshots of the native diff/changes views, so they can be seen
-/// on a headless machine (no display / `screencapture`). Gated by env vars:
+/// — and timed — on a headless machine (no display / `screencapture`). Gated by env vars:
 ///
-///     TENON_DIFF_SNAPSHOT=/path/out.png swift run tenon-poc
-///     TENON_CHANGES_SNAPSHOT=/path/out.png swift run tenon-poc
+///     TENON_DIFF_SNAPSHOT=/path/out.png swift run tenon
+///     TENON_CHANGES_SNAPSHOT=/path/out.png swift run tenon
+///
+/// The diff's two sides default to a small built-in sample; point
+/// `TENON_DIFF_SNAPSHOT_OLD` / `TENON_DIFF_SNAPSHOT_NEW` at files to render a real one.
+/// That is how a large diff gets measured here: the render reports its first layout pass
+/// and its capture to stderr, and the first layout pass is exactly where a non-lazy
+/// container would build every row.
 ///
 /// Renders the real view through an offscreen `NSHostingView` + `cacheDisplay`, writes
 /// the PNG, and exits before any window opens. Not part of normal operation.
@@ -43,12 +49,15 @@ enum DiffSnapshot {
             return out.split(separator: "\\0", omittingEmptySubsequences: true).compactMap { Entry(record: String($0)) }
         }
         """
+        let env = ProcessInfo.processInfo.environment
+        let oldText = env["TENON_DIFF_SNAPSHOT_OLD"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? old
+        let newText = env["TENON_DIFF_SNAPSHOT_NEW"].flatMap { try? String(contentsOfFile: $0, encoding: .utf8) } ?? new
         let request = DiffRequest(
-            source: .inline(oldText: old, newText: new),
+            source: .inline(oldText: oldText, newText: newText),
             fileName: "GitStatus.swift",
             title: "GitStatus.swift"
         )
-        write(DiffSlotView(request: request, startSplit: true),
+        write(DiffSlotView(request: request, startSplit: env["TENON_DIFF_SNAPSHOT_SPLIT"] != "0"),
               size: CGSize(width: 900, height: 560), to: path)
     }
 
@@ -75,7 +84,9 @@ enum DiffSnapshot {
 
         let hosting = NSHostingView(rootView: AnyView(view))
         hosting.frame = NSRect(origin: .zero, size: size)
+        let layoutStart = Date()
         hosting.layoutSubtreeIfNeeded()
+        let firstLayout = Date().timeIntervalSince(layoutStart)
         // Give SwiftUI real runloop turns to lay out its ScrollView content and
         // commit its layer before the offscreen capture.
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
@@ -85,7 +96,13 @@ enum DiffSnapshot {
             FileHandle.standardError.write(Data("snapshot: no bitmap rep\n".utf8))
             exit(2)
         }
+        let captureStart = Date()
         hosting.cacheDisplay(in: hosting.bounds, to: rep)
+        let capture = Date().timeIntervalSince(captureStart)
+        FileHandle.standardError.write(
+            Data(String(format: "snapshot: layout %.0f ms, capture %.0f ms\n",
+                        firstLayout * 1000, capture * 1000).utf8)
+        )
         guard let png = rep.representation(using: .png, properties: [:]) else {
             FileHandle.standardError.write(Data("snapshot: png encode failed\n".utf8))
             exit(3)

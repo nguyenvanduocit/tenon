@@ -76,9 +76,25 @@ final class LineDiffTests: XCTestCase {
     // MARK: stat()
 
     func testStatCountsAddedAndRemoved() {
-        let s = LineDiff.stat(old: "a\nb\nc\n", new: "a\nX\nc\nd\n")
+        let s = LineDiff.stat(LineDiff.hunks(old: "a\nb\nc\n", new: "a\nX\nc\nd\n"))
         XCTAssertEqual(s.added, 2)   // X, d
         XCTAssertEqual(s.removed, 1) // b
+    }
+
+    func testStatOverManyHunksCountsEveryChangeExactlyOnce() {
+        // Two edits far enough apart to land in separate hunks: the summary is over
+        // the whole diff, and context lines shared by no hunk cannot double-count.
+        let old = (1...200).map { "line \($0)" }
+        var new = old
+        new[10] = "edited early"
+        new[150] = "edited late"
+        let text: ([String]) -> String = { $0.joined(separator: "\n") + "\n" }
+        let hunks = LineDiff.hunks(old: text(old), new: text(new))
+
+        XCTAssertEqual(hunks.count, 2)
+        let s = LineDiff.stat(hunks)
+        XCTAssertEqual(s.added, 2)
+        XCTAssertEqual(s.removed, 2)
     }
 
     // MARK: hunks()

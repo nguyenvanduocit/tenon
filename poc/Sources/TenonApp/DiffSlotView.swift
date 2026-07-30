@@ -17,7 +17,8 @@ private struct ResolvedDiff: Sendable {
 /// hand; for a `.git` request it resolves both blobs off-main (a generation guard
 /// drops a stale load if the pane is asked to reload before the last finished). The
 /// line diff itself is the pure `LineDiff` engine's job, computed once per content
-/// change and cached — not per render.
+/// change and cached — not per render, and the same for the `DiffRows` flattening
+/// and the column measurements the lazy renderer needs.
 @MainActor
 @Observable
 final class DiffContentModel {
@@ -32,6 +33,18 @@ final class DiffContentModel {
     private(set) var stat: (added: Int, removed: Int) = (0, 0)
     /// The largest line number shown, so the gutter is exactly as wide as it needs.
     private(set) var maxLineNumber = 1
+
+    /// The flat row lists the lazy container scrolls, one per style.
+    private(set) var unifiedRows: [DiffRow] = []
+    private(set) var splitRows: [DiffRow] = []
+
+    /// How wide the text column of each style has to be. A lazy container measures
+    /// only the rows it builds, so it cannot discover that the widest line is a
+    /// thousand rows below the viewport — core names the candidates and these are
+    /// them, measured once with the row font.
+    private(set) var unifiedTextWidth: CGFloat = 0
+    private(set) var leftTextWidth: CGFloat = 0
+    private(set) var rightTextWidth: CGFloat = 0
 
     private(set) var request: DiffRequest
     private var generation = 0
@@ -80,10 +93,24 @@ final class DiffContentModel {
 
     private func recompute() {
         hunks = LineDiff.hunks(old: oldText, new: newText, context: 3)
-        stat = LineDiff.stat(old: oldText, new: newText)
-        maxLineNumber = hunks.flatMap(\.lines).reduce(1) {
-            Swift.max($0, Swift.max($1.oldNumber ?? 0, $1.newNumber ?? 0))
+        stat = LineDiff.stat(hunks)
+        maxLineNumber = DiffRows.maxLineNumber(hunks)
+        unifiedRows = DiffRows.unified(hunks)
+        splitRows = DiffRows.split(hunks)
+        unifiedTextWidth = Self.measure(DiffRows.widestTexts(unifiedRows, column: .unified))
+        leftTextWidth = Self.measure(DiffRows.widestTexts(splitRows, column: .left))
+        rightTextWidth = Self.measure(DiffRows.widestTexts(splitRows, column: .right))
+    }
+
+    /// The row font, as AppKit sees it — the same monospaced face the SwiftUI rows
+    /// draw with, so a measurement here is what the text finally occupies.
+    private static let rowNSFont = TenonTheme.utilityNSFont(size: 11)
+
+    private static func measure(_ texts: [String]) -> CGFloat {
+        texts.reduce(CGFloat.zero) { widest, text in
+            Swift.max(widest, (text as NSString).size(withAttributes: [.font: rowNSFont]).width)
         }
+        .rounded(.up)
     }
 }
 
@@ -189,10 +216,18 @@ private enum DiffStyle: String, CaseIterable, Identifiable {
 }
 
 /// The host's default diff view: a native, high-performance diff renderer any plugin
-/// opens with `workspace.tab.create.v1` and diff content. It paints only the changed
-/// hunks (plus context) — a two-line edit in a 10k-line file draws a handful of rows.
-/// No WebView. Unified scrolls a long line horizontally; split gives each side a fixed
-/// half-width column and truncates, so a long line on one side never balloons the other.
+/// opens with `workspace.tab.create.v1` and diff content. No WebView.
+///
+/// It paints only the changed hunks (plus context) — a two-line edit in a 10k-line
+/// file draws a handful of rows — and, of those, only the rows on screen: the pure
+/// `DiffRows` projection flattens (hunks × lines) into one list keyed by line number,
+/// which a `LazyVStack` scrolls. A diff of any size costs a viewport, not a file.
+///
+/// The width that laziness gives up is bought back from the content: `DiffRows` names
+/// the widest candidate lines per column and the model measures those, so the scroll
+/// extent is right on the first frame instead of growing as rows are built. Unified
+/// scrolls a long line horizontally; split gives each side its own column, so a long
+/// line on one side never widens the other.
 struct DiffSlotView: View {
     private let request: DiffRequest
     @State private var model: DiffContentModel
@@ -218,7 +253,8 @@ struct DiffSlotView: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TenonTheme.panel)
-        .onAppear { model.reload() }
+        // The model resolves at construction; a new request is the one thing that
+        // makes this pane diff again.
         .onChange(of: request) { _, newRequest in model.reload(newRequest) }
     }
 
@@ -267,12 +303,25 @@ struct DiffSlotView: View {
         } else {
             GeometryReader { geo in
                 ScrollView([.vertical, .horizontal]) {
-                    VStack(alignment: .leading, spacing: 0) { rowsBody }
-                        .frame(minWidth: geo.size.width, minHeight: geo.size.height, alignment: .topLeading)
-                        .padding(.bottom, 8)
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        // Keyed on the row's own id — line numbers, not list position.
+                        // A lazy container recycles rows, and an index key would give
+                        // every row below a change a new identity on each reload.
+                        ForEach(rows) { row in
+                            rowBody(row)
+                        }
+                    }
+                    .frame(width: Swift.max(contentWidth, geo.size.width), alignment: .topLeading)
+                    .frame(minHeight: geo.size.height, alignment: .topLeading)
+                    .padding(.bottom, 8)
                 }
             }
         }
+    }
+
+    /// The flat row list for the selected style, flattened once by the model.
+    private var rows: [DiffRow] {
+        style == .unified ? model.unifiedRows : model.splitRows
     }
 
     /// The gutter is exactly wide enough for the largest line number, so a small
@@ -281,41 +330,47 @@ struct DiffSlotView: View {
         CGFloat(String(model.maxLineNumber).count) * 8 + 6
     }
 
+    // Row padding, named because the row builders and the content width both depend
+    // on it: a literal changed in one place and not the other silently clips a line
+    // or leaves dead space to scroll through.
+    private static let unifiedGutterPad: CGFloat = 8
+    private static let signColumn: CGFloat = 9
+    private static let signGap: CGFloat = 6
+    private static let unifiedTextTrail: CGFloat = 14
+    private static let splitGutterPad: CGFloat = 6
+    private static let splitTextTrail: CGFloat = 12
+    private static let dividerWidth: CGFloat = 1
+
+    private static let unifiedChrome =
+        unifiedGutterPad * 2 + signColumn + signGap + unifiedTextTrail
+    private static let splitCellChrome = splitGutterPad * 2 + splitTextTrail
+
+    private var leftCellWidth: CGFloat { gutterWidth + Self.splitCellChrome + model.leftTextWidth }
+    private var rightCellWidth: CGFloat { gutterWidth + Self.splitCellChrome + model.rightTextWidth }
+
+    /// How wide the scrollable content is: the widest row, from the measured column
+    /// widths. A lazy container has never seen the rows it hasn't built, so the
+    /// scroll extent comes from the content rather than from what is on screen.
+    private var contentWidth: CGFloat {
+        style == .unified
+            ? gutterWidth + Self.unifiedChrome + model.unifiedTextWidth
+            : leftCellWidth + Self.dividerWidth + rightCellWidth
+    }
+
     @ViewBuilder
-    private var rowsBody: some View {
-        if style == .unified {
-            ForEach(Array(model.hunks.enumerated()), id: \.offset) { _, hunk in
-                hunkHeader(hunk)
-                unifiedRows(hunk)
-            }
-        } else {
-            splitGrid
+    private func rowBody(_ row: DiffRow) -> some View {
+        switch row.content {
+        case .header(let header):
+            hunkHeader(header)
+        case .line(let line):
+            unifiedRow(line)
+        case .pair(let left, let right):
+            splitRow(left: left, right: right)
         }
     }
 
-    /// Split view. One `Grid` so each side gets its OWN column width — the widest
-    /// line on that side — instead of forcing them equal. A long added line makes
-    /// only the new column wide; the old column stays as narrow as its content, and
-    /// the whole grid scrolls horizontally so nothing is truncated.
-    private var splitGrid: some View {
-        Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-            ForEach(Array(model.hunks.enumerated()), id: \.offset) { _, hunk in
-                GridRow { hunkHeader(hunk).gridCellColumns(3) }
-                ForEach(Array(pair(hunk.lines).enumerated()), id: \.offset) { _, row in
-                    GridRow {
-                        splitCell(row.left, side: .left)
-                        // Fixed height too — a height-flexible divider would make the
-                        // whole GridRow flexible and let the grid stretch the rows apart.
-                        Rectangle().fill(TenonTheme.line).frame(width: 1, height: Self.rowHeight)
-                        splitCell(row.right, side: .right)
-                    }
-                }
-            }
-        }
-    }
-
-    private func hunkHeader(_ hunk: DiffHunk) -> some View {
-        Text(hunk.header)
+    private func hunkHeader(_ header: String) -> some View {
+        Text(header)
             .font(Self.rowFont)
             .foregroundStyle(TenonTheme.amber)
             .padding(.horizontal, 10)
@@ -326,38 +381,52 @@ struct DiffSlotView: View {
 
     // MARK: unified
 
-    private func unifiedRows(_ hunk: DiffHunk) -> some View {
-        ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
-            HStack(spacing: 0) {
-                // One line-number column (new side, or old for a deletion) — the sign
-                // already tells the side, so a second empty column isn't needed.
-                Text((line.newNumber ?? line.oldNumber).map(String.init) ?? "")
-                    .foregroundStyle(TenonTheme.muted.opacity(0.55))
-                    .frame(width: gutterWidth, alignment: .trailing)
-                    .padding(.leading, 8)
-                    .padding(.trailing, 8)
-                Text(sign(line.kind))
-                    .frame(width: 9, alignment: .center)
-                    .foregroundStyle(fg(line.kind))
-                    .padding(.trailing, 6)
-                Text(line.text.isEmpty ? " " : line.text)
-                    .lineLimit(1)
-                    .fixedSize(horizontal: true, vertical: false)
-                    .foregroundStyle(line.kind == .context ? TenonTheme.text : fg(line.kind))
-                    .textSelection(.enabled)
-                    .padding(.trailing, 14)
-            }
-            .font(Self.rowFont)
-            .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
-            .background(bg(line.kind))
+    private func unifiedRow(_ line: DiffLine) -> some View {
+        HStack(spacing: 0) {
+            // One line-number column (new side, or old for a deletion) — the sign
+            // already tells the side, so a second empty column isn't needed.
+            Text((line.newNumber ?? line.oldNumber).map(String.init) ?? "")
+                .foregroundStyle(TenonTheme.muted.opacity(0.55))
+                .frame(width: gutterWidth, alignment: .trailing)
+                .padding(.leading, Self.unifiedGutterPad)
+                .padding(.trailing, Self.unifiedGutterPad)
+            Text(sign(line.kind))
+                .frame(width: Self.signColumn, alignment: .center)
+                .foregroundStyle(fg(line.kind))
+                .padding(.trailing, Self.signGap)
+            Text(line.text.isEmpty ? " " : line.text)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .foregroundStyle(line.kind == .context ? TenonTheme.text : fg(line.kind))
+                .textSelection(.enabled)
+                .padding(.trailing, Self.unifiedTextTrail)
         }
+        .font(Self.rowFont)
+        .frame(maxWidth: .infinity, minHeight: Self.rowHeight, alignment: .leading)
+        .background(bg(line.kind))
     }
 
     // MARK: split
 
     private enum SplitSide { case left, right }
 
-    private func splitCell(_ line: DiffLine?, side: SplitSide) -> some View {
+    /// One side-by-side row. Each side gets its OWN measured column width — the
+    /// widest line on that side — instead of forcing them equal: a long added line
+    /// widens only the new column, the old column stays as narrow as its content,
+    /// and the pane scrolls horizontally so nothing is truncated.
+    private func splitRow(left: DiffLine?, right: DiffLine?) -> some View {
+        HStack(spacing: 0) {
+            splitCell(left, side: .left, width: leftCellWidth)
+            // Fixed height too — a height-flexible divider would make the whole row
+            // flexible and let the stack pull the rows apart.
+            Rectangle().fill(TenonTheme.line)
+                .frame(width: Self.dividerWidth, height: Self.rowHeight)
+            splitCell(right, side: .right, width: rightCellWidth)
+        }
+        .frame(height: Self.rowHeight)
+    }
+
+    private func splitCell(_ line: DiffLine?, side: SplitSide, width: CGFloat) -> some View {
         HStack(spacing: 0) {
             if let line {
                 gutter(side == .left ? line.oldNumber : line.newNumber)
@@ -365,45 +434,18 @@ struct DiffSlotView: View {
                     .fixedSize(horizontal: true, vertical: false)
                     .foregroundStyle(line.kind == .context ? TenonTheme.text : fg(line.kind))
                     .textSelection(.enabled)
-                    .padding(.trailing, 12)
+                    .padding(.trailing, Self.splitTextTrail)
             } else {
                 Color.clear.frame(width: 0)
             }
         }
         .font(Self.rowFont)
-        // `maxWidth: .infinity` makes the cell fill its Grid column (so the row tint
-        // spans it); the text is `fixedSize`, so the column is exactly as wide as the
-        // widest line on THIS side — independent of the other side. Height is fixed
-        // (min == max), or the flexible 1px divider would stretch the rows apart.
-        .frame(maxWidth: .infinity, minHeight: Self.rowHeight, maxHeight: Self.rowHeight, alignment: .leading)
+        // Explicit width so the two columns line up across rows the container has
+        // never built together. Height is fixed (min == max), or the flexible 1px
+        // divider would stretch the rows apart.
+        .frame(width: width, alignment: .leading)
+        .frame(minHeight: Self.rowHeight, maxHeight: Self.rowHeight, alignment: .leading)
         .background(line.map { bg($0.kind) } ?? TenonTheme.ink.opacity(0.22))
-    }
-
-    /// Pairs a hunk's lines for side-by-side view: a run of removals aligns with
-    /// the run of additions that follows it; context sits on both sides.
-    private func pair(_ lines: [DiffLine]) -> [(left: DiffLine?, right: DiffLine?)] {
-        var rows: [(DiffLine?, DiffLine?)] = []
-        var i = 0
-        while i < lines.count {
-            switch lines[i].kind {
-            case .context:
-                rows.append((lines[i], lines[i]))
-                i += 1
-            case .removed:
-                var removed: [DiffLine] = []
-                while i < lines.count, lines[i].kind == .removed { removed.append(lines[i]); i += 1 }
-                var added: [DiffLine] = []
-                while i < lines.count, lines[i].kind == .added { added.append(lines[i]); i += 1 }
-                for j in 0..<max(removed.count, added.count) {
-                    rows.append((j < removed.count ? removed[j] : nil, j < added.count ? added[j] : nil))
-                }
-            case .added:
-                var added: [DiffLine] = []
-                while i < lines.count, lines[i].kind == .added { added.append(lines[i]); i += 1 }
-                for line in added { rows.append((nil, line)) }
-            }
-        }
-        return rows
     }
 
     // MARK: pieces
@@ -413,7 +455,7 @@ struct DiffSlotView: View {
             .font(Self.rowFont)
             .foregroundStyle(TenonTheme.muted.opacity(0.55))
             .frame(width: gutterWidth, alignment: .trailing)
-            .padding(.horizontal, 6)
+            .padding(.horizontal, Self.splitGutterPad)
     }
 
     private func placeholder(icon: String, text: String) -> some View {

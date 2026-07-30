@@ -44,10 +44,13 @@ public enum LineDiff {
         myers(splitLines(old), splitLines(new))
     }
 
-    /// Added/removed line counts (the `+N -M` summary), ignoring context.
-    public static func stat(old: String, new: String) -> (added: Int, removed: Int) {
+    /// Added/removed line counts (the `+N -M` summary), ignoring context. Summarises
+    /// a diff already in hand: every changed line lands in exactly one hunk, so the
+    /// counts are the same as over the full alignment — without paying for a second
+    /// pass through the edit-script search.
+    public static func stat(_ hunks: [DiffHunk]) -> (added: Int, removed: Int) {
         var added = 0, removed = 0
-        for line in lines(old: old, new: new) {
+        for line in hunks.lazy.flatMap(\.lines) {
             switch line.kind {
             case .added: added += 1
             case .removed: removed += 1
