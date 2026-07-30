@@ -91,6 +91,11 @@ contract instead of once per call, and every consent is revocable.
 
 ## Owner / files (agent lock)
 
+No active lock — all claims released. Latest pass: Orca worker task_3d7327612386
+verified gaps 7+8 closed (see closure-verification section below); it left
+`Sources/` byte-identical to `64c6bcc` and released `IntentPolicy.swift`,
+`IntentDispatcher.swift`, `CallerConsentTests.swift` at 23:33.
+
 Kernel takeover session `core_contract_executor` — COMPLETE. Host/app/catalog production
 files were not edited by the takeover. Historical ownership trail follows.
 
@@ -237,6 +242,56 @@ The focused total is 11 caller-consent + 22 policy + 15 dispatcher + 5 bundled
 integration tests. RepoWise could not produce history/health scores for these files
 because they are untracked relative to indexed commit `012a6a5`; its zero/empty result
 is treated as unavailable evidence, not as low risk.
+
+### Gap 7 + 8 closure verification — Orca worker task_3d7327612386, 2026-07-30 23:33
+
+Both gaps recorded at the historical checkpoint are CLOSED in the tree at `64c6bcc`
+(landed by the kernel takeover) and are now verified by mutation on the live tree,
+not by trusting the write-up above:
+
+- **Gap 7 — one prompt per concurrent first wave.** `IntentDispatcher` coalesces
+  through `callerConsentFlights`, a per-`CallerConsentKey` single-flight wave
+  (`IntentDispatcher.swift:1065-1116`). The race test
+  `testConcurrentPolicyApprovalsShareOnePromptAndPersistOneGrant` spawns 8 genuinely
+  concurrent sends against a **suspended** prompt (`ConsentConfirmationProbe`
+  `suspendsRequests: true`). Determinism comes from that suspension, not from timing:
+  while the prompt is held open the flight cannot complete, so a second prompt can
+  only ever appear if coalescing itself is broken — late-arriving sends either join
+  the live flight or see the already-persisted consent, and the count stays 1 on
+  every interleaving. All 8 waiters are asserted to observe the same approved
+  outcome, and the denial twin
+  (`testConcurrentPolicyDenialsAreWaveLocalAndALaterCallRetries`) covers the other
+  verdict. **Mutation proof:** making a joining waiter raise its own prompt turned
+  the test RED — `("8") is not equal to ("1")`, 0.9 s, clean failure, no hang.
+  Reverted; file byte-identical to HEAD.
+- **Gap 8 — consent authorized in the same atomic pass, revoke wins the race.**
+  Consent rides inside `PolicyInvocationRequest.callerConsent` and
+  `PolicyEngine.authorize` checks it in the SAME atomic pass as declared use,
+  audience, capability and scope (`IntentPolicy.swift:1072-1099`). The dispatcher
+  authorizes that one request object at post-confirmation, again at operation start
+  inside the mailbox, and continuously via the revision-driven policy monitor
+  (`IntentDispatcher.swift:958-978`) — so a revoke landing between admission and
+  execution advances the policy revision, the monitor re-authorizes, and the queued
+  job is cancelled before provider code runs.
+  `testRevokingConsentAfterEnqueuePreventsQueuedProviderStart` asserts exactly that:
+  provider saw `[1]`, never `[1, 2]`. **Mutation proof:** dropping `callerConsent`
+  from the execution-boundary request (back to the old pre-check-only shape) turned
+  the test RED — `("[1, 2]") is not equal to ("[1]")`, 0.8 s. Reverted.
+  **No two-step residue:** the only production `hasStandingConsent` call site is the
+  prompt-or-not decision inside the consent flight (`IntentDispatcher.swift:1090`) —
+  a UX decision, not authorization; a stale read there is harmless because the
+  atomic `authorize` gate re-checks. One policy path (invariant 5) holds.
+
+Preserved-property spot check: `removePrincipal` still does not touch consent
+(`testRetiringThePreviousGenerationKeepsTheLiveOnesConsent` green), withdrawal is
+`revokeStandingConsents` (green), denial is not remembered (green), persistence
+failure fails closed before provider start (green).
+
+**Totals measured on the settled tree:** `swift build` exit 0 (9.95 s incremental);
+`swift test` **653 tests / 0 failures** — exactly the coordinator's baseline;
+`CallerConsentTests` 15/15. No production or test source was changed by this pass:
+the work was verification, and the tree's `Sources/`+`Tests/` are byte-identical to
+`64c6bcc`. Only `.kanban/` bookkeeping was written.
 
 ## Notes
 
