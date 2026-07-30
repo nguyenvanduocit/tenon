@@ -35,6 +35,12 @@ struct AppStatePaths: Sendable, Equatable {
         stateRoot.appendingPathComponent("runtime", isDirectory: true)
     }
 
+    /// The persisted workspace catalog (T-027), beside `.recent-workspaces.json` and
+    /// `.recent-views.json` in the workspace state root.
+    var workspaceCatalogFile: URL {
+        workspaceStateRoot.appendingPathComponent(".workspace-catalog.json")
+    }
+
     static func resolve(
         environment: [String: String] =
             ProcessInfo.processInfo.environment,

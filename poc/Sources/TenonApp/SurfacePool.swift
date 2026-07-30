@@ -33,6 +33,9 @@ final class SurfacePool {
     @ObservationIgnored var onFocusNextSlot: (() -> Void)?
     @ObservationIgnored var onSlotFocusGained: ((UUID) -> Void)?
     @ObservationIgnored var onShellExited: ((UUID) -> Void)?
+    /// Fires on every pin/unpin so the catalog persistence can note the change — a pin
+    /// set right before quitting, with no workspace mutation after it, must still land.
+    @ObservationIgnored var onPinChange: (() -> Void)?
 
     let backendName: String
     /// Builds a surface for a slot. The slot `UUID` is passed so the backend can export it as
@@ -102,12 +105,19 @@ final class SurfacePool {
     }
 
     /// "Set Project Directory…" (`root`) and "Use Automatic" (`nil`). Re-resolves the pane
-    /// against its current cwd and publishes only if the anchor actually moved.
+    /// against its current cwd and publishes only if the anchor actually moved. Restoring
+    /// a persisted pin lands here too, before the pane has a surface: the pin is recorded
+    /// and applies when the surface's first directory seed reads `pinnedRoots`.
     func pinProjectRoot(_ root: URL?, for slotID: UUID) {
         pinnedRoots[slotID] = root
+        onPinChange?()
         guard let cwd = directories[slotID]?.cwd else { return }
         updateDirectory(cwd: cwd, for: slotID)
     }
+
+    /// The pins, verbatim, for catalog persistence (T-027). `SurfacePool` stays the one
+    /// runtime owner; the catalog document is just where they sleep between launches.
+    var pinnedProjectRoots: [UUID: URL] { pinnedRoots }
 
     /// Whether a pane's root is a human's pin rather than the resolved one.
     func hasPinnedProjectRoot(for slotID: UUID) -> Bool {

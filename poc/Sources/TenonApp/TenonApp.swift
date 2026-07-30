@@ -105,6 +105,7 @@ final class AppComposition {
     let router = DragRouter()
     let palette = CommandPaletteState()
     let userInterface: PluginUIState
+    let catalogStore: WorkspaceCatalogStore
 
     private(set) var startupError: String?
     private(set) var isStarted = false
@@ -134,12 +135,56 @@ final class AppComposition {
 
         let pluginsRoot = paths.pluginInventoryRoot
         let prefs = AppPreferencesStore.shared
+        let catalogStore = WorkspaceCatalogStore(
+            fileURL: paths.workspaceCatalogFile
+        )
+        let fileManager = FileManager.default
+        // Plugin directories are short-named; the stable full id lives in each manifest.
+        // This is what init can know before `host.loadAll()` runs: a restored plugin-view
+        // pane whose plugin left the inventory degrades now, and a view id unknown within
+        // a live plugin is the host's instance reconciliation's business once it loads.
+        let installedPluginIDs: Set<String> = Set(
+            ((try? fileManager.contentsOfDirectory(
+                at: pluginsRoot,
+                includingPropertiesForKeys: nil
+            )) ?? []).compactMap { entry in
+                guard let data = try? Data(
+                    contentsOf: entry.appendingPathComponent("manifest.json")
+                ),
+                    let object = try? JSONSerialization.jsonObject(with: data)
+                        as? [String: Any]
+                else { return nil }
+                return object["id"] as? String
+            }
+        )
+        let restored = WorkspaceCatalogStore
+            .loadDocument(at: paths.workspaceCatalogFile)
+            .flatMap { document in
+                WorkspaceCatalogSnapshot.restore(
+                    document,
+                    isDirectory: { path in
+                        var isDirectory: ObjCBool = false
+                        return fileManager.fileExists(
+                            atPath: path,
+                            isDirectory: &isDirectory
+                        ) && isDirectory.boolValue
+                    },
+                    isFileReadable: { fileManager.fileExists(atPath: $0) },
+                    isKnownPluginView: { pluginID, _ in
+                        installedPluginIDs.contains(pluginID)
+                    }
+                )
+            }
+        let launch = WorkspaceCatalogSnapshot.launchCatalog(
+            restored: restored,
+            launchDirectory: resolvedLaunchDirectory(),
+            launchContent: prefs.preferences.newWorkspaceContent
+                .slotContent(),
+            fallbackDirectory: FileManager.default
+                .homeDirectoryForCurrentUser.standardizedFileURL
+        )
         let store = WorkspaceStore(
-            catalog: WorkspaceCatalog(
-                path: resolvedInitialWorkspacePath(),
-                content: prefs.preferences.newWorkspaceContent
-                    .slotContent()
-            ),
+            catalog: launch.catalog,
             recent: RecentStore(
                 fileURL: paths.workspaceStateRoot.appendingPathComponent(
                     ".recent-views.json"
@@ -169,6 +214,14 @@ final class AppComposition {
                 ]
             )
         }
+        // T-030 handoff: re-apply the persisted per-pane pins verbatim. No surface exists
+        // yet, so each call just records its pin; it takes effect when the pane's surface
+        // seeds its first directory. `onPinChange` is not wired yet, so restoring pins
+        // schedules no write.
+        for (slotID, root) in launch.pins {
+            terminalSurfaces.pinProjectRoot(root, for: slotID)
+        }
+
         let webSurfaces = PluginWebSurfacePool()
         let userInterface = PluginUIState()
         let intentRuntime = try AppIntentRuntime(
@@ -211,12 +264,14 @@ final class AppComposition {
         self.intentRuntime = intentRuntime
         self.cliServer = cliServer
         self.userInterface = userInterface
+        self.catalogStore = catalogStore
 
         Self.wire(
             host: host,
             store: store,
             terminalSurfaces: terminalSurfaces,
-            webSurfaces: webSurfaces
+            webSurfaces: webSurfaces,
+            catalogStore: catalogStore
         )
         Self.wireDefaultContent(store: store, prefs: prefs)
 
@@ -259,6 +314,17 @@ final class AppComposition {
         await starting?.value
         lifecycleID = nil
         lifecycleTask = nil
+
+        // The quit path persists the final live state without waiting for a debounce
+        // window that would outlive the process. Restore itself never rewrites the file;
+        // only live state does, here and via the coalesced saves during the session.
+        await catalogStore.noteChange(
+            WorkspaceCatalogSnapshot.document(
+                capturing: store.catalog,
+                pins: terminalSurfaces.pinnedProjectRoots
+            )
+        )
+        await catalogStore.flush()
 
         await host.shutdown()
         webSurfaces.disposeAll()
@@ -334,7 +400,8 @@ private extension AppComposition {
         host: PluginHost,
         store: WorkspaceStore,
         terminalSurfaces: SurfacePool,
-        webSurfaces: PluginWebSurfacePool
+        webSurfaces: PluginWebSurfacePool,
+        catalogStore: WorkspaceCatalogStore
     ) {
         host.onPluginLifecycleChanged = {
             [weak host, weak store, weak webSurfaces] _ in
@@ -343,7 +410,7 @@ private extension AppComposition {
         }
 
         store.onEvents = {
-            [weak host, weak terminalSurfaces, weak webSurfaces]
+            [weak host, weak store, weak terminalSurfaces, weak webSurfaces]
                 events,
                 snapshot in
             terminalSurfaces?.retainOnly(Set(snapshot.allSlotIDs))
@@ -363,6 +430,29 @@ private extension AppComposition {
                         terminalSurfaces?.focusSurface(for: slotID)
                     }
                 }
+            }
+            // Coalesced catalog persistence: every mutation notes the full state; the
+            // store debounces to one durable write per burst (T-027). The task reads the
+            // live state at run time instead of capturing this event's snapshot: actor
+            // jobs are not ordered, so a late-running note must converge on the newest
+            // tree, never push an older one over the quit-path save.
+            Task { @MainActor [weak store, weak terminalSurfaces] in
+                guard let store, let terminalSurfaces else { return }
+                await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
+                    capturing: store.catalog,
+                    pins: terminalSurfaces.pinnedProjectRoots
+                ))
+            }
+        }
+
+        terminalSurfaces.onPinChange = {
+            [weak store, weak terminalSurfaces] in
+            Task { @MainActor [weak store, weak terminalSurfaces] in
+                guard let store, let terminalSurfaces else { return }
+                await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
+                    capturing: store.catalog,
+                    pins: terminalSurfaces.pinnedProjectRoots
+                ))
             }
         }
 
@@ -483,15 +573,16 @@ private struct StartupFailureView: View {
     }
 }
 
-/// Resolve the first workspace independently of how the app was launched.
-func resolvedInitialWorkspacePath(
+/// The directory this launch explicitly points at, or nil for a bare launch.
+/// `TENON_WORKSPACE_PATH` is explicit, and so is a terminal launch's cwd — running
+/// `tenon` inside a project means "open this project". A Finder-style launch (cwd `/`)
+/// names nothing: that is the bare launch that restores the saved catalog as saved.
+func resolvedLaunchDirectory(
     environment: [String: String] =
         ProcessInfo.processInfo.environment,
     currentDirectoryPath: String =
-        FileManager.default.currentDirectoryPath,
-    homeDirectory: URL =
-        FileManager.default.homeDirectoryForCurrentUser
-) -> URL {
+        FileManager.default.currentDirectoryPath
+) -> URL? {
     if let override = environment["TENON_WORKSPACE_PATH"]?
         .trimmingCharacters(in: .whitespacesAndNewlines),
        !override.isEmpty
@@ -507,8 +598,20 @@ func resolvedInitialWorkspacePath(
         fileURLWithPath: currentDirectoryPath,
         isDirectory: true
     ).standardizedFileURL
-    guard launchDirectory.path == "/" else {
-        return launchDirectory
-    }
-    return homeDirectory.standardizedFileURL
+    return launchDirectory.path == "/" ? nil : launchDirectory
+}
+
+/// Resolve the first workspace independently of how the app was launched.
+func resolvedInitialWorkspacePath(
+    environment: [String: String] =
+        ProcessInfo.processInfo.environment,
+    currentDirectoryPath: String =
+        FileManager.default.currentDirectoryPath,
+    homeDirectory: URL =
+        FileManager.default.homeDirectoryForCurrentUser
+) -> URL {
+    resolvedLaunchDirectory(
+        environment: environment,
+        currentDirectoryPath: currentDirectoryPath
+    ) ?? homeDirectory.standardizedFileURL
 }
