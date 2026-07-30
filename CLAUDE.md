@@ -32,7 +32,7 @@ swift test --filter testEditingTheClockPluginOnDiskHotReloadsIt   # single test 
 swift build             # compile check only
 ```
 
-Environment variables: `TENON_STUB_TERMINAL=1` (stub terminal pane, no PTY — plugin loop unchanged), `TENON_PLUGINS_DIR=/path` (point the host at a different plugin folder).
+Environment variables: `TENON_STUB_TERMINAL=1` (stub terminal pane, no PTY — plugin loop unchanged), `TENON_PLUGINS_DIR=/path` (point the host at a different plugin folder), `TENON_TRUST_PLUGIN_INVENTORY=1` (stand that folder in for the app bundle so its plugins carry bundled standing consent instead of prompting; matched exactly — `true` leaves it untrusted). Standing consent is host-owned: the bundled inventory has it, a directory named by `TENON_PLUGINS_DIR` earns it only through that flag.
 
 Builds live in two trees inside the gitignored `poc/.build`: `arm64-apple-macosx/`
 (SwiftPM) and `xcode/` — one derived data path shared by every configuration. The

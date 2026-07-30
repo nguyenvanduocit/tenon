@@ -426,7 +426,9 @@ public final class PluginHost {
         pluginsRoot: URL,
         stateRoot: URL,
         kernel: IntentKernelComponents,
-        authorization: PluginHostAuthorization = .bundledInventory,
+        authorization: PluginHostAuthorization = PluginHostAuthorization(
+            approvedOpenIntentIDs: { _, _ in [] }
+        ),
         invocationScopeProvider: @escaping InvocationScopeProvider = {
             InvocationScope()
         }

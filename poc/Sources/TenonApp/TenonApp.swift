@@ -182,11 +182,17 @@ final class AppComposition {
             pluginsRoot: pluginsRoot,
             stateRoot: paths.pluginStateRoot,
             kernel: intentRuntime.kernel,
-            // The inventory root is the app bundle (or the developer root standing in for
-            // it), so everything the host loads shipped with the app and carries the
-            // consent the user gave by installing it. A user-installed plugin directory
-            // would need its own authorization rather than this one.
-            authorization: .bundledInventory,
+            // Bundled authorization is for an inventory the host controls: everything in
+            // the app bundle shipped with it and carries the consent the user gave by
+            // installing Tenon. An inventory named by `TENON_PLUGINS_DIR` is an arbitrary
+            // user directory, so it loads untrusted and its plugins ask — unless the
+            // developer stands that directory in for the bundle with
+            // `TENON_TRUST_PLUGIN_INVENTORY=1`.
+            authorization: paths.trustsPluginInventory
+                ? .bundledInventory
+                : PluginHostAuthorization(
+                    approvedOpenIntentIDs: { _, _ in [] }
+                ),
             invocationScopeProvider: { @MainActor [weak store] in
                 guard let store else {
                     return InvocationScope()

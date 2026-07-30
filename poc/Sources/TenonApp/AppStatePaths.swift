@@ -15,6 +15,14 @@ struct AppStatePaths: Sendable, Equatable {
     let pluginInventoryRoot: URL
     let stateRoot: URL
 
+    /// Whether the host itself controls the inventory it just resolved, and may therefore
+    /// authorize what it loads as bundled.
+    ///
+    /// True for the app bundle's own plugin root. `TENON_PLUGINS_DIR` names an arbitrary
+    /// user directory, so an override is untrusted on its own — a developer standing that
+    /// directory in for the bundle says so with `TENON_TRUST_PLUGIN_INVENTORY=1`.
+    let trustsPluginInventory: Bool
+
     var pluginStateRoot: URL {
         stateRoot.appendingPathComponent("plugins", isDirectory: true)
     }
@@ -40,6 +48,7 @@ struct AppStatePaths: Sendable, Equatable {
         fileManager: FileManager = .default
     ) throws -> AppStatePaths {
         let inventoryRoot: URL
+        let trustsInventory: Bool
         if let override = environment["TENON_PLUGINS_DIR"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty
@@ -49,8 +58,13 @@ struct AppStatePaths: Sendable, Equatable {
                     (override as NSString).expandingTildeInPath,
                 isDirectory: true
             ).standardizedFileURL
+            // Exact match only. Any other value — including "true" — leaves the override
+            // untrusted, so a flag set by accident cannot grant standing consent.
+            trustsInventory =
+                environment["TENON_TRUST_PLUGIN_INVENTORY"] == "1"
         } else if let bundledPluginsRoot {
             inventoryRoot = bundledPluginsRoot.standardizedFileURL
+            trustsInventory = true
         } else {
             throw AppStatePathError.pluginInventoryMissing(
                 "<bundle>/plugins"
@@ -73,7 +87,8 @@ struct AppStatePaths: Sendable, Equatable {
             .appendingPathComponent("state", isDirectory: true)
         let paths = AppStatePaths(
             pluginInventoryRoot: inventoryRoot,
-            stateRoot: stateRoot
+            stateRoot: stateRoot,
+            trustsPluginInventory: trustsInventory
         )
         for directory in [
             paths.pluginStateRoot,
