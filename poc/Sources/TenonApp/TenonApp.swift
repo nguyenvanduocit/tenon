@@ -214,6 +214,16 @@ final class AppComposition {
                 ]
             )
         }
+        // T-031: seed each restored pane's recorded title and cwd as placeholder data —
+        // the pane renders something useful immediately, and not one surface (so not one
+        // shell) is built for it until the human actually opens it. Cwd lands before the
+        // pins below so a pinned pane re-resolves against its recorded directory.
+        for (slotID, title) in launch.titles {
+            terminalSurfaces.setTitle(title, for: slotID)
+        }
+        for (slotID, cwd) in launch.cwds {
+            terminalSurfaces.seedRestoredDirectory(cwd, for: slotID)
+        }
         // T-030 handoff: re-apply the persisted per-pane pins verbatim. No surface exists
         // yet, so each call just records its pin; it takes effect when the pane's surface
         // seeds its first directory. `onPinChange` is not wired yet, so restoring pins
@@ -321,7 +331,9 @@ final class AppComposition {
         await catalogStore.noteChange(
             WorkspaceCatalogSnapshot.document(
                 capturing: store.catalog,
-                pins: terminalSurfaces.pinnedProjectRoots
+                pins: terminalSurfaces.pinnedProjectRoots,
+                titles: terminalSurfaces.titles,
+                cwds: terminalSurfaces.directories.mapValues(\.cwd)
             )
         )
         await catalogStore.flush()
@@ -440,7 +452,9 @@ private extension AppComposition {
                 guard let store, let terminalSurfaces else { return }
                 await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
                     capturing: store.catalog,
-                    pins: terminalSurfaces.pinnedProjectRoots
+                    pins: terminalSurfaces.pinnedProjectRoots,
+                    titles: terminalSurfaces.titles,
+                    cwds: terminalSurfaces.directories.mapValues(\.cwd)
                 ))
             }
         }
@@ -451,7 +465,9 @@ private extension AppComposition {
                 guard let store, let terminalSurfaces else { return }
                 await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
                     capturing: store.catalog,
-                    pins: terminalSurfaces.pinnedProjectRoots
+                    pins: terminalSurfaces.pinnedProjectRoots,
+                    titles: terminalSurfaces.titles,
+                    cwds: terminalSurfaces.directories.mapValues(\.cwd)
                 ))
             }
         }

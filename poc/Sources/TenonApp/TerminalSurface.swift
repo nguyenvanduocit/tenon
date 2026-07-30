@@ -26,6 +26,11 @@ protocol TerminalSurface: AnyObject {
     /// Route keyboard focus back to this surface after shell interaction.
     func focus()
 
+    /// Deliver text into the pane's PTY (`terminal.write.v1`, queued `pendingText`
+    /// flushing on first view). A backend with no PTY keeps the discard default below;
+    /// the stub records instead, so delivery is assertable without a terminal (T-031).
+    func sendText(_ text: String)
+
     /// The current visible screen as plain text — feeds `tenon-cli pane.read` and the
     /// tui-idle heuristic. PTY-less backends have nothing to show and default to "".
     var renderedText: String { get }
@@ -46,6 +51,7 @@ extension TerminalSurface {
     }
 
     func focus() {}
+    func sendText(_ text: String) {}
     var renderedText: String { "" }
     var processExited: Bool { false }
     var commandFinishedCount: Int { 0 }
@@ -63,9 +69,16 @@ final class StubTerminalSurface: TerminalSurface {
     /// rule can be driven — and asserted — without a terminal.
     var onPwdChange: ((String) -> Void)?
     private(set) var focusCount = 0
+    /// Everything delivered to the (nonexistent) PTY, in order — the lifecycle tests
+    /// assert the first frame after materialization loses nothing that was queued.
+    private(set) var sentText: [String] = []
 
     func focus() {
         focusCount += 1
+    }
+
+    func sendText(_ text: String) {
+        sentText.append(text)
     }
 
     func makeView() -> AnyView {

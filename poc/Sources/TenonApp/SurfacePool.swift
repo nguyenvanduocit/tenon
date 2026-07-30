@@ -58,15 +58,23 @@ final class SurfacePool {
         self.makeSurface = makeSurface
     }
 
+    /// T-031: calling this IS the "pane became visible" signal. The shell's render path
+    /// is the only production caller and reaches here exactly when a terminal pane is
+    /// actually displayed on the visible canvas, so materialization is lazy by
+    /// construction: a restored background pane costs nothing until the human opens it.
     func surface(for slotID: UUID, workspacePath: URL) -> TerminalSurface {
         if let existing = surfaces[slotID] {
             return existing
         }
-        let surface = makeSurface(slotID, workspacePath)
+        // A restored pane materializes as a FRESH shell in the cwd it recorded before
+        // the quit (seeded below without a surface); everything else starts in its
+        // workspace. Nothing resurrects a dead process or replays history.
+        let spawnDirectory = directories[slotID]?.cwd ?? workspacePath
+        let surface = makeSurface(slotID, spawnDirectory)
         // Seed from the directory the shell is actually starting in, so a pane reports a
         // project root immediately — before any OSC 7 arrives, and even where the bundle
         // ships no shell integration to emit one.
-        updateDirectory(cwd: workspacePath, for: slotID)
+        updateDirectory(cwd: spawnDirectory, for: slotID)
         surface.onTitleChange = { [weak self] title in
             guard let self else { return }
             self.titles[slotID] = title
@@ -87,7 +95,7 @@ final class SurfacePool {
         }
         surfaces[slotID] = surface
         if let queued = pendingText.removeValue(forKey: slotID) {
-            (surface as? GhosttySurface)?.sendText(queued)
+            surface.sendText(queued)
         }
         return surface
     }
@@ -98,10 +106,28 @@ final class SurfacePool {
         titles[slotID] = title
     }
 
-    /// Where a pane's shell is, and what that resolves to. `nil` for a pane that has never
-    /// had a surface built.
+    /// Where a pane's shell is, and what that resolves to. `nil` for a pane that has
+    /// neither a surface nor restored placeholder data.
     func paneDirectory(for slotID: UUID) -> ProjectRoot.PaneDirectory? {
         directories[slotID]
+    }
+
+    /// T-031: the one-way viewed latch. True from the moment a pane was first actually
+    /// displayed (which is what builds its surface), false again only when the slot
+    /// leaves the catalog. Materialization IS the latch — one source of truth, so this
+    /// can never disagree with which panes hold live surfaces.
+    func hasEverBeenViewed(_ slotID: UUID) -> Bool {
+        surfaces[slotID] != nil
+    }
+
+    /// T-031: seed a restored pane's recorded cwd as placeholder data, before — and
+    /// without — any surface. The pane renders its recorded directory immediately, and
+    /// first view spawns the fresh shell there. Seeding is not viewing: the latch stays
+    /// down and nothing materializes here. A pane that already holds a surface has live
+    /// state, which stale restore data must never overwrite.
+    func seedRestoredDirectory(_ cwd: URL, for slotID: UUID) {
+        guard surfaces[slotID] == nil else { return }
+        updateDirectory(cwd: cwd, for: slotID)
     }
 
     /// "Set Project Directory…" (`root`) and "Use Automatic" (`nil`). Re-resolves the pane
@@ -146,9 +172,11 @@ final class SurfacePool {
         surfaces[slotID]?.focus()
     }
 
-    /// Deliver `terminal.write.v1` text into a slot's PTY. Stub backend: no-op.
+    /// Deliver `terminal.write.v1` text into a slot's PTY, through the seam so every
+    /// backend receives it the same way (the stub records it for the lifecycle tests).
+    /// Aiming at a pane that has never been viewed delivers nothing and builds nothing.
     func sendText(_ text: String, to slotID: UUID) {
-        (surfaces[slotID] as? GhosttySurface)?.sendText(text)
+        surfaces[slotID]?.sendText(text)
     }
 
     /// Same delivery, but for a slot that may not have rendered yet: the text is queued and

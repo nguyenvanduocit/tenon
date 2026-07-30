@@ -76,10 +76,15 @@ public enum WorkspaceCatalogSnapshot {
         public var height: Int
         public var content: ContentRecord
         /// T-030's per-pane "Set Project Directory…" override. A human choice, so it
-        /// round-trips verbatim: no re-resolution, no existence check. The pane's cwd is
-        /// deliberately NOT here — it is live shell state, and a restored pane re-seeds
-        /// from its workspace path.
+        /// round-trips verbatim: no re-resolution, no existence check.
         public var projectRootPin: String?
+        /// T-031: what the pane looked like at quit — the placeholder a restored,
+        /// not-yet-viewed pane renders without building a surface, and (for `cwd`) the
+        /// directory its fresh shell spawns into on first view. Cosmetic and fail-soft:
+        /// a cwd that is no longer a directory is dropped at restore, degrading the one
+        /// pane to its workspace path.
+        public var title: String?
+        public var cwd: String?
 
         public init(
             id: UUID,
@@ -88,7 +93,9 @@ public enum WorkspaceCatalogSnapshot {
             width: Int,
             height: Int,
             content: ContentRecord,
-            projectRootPin: String? = nil
+            projectRootPin: String? = nil,
+            title: String? = nil,
+            cwd: String? = nil
         ) {
             self.id = id
             self.x = x
@@ -97,6 +104,8 @@ public enum WorkspaceCatalogSnapshot {
             self.height = height
             self.content = content
             self.projectRootPin = projectRootPin
+            self.title = title
+            self.cwd = cwd
         }
     }
 
@@ -152,11 +161,14 @@ public enum WorkspaceCatalogSnapshot {
         }
     }
 
-    /// Capture the live catalog and the pins `SurfacePool` holds. Pins for panes outside
-    /// the catalog (already closed) are not recorded.
+    /// Capture the live catalog and the per-pane state `SurfacePool` holds: pins, plus
+    /// the T-031 placeholder data (last title, last cwd). Entries for panes outside the
+    /// catalog (already closed) are not recorded.
     public static func document(
         capturing catalog: WorkspaceCatalog,
-        pins: [UUID: URL]
+        pins: [UUID: URL],
+        titles: [UUID: String] = [:],
+        cwds: [UUID: URL] = [:]
     ) -> Document {
         Document(
             workspaces: catalog.workspaces.map { workspace in
@@ -175,7 +187,9 @@ public enum WorkspaceCatalogSnapshot {
                                     width: slot.rect.width,
                                     height: slot.rect.height,
                                     content: record(of: slot.content),
-                                    projectRootPin: pins[slot.id]?.path
+                                    projectRootPin: pins[slot.id]?.path,
+                                    title: titles[slot.id],
+                                    cwd: cwds[slot.id]?.path
                                 )
                             },
                             activeSlotID: tab.activeSlotID
@@ -210,6 +224,8 @@ public enum WorkspaceCatalogSnapshot {
         var seenSlotIDs = Set<UUID>()
         var workspaces: [Workspace] = []
         var pins: [UUID: URL] = [:]
+        var titles: [UUID: String] = [:]
+        var cwds: [UUID: URL] = [:]
 
         for workspaceRecord in document.workspaces {
             guard isDirectory(workspaceRecord.path),
@@ -218,12 +234,16 @@ public enum WorkspaceCatalogSnapshot {
 
             var tabs: [Tab] = []
             var workspacePins: [UUID: URL] = [:]
+            var workspaceTitles: [UUID: String] = [:]
+            var workspaceCwds: [UUID: URL] = [:]
 
             for tabRecord in workspaceRecord.tabs {
                 guard !seenTabIDs.contains(tabRecord.id) else { continue }
 
                 var slots: [WorkspaceSlot] = []
                 var tabPins: [UUID: URL] = [:]
+                var tabTitles: [UUID: String] = [:]
+                var tabCwds: [UUID: URL] = [:]
                 var identitiesHold = true
                 for slotRecord in tabRecord.slots {
                     guard seenSlotIDs.insert(slotRecord.id).inserted else {
@@ -248,6 +268,19 @@ public enum WorkspaceCatalogSnapshot {
                     if let pin = slotRecord.projectRootPin {
                         tabPins[slotRecord.id] = URL(
                             fileURLWithPath: pin,
+                            isDirectory: true
+                        )
+                    }
+                    // T-031 placeholder data. Purely cosmetic (plus the spawn directory),
+                    // so it degrades value by value: an empty title is no title, and a
+                    // cwd that stopped being a directory falls back to the workspace path
+                    // by simply not being seeded.
+                    if let title = slotRecord.title, !title.isEmpty {
+                        tabTitles[slotRecord.id] = title
+                    }
+                    if let cwd = slotRecord.cwd, isDirectory(cwd) {
+                        tabCwds[slotRecord.id] = URL(
+                            fileURLWithPath: cwd,
                             isDirectory: true
                         )
                     }
@@ -277,6 +310,8 @@ public enum WorkspaceCatalogSnapshot {
                 ))
                 seenTabIDs.insert(tabRecord.id)
                 workspacePins.merge(tabPins) { _, new in new }
+                workspaceTitles.merge(tabTitles) { _, new in new }
+                workspaceCwds.merge(tabCwds) { _, new in new }
             }
 
             guard !tabs.isEmpty else { continue }
@@ -294,6 +329,8 @@ public enum WorkspaceCatalogSnapshot {
             ))
             seenWorkspaceIDs.insert(workspaceRecord.id)
             pins.merge(workspacePins) { _, new in new }
+            titles.merge(workspaceTitles) { _, new in new }
+            cwds.merge(workspaceCwds) { _, new in new }
         }
 
         guard !workspaces.isEmpty else { return nil }
@@ -314,7 +351,9 @@ public enum WorkspaceCatalogSnapshot {
                 workspaces: workspaces,
                 activeWorkspaceID: activeWorkspaceID
             ),
-            pins: pins
+            pins: pins,
+            titles: titles,
+            cwds: cwds
         )
     }
 
@@ -353,7 +392,12 @@ public enum WorkspaceCatalogSnapshot {
                 content: launchContent
             )
         }
-        return RestoredWorkspaceCatalog(catalog: catalog, pins: restored.pins)
+        return RestoredWorkspaceCatalog(
+            catalog: catalog,
+            pins: restored.pins,
+            titles: restored.titles,
+            cwds: restored.cwds
+        )
     }
 
     private static func record(of content: SlotContent) -> ContentRecord {
@@ -439,15 +483,26 @@ public enum WorkspaceCatalogSnapshot {
     }
 }
 
-/// What restore hands back: the validated catalog plus the per-pane project-root pins the
-/// shell re-applies through `SurfacePool.pinProjectRoot`.
+/// What restore hands back: the validated catalog, the per-pane project-root pins the
+/// shell re-applies through `SurfacePool.pinProjectRoot`, and the T-031 placeholder data
+/// (last recorded title and cwd per pane) the shell seeds through
+/// `SurfacePool.setTitle`/`seedRestoredDirectory` — all without building a surface.
 public struct RestoredWorkspaceCatalog: Equatable, Sendable {
     public let catalog: WorkspaceCatalog
     public let pins: [UUID: URL]
+    public let titles: [UUID: String]
+    public let cwds: [UUID: URL]
 
-    public init(catalog: WorkspaceCatalog, pins: [UUID: URL]) {
+    public init(
+        catalog: WorkspaceCatalog,
+        pins: [UUID: URL],
+        titles: [UUID: String] = [:],
+        cwds: [UUID: URL] = [:]
+    ) {
         self.catalog = catalog
         self.pins = pins
+        self.titles = titles
+        self.cwds = cwds
     }
 }
 

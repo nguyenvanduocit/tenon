@@ -625,10 +625,25 @@ final class GhosttyNSView: NSView {
         resources.keyWindowObservers.forEach { NotificationCenter.default.removeObserver($0) }
         resources.keyWindowObservers = []
 
-        guard let window else { return }
+        guard let window else {
+            // T-031: a card detached on a tab or workspace switch keeps its surface,
+            // its PTY and its scrollback — teardown is slot-closure only. The renderer
+            // alone is told nobody can see it, so hidden viewed panes stop paying for
+            // frames (the Kero "hidden tab renderer memory" trim).
+            if let surface {
+                ghostty_surface_set_occlusion(surface, false)
+            }
+            return
+        }
 
         if surface == nil {
             createSurface()
+        }
+        if let surface {
+            ghostty_surface_set_occlusion(
+                surface,
+                window.occlusionState.contains(.visible)
+            )
         }
         updateSurfaceGeometry()
 
@@ -650,6 +665,22 @@ final class GhosttyNSView: NSView {
         ) { [weak self] _ in
             MainActor.assumeIsolated {
                 self?.updateSurfaceGeometry()
+            }
+        })
+        // T-031: a minimized or fully covered window is as hidden as a detached card —
+        // the renderer pauses, the PTY never notices.
+        resources.keyWindowObservers.append(NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification,
+            object: window,
+            queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, let surface = self.surface, let window = self.window
+                else { return }
+                ghostty_surface_set_occlusion(
+                    surface,
+                    window.occlusionState.contains(.visible)
+                )
             }
         })
 
