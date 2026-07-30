@@ -112,6 +112,9 @@ final class PluginBuiltinsTests: XCTestCase {
                 "tenon.intents.list",
                 "tenon.intents.send",
                 "tenon.log",
+                "tenon.palette.onQuery",
+                "tenon.palette.registerProvider",
+                "tenon.palette.setResults",
                 "tenon.path.basename",
                 "tenon.path.dirname",
                 "tenon.path.extname",
@@ -173,7 +176,7 @@ final class PluginBuiltinsTests: XCTestCase {
         let hostCallHooks = [
             "__tenonActivate", "__tenonBeginShutdown", "__tenonCancelProvider",
             "__tenonEmit", "__tenonFireTimer", "__tenonInvokeProvider",
-            "__tenonProcessExit", "__tenonProcessOutput",
+            "__tenonPaletteQuery", "__tenonProcessExit", "__tenonProcessOutput",
             "__tenonSettleIntent", "__tenonSettleList",
             "__tenonSettleNestedIntent", "__tenonSettleStorage",
             "__tenonShutdown", "__tenonStart", "__tenonViewClose",

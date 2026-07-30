@@ -89,7 +89,10 @@ The exact public `tenon` vocabulary is:
 - EVENT: `events.on`;
 - RESOURCE: `timers.after/every/cancel`, `process.stream`, `fs.watch`;
 - CONTRIBUTION: `statusBar.set`,
-  `views.register/set/onSelect/onSubmit/onOpen/onClose`.
+  `views.register/set/onSelect/onSubmit/onOpen/onClose`,
+  `palette.registerProvider/setResults/onQuery` (dynamic palette providers:
+  registration and revision-scoped result snapshots are CONTRIBUTIONS, `onQuery`
+  subscribes to owner-scoped palette query EVENTs).
 
 Finite filesystem/process/workspace/terminal/browser/UI/secrets/network/clipboard/OS work
 has no handwritten plugin helper; it uses declared canonical intents.

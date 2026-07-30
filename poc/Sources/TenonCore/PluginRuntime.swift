@@ -105,6 +105,10 @@ public actor PluginRuntime {
     private static let maximumWatchers = 64
     private static let maximumBridgeMessagesPerDrain = 8_192
     private static let maximumPendingCallbacks = 256
+    private static let maximumPaletteProviders = 8
+    private static let maximumPaletteResults = 50
+    private static let maximumPaletteActions = 8
+    private static let maximumPaletteTextLength = 256
 
     private let configuration: PluginRuntimeConfiguration
     private let executor: PinnedThreadExecutor
@@ -144,6 +148,18 @@ public actor PluginRuntime {
     private var viewRegistrations: [String: ViewRegistration] = [:]
     private var viewBodies: [String: [String: ViewBody]] = [:]
     private var openViewInstances: Set<PluginViewInstanceKey> = []
+
+    /// Palette provider contributions, keyed by provider ID. `deliveredRevision` is the
+    /// newest query revision handed to this generation; a publication for any other
+    /// revision answers a question the user is no longer asking and is dropped here.
+    private struct PaletteProviderState {
+        var title: String
+        var deliveredRevision = 0
+        var publishedRevision = 0
+        var results: [PaletteResultItem] = []
+    }
+
+    private var paletteProviderStates: [String: PaletteProviderState] = [:]
 
     private var timers: [Int: TimerResource] = [:]
     private var processes: [Int: ProcessResource] = [:]
@@ -320,6 +336,46 @@ public actor PluginRuntime {
         _ = try callJavaScript("__tenonViewOpen", arguments: [viewID, instanceID])
         try drainBridgeMessages()
         markStateChanged()
+    }
+
+    /// Hands one palette query fact to every registered provider of this generation.
+    ///
+    /// EVENT delivery: fire-and-forget onto this runtime's own pinned thread. The host
+    /// never awaits the JavaScript handler — a provider that dawdles or never answers
+    /// leaves its `publishedRevision` behind and simply stays pending; nothing upstream
+    /// blocks. The invocation gate is the same one provider bindings take: a keystroke
+    /// racing this generation's retirement is refused here instead of enqueueing onto a
+    /// stopped executor.
+    public nonisolated func deliverPaletteQuery(
+        text: String,
+        revision: Int
+    ) async {
+        guard invocationGate.acquire() else { return }
+        defer { invocationGate.release() }
+        await performPaletteQueryDelivery(text: text, revision: revision)
+    }
+
+    /// Recording `deliveredRevision` before invoking JavaScript is what lets
+    /// `setPaletteResults` reject a publication for a superseded query (keystroke N+1
+    /// cancels keystroke N). A bridge failure marks this runtime failed, exactly like
+    /// every other callback path — the host stays alive.
+    private func performPaletteQueryDelivery(text: String, revision: Int) {
+        guard phase == .active, !paletteProviderStates.isEmpty else { return }
+        let bounded = String(text.prefix(Self.maximumPaletteTextLength))
+        do {
+            for providerID in paletteProviderStates.keys.sorted() {
+                paletteProviderStates[providerID]?.deliveredRevision = revision
+                _ = try callJavaScript(
+                    "__tenonPaletteQuery",
+                    arguments: [providerID, bounded, revision]
+                )
+            }
+            try drainBridgeMessages()
+            markStateChanged()
+        } catch {
+            emitLog("palette query bridge error: \(error)")
+            transitionToFailed(error)
+        }
     }
 
     public func closeViewInstance(viewID: String, instanceID: String) throws {
@@ -829,6 +885,10 @@ private extension PluginRuntime {
             registerView(object)
         case "view.set":
             setViewBody(object)
+        case "palette.register":
+            try registerPaletteProvider(object)
+        case "palette.results":
+            setPaletteResults(object)
 
         default:
             throw PluginRuntimeError.bridgeProtocolViolation(
@@ -1502,6 +1562,143 @@ private extension PluginRuntime {
         markStateChanged()
     }
 
+    /// CONTRIBUTION registration: the plugin owns the declaration, the host owns
+    /// validation and rendering. Exceeding the provider bound is a protocol violation
+    /// that fails this runtime, exactly like the timer/process resource limits.
+    func registerPaletteProvider(_ object: [String: IntentValue]) throws {
+        guard let providerID = object["providerID"]?.stringValue,
+              providerID.count <= Self.maximumPaletteTextLength
+        else {
+            emitLog(
+                "tenon.palette.registerProvider needs a provider ID of at most "
+                    + "\(Self.maximumPaletteTextLength) characters"
+            )
+            return
+        }
+        guard paletteProviderStates[providerID] != nil
+            || paletteProviderStates.count < Self.maximumPaletteProviders
+        else {
+            throw PluginRuntimeError.resourceLimitExceeded("palette providers")
+        }
+        let title = object["title"]?.stringValue ?? providerID
+        var state = paletteProviderStates[providerID] ?? PaletteProviderState(title: title)
+        state.title = String(title.prefix(Self.maximumPaletteTextLength))
+        paletteProviderStates[providerID] = state
+        markStateChanged()
+    }
+
+    /// CONTRIBUTION publication: replaces this provider's previous snapshot. Only the
+    /// revision most recently delivered to this generation is accepted — anything else
+    /// answers a superseded query. Rows are shape-validated and bounded here; naming an
+    /// intent grants nothing, the dispatcher still authorizes every invocation.
+    func setPaletteResults(_ object: [String: IntentValue]) {
+        guard let providerID = object["providerID"]?.stringValue,
+              var state = paletteProviderStates[providerID],
+              let revisionValue = object["revision"]?.intValue,
+              let rawResults = object["results"]?.arrayValue
+        else {
+            emitLog(
+                "tenon.palette.setResults needs a registered providerID, an integer "
+                    + "revision, and a results array — call registerProvider first"
+            )
+            return
+        }
+        guard revisionValue == state.deliveredRevision else {
+            emitLog(
+                "tenon.palette.setResults(\(providerID)) dropped revision "
+                    + "\(revisionValue): the current query revision is "
+                    + "\(state.deliveredRevision)"
+            )
+            return
+        }
+        state.publishedRevision = revisionValue
+        state.results = rawResults
+            .prefix(Self.maximumPaletteResults)
+            .compactMap { parsePaletteResult($0, providerID: providerID) }
+        paletteProviderStates[providerID] = state
+        markStateChanged()
+    }
+
+    func parsePaletteResult(
+        _ value: IntentValue,
+        providerID: String
+    ) -> PaletteResultItem? {
+        guard let object = value.objectValue,
+              let rowID = object["id"]?.stringValue,
+              let title = object["title"]?.stringValue,
+              let designation = parsePaletteIntentDesignation(object["intent"])
+        else {
+            emitLog(
+                "tenon.palette.setResults(\(providerID)) dropped a result: each result "
+                    + "needs {id, title, intent: {name}} with the intent declared in "
+                    + "manifest.intents.provides"
+            )
+            return nil
+        }
+        let actions = (object["actions"]?.arrayValue ?? [])
+            .prefix(Self.maximumPaletteActions)
+            .compactMap { raw -> PaletteResultAction? in
+                guard let action = raw.objectValue,
+                      let actionTitle = action["title"]?.stringValue,
+                      let actionDesignation =
+                          parsePaletteIntentDesignation(action["intent"])
+                else {
+                    emitLog(
+                        "tenon.palette.setResults(\(providerID)) dropped an action on "
+                            + "\(rowID): each action needs {title, intent: {name}} with "
+                            + "the intent declared in manifest.intents.provides"
+                    )
+                    return nil
+                }
+                return PaletteResultAction(
+                    title: String(actionTitle.prefix(Self.maximumPaletteTextLength)),
+                    intentID: actionDesignation.intentID,
+                    input: actionDesignation.input
+                )
+            }
+        return PaletteResultItem(
+            id: String(rowID.prefix(Self.maximumPaletteTextLength)),
+            title: String(title.prefix(Self.maximumPaletteTextLength)),
+            subtitle: object["subtitle"]?.stringValue
+                .map { String($0.prefix(Self.maximumPaletteTextLength)) },
+            icon: object["icon"]?.stringValue
+                .map { String($0.prefix(Self.maximumPaletteTextLength)) },
+            intentID: designation.intentID,
+            input: designation.input,
+            actions: Array(actions)
+        )
+    }
+
+    /// A result may only designate an intent its own plugin provides. This is shape
+    /// validation of the contribution, not authority: the palette principal's dispatch
+    /// is still policy-checked on the one shared path.
+    func parsePaletteIntentDesignation(
+        _ value: IntentValue?
+    ) -> (intentID: IntentID, input: IntentValue)? {
+        guard let object = value?.objectValue,
+              let rawName = object["name"]?.stringValue,
+              let intentID = try? IntentID(rawName),
+              manifest.intents.provides.contains(where: { $0.name == intentID })
+        else {
+            return nil
+        }
+        return (intentID, object["input"] ?? .object([:]))
+    }
+
+    func makePaletteSnapshots() -> [PaletteProviderInfo] {
+        paletteProviderStates
+            .map { providerID, state in
+                PaletteProviderInfo(
+                    providerID: providerID,
+                    title: state.title,
+                    deliveredRevision: state.deliveredRevision,
+                    publishedRevision: state.publishedRevision,
+                    results: state.results
+                )
+            }
+            .sorted { $0.providerID < $1.providerID }
+    }
+
     func makeSnapshot() -> PluginRuntimeSnapshot {
         PluginRuntimeSnapshot(
             revision: revision,
@@ -1509,6 +1706,7 @@ private extension PluginRuntime {
             phase: phase,
             statusBarText: statusBarText,
             views: makeViewSnapshots(),
+            paletteProviders: makePaletteSnapshots(),
             openViewInstances: openViewInstances.sorted {
                 ($0.viewID, $0.instanceID) < ($1.viewID, $1.instanceID)
             },

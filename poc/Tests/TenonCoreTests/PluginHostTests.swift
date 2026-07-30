@@ -1306,6 +1306,11 @@ private actor FakePluginRuntime: PluginHostRuntime {
         instanceID _: String
     ) throws {}
 
+    func deliverPaletteQuery(
+        text _: String,
+        revision _: Int
+    ) {}
+
     func shutdown(
         timeout _: TimeInterval
     ) -> PluginRuntimeShutdownReport {

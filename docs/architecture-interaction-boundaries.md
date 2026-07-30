@@ -195,6 +195,12 @@ Current DIRECT inventory:
 - app lifecycle and composition-root wiring;
 - `WorkspaceStore` and typed workspace use cases;
 - terminal and web surface pool retain/reconcile/focus/lifecycle;
+- pane activity/attention state (T-029): one `PaneActivity` per slot, fed by the shell's
+  fixed-interval terminal-observation poll and the shell's viewed projection, read
+  same-owner DIRECT by tab chips, pane headers, sidebar rollups, the title-bar count,
+  and the host-native completion-notification adapter. No plugin EVENT exists for this
+  state; if a plugin ever needs visibility into pane attention, that is a NEW classified
+  EVENT admitted through this law's ordered decision — never a reuse of this host state;
 - plugin-host administration from the Settings UI;
 - pure parsers, ranking, schemas, and value transformations;
 - `tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the
@@ -344,6 +350,9 @@ Current EVENT inventory:
 - targeted browser URL/title/loading/navigation facts;
 - plugin view user facts delivered to the owning plugin (`onSelect`, `onSubmit`,
   `onOpen`, `onClose`);
+- palette query facts (`text`, host-owned monotonic `revision`) delivered owner-scoped
+  to plugins that registered a palette provider (`tenon.palette.onQuery`); the palette
+  publishes them without awaiting any observer;
 - settings-change and plugin lifecycle facts.
 
 An event MUST NOT be used to ask the host to mutate state. If the publisher needs a result,
@@ -378,6 +387,9 @@ Current CONTRIBUTION inventory:
 - manifest setting schemas and plugin presentation metadata;
 - `tenon.statusBar.set`;
 - `tenon.views.register/set` and owner-scoped select/submit/open/close callbacks;
+- `tenon.palette.registerProvider/setResults`: dynamic palette provider registration and
+  its revision-scoped result snapshots (bounded; a publication for a superseded query
+  revision is dropped; each result designates an intent the publishing plugin provides);
 - plugin view trees, rows, menus, and native component descriptions;
 - plugin-owned intent contracts and their palette/registered-product-keybinding presentation
   metadata.
@@ -441,6 +453,9 @@ fitness-test update in the same change.
 | `tenon.views.onSubmit` | EVENT subscription control for owner-scoped UI facts |
 | `tenon.views.onOpen` | EVENT subscription control for owner-scoped lifecycle facts |
 | `tenon.views.onClose` | EVENT subscription control for owner-scoped lifecycle facts |
+| `tenon.palette.registerProvider` | CONTRIBUTION registration |
+| `tenon.palette.onQuery` | EVENT subscription control for owner-scoped palette query facts |
+| `tenon.palette.setResults` | CONTRIBUTION publication (revision-scoped; host drops stale revisions) |
 
 Finite filesystem, process execution, terminal, browser navigation, workspace, UI, secrets,
 network, OS, and clipboard operations are available only through `tenon.intents.send`.

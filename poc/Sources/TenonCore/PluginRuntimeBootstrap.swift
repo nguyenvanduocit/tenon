@@ -25,6 +25,7 @@ enum PluginRuntimeBootstrap {
       const processHandlers = new Map();
       const watchHandlers = new Map();
       const viewHandlers = new Map();
+      const paletteHandlers = new Map();
 
       const token = prefix => `${prefix}-${nextToken++}`;
       const clone = (value, seen = new WeakSet(), depth = 0) => {
@@ -436,6 +437,33 @@ enum PluginRuntimeBootstrap {
         }
       });
 
+      const palette = Object.freeze({
+        registerProvider(providerID, options = {}) {
+          requireString(providerID, "tenon.palette.registerProvider");
+          const source = options && typeof options === "object" ? options : {};
+          if (!paletteHandlers.has(providerID)) paletteHandlers.set(providerID, null);
+          post("palette.register", {
+            providerID,
+            title: typeof source.title === "string" ? source.title : providerID
+          });
+        },
+        onQuery(providerID, handler) {
+          requireString(providerID, "tenon.palette.onQuery");
+          requireFunction(handler, "tenon.palette.onQuery");
+          paletteHandlers.set(providerID, handler);
+        },
+        setResults(providerID, revision, results) {
+          requireString(providerID, "tenon.palette.setResults");
+          if (typeof revision !== "number" || !Number.isInteger(revision) || revision < 0) {
+            throw new TypeError("tenon.palette.setResults requires the integer revision from the query");
+          }
+          if (!Array.isArray(results)) {
+            throw new TypeError("tenon.palette.setResults requires an array of results");
+          }
+          post("palette.results", { providerID, revision, results: clone(results) });
+        }
+      });
+
       Object.defineProperty(globalThis, "__tenonStart", {
         configurable: false,
         writable: false,
@@ -455,6 +483,7 @@ enum PluginRuntimeBootstrap {
             fs,
             statusBar,
             views,
+            palette,
             log(...values) {
               post("log", {
                 message: values.map(value => {
@@ -765,6 +794,17 @@ enum PluginRuntimeBootstrap {
         }
       });
 
+      Object.defineProperty(globalThis, "__tenonPaletteQuery", {
+        configurable: false,
+        writable: false,
+        value(providerID, text, revision) {
+          const handler = paletteHandlers.get(providerID);
+          if (!handler) return false;
+          invokeAsync(`palette ${providerID} query`, handler, [{ text, revision }]);
+          return true;
+        }
+      });
+
       Object.defineProperty(globalThis, "__tenonViewClose", {
         configurable: false,
         writable: false,
@@ -814,6 +854,7 @@ enum PluginRuntimeBootstrap {
           processHandlers.clear();
           watchHandlers.clear();
           viewHandlers.clear();
+          paletteHandlers.clear();
           return true;
         }
       });

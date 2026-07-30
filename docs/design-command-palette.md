@@ -253,19 +253,50 @@ without entering the dispatcher.
 
 ## Dynamic results
 
-Search-as-you-type file, branch, or pane results have multi-result and query-lifetime
-semantics. They MUST NOT be modeled as one indefinitely held intent call.
+Search-as-you-type results have multi-result and query-lifetime semantics. They are NOT
+modeled as one indefinitely held intent call. The shipped protocol (T-006 phase 4) is
+CONTRIBUTION + EVENT, mirroring `tenon.views`:
 
-Before adding them, define a bounded RESOURCE/CONTRIBUTION protocol with:
+```js
+tenon.palette.registerProvider("files", { title: "Files" });   // CONTRIBUTION registration
+tenon.palette.onQuery("files", function (query) {              // EVENT subscription
+  // query = { text, revision } — revision is host-owned and monotonic
+  tenon.palette.setResults("files", query.revision, [          // CONTRIBUTION publication
+    {
+      id: "readme",
+      title: "Open README.md",
+      subtitle: "docs",
+      icon: "doc",
+      intent: { name: "dev.example.files.open.v1", input: { path: "README.md" } },
+      actions: [
+        { title: "Reveal in Finder",
+          intent: { name: "dev.example.files.reveal.v1", input: { path: "README.md" } } }
+      ]
+    }
+  ]);
+});
+```
 
-- owner and declared source;
-- query revision;
-- debounce/cancellation;
-- maximum result count and payload;
-- stale-result rejection;
-- teardown on provider reload.
+Protocol rules, enforced by `PaletteProviderTests`:
 
-Each executable result still points to a canonical intent name plus input.
+- **Owner and source:** a provider belongs to the registering plugin generation;
+  `manifest.intents.provides` must contain every intent a result or action designates.
+- **Query revision:** host-owned, monotonic, bumped per keystroke and on palette close.
+  A publication for any revision other than the newest one delivered to that generation
+  is dropped by the runtime, and the host renders only publications matching the current
+  revision — keystroke N+1 cancels keystroke N.
+- **Non-blocking:** query delivery is a fire-and-forget owner-scoped EVENT onto the
+  plugin's own pinned thread. The static ranked list renders instantly and is never
+  delayed or reordered by a provider; provider sections append below it, showing one
+  non-selectable "Searching…" row while an answer is in flight.
+- **Bounds:** ≤ 8 providers per plugin (a ninth fails the runtime), ≤ 50 results per
+  publication, ≤ 8 actions per result, bounded string lengths.
+- **Teardown:** hot reload/disable removes the retired generation's providers
+  atomically; `PluginHost.accept`'s identity guard drops its late snapshots.
+
+Each executable result points to a canonical plugin-owned intent name plus input;
+selection and the ⌘K actions submenu both dispatch through `PaletteIntentInvoker` as the
+palette principal.
 
 ## Performance and failure
 

@@ -214,6 +214,7 @@ protocol PluginHostRuntime: AnyObject, Sendable {
     ) async throws -> Bool
     func openViewInstance(viewID: String, instanceID: String) async throws
     func closeViewInstance(viewID: String, instanceID: String) async throws
+    func deliverPaletteQuery(text: String, revision: Int) async
     func shutdown(timeout: TimeInterval) async -> PluginRuntimeShutdownReport
 }
 
@@ -258,6 +259,8 @@ public final class PluginHost {
         reserved: KeyBindingIndex.shellReserved
     )
     public private(set) var commandIndex = CommandIndex()
+    public private(set) var paletteSections: [PaletteProviderSection] = []
+    public private(set) var paletteQueryRevision = 0
     public private(set) var log: [String] = []
 
     @ObservationIgnored
@@ -1374,6 +1377,30 @@ public final class PluginHost {
 
     // MARK: - Contributions and events
 
+    /// One keystroke of the palette query. Bumps the host-owned monotonic revision —
+    /// instantly invalidating every in-flight answer — republishes sections (now
+    /// pending), and fans the query fact out to provider generations without awaiting
+    /// any of them. This is synchronous host state mutation: ranking the static list
+    /// never waits on a plugin.
+    public func setPaletteQuery(_ text: String) {
+        paletteQueryRevision += 1
+        let revision = paletteQueryRevision
+        for session in sessions.values {
+            let runtime = session.runtime
+            Task {
+                await runtime.deliverPaletteQuery(text: text, revision: revision)
+            }
+        }
+        publish()
+    }
+
+    /// Closing the palette withdraws the question: the revision advances so every
+    /// in-flight answer is stale on arrival, and no new query is delivered to anyone.
+    public func invalidatePaletteQuery() {
+        paletteQueryRevision += 1
+        publish()
+    }
+
     public func emit(
         event: String,
         payload: IntentValue
@@ -2231,6 +2258,26 @@ private extension PluginHost {
                 pluginID: pluginID
             )
         }
+        // Provider sections rebuild only from live sessions: a retired generation's
+        // contributions vanish here, and `accept`'s identity guard already dropped its
+        // late snapshots. Results are shown only when they answer the *current* query
+        // revision; anything older renders as the provider's pending row instead.
+        let currentPaletteRevision = paletteQueryRevision
+        let nextPaletteSections = orderedSessions.flatMap {
+            pluginID,
+            session in
+            session.snapshot.paletteProviders.map { provider in
+                let isCurrent = provider.publishedRevision == currentPaletteRevision
+                    && currentPaletteRevision > 0
+                return PaletteProviderSection(
+                    pluginID: pluginID,
+                    providerID: provider.providerID,
+                    title: provider.title,
+                    isPending: !isCurrent && currentPaletteRevision > 0,
+                    results: isCurrent ? provider.results : []
+                )
+            }
+        }
         let keyBindingRequests = nextIntentPresentations.compactMap {
             presentation -> KeyBindingRequest? in
             guard let key = presentation.key else {
@@ -2296,6 +2343,7 @@ private extension PluginHost {
         intentPresentations = nextIntentPresentations
         keyBindingIndex = nextKeyBindingIndex
         commandIndex = nextCommandIndex
+        paletteSections = nextPaletteSections
         plugins = nextPlugins
         publishedKeyBindingDiagnostics = Set(
             nextKeyBindingIndex.diagnostics

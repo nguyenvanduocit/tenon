@@ -231,6 +231,7 @@ public struct PluginRuntimeSnapshot: Sendable, Equatable {
     public let phase: PluginRuntimePhase
     public let statusBarText: String?
     public let views: [PluginViewInfo]
+    public let paletteProviders: [PaletteProviderInfo]
     public let openViewInstances: [PluginViewInstanceKey]
     public let permissionViolations: [String]
     public let runtimeThreadIdentifier: UInt64?
@@ -243,6 +244,7 @@ public struct PluginRuntimeSnapshot: Sendable, Equatable {
         phase: PluginRuntimePhase,
         statusBarText: String?,
         views: [PluginViewInfo],
+        paletteProviders: [PaletteProviderInfo] = [],
         openViewInstances: [PluginViewInstanceKey],
         permissionViolations: [String],
         runtimeThreadIdentifier: UInt64?,
@@ -254,6 +256,7 @@ public struct PluginRuntimeSnapshot: Sendable, Equatable {
         self.phase = phase
         self.statusBarText = statusBarText
         self.views = views
+        self.paletteProviders = paletteProviders
         self.openViewInstances = openViewInstances
         self.permissionViolations = permissionViolations
         self.runtimeThreadIdentifier = runtimeThreadIdentifier

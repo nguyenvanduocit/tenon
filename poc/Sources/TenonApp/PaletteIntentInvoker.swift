@@ -59,6 +59,32 @@ enum PaletteIntentInvoker {
         )
     }
 
+    /// Invoke a dynamic palette result (or one of its ⌘K actions) by its declared
+    /// intent designation. The same production dispatcher path as a static row — the
+    /// palette principal, the publishing plugin as provider, a freshly minted gesture —
+    /// with the result's bounded input attached. `nil` means the plugin went away
+    /// between publication and the click.
+    static func send(
+        intentID: IntentID,
+        input: IntentValue,
+        pluginID: PluginID,
+        host: PluginHost,
+        runtime: AppIntentRuntime
+    ) async -> IntentResult? {
+        guard host.plugins.first(where: { $0.id == pluginID })?.isLoaded == true,
+              let providerID = try? ProviderID(pluginID.rawValue)
+        else {
+            return nil
+        }
+        return await runtime.send(
+            intentID,
+            input: input,
+            as: AppIntentRuntime.palettePrincipal,
+            target: providerID,
+            userGestureID: UUID()
+        )
+    }
+
     static func send(
         target: KeyBindingTarget,
         expectedBinding: KeyBinding? = nil,

@@ -13,6 +13,11 @@ final class CommandPaletteState {
     var selection = 0
     var isRunning = false
     var errorMessage: String?
+    /// The ⌘K actions submenu over the selected dynamic result. Open only while the
+    /// selected row actually carries secondary actions; Esc closes it before it closes
+    /// the palette.
+    var actionsPresented = false
+    var actionSelection = 0
 
     @ObservationIgnored private var store: Frecency
     @ObservationIgnored private let storeURL: URL
@@ -37,12 +42,16 @@ final class CommandPaletteState {
         selection = 0
         isRunning = false
         errorMessage = nil
+        actionsPresented = false
+        actionSelection = 0
         isPresented = true
     }
 
     func dismiss() {
         isRunning = false
         errorMessage = nil
+        actionsPresented = false
+        actionSelection = 0
         isPresented = false
     }
 
