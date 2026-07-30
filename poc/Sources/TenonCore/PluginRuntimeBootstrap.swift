@@ -5,6 +5,7 @@ enum PluginRuntimeBootstrap {
 
       const nativePost = globalThis.__tenonNativePost;
       delete globalThis.__tenonNativePost;
+      delete globalThis.console;
 
       let phase = "bootstrapping";
       let configuration = null;

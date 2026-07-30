@@ -8,7 +8,8 @@
 - **effort**: S
 
 ## Owner / files (agent lock)
-UNCLAIMED.
+RELEASED 00:23 — done by Orca worker task_55a47a204dd8 (dispatch ctx_efe4d2bc7df6).
+All files free.
 
 Expected files:
 - `poc/Sources/TenonCore/PluginRuntimeBootstrap.swift` — the deletion, next to the existing
@@ -37,23 +38,48 @@ independently by the PM before this task was filed.
   closed surface is meant to prevent. And any global a future macOS adds to JSC arrives in
   plugin scope silently, because nothing closes the scope.
 
-## Open decision — do not skip it
-`PluginRuntimeBootstrap.swift:438-745` installs roughly 20 `__tenon*` host hooks on
-`globalThis`. They are `configurable: false, writable: false`, so a plugin cannot replace
-them, and the blast radius of calling one is confined to that plugin's own generation —
-self-harm, not a cross-principal hole. But they are plugin-visible and plugin-callable,
-which contradicts the letter of invariant 1. Decide explicitly: either hide them behind a
-closure-captured table so the invariant is literally true, or keep them and write down why
-they are exempt. Do not leave the question implicit.
+## Decision — the `__tenon*` hooks stay on `globalThis`, exempt by name (2026-07-31)
+The 20 `__tenon*` host hooks remain plugin-visible. Reasoning:
+
+1. **They are the host's call channel, not a plugin capability.** The host invokes them
+   by global lookup — `PluginRuntime.swift:447` `context.objectForKeyedSubscript(functionName)`
+   — on every settle/emit/timer/view callback. Hiding them behind a closure-captured
+   table means the host must retain per-generation `JSValue` hook references instead,
+   which (a) rewrites the call path in `PluginRuntime.swift`, a file outside this task's
+   scope, and (b) reintroduces exactly the `runtime → context → JSValue → runtime`
+   retention shape whose leak T-017 fixed. The cost buys no security: the hooks already
+   cross no principal boundary.
+2. **A plugin cannot replace them** — every hook is installed
+   `configurable: false, writable: false` (`PluginRuntimeBootstrap.swift:438-818`), so
+   there is no spoofing path, only calling.
+3. **Calling one is self-harm, confined to the caller's own generation.** The host keeps
+   authoritative request state; e.g. `__tenonSettleIntent` with an unknown token returns
+   `false`, and settling your own pending intent with a fabricated result only lies to
+   yourself. No cross-principal effect exists.
+4. **Visibility is pinned, not open.** The exemption is encoded by NAME:
+   `testPluginGlobalScopeClosesToBuiltinsHostHooksAndTenon` lists all 20 hooks in its
+   expected `Object.getOwnPropertyNames(globalThis)` set, so adding a 21st hook — or
+   removing one — fails the suite until the test is updated deliberately. The exemption
+   cannot silently widen, which is the failure mode that lost the `console` deletion in
+   `163c8bf`/`8620bc3`.
+
+Invariant 1 in `CLAUDE.md` now states the exemption affirmatively and names the test.
 
 ## Criteria
-- [ ] `console` is deleted in every plugin context; `typeof console` evaluates to
-      `"undefined"` from plugin code
-- [ ] A test pins `Object.getOwnPropertyNames(globalThis)` against the exact expected set —
-      ECMAScript builtins plus `tenon` — so that the NEXT global to appear fails the suite
-      rather than arriving unnoticed
-- [ ] That test is proven load-bearing: remove the deletion, watch it go red, restore
-- [ ] The `__tenon*` hook decision is made and recorded in this file with its reasoning
-- [ ] CLAUDE.md invariant 1 states the rule and names the test that now enforces it, with
+- [x] `console` is deleted in every plugin context; `typeof console` evaluates to
+      `"undefined"` from plugin code — `delete globalThis.console;` at
+      `PluginRuntimeBootstrap.swift:8`, asserted by the new test's first check
+- [x] A test pins `Object.getOwnPropertyNames(globalThis)` against the exact expected set —
+      62 ECMAScript builtins + 20 named `__tenon*` hooks + `tenon` — so that the NEXT
+      global to appear fails the suite rather than arriving unnoticed
+      (`PluginBuiltinsTests.swift` `testPluginGlobalScopeClosesToBuiltinsHostHooksAndTenon`)
+- [x] That test is proven load-bearing: deletion removed → RED at 00:20 (both asserts:
+      `typeof console` came back `"object"`, property list carried `"console"`), deletion
+      restored → GREEN at 00:21
+- [x] The `__tenon*` hook decision is made and recorded in this file with its reasoning
+      (see `## Decision` above: kept, exempt by name, pinned in the test)
+- [x] CLAUDE.md invariant 1 states the rule and names the test that now enforces it, with
       no "not yet enforced" clause left behind
-- [ ] `swift build` exit 0 and the full suite green at or above the current baseline
+- [x] `swift build` exit 0 and the full suite green at or above the current baseline —
+      `swift test` **724 tests / 0 failures** at 00:22 (claim-time baseline 723; +1 = the
+      new scope-closure test), `swift build` exit 0

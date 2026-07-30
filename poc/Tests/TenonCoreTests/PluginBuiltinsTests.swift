@@ -140,6 +140,56 @@ final class PluginBuiltinsTests: XCTestCase {
         _ = await runtime.shutdown()
     }
 
+    func testPluginGlobalScopeClosesToBuiltinsHostHooksAndTenon() async throws {
+        let runtime = try makeRuntime(
+            source: """
+            tenon.statusBar.set(
+              typeof console + "|"
+                + Object.getOwnPropertyNames(globalThis).sort().join(",")
+            );
+            """
+        )
+        _ = try await runtime.start()
+        let snapshot = await runtime.snapshot()
+        let ecmaScriptBuiltins = [
+            "AggregateError", "Array", "ArrayBuffer", "Atomics", "BigInt",
+            "BigInt64Array", "BigUint64Array", "Boolean", "DataView", "Date",
+            "Error", "EvalError", "FinalizationRegistry", "Float16Array",
+            "Float32Array", "Float64Array", "Function", "Infinity",
+            "Int16Array", "Int32Array", "Int8Array", "Intl", "Iterator",
+            "JSON", "Map", "Math", "NaN", "Number", "Object", "Promise",
+            "Proxy", "RangeError", "ReferenceError", "Reflect", "RegExp",
+            "Set", "String", "Symbol", "SyntaxError", "TypeError", "URIError",
+            "Uint16Array", "Uint32Array", "Uint8Array", "Uint8ClampedArray",
+            "WeakMap", "WeakRef", "WeakSet", "WebAssembly", "decodeURI",
+            "decodeURIComponent", "encodeURI", "encodeURIComponent", "escape",
+            "eval", "globalThis", "isFinite", "isNaN", "parseFloat",
+            "parseInt", "undefined", "unescape",
+        ]
+        // The __tenon* hooks are exempt from invariant 1 by decision (T-037):
+        // they are the host's only call channel into this generation — looked
+        // up on globalThis per call — non-configurable, non-writable, and
+        // invoking one can only disturb the calling plugin's own generation.
+        let hostCallHooks = [
+            "__tenonActivate", "__tenonBeginShutdown", "__tenonCancelProvider",
+            "__tenonEmit", "__tenonFireTimer", "__tenonInvokeProvider",
+            "__tenonProcessExit", "__tenonProcessOutput",
+            "__tenonSettleIntent", "__tenonSettleList",
+            "__tenonSettleNestedIntent", "__tenonSettleStorage",
+            "__tenonShutdown", "__tenonStart", "__tenonViewClose",
+            "__tenonViewOpen", "__tenonViewSelect", "__tenonViewSubmit",
+            "__tenonWatchPaths", "__tenonWatchRejected",
+        ]
+        let reported = try XCTUnwrap(snapshot.statusBarText)
+            .components(separatedBy: "|")
+        XCTAssertEqual(reported.first, "undefined")
+        XCTAssertEqual(
+            reported.last?.components(separatedBy: ","),
+            (ecmaScriptBuiltins + hostCallHooks + ["tenon"]).sorted()
+        )
+        _ = await runtime.shutdown()
+    }
+
     func testStoragePublishesToLocalCacheOnlyAfterPersistenceCommits() async throws {
         let persisted = PersistedValues()
         let runtime = try makeRuntime(
