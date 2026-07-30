@@ -246,6 +246,8 @@ struct SpatialCanvasView: NSViewRepresentable {
     let pluginSnapshots: [PluginSnapshot]
     let pluginViewSections: [PluginViewSection]
     let webSurfaceTitles: [WebSurfaceKey: String]
+    /// T-029: the per-slot attention projection; the card header shows its state dot.
+    let paneAttention: [UUID: PaneActivity]
     let router: DragRouter
 
     func makeNSView(context: Context) -> SpatialCanvasNSView {
@@ -266,6 +268,7 @@ struct SpatialCanvasView: NSViewRepresentable {
             pluginSnapshots: pluginSnapshots,
             pluginViewSections: pluginViewSections,
             webSurfaceTitles: webSurfaceTitles,
+            paneAttention: paneAttention,
             router: router
         )
     }
@@ -368,6 +371,7 @@ final class SpatialCanvasNSView: NSView {
         pluginSnapshots: [PluginSnapshot],
         pluginViewSections: [PluginViewSection],
         webSurfaceTitles: [WebSurfaceKey: String],
+        paneAttention: [UUID: PaneActivity],
         router: DragRouter
     ) {
         self.store = store
@@ -431,6 +435,7 @@ final class SpatialCanvasNSView: NSView {
                 pluginSnapshots: pluginSnapshots,
                 host: host
             )
+            card.setAttention(paneAttention[slot.id]?.state)
         }
 
         let visibleIDs = Set(tab.slots.map(\.id))
@@ -812,6 +817,9 @@ final class SpatialSlotCardView: NSView {
 
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
+    /// T-029: the pane's attention state, colored by the one shared dot vocabulary.
+    /// Hidden while the pane never materialised — no surface, no invented state.
+    private let stateDot = NSView()
     private let closeButton = SlotCloseButton()
     private var contentHost: NSHostingView<AnyView>?
     private var contentKey = ""
@@ -858,7 +866,11 @@ final class SpatialSlotCardView: NSView {
             guard let self else { return }
             self.onClose?(self.slotID)
         }
+        stateDot.wantsLayer = true
+        stateDot.layer?.cornerRadius = 3.5
+        stateDot.isHidden = true
         addSubview(glyph)
+        addSubview(stateDot)
         addSubview(title)
         addSubview(closeButton)
         setState(isActive: false, previewIsValid: nil)
@@ -880,10 +892,18 @@ final class SpatialSlotCardView: NSView {
         let glyphHeight = glyph.intrinsicContentSize.height
         let titleHeight = title.intrinsicContentSize.height
         glyph.frame = CGRect(x: 9, y: 0, width: 19, height: glyphHeight)
-        title.frame = CGRect(
+        let dotSize: CGFloat = 7
+        stateDot.frame = CGRect(
             x: 31,
+            y: ((header - dotSize) / 2).rounded(),
+            width: dotSize,
+            height: dotSize
+        )
+        let titleX: CGFloat = stateDot.isHidden ? 31 : 43
+        title.frame = CGRect(
+            x: titleX,
             y: 0,
-            width: max(bounds.width - 62, 1),
+            width: max(bounds.width - titleX - 31, 1),
             height: titleHeight
         )
         let titleTop = ((header - titleHeight) / 2).rounded()
@@ -1153,6 +1173,19 @@ final class SpatialSlotCardView: NSView {
         contentHost = nil
         contentKey = ""
         self.pluginRenderIdentity = nil
+    }
+
+    /// T-029: project the pane's attention state onto the header dot — the same one
+    /// machine the tab chip, sidebar and title bar read; nothing recomputed here.
+    func setAttention(_ state: PaneActivityState?) {
+        if let state {
+            stateDot.isHidden = false
+            stateDot.layer?.backgroundColor =
+                PaneAttentionProjection.dotColor(for: state).cgColor
+        } else {
+            stateDot.isHidden = true
+        }
+        needsLayout = true
     }
 
     func setState(isActive: Bool, previewIsValid: Bool?) {

@@ -57,7 +57,7 @@ struct ContentView: View {
 
             HStack(spacing: 0) {
                 if sidebarVisible {
-                    WorkspaceSidebarView(store: store)
+                    WorkspaceSidebarView(store: store, pool: pool)
                         .frame(width: sidebarWidth)
                 }
 

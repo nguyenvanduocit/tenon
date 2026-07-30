@@ -37,6 +37,21 @@ final class SurfacePool {
     /// set right before quitting, with no workspace mutation after it, must still land.
     @ObservationIgnored var onPinChange: (() -> Void)?
 
+    /// T-029: the per-slot attention projection the shell surfaces read (tab chips,
+    /// pane headers, sidebar rollups, title-bar count). Rewritten only when a machine
+    /// reports events or is born, so the 200 ms poll never thrashes SwiftUI.
+    private(set) var paneAttention: [UUID: PaneActivity] = [:]
+    /// T-029, the notification seam: every slot whose `.becameUnseen` fired in ONE
+    /// poll pass, delivered as a single batch — the coalescing unit.
+    @ObservationIgnored var onPanesBecameUnseen: (([UUID]) -> Void)?
+    /// T-029: the live machines behind `paneAttention`, mutated on every poll
+    /// (detector streaks move even when nothing observable changes).
+    @ObservationIgnored private var activityMachines: [UUID: PaneActivity] = [:]
+    /// T-029: the slots currently satisfying the three-condition viewed rule, as last
+    /// projected by the shell. Read at machine birth so a pane materialising into a
+    /// displayed canvas starts viewed.
+    @ObservationIgnored private var viewedSlotIDs: Set<UUID> = []
+
     let backendName: String
     /// Builds a surface for a slot. The slot `UUID` is passed so the backend can export it as
     /// `TENON_PANE_ID`, letting an agent running inside the pane target itself over the CLI.
@@ -167,6 +182,69 @@ final class SurfacePool {
         }
     }
 
+    /// T-029, the feed: one fixed-interval pass mapping every live surface's
+    /// observation onto its slot's `PaneActivity` machine. The cadence is the caller's
+    /// (the same 200 ms `terminal.wait.v1`'s loop uses); the instant is a parameter so
+    /// the whole feed is deterministic in tests. A pane that never materialised has no
+    /// surface, so it is not observed and holds no activity state — nothing is invented
+    /// for it.
+    func pollActivity(at now: Date) {
+        var becameUnseen: [UUID] = []
+        for slotID in surfaces.keys {
+            guard let observation = terminalObservation(for: slotID) else { continue }
+            let isNewMachine = activityMachines[slotID] == nil
+            var machine = activityMachines[slotID] ?? PaneActivity(
+                viewed: viewedSlotIDs.contains(slotID),
+                at: now
+            )
+            let events = machine.observe(
+                PaneActivity.Observation(
+                    text: observation.text,
+                    processExited: observation.processExited,
+                    commandFinishedCount: observation.commandFinishedCount
+                ),
+                at: now
+            )
+            activityMachines[slotID] = machine
+            if isNewMachine || !events.isEmpty {
+                paneAttention[slotID] = machine
+            }
+            if events.contains(.becameUnseen) {
+                becameUnseen.append(slotID)
+            }
+        }
+        if !becameUnseen.isEmpty {
+            onPanesBecameUnseen?(becameUnseen)
+        }
+    }
+
+    /// T-029: the shell's viewed projection lands here as a set; the pool diffs it and
+    /// calls `setViewed` only on the slots entering or leaving the condition. No timer
+    /// ever reaches this — callers are the frontmost transitions and catalog events.
+    func applyViewed(_ viewed: Set<UUID>, at now: Date) {
+        guard viewed != viewedSlotIDs else { return }
+        let entering = viewed.subtracting(viewedSlotIDs)
+        let leaving = viewedSlotIDs.subtracting(viewed)
+        viewedSlotIDs = viewed
+        for slotID in entering {
+            setMachineViewed(slotID, viewed: true, at: now)
+        }
+        for slotID in leaving {
+            setMachineViewed(slotID, viewed: false, at: now)
+        }
+    }
+
+    /// A never-materialised pane has no machine: its membership in `viewedSlotIDs` is
+    /// remembered above so the machine is born viewed when the surface appears.
+    private func setMachineViewed(_ slotID: UUID, viewed: Bool, at now: Date) {
+        guard var machine = activityMachines[slotID] else { return }
+        let events = machine.setViewed(viewed, at: now)
+        activityMachines[slotID] = machine
+        if !events.isEmpty {
+            paneAttention[slotID] = machine
+        }
+    }
+
     /// Route keyboard focus to an existing slot's surface.
     func focusSurface(for slotID: UUID) {
         surfaces[slotID]?.focus()
@@ -237,6 +315,15 @@ final class SurfacePool {
             directories.removeValue(forKey: key)
             pinnedRoots.removeValue(forKey: key)
         }
+        // T-029: attention state is bounded by the slot's lifetime, exactly like the
+        // surface itself (invariant 10).
+        for key in activityMachines.keys where !slotIDs.contains(key) {
+            activityMachines.removeValue(forKey: key)
+        }
+        for key in paneAttention.keys where !slotIDs.contains(key) {
+            paneAttention.removeValue(forKey: key)
+        }
+        viewedSlotIDs.formIntersection(slotIDs)
         // Text queued for a pane that closed before it ever rendered has nowhere to go.
         for key in pendingText.keys where !slotIDs.contains(key) {
             pendingText.removeValue(forKey: key)

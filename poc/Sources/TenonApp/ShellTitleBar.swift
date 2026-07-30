@@ -83,6 +83,19 @@ struct ShellTitleBar: View {
 
             Spacer(minLength: 6)
 
+            // T-029: how many panes across the whole catalog await a human. The one
+            // machine's rollup — hidden entirely while nothing needs attention.
+            if totalUnseen > 0 {
+                Text("\(totalUnseen)")
+                    .font(TenonTheme.utilityFont(size: 9, weight: .bold))
+                    .foregroundStyle(TenonTheme.ink)
+                    .padding(.horizontal, 5)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(TenonTheme.amber))
+                    .help("\(totalUnseen) pane(s) finished and are waiting for you")
+                    .accessibilityIdentifier("tenon.unseenCount")
+            }
+
             ShellIconButton(
                 symbol: sidebarVisible ? "sidebar.left" : "sidebar.leading",
                 help: "Toggle sidebar",
@@ -100,6 +113,14 @@ struct ShellTitleBar: View {
                         TabChip(
                             title: tabTitle(for: tab, index: index),
                             isActive: tab.id == activeWorkspace?.activeTabID,
+                            attentionState: PaneAttentionProjection.tabState(
+                                for: tab,
+                                attention: pool.paneAttention
+                            ),
+                            isUnseen: PaneAttentionProjection.tabIsUnseen(
+                                tab,
+                                attention: pool.paneAttention
+                            ),
                             canClose: activeTabs.count > 1,
                             isDropTarget: router.activeDropTarget == .existingTab(tab.id),
                             select: { store.selectTab(tab.id) },
@@ -166,6 +187,13 @@ struct ShellTitleBar: View {
         store.catalog.activeWorkspace
     }
 
+    private var totalUnseen: Int {
+        PaneAttentionProjection.totalUnseen(
+            catalog: store.catalog,
+            attention: pool.paneAttention
+        )
+    }
+
     private var activeTabs: [TenonCore.Tab] {
         activeWorkspace?.tabs ?? []
     }
@@ -182,6 +210,11 @@ struct ShellTitleBar: View {
 private struct TabChip: View {
     let title: String
     let isActive: Bool
+    /// T-029: the active slot's `PaneActivity` state — `nil` (no dot) while none of
+    /// the tab's panes ever materialised.
+    var attentionState: PaneActivityState?
+    /// T-029: bold while any pane in this tab finished (or died) unviewed.
+    var isUnseen: Bool = false
     let canClose: Bool
     var isDropTarget: Bool = false
     let select: () -> Void
@@ -193,7 +226,20 @@ private struct TabChip: View {
                 Image(systemName: "terminal")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(isActive ? TenonTheme.amber : TenonTheme.muted)
+                if let attentionState {
+                    Circle()
+                        .fill(
+                            Color(
+                                nsColor: PaneAttentionProjection.dotColor(
+                                    for: attentionState
+                                )
+                            )
+                        )
+                        .frame(width: 6, height: 6)
+                        .accessibilityIdentifier("tenon.tabAttentionDot")
+                }
                 Text(title)
+                    .fontWeight(isUnseen ? .bold : .medium)
                     .lineLimit(1)
                     .truncationMode(.middle)
                     .frame(maxWidth: 150)

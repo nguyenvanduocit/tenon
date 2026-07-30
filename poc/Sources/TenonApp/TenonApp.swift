@@ -116,6 +116,19 @@ final class AppComposition {
     @ObservationIgnored
     private var lifecycleID: UUID?
 
+    /// T-029: owns the fire-only-in-background rule and the one-alert-per-burst rule
+    /// for panes that finish while Tenon is not frontmost.
+    private let attentionNotifier: PaneAttentionNotifier
+
+    /// T-029: the fixed-interval observation feed. The machine's `IdleDetector` counts
+    /// consecutive identical polls, so this MUST stay a clock loop — an event-driven
+    /// feed would never see two identical samples and idle would be unreachable.
+    @ObservationIgnored
+    private var attentionPollTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var appActivationObservers: [NSObjectProtocol] = []
+
     convenience init() throws {
         try self.init(paths: AppStatePaths.resolve())
     }
@@ -267,6 +280,11 @@ final class AppComposition {
             }
         )
 
+        let attentionNotifier = PaneAttentionNotifier(
+            isAppFrontmost: { NSApplication.shared.isActive },
+            deliver: { SystemNotificationDelivery.shared.deliver($0) }
+        )
+
         self.host = host
         self.store = store
         self.terminalSurfaces = terminalSurfaces
@@ -275,6 +293,7 @@ final class AppComposition {
         self.cliServer = cliServer
         self.userInterface = userInterface
         self.catalogStore = catalogStore
+        self.attentionNotifier = attentionNotifier
 
         Self.wire(
             host: host,
@@ -284,6 +303,37 @@ final class AppComposition {
             catalogStore: catalogStore
         )
         Self.wireDefaultContent(store: store, prefs: prefs)
+
+        // T-029: panes that start needing a human while Tenon is in the background
+        // raise one coalesced system notification per poll pass; clicking it focuses
+        // the pane, which makes it viewed, which clears the bold — no second path.
+        terminalSurfaces.onPanesBecameUnseen = { [weak terminalSurfaces] slotIDs in
+            guard let terminalSurfaces else { return }
+            attentionNotifier.panesBecameUnseen(
+                slotIDs,
+                titles: terminalSurfaces.titles
+            )
+        }
+        SystemNotificationDelivery.shared.onActivate = { [weak store] slotID in
+            NSApplication.shared.activate(ignoringOtherApps: true)
+            store?.focusSlot(slotID)
+        }
+        // The viewed rule recomputes on exactly its two input signals: app activation
+        // transitions here, and catalog changes inside `wire`'s onEvents. No timer.
+        appActivationObservers = [
+            NSApplication.didBecomeActiveNotification,
+            NSApplication.didResignActiveNotification,
+        ].map { name in
+            NotificationCenter.default.addObserver(
+                forName: name,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                Task { @MainActor [weak self] in
+                    self?.applyViewedProjection(at: Date())
+                }
+            }
+        }
 
         cliServer.onRequest = { action, respond in
             Task { @MainActor in
@@ -318,12 +368,32 @@ final class AppComposition {
         }
     }
 
+    /// T-029: recompute the three-condition viewed rule (app frontmost + workspace
+    /// selected + pane displayed on the active tab's canvas) and hand the pool the
+    /// diff. Called from activation transitions and catalog events — never a timer.
+    func applyViewedProjection(at now: Date) {
+        terminalSurfaces.applyViewed(
+            PaneAttentionProjection.viewedSlots(
+                appFrontmost: NSApplication.shared.isActive,
+                catalog: store.catalog
+            ),
+            at: now
+        )
+    }
+
     func stop() async {
         let starting = lifecycleTask
         starting?.cancel()
         await starting?.value
         lifecycleID = nil
         lifecycleTask = nil
+
+        attentionPollTask?.cancel()
+        attentionPollTask = nil
+        for observer in appActivationObservers {
+            NotificationCenter.default.removeObserver(observer)
+        }
+        appActivationObservers = []
 
         // The quit path persists the final live state without waiting for a debounce
         // window that would outlive the process. Restore itself never rewrites the file;
@@ -378,6 +448,28 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 }
 
 private extension AppComposition {
+    /// T-029, the feed: the same fixed 200 ms / 20 ms-tolerance cadence
+    /// `terminal.wait.v1`'s loop uses (`TerminalIntentProvider`). `Date()` is supplied
+    /// here, at the imperative edge; every mutation below it takes time as a parameter.
+    func startAttentionPolling() {
+        guard attentionPollTask == nil else { return }
+        attentionPollTask = Task { @MainActor [weak self] in
+            let clock = ContinuousClock()
+            while !Task.isCancelled {
+                do {
+                    try await clock.sleep(
+                        for: .milliseconds(200),
+                        tolerance: .milliseconds(20)
+                    )
+                } catch {
+                    return
+                }
+                guard let self else { return }
+                self.terminalSurfaces.pollActivity(at: Date())
+            }
+        }
+    }
+
     func performStart() async {
         do {
             try Task.checkCancellation()
@@ -396,6 +488,7 @@ private extension AppComposition {
             }
             isStarted = true
             startupError = nil
+            startAttentionPolling()
             NSApp.activate(ignoringOtherApps: true)
             await Task.yield()
             if let slotID = store.catalog.activeSlotID {
@@ -426,6 +519,15 @@ private extension AppComposition {
                 events,
                 snapshot in
             terminalSurfaces?.retainOnly(Set(snapshot.allSlotIDs))
+            // T-029: catalog changes (workspace/tab selection, pane moves) change
+            // which panes are displayed, so the viewed projection recomputes here.
+            terminalSurfaces?.applyViewed(
+                PaneAttentionProjection.viewedSlots(
+                    appFrontmost: NSApplication.shared.isActive,
+                    catalog: snapshot
+                ),
+                at: Date()
+            )
             if let host {
                 webSurfaces?.reconcile(catalog: snapshot, host: host)
             }

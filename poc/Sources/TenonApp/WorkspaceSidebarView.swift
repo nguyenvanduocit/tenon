@@ -6,6 +6,7 @@ import TenonCore
 /// action, and the picker that seeds a new workspace path.
 struct WorkspaceSidebarView: View {
     var store: WorkspaceStore
+    var pool: SurfacePool
 
     var body: some View {
         // The workspace rows read `store.catalog`, so they must re-render on every
@@ -16,7 +17,7 @@ struct WorkspaceSidebarView: View {
         // (`RecentWorkspaceStore` is `@Observable`) plus `store.openWorkspaceFolders`,
         // which republishes when a workspace opens or closes and stays silent through
         // tab/slot churn — the menu stays put yet still refreshes when its own list changes.
-        WorkspaceRowList(store: store)
+        WorkspaceRowList(store: store, pool: pool)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(TenonTheme.chrome)
             .contentShape(Rectangle())
@@ -78,6 +79,7 @@ struct WorkspaceSidebarView: View {
 /// tab/slot churn without dragging the open Add-Workspace menu through a re-layout.
 private struct WorkspaceRowList: View {
     var store: WorkspaceStore
+    var pool: SurfacePool
 
     var body: some View {
         ScrollView {
@@ -86,6 +88,13 @@ private struct WorkspaceRowList: View {
                     WorkspaceRow(
                         workspace: workspace,
                         isActive: workspace.id == store.catalog.activeWorkspaceID,
+                        // T-029: this row's rollup of the one attention machine.
+                        // Read here, inside the row list, so the open context menu
+                        // above never re-lays-out on attention churn.
+                        unseenCount: PaneAttentionProjection.unseenCount(
+                            in: workspace,
+                            attention: pool.paneAttention
+                        ),
                         canRemove: store.catalog.workspaces.count > 1,
                         select: { store.selectWorkspace(workspace.id) },
                         remove: { store.removeWorkspace(workspace.id) }
@@ -102,6 +111,9 @@ private struct WorkspaceRowList: View {
 private struct WorkspaceRow: View {
     let workspace: Workspace
     let isActive: Bool
+    /// T-029: how many of this workspace's panes finished (or died) unviewed.
+    /// The row bolds and counts while it is non-zero; viewing clears it upstream.
+    let unseenCount: Int
     let canRemove: Bool
     let select: () -> Void
     let remove: () -> Void
@@ -124,7 +136,12 @@ private struct WorkspaceRow: View {
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(workspace.name)
-                        .font(TenonTheme.interfaceFont(size: 11, weight: .semibold))
+                        .font(
+                            TenonTheme.interfaceFont(
+                                size: 11,
+                                weight: unseenCount > 0 ? .bold : .semibold
+                            )
+                        )
                         .foregroundStyle(TenonTheme.text)
                         .lineLimit(1)
                     Text("\(workspace.tabs.count) \(workspace.tabs.count == 1 ? "tab" : "tabs")")
@@ -132,6 +149,16 @@ private struct WorkspaceRow: View {
                         .foregroundStyle(TenonTheme.muted)
                 }
                 Spacer()
+
+                if unseenCount > 0 {
+                    Text("\(unseenCount)")
+                        .font(TenonTheme.utilityFont(size: 9, weight: .bold))
+                        .foregroundStyle(TenonTheme.ink)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(TenonTheme.amber))
+                        .accessibilityIdentifier("tenon.workspaceUnseenCount")
+                }
             }
             .padding(.leading, 9)
             .padding(.trailing, 8)

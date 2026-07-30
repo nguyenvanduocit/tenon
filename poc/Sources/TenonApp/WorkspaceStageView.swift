@@ -32,6 +32,7 @@ struct WorkspaceStageView: View {
                     pluginSnapshots: pluginSnapshots,
                     pluginViewSections: pluginViewSections,
                     webSurfaceTitles: webSurfaceTitles,
+                    paneAttention: pool.paneAttention,
                     router: router
                 )
 

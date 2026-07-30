@@ -7,12 +7,13 @@
 - **effort**: L
 
 ## Owner / files (agent lock)
-UNCLAIMED — **core half DONE + VERIFIED 00:15, its locks RELEASED** (worker
-task_f698353650f8 / ctx_d67bb5e3a191). `PaneActivity.swift`,
-`PaneActivityTests.swift` and `IdleDetector.swift` (one additive `Sendable`
-conformance) are free. The app half — `SurfacePool.swift`, `ShellTitleBar.swift`,
-`SpatialCanvasView.swift`, `WorkspaceSidebarView.swift`, the notification adapter —
-remains undone and unclaimed; start from `## Handoff to the app half` below.
+UNCLAIMED — **app half DONE + VERIFIED 01:01, ALL LOCKS RELEASED** (worker
+task_f3b0bcbc0314 / ctx_16c18958daa7). Every file below is free again:
+`SurfacePool.swift`, `ShellTitleBar.swift`, `SpatialCanvasView.swift`,
+`WorkspaceSidebarView.swift`, `WorkspaceStageView.swift`, `ContentView.swift`,
+`TenonApp.swift`, NEW `PaneAttentionProjection.swift` + `PaneAttentionNotifier.swift`
++ `Tests/TenonAppStateTests/PaneAttentionTests.swift`, and the
+`docs/architecture-interaction-boundaries.md` DIRECT-inventory note. Not committed.
 
 Expected files:
 - `poc/Sources/TenonCore/PaneActivity.swift` — NEW pure state machine
@@ -93,6 +94,57 @@ visibility, that is a new classified EVENT through the law, not a reuse of this 
 The app half should record that classification in
 `docs/architecture-interaction-boundaries.md` before wiring (criterion 6).
 
+## App-half verification (worker task_f3b0bcbc0314, 00:38–)
+
+**Seam decisions taken (inside the handoff's frame, nothing re-decided):**
+- **Feed cadence**: fixed 200 ms / 20 ms tolerance — the exact numbers from
+  `terminal.wait.v1`'s loop (`TerminalIntentProvider.swift:281,287`) — driven by
+  `AppComposition.startAttentionPolling()` (a `ContinuousClock` task started in
+  `performStart`, cancelled in `stop`). `Date()` is supplied only at that imperative
+  edge; `SurfacePool.pollActivity(at:)` and `applyViewed(_:at:)` take time as a
+  parameter and are fully deterministic in tests.
+- **Displayed set** (condition c): the selected workspace's ACTIVE TAB renders all of
+  its panes at once (`WorkspaceStageView` renders exactly `catalog.activeTab`), so
+  "displayed on the canvas" = `catalog.activeTab.slots`. A pane in a background tab of
+  the selected workspace is the "hidden in a stack" case and is NOT viewed.
+- **Viewed projection**: pure `PaneAttentionProjection.viewedSlots(appFrontmost:catalog:)`;
+  recomputed on exactly two signals — `NSApplication.did{Become,Resign}ActiveNotification`
+  and `store.onEvents` (catalog changes). No timer path exists. The pool diffs the set
+  and calls `setViewed` only on enter/leave transitions.
+- **Never-materialised pane**: has NO activity entry (`paneAttention[slot] == nil`) —
+  no surface means nothing to observe; no observation is invented, no dot renders, and
+  it counts zero everywhere. Membership in the viewed set is remembered so the machine
+  is born viewed when the surface materialises mid-display.
+- **Anti-thrash**: machines live in an `@ObservationIgnored` dict; the observable
+  `paneAttention` projection is rewritten only when a machine is born or reports
+  events, so the 200 ms poll does not re-render SwiftUI.
+- **Notification**: one batch per poll pass (the coalescing unit) →
+  `PaneAttentionNotifier` fires only while the app is NOT frontmost, one alert per
+  burst. System half `SystemNotificationDelivery` is bundle-gated
+  (`UNUserNotificationCenter` needs a real bundle; bare `swift run` degrades to no-op).
+  Click → `NSApp.activate` + `store.focusSlot` (cross-workspace, `Workspace.swift:684`)
+  → pane becomes viewed → bold clears. No second clearing path.
+
+**Mutation proofs — every rule seen RED then restored (10 tests, 28 red assertions at
+the stub stage first, then green 10/10):**
+| Mutation | Red assertion |
+|---|---|
+| viewedSlots drops app-frontmost condition | `testViewed…:48` (background app viewed nothing) |
+| viewedSlots returns whole workspace (drops condition c) | `testViewed…:56` (hidden-tab pane included) |
+| applyViewed skips both enter/leave transitions | `testAFinishWhileUnviewedBolds…:132,137`, `…Rearms:167`, `testAnExit…:191` |
+| retainOnly keeps attention state | `testRetainOnly…:291,296` |
+| notifier drops not-frontmost guard | `testNotifier…:249` |
+| notifier fires one alert per pane | `testNotifier…:256,267,272` |
+| poll feeds event-shaped (always-changing) text | `testPollFeeds…:83` (idle unreachable — the exact silent-failure trap) |
+| poll invents observations for surface-less panes | `testANeverMaterialisedPane…:99` (this test proven non-vacuous) |
+| becameUnseen delivered per-slot instead of per-pass | `testBecameUnseen…:223,230` |
+
+**Human-verify-only remainder:** the pixels — chip dot + bold, pane-header dot,
+sidebar bold+count, title-bar count badge — and the real system notification banner
+(needs the installed .app bundle; `swift run` cannot deliver one). Method: long
+`sleep 5` in one pane of a background workspace, watch bold appear, view it, watch it
+clear; `kill` a shell for the red-dot/exit case.
+
 ## Criteria
 - [x] `PaneActivity` is a pure state machine over terminal observations + a clock: working
       → idle → finished-unseen → seen, plus exited. Every transition asserted in
@@ -105,16 +157,34 @@ The app half should record that classification in
       `IdleDetector` streak), never from parsing agent-specific output strings
       — the machine embeds the one `IdleDetector` (`terminal.wait.v1`'s rule, now
       `Sendable`) and reads only the three observation fields; no string parsing exists
-- [ ] Tab chip, pane header, sidebar workspace row and title bar all project the same one
+- [x] Tab chip, pane header, sidebar workspace row and title bar all project the same one
       state — no second computation of "is this busy" anywhere in the shell
-- [ ] The sidebar/tab row stays bold until the pane is actually viewed, and viewing is what
+      — every surface reads `SurfacePool.paneAttention` through pure
+      `PaneAttentionProjection` rollups (tabState/tabIsUnseen/unseenCount/totalUnseen);
+      the only "busy" computation is the core machine itself
+- [x] The sidebar/tab row stays bold until the pane is actually viewed, and viewing is what
       clears it (not focus of the window, not a timer)
-- [ ] A pane reaching finished-unseen while the app is not frontmost raises one system
+      — three-condition viewed rule (`viewedSlots`), recomputed only on app-activation
+      transitions and catalog events; mutation-proven: dropping condition (a) or (c),
+      or the enter/leave transitions, each turned a named assertion red
+- [x] A pane reaching finished-unseen while the app is not frontmost raises one system
       notification; activating it focuses that pane. Notifications are coalesced, never one
       per finished command
-- [ ] Interaction classification is written down before the code
+      — one batch per poll pass → `PaneAttentionNotifier` (not-frontmost gate + one
+      alert per burst, both mutation-proven); click → `NSApp.activate` +
+      `store.focusSlot` → viewed → bold clears (no second clearing path). CAVEAT: the
+      visible banner needs the installed .app — `UNUserNotificationCenter` requires a
+      bundle identifier, so bare `swift run` deliberately no-ops delivery
+- [x] Interaction classification is written down before the code
       (`docs/architecture-interaction-boundaries.md`): pane activity is host-native typed
       state; any plugin visibility is an EVENT, and this task either ships that EVENT or
       states that it does not
+      — recorded in the DIRECT inventory (~line 198) BEFORE wiring: same-owner DIRECT,
+      NO plugin EVENT ships with this task; future plugin visibility = new classified
+      EVENT through the law
 - [ ] `swift build` + `swift test` green; launch smoke with a long-running command in one
       pane and a finished one in another, and one human look at the dots
+      — DONE: build exit 0 (warnings-as-errors ON), full suite **750/750, 0 failures**
+      on 5919bb3, launch smoke alive 8 s on a private socket, empty log, `PaneAttentionTests`
+      10/10. REMAINING (human-only): run a long command in one pane + a finished one in
+      another and look at the dots/bold/badge; and the system banner from the installed app
