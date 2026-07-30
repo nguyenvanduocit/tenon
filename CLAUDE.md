@@ -4,10 +4,16 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Tenon — a native macOS terminal workspace where every feature is a plugin, even the bundled ones. Pre-alpha; Phase 0 (plugin-host spike) is complete. **VISION.md is the north-star document — consult it before any architectural decision.**
+Tenon is a terminal-first native macOS workspace with an independently installable,
+hot-reloadable JavaScript plugin boundary. Host-native terminal, workspace, surface, and
+settings behavior uses typed Swift services; plugins extend that product through the
+canonical public boundary. Pre-alpha; Phase 0 (plugin-host spike) is complete.
+**VISION.md is the product north star; `docs/architecture-interaction-boundaries.md` is
+normative for interaction mechanism selection.**
 
 - `poc/` — Phase 0 spike: Swift package proving the plugin loop (host + manifest + hot reload + plugins driving UI).
-- `docs/research-plugin-runtimes.md` — research base for all runtime/sandboxing/permission decisions. Written under the project's former name "Tessera"; it is about this project.
+- `docs/research-plugin-runtimes.md` — historical runtime/sandbox evidence written under
+  the former name “Tessera.” Its old architecture recommendations are non-normative.
 - `docs/naming.md` — naming decision record. If a new name is ever needed for anything public (packages, orgs, domains), run the sweep battery there before proposing.
 
 ## Commands
@@ -30,33 +36,94 @@ No lint/format configuration exists yet.
 
 **TDD is the working method here — read `docs/tdd.md` before adding a feature.** The loop: failing core test first, minimal core change to green, only then the shell, then a launch smoke check. The fitness test for any design: "can this rule be asserted in `TenonCoreTests` without a window?" If not, the rule is in the wrong layer.
 
-Two Swift targets with a hard boundary:
+The package is Swift 6 (`swift-tools-version: 6.1`, `swiftLanguageModes: [.v6]`) and has
+four architectural targets:
 
-- **`TenonCore`** (`poc/Sources/TenonCore/`) — every rule, deliberately free of AppKit/SwiftUI so everything is testable without a window server. The workspace: `Workspace` (tabs/splits/panes as pure values; every mutation returns `[WorkspaceEvent]`, empty means nothing changed) + `WorkspaceStore` (observable shell + the workspace→plugin event bridge). The plugin host: `PluginManifest` (parsing, discovery, known-permission list, settings schema) → `PluginRuntime` (one JavaScriptCore `JSContext` per plugin; builds the `tenon` API object — v0.2: statusBar/commands/events/log/sidebar/settings/storage/workspace free tier + gated fs/process/terminal.write/workspace.control; the permission gate) → `PluginHost` (owns all runtimes, enable/disable, settings + storage stores, aggregation incl. sidebar sections, reload) → `PluginWatcher` (recursive FSEvents watch, debounced). `SettingsStore`/`PluginStorage` persist to dot-prefixed JSON files in the plugins root.
-- **`TenonApp`** (`poc/Sources/TenonApp/`) — the SwiftUI shell: projections of core state, no rules of its own. `SurfacePool` maps pane IDs to terminal surfaces (the core only ever sees UUIDs) and owns per-pane titles; `ContentView` renders tab bar + split tree + sidebar; `TenonApp` does all the wiring and menu shortcuts. `TerminalSurface` (`TerminalSurface.swift`) is the protocol seam hiding the terminal backend: `GhosttySurface` (libghostty) is the live backend, `StubTerminalSurface` covers PTY-less runs. ghostty's own keybindings (super+t, super+d, goto_split) are routed back into the workspace via the action callback in `GhosttySurface.swift` — they cannot be handled as menu shortcuts because `performKeyEquivalent` hands them to the surface first.
-- **`GhosttyKit`** (`poc/GhosttyKit/`) — thin C shim over the prebuilt `GhosttyKit.xcframework`, consumed exactly the way Muxy consumes it (research doc §1.1): `scripts/setup-ghosttykit.sh` downloads a pinned dated release of the `muxy-app/ghostty` soft fork (Tenon's own fork pipeline is the Phase 0.5 deliverable), syncs `ghostty.h` out of it, and `Package.swift` links `ghostty-internal.a` via `.unsafeFlags`. Zig never runs in this repo. The xcframework, header, and resources are gitignored — only the script and the modulemap are committed. The embedding itself lives in `GhosttySurface.swift`: one process-wide `ghostty_app_t`, one `ghostty_surface_t` per view, `GHOSTTY_ACTION_SET_TITLE` bridged to `onTitleChange`.
+- **`TenonIntentCore`** — runtime-independent invocation kernel: bounded `IntentValue`,
+  canonical contracts/schema, principals/policy, provider generations/leases, dispatcher,
+  admission, lifecycle, and discovery. It imports neither AppKit nor JavaScriptCore.
+- **`TenonCore`** — headless workspace/domain model and plugin host. `Workspace` mutations
+  are typed pure/domain operations emitting facts; `PluginRuntime` owns one isolated
+  JavaScriptCore context per plugin generation; `PluginHost` owns manifests, activation,
+  contributions, events, settings/storage, and hot reload. It imports no AppKit/SwiftUI.
+- **`TenonApp`** — composition root and native adapters: SwiftUI/AppKit shell,
+  `SurfacePool`, `PluginWebSurfacePool`, Ghostty/WebKit, user-prompt/system/workspace/
+  terminal intent providers, and CLI socket adapter. Built-in UI calls typed application
+  services DIRECT; public intent providers adapt to the same services.
+- **`TenonCLI`** — Foundation/POSIX client for the local control socket. Its domain surface
+  is `intent list/describe/send`; only ping and single-instance activation/focus are direct
+  control plane.
 
-A plugin is a directory under `poc/plugins/`: `manifest.json` (name, version, permissions) + `main.js`. Hot reload is deliberately whole-plugin: any file change drops that plugin's `PluginRuntime` (destroying its `JSContext` and every JSValue it handed the host), then rebuilds from disk. State loss across reload is intentional and asserted by tests. Plugins can be disabled/enabled per-plugin via `PluginHost.setEnabled(_:pluginNamed:)`: disable destroys the runtime but keeps the plugin listed for re-enabling, and the choice persists in `.disabled.json` inside the plugins root (dot-prefixed, so discovery and the watcher ignore it) across restarts.
+**Interaction classification is mandatory.** Read
+`docs/architecture-interaction-boundaries.md` before changing any interaction:
+CONTRIBUTION → EVENT → RESOURCE/STREAM/TASK → same-owner DIRECT → exact SCOPED FACILITY
+allowlist → cross-principal finite INTENT. `docs/design-intent-bus.md` specifies the kernel
+only after the law selects INTENT.
+
+A plugin is a directory under `poc/plugins/` with a stable full `id`, `manifest.json`, and
+`main.js`. Its manifest declares permissions, `intents.uses`, `intents.provides`, settings,
+and presentation metadata before JavaScript evaluation. Hot reload stages a replacement
+generation, activates it atomically, drains the retired generation, and tears down its
+calls/resources/contributions. A failed staged generation leaves the last good generation
+active.
+
+The exact public `tenon` vocabulary is:
+
+- immutable runtime metadata: `apiVersion`;
+- INTENT/control: `intents.send`, `intents.handle`, `intents.list`;
+- closed SCOPED FACILITY: `settings.get`, `storage.get/set`, `log`;
+- pure DIRECT JavaScript: `path.join/normalize/basename/dirname/extname`;
+- EVENT: `events.on`;
+- RESOURCE: `timers.after/every/cancel`, `process.stream`, `fs.watch`;
+- CONTRIBUTION: `statusBar.set`,
+  `views.register/set/onSelect/onSubmit/onOpen/onClose`.
+
+Finite filesystem/process/workspace/terminal/browser/UI/secrets/network/clipboard/OS work
+has no handwritten plugin helper; it uses declared canonical intents.
 
 ## Invariants — tests enforce these; do not weaken them
 
 1. **Plugins see only the `tenon` global.** `console` is explicitly deleted; `require`, `setTimeout`, `fetch` were never there. `testPluginsSeeOnlyTheTenonGlobal` fails if anything else leaks into plugin scope. A new capability means a new member on `tenon`, never a new global.
-2. **Plugins never touch a terminal type.** Terminal state reaches plugins only as `tenon` events (`terminal.title-changed` today). New terminal-visible surface goes into both `TerminalSurface` and the `tenon` API — never by handing plugins the terminal object.
+2. **Plugins never touch native host types.** Terminal/WebKit/AppKit/Foundation-I/O state crosses only as bounded values, targeted events, contributions, resource handles, or intent results.
 3. **`TenonCore` imports no AppKit or SwiftUI.** UI concerns live in `TenonApp` only.
 4. **A broken plugin never takes down the host** (`testBrokenPluginIsReportedAndDoesNotKillHost`). It is logged, marked failed, and reloads itself when fixed.
-5. **The permission gate has exactly one home: `PluginRuntime.installAPI`.** The policy is VISION principle 5: UI contribution (statusBar, commands, sidebar), generic event subscription, logging, settings, and storage are permission-free; permissions exist only for sensitive capabilities — exactly six: `terminal.read` (terminal.* event topics), `terminal.write`, `filesystem.read`, `filesystem.write`, `process.exec`, `workspace.control`. Every gated call goes through `requirePermission(_:api:)`; blocked calls no-op with `{ok: false, error}` plus a ⛔ log naming the manifest fix and surface as `permissionViolations` on the plugin's snapshot — they never throw, so one undeclared capability can't kill the rest of the plugin. Every capability keeps a blocked+allowed test pair (`PluginCapabilityTests`, `PluginPlatformTests`). Future capabilities (network allowlists, path scoping, consent, audit) land in the same function.
-6. **No private API — ever.** Bundled plugins compile against the same public surface third-party plugins get. This is the founding principle (VISION.md): any host↔plugin channel that a shipped plugin uses but the public API doesn't expose is the one architectural sin in this project.
+5. **One policy path.** Exact manifest use/provision, audience, capability, scope, consent, provider eligibility, and admission are separate fail-closed checks in the intent policy/dispatcher path. Naming an intent never grants authority.
+6. **One typed semantic implementation.** Same-owner host UI calls typed services DIRECT; public adapters use intent providers that call those services. Two public protocols for one operation are forbidden.
+7. **The scoped-facility allowlist is closed:** settings, plugin-private storage, and log. `tenon.path.*` is pure local code. Every other finite plugin→host operation defaults to INTENT.
+8. **Core intent audiences are exact:** `{plugin, cli, agent}` or `{plugin}`. Palette and registered product keybindings project plugin-owned intent metadata. Such a keybinding is host-wide, discoverable, or rebindable outside one focused view. Focused-view keyboard controls without public command registration are same-owner DIRECT/local control. Built-in app UI has no generic app intent principal.
+9. **Uniform plugin boundary.** Every plugin runtime, bundled or third-party, receives the
+   same exact public surface and plugin principal rules. Every sent/handled intent is
+   declared in the manifest. Host-native Swift stays typed DIRECT because it shares one
+   semantic owner; it does not impersonate a plugin. Functions inside one plugin generation
+   call each other directly; intents are its external contracts, not its internal module
+   system.
+10. **Every queue, payload, lifetime, and generation is bounded.** Runtime retirement settles calls once, cancels resources, removes contributions/subscriptions, and cannot callback into a destroyed context.
 
 ## Design tenets that shape API review
 
 From VISION.md, the two that most often decide whether a change is right:
 
 - **AI-writable.** Every plugin API decision passes the test: can a language model read the docs and write a working plugin on the first try? One async API shape on every surface; load-time errors with suggestions, never silent `undefined`.
-- **Replaceable everything.** Any bundled plugin can be disabled or replaced and the app keeps working. The empty shell must remain a valid state.
+- **Replaceable plugins.** A plugin can be disabled, reloaded, or replaced without
+  corrupting host state. The terminal workspace remains useful with no optional plugins
+  installed.
 
 ## Verification
 
 The GUI cannot be screenshotted from a headless shell, so `swift build` + `swift test` are the evidence bar. `ShippedPluginsTests` copies the real `plugins/` directory into a temp dir and exercises the actual shipped `clock` and `hello-palette` JS — including a genuine on-disk edit that must propagate through FSEvents into host state. When you change plugin-host behavior, extend those tests rather than relying on manual app runs.
+
+## Workflow — one branch, many agents on `main`
+
+All work happens directly on `main`. There are no worktrees and no feature branches: every agent — interactive or autonomous — edits, tests, and commits on the same `main` checkout. This is deliberate. The isolation a branch would give is bought instead with the live coordination signals below, so agents stay out of each other's way while sharing one tree.
+
+Because several agents run in parallel on that one working tree:
+
+- **Foreign dirty changes are normal.** `git status` will show edits you did not make — another agent is mid-task. Leave them untouched: never stash, revert, discard, or commit someone else's work, and don't be thrown by them. Stage and commit only the files you yourself touched.
+- **Claim your work through the board before you touch a file.** `.kanban/` is the shared session channel where agents tell each other what they're doing. Before starting: read `.kanban/board.md` and open every task in `Doing` to see who is working where. Then move your task into `Doing` (WIP limit = 2) and, in its task file, list the files you are about to change under an `## Owner / files (agent lock)` heading with your session id. That heading is how other agents see, at file granularity, what is already spoken for.
+- **Overlap → coordinate, don't collide.** If a file you need is already claimed in another `Doing` task, take different work, wait for the claim to clear, or split the change so your edits and theirs don't overwrite each other. Two agents editing the same lines on one branch is exactly the collision this protocol exists to prevent — check first, then write.
+- **Release when done.** When your task leaves `Doing`, the claim is gone: clear its `Owner / files` list (or archive the task) so those files are free again, and update `.kanban/board.md` per the session-end step below.
+
+Rule of thumb: the working tree is always live and shared, so read `.kanban/` before you write, keep it current while you work, and clear it when you finish.
 
 <!-- kanban:start -->
 ## Task Board

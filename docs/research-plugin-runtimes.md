@@ -1,6 +1,15 @@
 # Tessera — Plugin Runtime & Sandboxing Research
 
 > **Note (2026-07-23):** the product this research was commissioned for has since been renamed **Tenon** (see `naming.md`). "Tessera" below refers to this project at the time of writing — distinct from `horang-labs/tessera` analyzed in §5.
+>
+> **Historical research snapshot — non-normative.** The architecture recommendations
+> below preserve the assumptions of the 2026-07-23 investigation, including its
+> “every feature is a plugin” premise. Current interaction design MUST follow
+> [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md).
+> Host-native same-owner work is typed DIRECT; finite public plugin/CLI/agent work uses
+> canonical intents; events, resources, contributions, and the closed scoped-facility
+> allowlist retain their distinct semantics. This research cannot add or override a public
+> API.
 
 **Date:** 2026-07-23
 **Scope:** Plugin host architecture, libghostty embedding, permission models, and name conflicts for *Tessera*, a macOS-native terminal workspace (Swift + libghostty) in which every feature is a TypeScript plugin, authored to be AI-writable and sandboxed by default.
@@ -1213,7 +1222,11 @@ If the mosaic metaphor is the attachment, **Tesela** and **Smalti** preserve it 
 
 ---
 
-## 6. Recommendations for Tessera
+## 6. Historical recommendations for Tessera
+
+This section records the 2026-07-23 recommendation set under its original premises. It is
+not an implementation backlog. The current interaction boundary law classifies every new
+surface before any runtime recommendation here is considered.
 
 ### 6.1 Plugin host architecture
 

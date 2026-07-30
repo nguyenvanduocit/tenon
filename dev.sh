@@ -13,5 +13,19 @@ cd "$(dirname "$0")/poc"
 # The setup script is idempotent — a no-op once the framework is already in place.
 ./scripts/setup-ghosttykit.sh
 
-echo "==> Launching Tenon (swift run tenon)"
+# Read plugins straight from the source tree so every plugin — including ones added
+# this session — and every edit show up immediately. Without this the app falls back
+# to the one-time seed under ~/Library/Application Support/Tenon/plugins, which only an
+# installed build should use and which never gains plugins added after it was first seeded.
+export TENON_PLUGINS_DIR="${TENON_PLUGINS_DIR:-$PWD/plugins}"
+
+# The app is a singleton: a plain `swift run` would just focus the instance that is
+# already running and exit(0), leaving the OLD build in memory — so your edits never
+# show. Kill any running instance and clear its stale control socket first, so this
+# run actually replaces it with the freshly built code.
+pkill -f 'debug/tenon' 2>/dev/null || true
+rm -f "/tmp/tenon-$(id -u)/tenon.sock" 2>/dev/null || true
+sleep 0.3
+
+echo "==> Launching Tenon (swift run tenon, plugins: $TENON_PLUGINS_DIR)"
 exec swift run tenon "$@"

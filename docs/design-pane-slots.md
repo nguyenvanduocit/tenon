@@ -1,151 +1,199 @@
-# Design — Pane slots: typed, stackable, freely arranged
+# Design — spatial pane slots
 
-Status: **core + plugin API landed and verified (`swift test`: 112/112); shell written and
-type-checked, pending a GUI smoke run** (needs GhosttyKit + a windowed session). North
-star: VISION.md. Method: docs/tdd.md.
+**Status:** landed; interaction boundary reconciled · **Date:** 2026-07-25
+**Normative boundary:** [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md)
 
-## The idea, in one sentence
+## Goal
 
-Every visible surface in the app is a **pane** — a content-agnostic slot — and a tab is a
-**layout tree** of those slots that the user splits, stacks, resizes, and drags freely.
-A pane can hold a terminal *or* a plugin view; the kernel never knows which kind it is,
-only *that* kind. This is the standard docking / tiling model (VS Code editor groups,
-dockview, tmux), grounded in what the kernel already owns: "the pane/tab/window tree"
-(VISION §1).
+A workspace contains tabs; each tab contains freely arranged rectangular slots. A slot has
+stable identity, spatial geometry, and typed content. Moving, resizing, switching tabs, or
+moving a slot to another tab preserves its live terminal/editor/plugin resource by keeping
+the slot UUID stable.
 
-## What was already true (the seam we build on)
-
-- `SplitNode` is a tested binary split tree; a pane is just a `UUID` (`Workspace.swift`).
-- `SurfacePool` maps pane `UUID → TerminalSurface` in the shell; the core never touches a
-  terminal type (Invariant #2, tdd.md rule 3).
-- `tenon.sidebar` already renders a plugin view natively in a fixed slot — the view
-  mechanism exists, it was just nailed to the 220px left rail.
-
-So this feature is: **generalize the leaf to a stack, give the leaf typed content, give
-splits identity, and add the move/resize mutations + a `tenon.views` surface.** The tree
-geometry machinery is reused, not reinvented.
-
-## The model (TenonCore, pure values — no AppKit)
+## Model
 
 ```swift
-public indirect enum SplitNode: Equatable {
-    case leaf(panes: [UUID], selected: Int)                 // a stack; single pane = stack of one
-    case split(id: UUID, SplitOrientation,                  // id addresses the split for resize
-               first: SplitNode, second: SplitNode, ratio: Double)   // ratio is authoritative
-    static func pane(_ id: UUID) -> SplitNode               // sugar for .leaf([id], 0)
+public struct WorkspaceSlot: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public var rect: GridRect
+    public var content: SlotContent
+}
+
+public struct Tab: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public var slots: [WorkspaceSlot]
+    public var activeSlotID: UUID?
+}
+
+public struct Workspace: Equatable, Identifiable, Sendable {
+    public let id: UUID
+    public var name: String
+    public var path: URL
+    public var tabs: [Tab]
+    public var activeTabID: UUID
 }
 ```
 
-- **Every leaf is a stack.** One leaf shape, one code path. A single-pane leaf renders with
-  no visible mini tab-bar; a multi-pane leaf renders its panes as tabs sharing the slot.
-- **`Split.id` is excluded from `==`** (custom `Equatable`) so tests compare tree *shape +
-  ratio + panes*, not random ids. `ratio` is compared exactly.
-- **Content is a side-table on `Workspace`**, keyed by pane `UUID`, not stored in the leaf:
-  ```swift
-  public enum PaneContent: Equatable { case terminal; case pluginView(plugin: String, viewID: String); case empty }
-  public private(set) var paneContents: [UUID: PaneContent]   // default .terminal per new pane
-  ```
-  Geometry (SplitNode), content (`paneContents`), and surface instances (`SurfacePool`) are
-  three tables joined by the pane `UUID`. A **move is pure geometry** — content and the live
-  surface ride along by key, so dragging a running terminal to another tab does not restart
-  it. This is the reason content is a side-table, not a leaf field.
+`SlotContent` currently represents terminal, changes, docs, file, diff, plugin view, and
+empty content. Native resources are not stored in the enum.
 
-## Mutations (each returns `[WorkspaceEvent]`; `[]` == nothing changed)
+Identity joins three concerns:
 
-Existing (generalized to stacks): `newTab`, `splitFocusedPane`, `closePane`, `closeTab`,
-`focusPane` (now also sets the containing leaf's `selected`), `focusNextPane`, tab selection.
-
-New:
-
-| Mutation | Meaning |
-|---|---|
-| `setPaneContent(_ pane, _ content)` | change a pane's content type (A) |
-| `movePane(_ id, beside target, _ o, _ side)` | 4-edge drop: remove + insert as leaf-of-one beside target's leaf |
-| `movePane(_ id, intoStackOf target)` | center drop: remove + append to target's stack, select it |
-| `movePane(_ id, toTab, beside, _ o, _ side)` | cross-tab drop (may empty+close the source tab) |
-| `reorderInStack(_ id, to index)` | drag a tab within a stack |
-| `setSplitRatio(_ splitID, _ ratio)` | resize; clamps 0.1…0.9; **must emit an event** so the store commits (see below) |
-
-**Move = remove + insert, atomic, addressed by UUID.** `removingPane` collapses a stack of 1
-(promote sibling, the old behavior) but only drops a tab from a stack of >1 (tree unchanged).
-Insert finds the target leaf by UUID in the already-collapsed tree, so same-tab reorders are
-safe. Cross-tab keeps the pane's UUID stable → no false close/open.
-
-## Events (added)
-
-```swift
-case paneMoved(pane: UUID, fromTab: UUID, toTab: UUID)   // from==to ⇒ same-tab reorder
-case splitResized(split: UUID, ratio: Double, tab: UUID)
-case paneContentChanged(pane: UUID, content: PaneContent)
+```text
+WorkspaceSlot.id
+  ├── geometry/value state in WorkspaceCatalog
+  ├── typed SlotContent value
+  └── live native resource in SurfacePool/editor/web/plugin instance stores
 ```
 
-Selecting a stack tab reuses `paneFocused` (select == focus + make visible). All three map
-to free-tier `workspace.*` bus topics (structural, not sensitive — VISION §5). The shell
-should call `setSplitRatio` on divider drag-*end* (or throttled) to avoid bus spam.
+That separation is load-bearing. Geometry mutations move only values; the resource follows
+the unchanged UUID and is not restarted.
 
-## Resize + splits: native, not hand-rolled
+## Spatial layout
 
-Splits render as the native `HSplitView`/`VSplitView` (AppKit `NSSplitView` under the hood):
-real draggable dividers, native feel, zero divider math in our code. **The shell does not
-reinvent the split view** — an earlier hand-rolled `GeometryReader` divider was a mistake
-(fighting the framework) and was removed.
+`SpatialLayout` owns all geometry rules:
 
-The model still keeps `Split.id` + an authoritative `ratio` and a tested `setSplitRatio`
-mutation, but they are **not wired to the live divider** today. They exist for the follow-up
-that serializes/restores layout (where `NSSplitView`'s `autosaveName`, or a plugin behind
-`workspace.control`, drives divider positions). `WorkspaceStore.apply` drops empty-event
-mutations, so `setSplitRatio` emits `splitResized` when it changes.
+- fixed logical grid: 12 columns × 12 rows;
+- minimum slot size: 3 × 3;
+- rectangles stay inside the grid;
+- slot IDs are unique;
+- rectangles do not overlap.
 
-There are **no fixed sidebars.** The whole window is the pane workspace; anything a plugin
-shows (a file tree, a git graph) lives *in a pane* via `PaneContent.pluginView`, chosen from
-each pane's content picker. That is the product — every visible thing is a pane.
+`GridRect` uses integer coordinates, making proposals deterministic and easy to test.
+Rendering scales logical cells to current canvas pixels.
 
-## Plugin surface (mảnh B): `tenon.views`
+Geometry operations produce immutable transactions:
 
-Mirrors `tenon.sidebar`, **free tier** (UI contribution needs no permission — VISION §5):
+- split;
+- close with deterministic neighbor absorption;
+- best empty rectangle;
+- move;
+- swap;
+- attached/detached resize.
+
+A transaction contains baseline, proposal, affected IDs, kind, and validity. The workspace
+applies it only when:
+
+- kind matches the requested mutation;
+- proposal is valid;
+- baseline matches the active tab;
+- claimed affected IDs equal actual changed IDs.
+
+This prevents stale drag/resize proposals from overwriting newer state.
+
+## Workspace mutations
+
+Typed operations include:
+
+- add/select/remove workspace;
+- new/select/next/previous/close tab;
+- add/split/close/focus/next/previous slot;
+- set slot content;
+- move slot to new/existing tab;
+- apply spatial move/swap/resize transaction.
+
+Every mutation returns `[WorkspaceEvent]`. Empty means no state change. Events describe
+committed facts such as `slotOpened`, `slotSplit`, `slotsMoved`, `slotsResized`,
+`slotContentChanged`, and `slotMovedToTab`.
+
+Validation and mutation are atomic. A placement failure leaves the catalog untouched.
+
+## Interaction classification
+
+| Interaction | Mechanism |
+|---|---|
+| built-in SwiftUI gesture/menu changes workspace | DIRECT typed workspace call |
+| plugin/CLI/agent reads or changes workspace | INTENT |
+| committed workspace mutation facts | EVENT |
+| plugin declares pane content/tree | CONTRIBUTION |
+| terminal/web/editor instance lifetime | RESOURCE + DIRECT host pool/store |
+| spatial layout math/transaction validation | DIRECT pure core logic |
+
+Built-in UI and public principal adapters reach the same typed workspace implementation:
+
+```text
+SwiftUI gesture ─────────────────────► WorkspaceStore / typed use case
+plugin / CLI / agent ─► intent provider ─► same typed use case
+```
+
+No generic app intent principal is needed.
+
+## Canonical workspace intents
+
+The current public inventory is:
+
+- `workspace.state.v1`;
+- `workspace.tab.create.v1`;
+- `workspace.pane.split.v1`;
+- `workspace.pane.focus.v1`;
+- `workspace.pane.close.v1`;
+- `workspace.pane.content.set.v1`;
+- `workspace.tab.next.v1`;
+- `workspace.tab.previous.v1`;
+- `workspace.pane.focus-next.v1`;
+- `workspace.select.v1`.
+
+Workspace and pane targeting uses caller-selectable `options.scope.workspaceID/paneID`;
+policy authorizes the designation. The input schema contains operation data only (for
+example split axis or content descriptor).
+
+Future move/swap/resize intents require a concrete public use case and explicit bounded
+schema. They MUST adapt to the existing typed transactions rather than creating a second
+geometry implementation.
+
+## Plugin view contribution
 
 ```js
-tenon.views.register(viewID, { title });      // declare a view this plugin provides
-tenon.views.set(viewID, { items: [...] });    // set content (same declarative row shape as sidebar)
-tenon.views.onSelect(viewID, fn);             // selection handler
+tenon.views.register("tree", { title: "Files", instanced: false });
+tenon.views.set("tree", { items: rows });
+tenon.views.onSelect("tree", handler);
 ```
 
-A plugin may provide several views (keyed by `viewID`), unlike the one-section sidebar.
-`PluginHost` aggregates them; the shell renders a `.pluginView(plugin, viewID)` pane by
-looking the section up and reusing the sidebar row renderer. Opening a view into a pane is
-a shell affordance that calls `setPaneContent(pane, .pluginView(...))` — no new permission.
+The plugin contributes declarative state. A generic
+`SlotContent.pluginView(pluginID:viewID:)` identifies it; the host resolves/render the
+current active generation's contribution. The plugin never receives `WorkspaceSlot`,
+terminal, editor, or WebKit objects.
 
-## Invariants preserved
+For instanced views, the slot UUID is the instance ID. Workspace-catalog reconciliation,
+not SwiftUI visibility, owns open/close lifecycle. See `design-plugin-view-instances.md`.
 
-Stacks/typed panes touch no security boundary. Content stays keyed by pane UUID; plugins
-declare a **value** (`pluginView(plugin, viewID)`), never touch a terminal or webview
-(Inv #2/#3). `tenon.views` is free tier — no new gate (Inv #5). `PaneContent.empty` +
-disabled-plugin panes render a placeholder, keeping the empty shell valid (VISION §6).
-No private API: terminal-in-pane and view-in-pane share the one `PaneContent` mechanism
-(Inv #6).
+## Resource lifecycle
 
-## Build order (each a red core test first)
+When a slot opens/closes or changes content, committed workspace facts drive resource
+reconciliation:
 
-1. ✅ Rewrite `SplitNode` → leaf/split; existing `WorkspaceTests` ported to leaf-of-one.
-2. ✅ A: `PaneContent` + `setPaneContent` + side-table; content rides along every op.
-3. ✅ C-move: `movePane` 4-edge + cross-tab (empties+closes the source tab).
-4. ✅ C-stack: `intoStackOf` + `reorderInStack`; focus==selected in a stack.
-5. ✅ C-resize: `setSplitRatio` + `Split.id`; clamp 0.1…0.9, commit-via-event.
-6. ✅ B: `tenon.views` (PluginRuntime + PluginHost); `file-explorer` dogfoods it.
-7. ✅ Shell (type-checked, not yet run): native `HSplitView`/`VSplitView` splits; `LeafView`
-   content dispatch; per-leaf header/tab-bar + content picker; 5-zone `PaneDropDelegate`.
-   No fixed sidebars — plugin views live in panes. Wired in `ContentView.swift`.
+- terminal content → `SurfacePool`;
+- plugin web content → `PluginWebSurfacePool`;
+- editor/file state → slot-scoped host store;
+- plugin view instance → `PluginHost` instance reconciliation.
 
-Steps 1–6 are verified by `swift test` (headless, 112 tests). Step 7 compiles under
-`swift test`'s type-check but needs `./scripts/setup-ghosttykit.sh` + `swift run tenon-poc`
-in a GUI session to smoke-test the pixels (per tdd.md, SwiftUI views carry no rules to
-unit-test).
+Tab switching and slot moves retain resources. Slot close/content replacement releases the
+superseded resource exactly once. Stale generation callbacks cannot publish into the new
+owner.
 
-## Not in this pass (natural follow-ups)
+## Rendering
 
-- Plugin-driven rearrangement: expose `movePane`/`setSplitRatio`/`setPaneContent` through
-  `tenon.workspace.*` behind the existing `workspace.control` gate (the permission already
-  exists — Inv #5). Today these are user-gesture-driven only.
-- Serialize the layout (make `Workspace` `Codable`) → session restore + saved layout presets.
-  The model is already a pure value with authoritative ratios and stable ids, so this is
-  additive.
+`SpatialCanvasView` renders the authoritative grid rectangles and translates drag/resize
+gestures into `SpatialLayout` proposals. It does not own layout rules.
+
+Preview is ephemeral. Only a validated committed transaction mutates `WorkspaceCatalog`.
+Keyboard focus and accessibility IDs follow the active slot UUID.
+
+## Fitness functions
+
+- every catalog has unique workspace/tab/slot IDs and valid active selections;
+- every tab layout stays within the 12×12 grid, minimum size, and non-overlap rules;
+- every spatial operation is deterministic and leaves invalid input unchanged;
+- stale/mismatched transactions are rejected;
+- moving a slot preserves UUID, content, and live resource;
+- close/content replacement releases only the affected resource;
+- built-in UI uses typed DIRECT workspace calls;
+- plugin/CLI/agent workspace calls use declared canonical intents;
+- workspace events are facts and contain bounded structural values;
+- plugin views remain contributions and native resources never cross the plugin boundary;
+- Swift 6 build, geometry/workspace tests, and real canvas interaction tests pass.
+
+Falsification: if geometry behavior exists in SwiftUI rather than `SpatialLayout`, the
+functional-core boundary is broken. If a public caller needs a workspace operation absent
+from the catalog, add a canonical intent provider over the typed mutation. If moving a slot
+restarts its resource, identity has leaked into presentation or lifecycle code.

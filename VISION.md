@@ -56,10 +56,13 @@ of process, filesystem, and view-host reconstruction work.
 
 ### Extensibility
 
-The embedded JavaScript plugin runtime exposes commands, events, status items,
-declarative views, settings, storage, filesystem/process capabilities, terminal
-write, and workspace control behind explicit permissions. Plugins extend the
-terminal workspace; the terminal workspace remains useful on its own.
+The embedded JavaScript runtime exposes intent invocation and handling, event
+subscription, scoped settings/storage/logging, timers, long-lived process and
+filesystem resources, and declarative status/view contributions. Finite
+cross-owner operations enter the host through capability-gated intents;
+same-owner native app behavior remains direct typed Swift. Palette commands are
+plugin-owned intent contributions rather than a second execution API. Plugins
+extend the terminal workspace; the terminal workspace remains useful on its own.
 
 ## Current architecture
 

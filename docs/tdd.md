@@ -1,8 +1,10 @@
 # TDD Design — how Tenon stays testable
 
-**The rule: every rule lives in `TenonCore` as pure values, tested headless. The SwiftUI
-shell is a projection with no rules of its own.** This is Functional Core, Imperative
-Shell (Bernhardt), and it is why 57 tests cover everything except pixels in ~1 second.
+**The rule: domain and boundary rules live in `TenonIntentCore`/`TenonCore` as typed,
+headlessly tested values and services. The SwiftUI shell contains native adapters and
+projection only.** This is Functional Core, Imperative Shell (Bernhardt). Interaction
+classification itself is enforced by
+[`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md).
 
 ## The loop
 
@@ -27,7 +29,7 @@ on first compile → `SurfacePool`/`ContentView`/`TenonApp` wired with zero new 
 | Workspace tree (tabs/splits/panes/focus) | pure `struct Workspace`, mutations return `[WorkspaceEvent]` | exhaustive unit | `WorkspaceTests` |
 | Observable stores (`WorkspaceStore`) | thin class over the pure value | batch/no-op forwarding | `WorkspaceStoreTests` |
 | Plugin host (load, reload, isolation, enable/disable) | `PluginHost` + one `JSContext`/plugin | unit vs throwaway plugin trees in temp dirs | `PluginHostTests`, `PluginPolicyTests` |
-| Permission gate | one function: `PluginRuntime.installAPI` | policy pairs: blocked vs allowed | `PluginPolicyTests` |
+| Intent contract/policy gate | canonical catalog + dispatcher/policy | declared-use/audience/capability/scope/provider pairs | `TenonIntentCoreTests`, `PluginPolicyTests` |
 | Event bridges (workspace→plugins, title→plugins) | value → `(name, payload)` mapping | end-to-end through a real JS plugin | `WorkspacePluginBridgeTests` |
 | Shipped plugins | the actual `plugins/` files | copied to temp dir, driven for real (incl. on-disk edits through FSEvents) | `ShippedPluginsTests` |
 | Terminal, rendering, input | `GhosttySurface` behind the `TerminalSurface` seam | **not unit-tested** — smoke launch only | — |
@@ -43,9 +45,10 @@ on first compile → `SurfacePool`/`ContentView`/`TenonApp` wired with zero new 
 3. **Identity in the core, resources in the shell.** A pane is a `UUID` to TenonCore.
    `SurfacePool` (app shell) maps IDs to terminal surfaces; releasing there frees
    ghostty resources. The core never imports anything it would need to fake.
-4. **One seam per boundary.** `TerminalSurface` hides the emulator; `tenon` is the
-   entire plugin surface; `installAPI` is the entire permission gate. When a test
-   needs a fake, the seam already exists — write a fake conformance, not a mock.
+4. **One seam per boundary.** `TerminalSurface` hides the emulator; the exact `tenon`
+   vocabulary is the entire plugin surface; the intent catalog/policy/dispatcher is the
+   finite public capability path. When a test needs a fake, the seam already exists —
+   write a fake conformance, not a parallel protocol.
 5. **Sensitive data never rides structural events.** Workspace events carry IDs and
    shapes, never pane content — content stays behind `terminal.read`. This keeps the
    free-tier bridge testable without security theater.
@@ -64,11 +67,10 @@ Next, each entering through a failing core test first:
   round-trip tests in `WorkspaceTests`.
 - **Pane resize persistence** — `ratio` updates as a mutation (`setRatio`) so split
   drags survive restore: tree tests.
-- **Command palette parity** (fuzzy search, host commands like "Split Right" as
-  first-class commands next to plugin commands): a pure `CommandIndex` in core.
-- **Plugin capability: `filesystem.read/write`** — lands entirely inside
-  `installAPI` + `PluginPolicyTests` pairs (blocked/allowed), same shape as
-  `terminal.read`.
+- **Command palette evolution** — rank a policy-filtered projection of plugin-owned intent
+  metadata with a pure index; selection/keybindings dispatch the same canonical intent.
+- **Plugin capability evolution** — add canonical intent/resource authority bindings and
+  blocked/allowed policy tests; no handwritten finite plugin API.
 - **Quick terminal, themes, settings** — each is a store + events in core; the
   window/hotkey/appearance part is shell.
 - **Runtime consent + audit log** — a pure `PermissionLedger` (request → decision →
