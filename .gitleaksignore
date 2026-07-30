@@ -1,0 +1,5 @@
+# Vendored upstream STTextView-Plugin-Neon declares its sentinel token name as a
+# literal UUID (`TokenName.default`). High entropy, zero secrecy — it is a
+# well-known constant in public source, not a credential.
+poc/Vendor/STTextView-Plugin-Neon/Sources/STPluginNeonAppKit/TokenName.swift:generic-api-key:5
+poc/Vendor/STTextView-Plugin-Neon/Sources/STPluginNeonUIKit/TokenName.swift:generic-api-key:5
