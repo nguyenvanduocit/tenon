@@ -835,6 +835,14 @@ final class GhosttyNSView: NSView {
         }
     }
 
+    // Every press that reaches keyDown goes to the PTY, so the command selectors
+    // interpretKeyEvents derives from those same presses (deleteBackward: for
+    // Backspace, cursor moves, …) are already-handled input. NSResponder's default
+    // would forward them up the chain, where they die unaccepted and AppKit beeps
+    // for a key the terminal did handle. Scoped to this view: everything else
+    // keeps the default, so truly unhandled input still gets its system feedback.
+    override func doCommand(by selector: Selector) {}
+
     override func keyUp(with event: NSEvent) {
         guard let surface else { return }
         let key = makeKeyEvent(event, action: GHOSTTY_ACTION_RELEASE)
