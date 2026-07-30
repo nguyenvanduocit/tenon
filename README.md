@@ -1,7 +1,18 @@
 # Tenon
 
-Tenon is a native macOS terminal workspace for people who spend their day in
-CLI tools such as Codex and Claude Code.
+Tenon is the human supervision layer for people running parallel CLI agents
+such as Codex and Claude Code.
+
+It preserves shared context, directs scarce human attention, and makes parallel
+work understandable, verifiable, and steerable. Agents keep running in their
+own CLI harnesses and real PTYs. Tenon provides the native workspace in which a
+person can answer:
+
+- what materially changed since the last look;
+- what requires human judgment now;
+- what evidence supports each claim;
+- which work is blocked, stale, drifting, or conflicting;
+- what can safely wait.
 
 The interaction model is intentionally small:
 
@@ -13,8 +24,13 @@ The interaction model is intentionally small:
   canvas.
 
 Tenon keeps the terminal at the center while bringing the tools needed during a
-coding session into the same window. Agent behavior remains in the CLI; Tenon
-provides the fast native workspace around it.
+coding session into the same window. Agent harnesses own planning, spawning,
+scheduling, and execution. Tenon owns the operator's situation awareness and
+return path to raw evidence.
+
+The supervision direction, Attention Inbox wedge, and falsifiable product
+metrics are documented in
+[`docs/research-human-agent-supervision.md`](docs/research-human-agent-supervision.md).
 
 ## Repository
 
@@ -61,4 +77,6 @@ and the libghostty packaging details.
 Status: pre-alpha. The native shell, spatial workspace model, libghostty
 embedding, built-in slot surfaces, and plugin runtime are running and covered
 by 159 non-UI tests plus 6 black-box macOS UI flows. Layout persistence and
-production hardening are still ahead.
+production hardening are still ahead. The Attention Inbox, evidence-linked
+context capsules, structured agent signals, and safe-fan-out measurements are
+the next product direction; they are not implemented runtime capabilities.

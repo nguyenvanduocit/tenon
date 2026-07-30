@@ -4,10 +4,14 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-Tenon is a terminal-first native macOS workspace with an independently installable,
-hot-reloadable JavaScript plugin boundary. Host-native terminal, workspace, surface, and
-settings behavior uses typed Swift services; plugins extend that product through the
-canonical public boundary. Pre-alpha; Phase 0 (plugin-host spike) is complete.
+Tenon is the human supervision layer for parallel CLI-agent work, built as a terminal-first
+native macOS workspace. Agents keep their native harness behavior and execute in real PTYs;
+Tenon preserves shared context, directs scarce human attention, and returns every condensed
+claim to inspectable evidence. Its independently installable, hot-reloadable JavaScript
+plugin boundary adapts changing agent tools without moving their execution semantics into
+the host. Host-native terminal, workspace, surface, and settings behavior uses typed Swift
+services; plugins extend that product through the canonical public boundary. Pre-alpha;
+Phase 0 (plugin-host spike) is complete.
 **VISION.md is the product north star; `docs/architecture-interaction-boundaries.md` is
 normative for interaction mechanism selection.**
 
@@ -99,11 +103,25 @@ has no handwritten plugin helper; it uses declared canonical intents.
    system.
 10. **Every queue, payload, lifetime, and generation is bounded.** Runtime retirement settles calls once, cancels resources, removes contributions/subscriptions, and cannot callback into a destroyed context.
 
-## Design tenets that shape API review
+## Design tenets that shape product and API review
 
-From VISION.md, the two that most often decide whether a change is right:
+From VISION.md, the product tests that most often decide whether a change is right:
 
-- **AI-writable.** Every plugin API decision passes the test: can a language model read the docs and write a working plugin on the first try? One async API shape on every surface; load-time errors with suggestions, never silent `undefined`.
+- **Scalable human judgment.** A supervision surface must reduce the time required to
+  understand what changed, what needs attention, and what can safely wait without reducing
+  correctness as concurrent work increases.
+- **Evidence-linked compression.** Context capsules and attention signals are navigation
+  aids. Every material claim carries source, freshness, and a direct return path to the
+  transcript, diff, command result, test receipt, or other represented evidence.
+- **Harness-adaptable public boundaries.** Agent execution remains in its CLI/PTy owner.
+  Public plugin contracts let adapters and supervision experiments evolve without private
+  host paths or duplicated domain semantics.
+
+Two enabling constraints keep those product surfaces changeable:
+
+- **AI-writable APIs.** A language model can read the docs and write a working plugin on the
+  first try. One async API shape is used on every surface; load-time errors offer
+  suggestions instead of silent `undefined`.
 - **Replaceable plugins.** A plugin can be disabled, reloaded, or replaced without
   corrupting host state. The terminal workspace remains useful with no optional plugins
   installed.

@@ -1,8 +1,29 @@
 # Tenon vision
 
-Tenon is a fast native terminal workspace for CLI-first software development.
-It is designed for developers who run coding agents in the terminal and want
-to stay in one working context.
+Tenon is the human supervision layer for parallel CLI-agent work.
+
+It preserves shared context, directs scarce human attention, and makes parallel
+work understandable, verifiable, and steerable. Coding agents continue to run
+in their native CLI harnesses and real PTYs. Tenon gives their human operator
+one coherent place to understand and intervene without taking ownership of
+agent planning, spawning, scheduling, or execution.
+
+Agents scale execution. Tenon scales human judgment.
+
+## Product purpose
+
+Tenon should answer five questions without requiring the operator to reopen
+every transcript:
+
+1. What materially changed since I last looked?
+2. What requires my judgment now?
+3. What is the agent claiming, and what evidence supports it?
+4. Which work is blocked, drifting, stale, or in conflict?
+5. What can I safely ignore for now?
+
+The terminal, transcript, diff, command result, and test receipt remain source
+evidence. Context capsules and attention signals help the operator navigate
+that evidence; they do not replace it.
 
 ## Product contract
 
@@ -27,6 +48,20 @@ It defines components, hierarchy, relative regions, and interactions. The
 native app owns its macOS materials, typography, colors, radii, and motion.
 
 ## What Tenon optimizes
+
+### Human situation awareness
+
+Parallel workstreams are organized by goal, material delta, requested decision,
+blocker, evidence, freshness, and next action. Tenon prioritizes changes that
+need judgment and keeps completed or safely progressing work out of the
+operator's immediate attention.
+
+### Practical human fan-out
+
+The useful limit is not the number of agents that can execute. It is the number
+of workstreams a person can supervise and then accurately re-enter. Tenon aims
+to increase that limit by surfacing explicit attention states promptly and
+reducing reorientation time with evidence-linked context.
 
 ### Terminal fidelity
 
@@ -64,6 +99,10 @@ same-owner native app behavior remains direct typed Swift. Palette commands are
 plugin-owned intent contributions rather than a second execution API. Plugins
 extend the terminal workspace; the terminal workspace remains useful on its own.
 
+The plugin platform is enabling architecture for agent adapters, supervision
+experiments, provenance, and public-contract governance. The customer value is
+faster, safer human judgment across changing CLI-agent tools.
+
 ## Current architecture
 
 ```text
@@ -94,6 +133,35 @@ proposal is valid, and whose claimed affected IDs equal the actual changes.
 - harden plugin consent, isolation, and auditability;
 - verify complete user interactions in the hosted macOS test target.
 
-The measure of Tenon is simple: a developer can open it as their terminal,
-remain there for the whole coding loop, and rearrange the workspace without
-interrupting the processes doing the work.
+## First supervision experiment
+
+The initial wedge is an Attention Inbox for three to five independently running
+Claude Code or Codex PTYs:
+
+- explicit states such as `needs_input`, `approval`, `failed`,
+  `ready_for_review`, and `completed`;
+- a “since you last looked” capsule containing goal, material delta, current
+  claim or blocker, next action, freshness, and links to raw evidence;
+- exact return to the originating workspace, slot, process, and evidence.
+
+This is a product target, not current runtime support. Its implementation must
+use the interaction classifications and governed public surfaces defined in
+[`docs/architecture-interaction-boundaries.md`](docs/architecture-interaction-boundaries.md).
+The research basis and falsifiable experiment are documented in
+[`docs/research-human-agent-supervision.md`](docs/research-human-agent-supervision.md).
+
+## Measure of success
+
+Tenon succeeds when one person can supervise more concurrent CLI-agent work
+without losing correctness or trust. The first experiment must reduce median
+context-reorientation time by at least 30%, preserve or improve explicit-blocker
+detection, and keep false-attention items below 10%. Every material capsule
+claim must resolve to an exact source identity, immutable location and hash,
+capture time, freshness, and authority level. Traceability errors and claims
+unsupported by their cited evidence are measured separately, with zero accepted
+in the reviewed experiment sample.
+
+The current pre-alpha implements the native terminal workspace, spatial canvas,
+libghostty integration, built-in slot surfaces, and plugin runtime described
+above. The Attention Inbox, context capsules, structured agent signals, and
+fan-out measurements remain to be implemented and validated.

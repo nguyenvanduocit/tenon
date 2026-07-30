@@ -11,6 +11,12 @@ a stat panel — anything that is not a tree of rows — had no way to express i
 had to wait for the host to grow a bespoke feature. That breaks the founding
 "AI-writable / replaceable everything" promise: the plugin is blocked on us.
 
+### Current relevance — 2026-07-30
+
+The landed view-tree also lets agent adapters and supervision experiments express native
+attention, context, and evidence surfaces through the governed public boundary without
+waiting for bespoke host UI.
+
 ## Decision
 
 `tenon.views.set(id, spec)` accepts a **view-tree** under `body`: a JSON tree of
