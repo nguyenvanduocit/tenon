@@ -1,657 +1,1608 @@
+import Darwin
 import Foundation
 import JavaScriptCore
+import TenonIntentCore
+import os
 
-/// A command a plugin registered through `tenon.commands.register`.
-public struct PluginCommand: Equatable, Identifiable {
-    public let pluginName: String
-    public let commandID: String
-    public let title: String
-
-    /// Globally unique — two plugins may both register a command called "reload".
-    public var id: String { "\(pluginName).\(commandID)" }
+struct PluginRuntimeResourceCounts: Sendable, Equatable {
+    let timers: Int
+    let processes: Int
+    let watchers: Int
 }
 
-/// One row of a plugin's sidebar section or slot view — the shared declarative row shape.
-public struct SidebarItem: Equatable, Identifiable {
-    public let id: String
-    public let label: String
-    public let depth: Int
-    public let icon: String?
-}
+/// One plugin runtime, isolated onto one long-lived operating-system thread.
+///
+/// JavaScriptCore values never cross this actor boundary. The bridge copies JavaScript
+/// values into `IntentValue` while still on the pinned thread, and every Foundation
+/// callback carries only a `Sendable` snapshot through a finite callback mailbox.
+public actor PluginRuntime {
+    public nonisolated let manifest: PluginManifest
+    public nonisolated let directory: URL
 
-/// A view a plugin provides through `tenon.views` — the content of a `.pluginView` slot.
-/// Unlike the one-section sidebar, a plugin may provide several, keyed by `viewID`.
-public struct PluginViewInfo: Equatable, Identifiable {
-    public let viewID: String
-    public let title: String
-    public let items: [SidebarItem]
-    public var id: String { viewID }
-}
-
-/// One plugin == one JSContext. Tearing this object down destroys the context,
-/// its callbacks, and every JSValue the plugin ever handed us. That is the whole
-/// hot-reload story: drop the runtime, build a new one.
-public final class PluginRuntime {
-    public let manifest: PluginManifest
-    public let directory: URL
-
-    /// Last value passed to `tenon.statusBar.set`. nil until the plugin sets one.
-    public private(set) var statusBarText: String?
-    public private(set) var commands: [PluginCommand] = []
-
-    /// This plugin's sidebar section — one per plugin, like the status bar item.
-    /// nil title means the plugin never called `tenon.sidebar.set`.
-    public private(set) var sidebarTitle: String?
-    public private(set) var sidebarItems: [SidebarItem] = []
-
-    /// One entry per distinct blocked call — e.g. subscribing to a `terminal.*`
-    /// event without declaring `terminal.read`. Deduplicated so a retry loop
-    /// can't flood the log or the UI.
-    public private(set) var permissionViolations: [String] = []
-
-    /// Views this plugin provides through `tenon.views`, keyed by viewID.
-    private struct ViewState { var title: String; var items: [SidebarItem]; var select: JSValue? }
-    private var viewStates: [String: ViewState] = [:]
-
-    /// Snapshot of this plugin's views, for the host to aggregate. Sorted for stable UI.
-    public var views: [PluginViewInfo] {
-        viewStates
-            .map { PluginViewInfo(viewID: $0.key, title: $0.value.title, items: $0.value.items) }
-            .sorted { $0.viewID < $1.viewID }
+    public nonisolated var unownedExecutor: UnownedSerialExecutor {
+        executor.asUnownedSerialExecutor()
     }
 
-    private var context: JSContext
-    private var commandFunctions: [String: JSValue] = [:]
-    private var eventHandlers: [String: [JSValue]] = [:]
-    private var sidebarSelectHandler: JSValue?
-    /// Settings keys the plugin asked for without declaring — warned about once each.
-    private var warnedSettingKeys: Set<String> = []
-    private let emitLog: (String) -> Void
-    private let onStateChange: () -> Void
-    /// Delivers `tenon.terminal.write` text to whatever terminal the host has
-    /// attached. Returns false when no terminal is attached, so the plugin gets
-    /// an explicit error instead of a write into the void.
-    private let terminalWrite: (String) -> Bool
-    /// The user's override for one of this plugin's settings, nil when unchanged —
-    /// `tenon.settings.get` falls back to the manifest default then.
-    private let settingOverride: (String) -> Any?
-    /// This plugin's persistent KV namespace, owned by the host so values
-    /// survive reloads.
-    private let storageGet: (String) -> Any?
-    private let storageSet: (String, Any) -> Void
-    /// Answers `tenon.workspace.get()` with the structural workspace state.
-    private let workspaceState: () -> [String: Any]
-    /// Delivers allowed `tenon.workspace.*` mutations to the host.
-    private let workspaceCommand: (WorkspaceCommand) -> Void
+    private struct ViewRegistration {
+        let title: String
+        let instanced: Bool
+    }
 
-    /// Loads and evaluates `main.js` immediately. Any JS exception is reported through `log`
-    /// rather than thrown — a broken plugin must not take down the host.
-    public init(
-        manifest: PluginManifest,
-        directory: URL,
-        log: @escaping (String) -> Void,
-        onStateChange: @escaping () -> Void,
-        terminalWrite: @escaping (String) -> Bool,
-        settingOverride: @escaping (String) -> Any?,
-        storageGet: @escaping (String) -> Any?,
-        storageSet: @escaping (String, Any) -> Void,
-        workspaceState: @escaping () -> [String: Any],
-        workspaceCommand: @escaping (WorkspaceCommand) -> Void
+    private struct ViewBody {
+        let items: [PluginRowItem]
+        let body: PluginViewNode?
+        let subtitle: String?
+        let actions: [ViewAction]
+    }
+
+    private struct PendingProviderCall {
+        let intentID: IntentID
+        let context: IntentProviderContext
+        let cancellation: PluginProviderCancellation
+        let progress: ProviderProgressDelivery
+        let continuation: CheckedContinuation<IntentProviderReply, any Error>
+    }
+
+    private struct ProviderProgressDelivery: Sendable {
+        let continuation: AsyncStream<IntentProgress>.Continuation
+        let task: Task<Void, Never>
+
+        init(context: IntentProviderContext) {
+            let pair = AsyncStream<IntentProgress>.makeStream(
+                bufferingPolicy: .bufferingNewest(1)
+            )
+            continuation = pair.continuation
+            task = Task { @concurrent [stream = pair.stream] in
+                for await progress in stream {
+                    guard !Task.isCancelled else { return }
+                    await context.reportProgress(progress)
+                }
+            }
+        }
+
+        func yield(_ progress: IntentProgress) {
+            continuation.yield(progress)
+        }
+
+        func cancel() {
+            continuation.finish()
+            task.cancel()
+        }
+    }
+
+    private struct PendingNestedIntent {
+        let callToken: String
+        let task: Task<Void, Never>
+    }
+
+    private struct ProcessResource {
+        let process: Process
+        let standardOutput: FileHandle
+        let standardError: FileHandle
+        var standardOutputEnded = false
+        var standardErrorEnded = false
+        var terminationStatus: Int32?
+    }
+
+    private struct TimerResource {
+        let timer: Timer
+        let repeats: Bool
+    }
+
+    private struct ShutdownPreparation {
+        let callbackPump: Task<Void, Never>?
+        let createdThreadIdentifier: UInt64?
+        let destroyedThreadIdentifier: UInt64?
+        let cancelledProviderCalls: Int
+        let lateProviderReplyCount: Int
+    }
+
+    private static let singletonViewKey = ""
+    private static let maximumPendingOutboundIntents = 256
+    private static let maximumPendingStorageWrites = 256
+    private static let maximumTimers = 256
+    private static let maximumProcesses = 32
+    private static let maximumWatchers = 64
+    private static let maximumBridgeMessagesPerDrain = 8_192
+    private static let maximumPendingCallbacks = 256
+
+    private let configuration: PluginRuntimeConfiguration
+    private let executor: PinnedThreadExecutor
+    private let javaScriptMailbox = PluginJavaScriptMailbox()
+    private let processOutputMailbox = PluginProcessOutputMailbox()
+    private let callbackMailbox: PluginRuntimeCallbackMailbox
+    private let invocationGate = PluginRuntimeInvocationGate()
+    private let lifecycle = PluginRuntimeLifecycle()
+    private let stateEmitter: PluginRuntimeStateEmitter
+    private let processRun: @Sendable (Process) throws -> Void
+    private let watcherStart: @Sendable (PathWatcher) -> Bool
+
+    private var callbackPump: Task<Void, Never>?
+    private var virtualMachine: JSVirtualMachine?
+    private var context: JSContext?
+    private var phase: PluginRuntimePhase = .initialized
+    private var revision: UInt64 = 0
+    private var createdThreadIdentifier: UInt64?
+    private var destroyedThreadIdentifier: UInt64?
+
+    private var boundIntentIDs: Set<IntentID> = []
+    private var pendingProviderCalls: [String: PendingProviderCall] = [:]
+    private var pendingOutboundIntentTokens: Set<String> = []
+    private var pendingIntentListTokens: Set<String> = []
+    private var pendingNestedIntents: [String: PendingNestedIntent] = [:]
+    private var pendingStorageTokens: Set<String> = []
+    private var storageCommitTail: Task<Void, Never>?
+    private var lateProviderReplyCount = 0
+
+    private var statusBarText: String?
+    private let eventSubscriptions = OSAllocatedUnfairLock(
+        initialState: Set<String>()
+    )
+    private var permissionViolationSet: Set<String> = []
+    private var permissionViolations: [String] = []
+
+    private var viewRegistrations: [String: ViewRegistration] = [:]
+    private var viewBodies: [String: [String: ViewBody]] = [:]
+    private var openViewInstances: Set<PluginViewInstanceKey> = []
+
+    private var timers: [Int: TimerResource] = [:]
+    private var processes: [Int: ProcessResource] = [:]
+    private var watchers: [Int: PathWatcher] = [:]
+
+    public init(configuration: PluginRuntimeConfiguration) throws {
+        try self.init(
+            configuration: configuration,
+            callbackCapacity: Self.maximumPendingCallbacks
+        )
+    }
+
+    init(
+        configuration: PluginRuntimeConfiguration,
+        callbackCapacity: Int,
+        processRun: @escaping @Sendable (Process) throws -> Void = {
+            try $0.run()
+        },
+        watcherStart: @escaping @Sendable (PathWatcher) -> Bool = {
+            $0.start()
+        }
     ) throws {
-        self.manifest = manifest
-        self.directory = directory
-        self.emitLog = log
-        self.onStateChange = onStateChange
-        self.terminalWrite = terminalWrite
-        self.settingOverride = settingOverride
-        self.storageGet = storageGet
-        self.storageSet = storageSet
-        self.workspaceState = workspaceState
-        self.workspaceCommand = workspaceCommand
-
-        guard let ctx = JSContext() else {
-            throw PluginLoadError.manifestInvalid(directory.path, "could not create JSContext")
-        }
-        self.context = ctx
-
-        let entrypoint = directory.appendingPathComponent("main.js")
-        guard let source = try? String(contentsOf: entrypoint, encoding: .utf8) else {
-            throw PluginLoadError.entrypointMissing(entrypoint.path)
-        }
-
-        let pluginName = manifest.name
-        context.exceptionHandler = { _, exception in
-            log("[\(pluginName)] JS exception: \(exception?.toString() ?? "unknown")")
-        }
-
-        installAPI()
-        context.evaluateScript(source, withSourceURL: entrypoint)
+        self.configuration = configuration
+        manifest = configuration.manifest
+        directory = configuration.directory
+        self.processRun = processRun
+        self.watcherStart = watcherStart
+        executor = try PinnedThreadExecutor(
+            name: "dev.tenon.plugin.\(configuration.manifest.id.rawValue)",
+            startupTimeout: configuration.startupTimeout
+        )
+        callbackMailbox = PluginRuntimeCallbackMailbox(capacity: callbackCapacity)
+        stateEmitter = PluginRuntimeStateEmitter(sink: configuration.onStateChange)
     }
 
-    // MARK: - The `tenon` object. This is the ENTIRE plugin-visible surface.
-
-    private func installAPI() {
-        // JavaScriptCore seeds every new context with a `console` object. Plugins get the
-        // `tenon` API and the ECMAScript builtins — nothing else — so drop it.
-        for hostExtra in ["console"] {
-            context.globalObject.deleteProperty(hostExtra)
+    /// Creates the VM/context, evaluates the plugin, validates all declared bindings, and
+    /// returns bindings suitable for an unpublished provider generation.
+    public func start() throws -> PluginRuntimeStartResult {
+        guard phase == .initialized else {
+            throw PluginRuntimeError.invalidLifecycle(expected: .initialized, actual: phase)
         }
 
-        let tenon = JSValue(newObjectIn: context)!
+        phase = .staging
+        createdThreadIdentifier = Self.currentThreadIdentifier()
+        startCallbackPump()
 
-        // --- tenon.statusBar.set(text) ---
-        let statusBar = JSValue(newObjectIn: context)!
-        let setStatus: @convention(block) (String) -> Void = { [weak self] text in
-            guard let self else { return }
-            self.statusBarText = text
-            self.onStateChange()
-        }
-        statusBar.setObject(setStatus, forKeyedSubscript: "set" as NSString)
-        tenon.setObject(statusBar, forKeyedSubscript: "statusBar" as NSString)
-
-        // --- tenon.commands.register(id, title, fn) ---
-        let commandsObj = JSValue(newObjectIn: context)!
-        let register: @convention(block) (String, String, JSValue) -> Void = { [weak self] id, title, fn in
-            guard let self else { return }
-            guard fn.isObject, !fn.isUndefined, !fn.isNull else {
-                self.emitLog("[\(self.manifest.name)] commands.register(\"\(id)\"): handler is not a function")
-                return
-            }
-            self.commandFunctions[id] = fn
-            let command = PluginCommand(pluginName: self.manifest.name, commandID: id, title: title)
-            if let existing = self.commands.firstIndex(where: { $0.commandID == id }) {
-                self.commands[existing] = command
-            } else {
-                self.commands.append(command)
-            }
-            self.onStateChange()
-        }
-        commandsObj.setObject(register, forKeyedSubscript: "register" as NSString)
-        tenon.setObject(commandsObj, forKeyedSubscript: "commands" as NSString)
-
-        // --- tenon.events.on(event, fn) ---
-        // Part of THE permission gate: sensitive topics are checked in this function
-        // and nowhere else. Blocked calls no-op with a suggestion — they never throw,
-        // so one undeclared capability can't take down the rest of the plugin.
-        let eventsObj = JSValue(newObjectIn: context)!
-        let on: @convention(block) (String, JSValue) -> Void = { [weak self] event, fn in
-            guard let self else { return }
-            guard fn.isObject, !fn.isUndefined, !fn.isNull else {
-                self.emitLog("[\(self.manifest.name)] events.on(\"\(event)\"): handler is not a function")
-                return
-            }
-            if event.hasPrefix("terminal."),
-               self.requirePermission("terminal.read", api: #"events.on("\#(event)")"#) != nil {
-                return
-            }
-            self.eventHandlers[event, default: []].append(fn)
-        }
-        eventsObj.setObject(on, forKeyedSubscript: "on" as NSString)
-        tenon.setObject(eventsObj, forKeyedSubscript: "events" as NSString)
-
-        // --- tenon.fs.* --- gated behind filesystem.read / filesystem.write.
-        // Every call returns a plain object: {ok: true, ...} or {ok: false, error} —
-        // explicit, never a silent undefined.
-        let fs = JSValue(newObjectIn: context)!
-
-        let readDir: @convention(block) (String) -> [String: Any] = { [weak self] path in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("filesystem.read", api: "fs.readDir(...)") {
-                return ["ok": false, "error": error]
-            }
-            let expanded = (path as NSString).expandingTildeInPath
-            do {
-                let fm = FileManager.default
-                let entries: [[String: Any]] = try fm.contentsOfDirectory(atPath: expanded)
-                    .sorted()
-                    .map { name in
-                        var isDir: ObjCBool = false
-                        fm.fileExists(atPath: expanded + "/" + name, isDirectory: &isDir)
-                        return ["name": name, "isDirectory": isDir.boolValue]
-                    }
-                return ["ok": true, "entries": entries]
-            } catch {
-                return ["ok": false, "error": error.localizedDescription]
-            }
-        }
-        fs.setObject(readDir, forKeyedSubscript: "readDir" as NSString)
-
-        let readFile: @convention(block) (String) -> [String: Any] = { [weak self] path in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("filesystem.read", api: "fs.readFile(...)") {
-                return ["ok": false, "error": error]
-            }
-            let expanded = (path as NSString).expandingTildeInPath
-            do {
-                return ["ok": true, "content": try String(contentsOfFile: expanded, encoding: .utf8)]
-            } catch {
-                return ["ok": false, "error": error.localizedDescription]
-            }
-        }
-        fs.setObject(readFile, forKeyedSubscript: "readFile" as NSString)
-
-        let exists: @convention(block) (String) -> [String: Any] = { [weak self] path in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("filesystem.read", api: "fs.exists(...)") {
-                return ["ok": false, "error": error]
-            }
-            let expanded = (path as NSString).expandingTildeInPath
-            return ["ok": true, "exists": FileManager.default.fileExists(atPath: expanded)]
-        }
-        fs.setObject(exists, forKeyedSubscript: "exists" as NSString)
-
-        let writeFile: @convention(block) (String, String) -> [String: Any] = { [weak self] path, content in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("filesystem.write", api: "fs.writeFile(...)") {
-                return ["ok": false, "error": error]
-            }
-            let expanded = (path as NSString).expandingTildeInPath
-            do {
-                try content.write(toFile: expanded, atomically: true, encoding: .utf8)
-                return ["ok": true]
-            } catch {
-                return ["ok": false, "error": error.localizedDescription]
-            }
-        }
-        fs.setObject(writeFile, forKeyedSubscript: "writeFile" as NSString)
-
-        tenon.setObject(fs, forKeyedSubscript: "fs" as NSString)
-
-        // --- tenon.process.exec(command, args, callback) --- gated behind process.exec.
-        // The process runs on a background queue with a 10s kill timeout; the JSContext
-        // is main-thread only, so the callback JSValue is touched exclusively on main.
-        let processObj = JSValue(newObjectIn: context)!
-        let exec: @convention(block) (String, JSValue, JSValue) -> Void = { [weak self] command, argsValue, callback in
-            guard let self else { return }
-            guard callback.isObject, !callback.isUndefined, !callback.isNull else {
-                self.emitLog("[\(self.manifest.name)] process.exec(\"\(command)\"): callback is not a function")
-                return
-            }
-            if let error = self.requirePermission("process.exec", api: "process.exec(...)") {
-                callback.call(withArguments: [["ok": false, "error": error]])
-                return
+        do {
+            let entrypoint = directory.appendingPathComponent("main.js")
+            guard let source = try? String(contentsOf: entrypoint, encoding: .utf8) else {
+                throw PluginLoadError.entrypointMissing(entrypoint.path)
             }
 
-            let process = Process()
-            process.executableURL = URL(fileURLWithPath: command)
-            process.arguments = (argsValue.toArray() ?? []).map { "\($0)" }
-            let stdoutPipe = Pipe()
-            let stderrPipe = Pipe()
-            process.standardOutput = stdoutPipe
-            process.standardError = stderrPipe
-
-            let finish: ([String: Any]) -> Void = { result in
-                DispatchQueue.main.async {
-                    callback.call(withArguments: [result])
-                }
+            let machine = JSVirtualMachine()
+            guard let javaScriptContext = JSContext(virtualMachine: machine) else {
+                throw PluginRuntimeError.javascriptContextUnavailable
             }
-            DispatchQueue.global(qos: .userInitiated).async {
-                do {
-                    try process.run()
-                } catch {
-                    finish(["ok": false, "error": "could not run \(command): \(error.localizedDescription)"])
-                    return
-                }
+            virtualMachine = machine
+            context = javaScriptContext
 
-                // Drain both pipes on their own queues *while* the child runs. Reading
-                // only after waitUntilExit deadlocks any command whose output exceeds
-                // the pipe buffer (~64KB): the child blocks on write(), so it never
-                // exits and the 10s timeout SIGKILLs it with its output lost.
-                // readDataToEndOfFile returns at EOF, i.e. once the child's write ends
-                // close; the group's leave→wait ordering publishes the boxes safely.
-                let stdoutBox = DataBox()
-                let stderrBox = DataBox()
-                let drain = DispatchGroup()
-                drain.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    stdoutBox.data = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-                    drain.leave()
-                }
-                drain.enter()
-                DispatchQueue.global(qos: .userInitiated).async {
-                    stderrBox.data = stderrPipe.fileHandleForReading.readDataToEndOfFile()
-                    drain.leave()
-                }
+            installNativeBridge(in: javaScriptContext)
+            javaScriptContext.evaluateScript(PluginRuntimeBootstrap.source)
+            try drainBridgeMessages()
 
-                let exited = DispatchSemaphore(value: 0)
-                DispatchQueue.global(qos: .userInitiated).async {
-                    process.waitUntilExit()
-                    exited.signal()
-                }
-                if exited.wait(timeout: .now() + 10) == .timedOut {
-                    kill(process.processIdentifier, SIGKILL)
-                    exited.wait()
-                    finish(["ok": false, "error": "\(command) timed out after 10s and was killed"])
-                    return
-                }
-                drain.wait()
-                let stdout = String(data: stdoutBox.data, encoding: .utf8) ?? ""
-                let stderr = String(data: stderrBox.data, encoding: .utf8) ?? ""
-                finish([
-                    "ok": true,
-                    "status": Int(process.terminationStatus),
-                    "stdout": stdout,
-                    "stderr": stderr,
-                ])
-            }
-        }
-        processObj.setObject(exec, forKeyedSubscript: "exec" as NSString)
-        tenon.setObject(processObj, forKeyedSubscript: "process" as NSString)
-
-        // --- tenon.terminal.write(text) --- gated behind terminal.write.
-        let terminal = JSValue(newObjectIn: context)!
-        let write: @convention(block) (String) -> [String: Any] = { [weak self] text in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("terminal.write", api: "terminal.write(...)") {
-                return ["ok": false, "error": error]
-            }
-            guard self.terminalWrite(text) else {
-                return ["ok": false, "error": "no terminal attached"]
-            }
-            return ["ok": true]
-        }
-        terminal.setObject(write, forKeyedSubscript: "write" as NSString)
-        tenon.setObject(terminal, forKeyedSubscript: "terminal" as NSString)
-
-        // --- tenon.settings.get(key) --- free tier: reading this plugin's OWN
-        // declared settings is not sensitive. An undeclared key returns null with
-        // a ⚠️ hint (once per key) — a typo is a bug to surface, not a violation.
-        let settingsObj = JSValue(newObjectIn: context)!
-        let getSetting: @convention(block) (String) -> JSValue? = { [weak self] key in
-            guard let self else { return nil }
-            guard let spec = self.manifest.settings.first(where: { $0.key == key }) else {
-                self.warnUndeclaredSetting(key)
-                return JSValue(nullIn: self.context)
-            }
-            guard let value = self.settingOverride(key) ?? spec.defaultValue?.anyValue else {
-                return JSValue(nullIn: self.context)
-            }
-            return JSValue(object: value, in: self.context)
-        }
-        settingsObj.setObject(getSetting, forKeyedSubscript: "get" as NSString)
-        tenon.setObject(settingsObj, forKeyedSubscript: "settings" as NSString)
-
-        // --- tenon.storage.get/set --- free tier: a private, per-plugin KV
-        // namespace persisted by the host — it survives reloads and restarts and
-        // leaks nothing about the user or other plugins.
-        let storage = JSValue(newObjectIn: context)!
-        let getStored: @convention(block) (String) -> JSValue? = { [weak self] key in
-            guard let self else { return nil }
-            guard let value = self.storageGet(key) else {
-                return JSValue(nullIn: self.context)
-            }
-            return JSValue(object: value, in: self.context)
-        }
-        storage.setObject(getStored, forKeyedSubscript: "get" as NSString)
-
-        let setStored: @convention(block) (String, JSValue) -> Void = { [weak self] key, value in
-            guard let self else { return }
-            guard let object = value.toObject(), JSONSerialization.isValidJSONObject([object]) else {
-                self.emitLog("[\(self.manifest.name)] storage.set(\"\(key)\"): value must be JSON-encodable")
-                return
-            }
-            self.storageSet(key, object)
-        }
-        storage.setObject(setStored, forKeyedSubscript: "set" as NSString)
-        tenon.setObject(storage, forKeyedSubscript: "storage" as NSString)
-
-        // --- tenon.sidebar.set / onSelect --- free-tier UI contribution, one
-        // section per plugin, mirroring statusBar: the last `set` wins.
-        let sidebar = JSValue(newObjectIn: context)!
-        let setSidebar: @convention(block) (JSValue) -> Void = { [weak self] section in
-            guard let self else { return }
-            guard let dict = section.toDictionary() as? [String: Any],
-                  let title = dict["title"] as? String,
-                  let rawItems = dict["items"] as? [[String: Any]]
-            else {
-                self.emitLog("[\(self.manifest.name)] sidebar.set(...): expected {title, items: [{id, label, depth?, icon?}]}")
-                return
-            }
-            self.sidebarTitle = title
-            self.sidebarItems = self.parseRows(rawItems, api: "sidebar.set")
-            self.onStateChange()
-        }
-        sidebar.setObject(setSidebar, forKeyedSubscript: "set" as NSString)
-
-        let onSelect: @convention(block) (JSValue) -> Void = { [weak self] fn in
-            guard let self else { return }
-            guard fn.isObject, !fn.isUndefined, !fn.isNull else {
-                self.emitLog("[\(self.manifest.name)] sidebar.onSelect(...): handler is not a function")
-                return
-            }
-            self.sidebarSelectHandler = fn
-        }
-        sidebar.setObject(onSelect, forKeyedSubscript: "onSelect" as NSString)
-        tenon.setObject(sidebar, forKeyedSubscript: "sidebar" as NSString)
-
-        // --- tenon.views.register / set / onSelect --- free-tier UI contribution, exactly
-        // like sidebar but keyed by viewID: a plugin may provide many views, each fillable
-        // into any slot (content kind `.pluginView`). No permission — VISION §5.
-        let viewsObj = JSValue(newObjectIn: context)!
-        let registerView: @convention(block) (String, JSValue) -> Void = { [weak self] viewID, spec in
-            guard let self else { return }
-            let title = (spec.toDictionary()?["title"] as? String) ?? viewID
-            var state = self.viewStates[viewID] ?? ViewState(title: title, items: [], select: nil)
-            state.title = title
-            self.viewStates[viewID] = state
-            self.onStateChange()
-        }
-        viewsObj.setObject(registerView, forKeyedSubscript: "register" as NSString)
-
-        let setView: @convention(block) (String, JSValue) -> Void = { [weak self] viewID, payload in
-            guard let self else { return }
-            guard let dict = payload.toDictionary() as? [String: Any],
-                  let rawItems = dict["items"] as? [[String: Any]]
-            else {
-                self.emitLog("[\(self.manifest.name)] views.set(\"\(viewID)\"): expected {title?, items: [{id, label, depth?, icon?}]}")
-                return
-            }
-            var state = self.viewStates[viewID] ?? ViewState(title: (dict["title"] as? String) ?? viewID, items: [], select: nil)
-            if let title = dict["title"] as? String { state.title = title }
-            state.items = self.parseRows(rawItems, api: "views.set(\"\(viewID)\")")
-            self.viewStates[viewID] = state
-            self.onStateChange()
-        }
-        viewsObj.setObject(setView, forKeyedSubscript: "set" as NSString)
-
-        let onSelectView: @convention(block) (String, JSValue) -> Void = { [weak self] viewID, fn in
-            guard let self else { return }
-            guard fn.isObject, !fn.isUndefined, !fn.isNull else {
-                self.emitLog("[\(self.manifest.name)] views.onSelect(\"\(viewID)\"): handler is not a function")
-                return
-            }
-            var state = self.viewStates[viewID] ?? ViewState(title: viewID, items: [], select: nil)
-            state.select = fn
-            self.viewStates[viewID] = state
-        }
-        viewsObj.setObject(onSelectView, forKeyedSubscript: "onSelect" as NSString)
-        tenon.setObject(viewsObj, forKeyedSubscript: "views" as NSString)
-
-        // --- tenon.workspace --- get() is free: tab/slot STRUCTURE (IDs and
-        // shapes) is exactly what the free-tier workspace.* events already carry.
-        // Driving the workspace is gated behind workspace.control.
-        let workspace = JSValue(newObjectIn: context)!
-        let getWorkspace: @convention(block) () -> [String: Any] = { [weak self] in
-            guard let self else { return ["tabs": [], "activeSlotId": NSNull()] }
-            return self.workspaceState()
-        }
-        workspace.setObject(getWorkspace, forKeyedSubscript: "get" as NSString)
-
-        let newTab: @convention(block) () -> [String: Any] = { [weak self] in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("workspace.control", api: "workspace.newTab()") {
-                return ["ok": false, "error": error]
-            }
-            self.workspaceCommand(.newTab)
-            return ["ok": true]
-        }
-        workspace.setObject(newTab, forKeyedSubscript: "newTab" as NSString)
-
-        let split: @convention(block) (String) -> [String: Any] = { [weak self] axis in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("workspace.control", api: "workspace.split(...)") {
-                return ["ok": false, "error": error]
-            }
-            let parsed: SplitAxis
-            switch axis {
-            case "horizontal":
-                parsed = .horizontal
-            case "vertical":
-                parsed = .vertical
-            default:
-                return [
-                    "ok": false,
-                    "error": #"axis must be "horizontal" or "vertical", got "\#(axis)""#,
+            _ = try callJavaScript(
+                "__tenonStart",
+                arguments: [
+                    PluginRuntimeValueParsing.foundationObject(from: bootstrapConfiguration())
                 ]
+            )
+            try drainBridgeMessages()
+
+            javaScriptContext.evaluateScript(
+                source,
+                withSourceURL: entrypoint
+            )
+            try drainBridgeMessages()
+
+            let expected = Set(manifest.intents.provides.map(\.name))
+            let missing = expected.subtracting(boundIntentIDs)
+            guard missing.isEmpty else {
+                throw PluginRuntimeError.missingIntentHandlers(
+                    missing.sorted { $0.rawValue < $1.rawValue }
+                )
             }
-            self.workspaceCommand(.split(parsed))
-            return ["ok": true]
+
+            _ = try callJavaScript("__tenonActivate")
+            try drainBridgeMessages()
+            phase = .active
+            markStateChanged()
+
+            let bindings = expected
+                .sorted { $0.rawValue < $1.rawValue }
+                .map(makeBinding(for:))
+            return PluginRuntimeStartResult(bindings: bindings, snapshot: makeSnapshot())
+        } catch {
+            phase = .failed
+            stopOwnedResources()
+            callbackMailbox.close()
+            releaseJavaScriptResources()
+            markStateChanged()
+            throw error
         }
-        workspace.setObject(split, forKeyedSubscript: "split" as NSString)
-
-        let focusSlot: @convention(block) (String) -> [String: Any] = { [weak self] slotId in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("workspace.control", api: "workspace.focusSlot(...)") {
-                return ["ok": false, "error": error]
-            }
-            guard let id = UUID(uuidString: slotId) else {
-                return ["ok": false, "error": #"slotId must be a UUID string, got "\#(slotId)""#]
-            }
-            self.workspaceCommand(.focusSlot(id))
-            return ["ok": true]
-        }
-        workspace.setObject(focusSlot, forKeyedSubscript: "focusSlot" as NSString)
-
-        let closeSlot: @convention(block) (String) -> [String: Any] = { [weak self] slotId in
-            guard let self else { return ["ok": false, "error": "plugin is shutting down"] }
-            if let error = self.requirePermission("workspace.control", api: "workspace.closeSlot(...)") {
-                return ["ok": false, "error": error]
-            }
-            guard let id = UUID(uuidString: slotId) else {
-                return ["ok": false, "error": #"slotId must be a UUID string, got "\#(slotId)""#]
-            }
-            self.workspaceCommand(.closeSlot(id))
-            return ["ok": true]
-        }
-        workspace.setObject(closeSlot, forKeyedSubscript: "closeSlot" as NSString)
-        tenon.setObject(workspace, forKeyedSubscript: "workspace" as NSString)
-
-        // --- tenon.log(text) ---
-        let logFn: @convention(block) (String) -> Void = { [weak self] text in
-            guard let self else { return }
-            self.emitLog("[\(self.manifest.name)] \(text)")
-        }
-        tenon.setObject(logFn, forKeyedSubscript: "log" as NSString)
-
-        tenon.setObject(manifest.name, forKeyedSubscript: "pluginName" as NSString)
-        tenon.setObject("0.2", forKeyedSubscript: "apiVersion" as NSString)
-
-        context.setObject(tenon, forKeyedSubscript: "tenon" as NSString)
     }
 
-    /// The single permission check every gated capability goes through. Returns nil
-    /// when the manifest grants `permission`; otherwise reports the violation (deduped)
-    /// and returns the message the caller hands back to JS as `{ok: false, error}`.
-    private func requirePermission(_ permission: String, api: String) -> String? {
-        guard !manifest.permissions.contains(permission) else { return nil }
-        let message = #"\#(api) requires the "\#(permission)" permission — add it to the permissions array in manifest.json"#
-        reportViolation(message)
-        return message
+    /// Immutable state for UI aggregation and diagnostics.
+    public func snapshot() -> PluginRuntimeSnapshot {
+        makeSnapshot()
     }
 
-    private func reportViolation(_ message: String) {
-        guard !permissionViolations.contains(message) else { return }
-        permissionViolations.append(message)
-        emitLog("⛔ [\(manifest.name)] \(message)")
-        onStateChange()
+    var resourceCounts: PluginRuntimeResourceCounts {
+        PluginRuntimeResourceCounts(
+            timers: timers.count,
+            processes: processes.count,
+            watchers: watchers.count
+        )
     }
 
-    /// Parse the shared declarative row shape used by both `sidebar.set` and `views.set`.
-    /// Rows missing an id or label are skipped with a one-line warning, never fatal.
-    private func parseRows(_ rawItems: [[String: Any]], api: String) -> [SidebarItem] {
-        var items: [SidebarItem] = []
-        for raw in rawItems {
-            guard let id = raw["id"] as? String, let label = raw["label"] as? String else {
-                emitLog("[\(manifest.name)] \(api): every item needs an id and a label — skipped one")
-                continue
-            }
-            items.append(SidebarItem(
-                id: id,
-                label: label,
-                depth: (raw["depth"] as? NSNumber)?.intValue ?? 0,
-                icon: raw["icon"] as? String
-            ))
-        }
-        return items
+    public nonisolated func handles(event: String) async -> Bool {
+        eventSubscriptions.withLock { $0.contains(event) }
     }
 
-    /// A typo'd settings key is a plugin bug, not a security event: warn once per key.
-    private func warnUndeclaredSetting(_ key: String) {
-        guard !warnedSettingKeys.contains(key) else { return }
-        warnedSettingKeys.insert(key)
-        emitLog(#"⚠️ [\#(manifest.name)] settings.get("\#(key)"): "\#(key)" is not declared in manifest.json's settings array — returning null"#)
+    public func isViewInstanced(_ viewID: String) -> Bool {
+        viewRegistrations[viewID]?.instanced ?? false
     }
 
-    // MARK: - Host → plugin calls
-
-    @discardableResult
-    public func invoke(commandID: String) -> Bool {
-        guard let fn = commandFunctions[commandID] else {
-            emitLog("[\(manifest.name)] no such command: \(commandID)")
-            return false
-        }
-        fn.call(withArguments: [])
-        return true
-    }
-
-    public func emit(event: String, payload: [String: Any]) {
-        guard let handlers = eventHandlers[event], !handlers.isEmpty else { return }
-        for handler in handlers {
-            handler.call(withArguments: [payload])
-        }
+    public func emit(event: String, payload: IntentValue) throws {
+        guard phase == .active else { throw PluginRuntimeError.runtimeStopped }
+        _ = try callJavaScript(
+            "__tenonEmit",
+            arguments: [
+                event,
+                PluginRuntimeValueParsing.foundationObject(from: payload),
+            ]
+        )
+        try drainBridgeMessages()
     }
 
     @discardableResult
-    public func invokeSidebarSelect(itemID: String) -> Bool {
-        guard let handler = sidebarSelectHandler else {
-            emitLog("[\(manifest.name)] no sidebar.onSelect handler registered")
-            return false
-        }
-        handler.call(withArguments: [itemID])
-        return true
+    public func invokeViewSelect(
+        viewID: String,
+        instanceID: String? = nil,
+        itemID: String,
+        value: IntentValue? = nil
+    ) throws -> Bool {
+        try callJavaScriptBool(
+            "__tenonViewSelect",
+            arguments: [
+                viewID,
+                instanceID ?? NSNull(),
+                decodeActionIdentifier(itemID),
+                value.map(PluginRuntimeValueParsing.foundationObject(from:)) ?? NSNull(),
+            ]
+        )
     }
 
     @discardableResult
-    public func invokeViewSelect(viewID: String, itemID: String) -> Bool {
-        guard let handler = viewStates[viewID]?.select else {
-            emitLog("[\(manifest.name)] no views.onSelect handler registered for \"\(viewID)\"")
-            return false
+    public func invokeViewSubmit(
+        viewID: String,
+        instanceID: String? = nil,
+        itemID: String,
+        text: String
+    ) throws -> Bool {
+        try callJavaScriptBool(
+            "__tenonViewSubmit",
+            arguments: [viewID, instanceID ?? NSNull(), decodeActionIdentifier(itemID), text]
+        )
+    }
+
+    public func openViewInstance(viewID: String, instanceID: String) throws {
+        guard phase == .active else { throw PluginRuntimeError.runtimeStopped }
+        guard viewRegistrations[viewID]?.instanced == true else { return }
+        let key = PluginViewInstanceKey(viewID: viewID, instanceID: instanceID)
+        guard openViewInstances.insert(key).inserted else { return }
+        _ = try callJavaScript("__tenonViewOpen", arguments: [viewID, instanceID])
+        try drainBridgeMessages()
+        markStateChanged()
+    }
+
+    public func closeViewInstance(viewID: String, instanceID: String) throws {
+        guard phase == .active else { throw PluginRuntimeError.runtimeStopped }
+        let key = PluginViewInstanceKey(viewID: viewID, instanceID: instanceID)
+        guard openViewInstances.remove(key) != nil else { return }
+        _ = try callJavaScript("__tenonViewClose", arguments: [viewID, instanceID])
+        try drainBridgeMessages()
+        viewBodies[viewID]?[instanceID] = nil
+        markStateChanged()
+    }
+
+    /// Testing/diagnostic hook that preserves the runtime boundary: only an owned JSON value
+    /// is returned, never `JSValue`.
+    public func evaluateForTesting(_ script: String) throws -> IntentValue {
+        guard phase == .staging || phase == .active,
+              let context
+        else {
+            throw PluginRuntimeError.runtimeStopped
         }
-        handler.call(withArguments: [itemID])
-        return true
+        guard let value = context.evaluateScript(script) else {
+            try drainBridgeMessages()
+            throw PluginRuntimeError.javascriptException("evaluation returned no value")
+        }
+        let result = try PluginJavaScriptValueDecoder.decode(value)
+        try drainBridgeMessages()
+        return result
     }
 
-    public func handles(event: String) -> Bool {
-        !(eventHandlers[event]?.isEmpty ?? true)
-    }
+    /// Explicit teardown is part of the runtime contract. It first closes provider
+    /// admission, settles active calls, destroys JSC on its owning thread, and only then
+    /// stops the executor. Concurrent calls join the same operation.
+    public nonisolated func shutdown(
+        timeout: TimeInterval = 2
+    ) async -> PluginRuntimeShutdownReport {
+        switch lifecycle.beginShutdown() {
+        case let .complete(report):
+            return report
+        case .wait:
+            return await lifecycle.waitForReport()
+        case .owner:
+            break
+        }
 
-    /// Evaluate an expression inside this plugin's context. Test/diagnostic only —
-    /// plugins never get this.
-    public func evaluateForTesting(_ script: String) -> JSValue? {
-        context.evaluateScript(script)
+        invocationGate.close()
+        let preparation = await prepareForShutdown()
+        if let callbackPump = preparation.callbackPump {
+            await callbackPump.value
+        }
+        await invocationGate.waitUntilIdle()
+        await stateEmitter.finish()
+        let executorResult = await executor.shutdown(timeout: timeout)
+        let report = PluginRuntimeShutdownReport(
+            executorResult: executorResult,
+            createdThreadIdentifier: preparation.createdThreadIdentifier,
+            destroyedThreadIdentifier: preparation.destroyedThreadIdentifier,
+            cancelledProviderCalls: preparation.cancelledProviderCalls,
+            lateProviderReplyCount: preparation.lateProviderReplyCount
+        )
+        lifecycle.finish(report)
+        return report
     }
 
     deinit {
-        commandFunctions.removeAll()
-        eventHandlers.removeAll()
-        sidebarSelectHandler = nil
-        viewStates.removeAll()
-        context.exceptionHandler = nil
+        precondition(
+            lifecycle.hasCompletedShutdown,
+            "PluginRuntime requires explicit await shutdown() before its last release"
+        )
     }
 }
 
-/// A tiny reference holder so a background pipe-drain can stash its result for the
-/// parent block to read after the `DispatchGroup` barrier publishes it.
-private final class DataBox {
-    var data = Data()
+// MARK: - JavaScript lifecycle
+
+private extension PluginRuntime {
+    func startCallbackPump() {
+        guard callbackPump == nil else { return }
+        let mailbox = callbackMailbox
+        let notifications = mailbox.notifications
+        callbackPump = Task.detached { [weak self] in
+            for await _ in notifications {
+                guard let self else { return }
+                let batch = mailbox.drain()
+                if batch.overflowed {
+                    await self.transitionToFailed(
+                        PluginRuntimeError.resourceLimitExceeded("runtime callbacks")
+                    )
+                    return
+                }
+                for event in batch.events {
+                    await self.consumeCallback(event)
+                }
+            }
+        }
+    }
+
+    func installNativeBridge(in context: JSContext) {
+        let mailbox = javaScriptMailbox
+        let nativePost: @convention(block) (String, JSValue) -> Void = { topic, value in
+            mailbox.post(topic: topic, value: value)
+        }
+        context.setObject(nativePost, forKeyedSubscript: "__tenonNativePost" as NSString)
+        context.exceptionHandler = { _, exception in
+            mailbox.postProtocolError(
+                "JavaScript exception: \(exception?.toString() ?? "unknown")"
+            )
+        }
+    }
+
+    func bootstrapConfiguration() -> IntentValue {
+        .object([
+            "pluginID": .string(manifest.id.rawValue),
+            "uses": .array(manifest.intents.uses.map { .string($0.rawValue) }),
+            "provides": .array(manifest.intents.provides.map { .string($0.name.rawValue) }),
+            "settings": .object(configuration.local.settings),
+            "storage": .object(configuration.local.storage),
+        ])
+    }
+
+    @discardableResult
+    func callJavaScript(
+        _ functionName: String,
+        arguments: [Any] = []
+    ) throws -> JSValue {
+        guard let context,
+              let function = context.objectForKeyedSubscript(functionName),
+              function.isObject,
+              !function.isUndefined,
+              !function.isNull,
+              let result = function.call(withArguments: arguments)
+        else {
+            throw PluginRuntimeError.javascriptException(
+                "\(functionName) is unavailable"
+            )
+        }
+        return result
+    }
+
+    func callJavaScriptBool(
+        _ functionName: String,
+        arguments: [Any]
+    ) throws -> Bool {
+        guard phase == .active else { throw PluginRuntimeError.runtimeStopped }
+        let value = try callJavaScript(functionName, arguments: arguments)
+        let result = value.toBool()
+        try drainBridgeMessages()
+        return result
+    }
+
+    func releaseJavaScriptResources() {
+        context?.exceptionHandler = nil
+        context = nil
+        virtualMachine = nil
+        destroyedThreadIdentifier = Self.currentThreadIdentifier()
+    }
+
+    private func prepareForShutdown() async -> ShutdownPreparation {
+        if phase == .stopped {
+            return ShutdownPreparation(
+                callbackPump: callbackPump,
+                createdThreadIdentifier: createdThreadIdentifier,
+                destroyedThreadIdentifier: destroyedThreadIdentifier,
+                cancelledProviderCalls: 0,
+                lateProviderReplyCount: lateProviderReplyCount
+            )
+        }
+
+        phase = .stopping
+        _ = try? callJavaScript("__tenonBeginShutdown")
+
+        stopOwnedResources()
+
+        let pending = pendingProviderCalls
+        pendingProviderCalls.removeAll()
+        cancelAllNestedIntents()
+        for (callToken, call) in pending {
+            call.cancellation.cancel()
+            call.progress.cancel()
+            _ = try? callJavaScript("__tenonCancelProvider", arguments: [callToken])
+            call.continuation.resume(throwing: CancellationError())
+        }
+
+        // Storage writes are FIFO and commit-then-publish. After the JavaScript
+        // phase enters stopping no new write is admitted, so awaiting the tail
+        // drains every accepted local persistence operation before teardown.
+        await storageCommitTail?.value
+        storageCommitTail = nil
+
+        _ = try? callJavaScript("__tenonShutdown")
+        do {
+            try drainBridgeMessages()
+        } catch {
+            emitLog("shutdown bridge error: \(error)")
+        }
+
+        pendingOutboundIntentTokens.removeAll()
+        pendingIntentListTokens.removeAll()
+        pendingStorageTokens.removeAll()
+        callbackMailbox.close()
+        callbackPump?.cancel()
+        releaseJavaScriptResources()
+        phase = .stopped
+        markStateChanged()
+
+        return ShutdownPreparation(
+            callbackPump: callbackPump,
+            createdThreadIdentifier: createdThreadIdentifier,
+            destroyedThreadIdentifier: destroyedThreadIdentifier,
+            cancelledProviderCalls: pending.count,
+            lateProviderReplyCount: lateProviderReplyCount
+        )
+    }
+
+    func stopOwnedResources() {
+        eventSubscriptions.withLock { $0.removeAll() }
+
+        for resource in timers.values {
+            resource.timer.invalidate()
+        }
+        timers.removeAll()
+
+        for watcher in watchers.values {
+            watcher.stop()
+        }
+        watchers.removeAll()
+
+        for resource in processes.values {
+            resource.standardOutput.readabilityHandler = nil
+            resource.standardError.readabilityHandler = nil
+            resource.process.terminationHandler = nil
+            if resource.process.isRunning {
+                resource.process.terminate()
+            }
+            try? resource.standardOutput.close()
+            try? resource.standardError.close()
+        }
+        processes.removeAll()
+        processOutputMailbox.removeAll()
+    }
+
+    static func currentThreadIdentifier() -> UInt64 {
+        var identifier: UInt64 = 0
+        pthread_threadid_np(nil, &identifier)
+        return identifier
+    }
+}
+
+// MARK: - Provider bindings
+
+private extension PluginRuntime {
+    func makeBinding(for intentID: IntentID) -> IntentProviderBinding {
+        let runtime = self
+        let gate = invocationGate
+        let callbackMailbox = callbackMailbox
+
+        return IntentProviderBinding(intentID: intentID) { [weak runtime] envelope, context in
+            guard gate.acquire() else {
+                return .failure(IntentProviderFailure(code: .kernel(.providerRetired)))
+            }
+            defer { gate.release() }
+
+            guard let runtime else {
+                return .failure(IntentProviderFailure(code: .kernel(.providerRetired)))
+            }
+
+            let callToken = envelope.requestID.uuidString
+            let cancellation = PluginProviderCancellation()
+            return try await withTaskCancellationHandler {
+                try Task.checkCancellation()
+                return try await runtime.invokeProvider(
+                    callToken: callToken,
+                    envelope: envelope,
+                    context: context,
+                    cancellation: cancellation
+                )
+            } onCancel: {
+                cancellation.cancel()
+                callbackMailbox.enqueue(.cancelProvider(callToken: callToken))
+            }
+        }
+    }
+
+    func invokeProvider(
+        callToken: String,
+        envelope: IntentEnvelope,
+        context providerContext: IntentProviderContext,
+        cancellation: PluginProviderCancellation
+    ) async throws -> IntentProviderReply {
+        guard phase == .active else { throw PluginRuntimeError.runtimeStopped }
+        guard boundIntentIDs.contains(envelope.name) else {
+            throw PluginRuntimeError.providerHandlerUnavailable(envelope.name)
+        }
+        try Task.checkCancellation()
+        guard !cancellation.isCancelled else { throw CancellationError() }
+
+        return try await withCheckedThrowingContinuation { continuation in
+            pendingProviderCalls[callToken] = PendingProviderCall(
+                intentID: envelope.name,
+                context: providerContext,
+                cancellation: cancellation,
+                progress: ProviderProgressDelivery(context: providerContext),
+                continuation: continuation
+            )
+
+            do {
+                let accepted = try callJavaScript(
+                    "__tenonInvokeProvider",
+                    arguments: [
+                        callToken,
+                        envelope.name.rawValue,
+                        PluginRuntimeValueParsing.foundationObject(from: envelope.input),
+                        PluginRuntimeValueParsing.foundationObject(
+                            from: providerMetadata(envelope)
+                        ),
+                    ]
+                ).toBool()
+                guard accepted else {
+                    failProviderCall(
+                        callToken,
+                        error: PluginRuntimeError.providerHandlerUnavailable(envelope.name)
+                    )
+                    return
+                }
+                try drainBridgeMessages()
+                if cancellation.isCancelled {
+                    cancelProviderCall(callToken)
+                }
+            } catch {
+                failProviderCall(callToken, error: error)
+            }
+        }
+    }
+
+    func providerMetadata(_ envelope: IntentEnvelope) -> IntentValue {
+        var scope: [String: IntentValue] = [:]
+        if let workspaceID = envelope.scope.workspaceID {
+            scope["workspaceID"] = .string(workspaceID.uuidString)
+        }
+        if let paneID = envelope.scope.paneID {
+            scope["paneID"] = .string(paneID.uuidString)
+        }
+        if let userGestureID = envelope.scope.userGestureID {
+            scope["userGestureID"] = .string(userGestureID.uuidString)
+        }
+
+        return .object([
+            "requestID": .string(envelope.requestID.uuidString),
+            "caller": .object([
+                "id": .string(envelope.caller.id),
+                "kind": .string(envelope.caller.kind.rawValue),
+                "audience": .string(envelope.caller.audience.rawValue),
+                "sessionRevision": envelope.caller.sessionRevision > UInt64(Int64.max)
+                    ? .number(Double(envelope.caller.sessionRevision))
+                    : .integer(Int64(envelope.caller.sessionRevision)),
+            ]),
+            "scope": .object(scope),
+        ])
+    }
+
+    func failProviderCall(_ callToken: String, error: any Error) {
+        guard let pending = pendingProviderCalls.removeValue(forKey: callToken) else {
+            lateProviderReplyCount += 1
+            return
+        }
+        pending.cancellation.cancel()
+        pending.progress.cancel()
+        cancelNestedIntents(for: callToken)
+        do {
+            _ = try callJavaScript("__tenonCancelProvider", arguments: [callToken])
+        } catch {
+            pending.continuation.resume(throwing: error)
+            transitionToFailed(error)
+            return
+        }
+        pending.continuation.resume(throwing: error)
+    }
+
+    func cancelProviderCall(_ callToken: String) {
+        guard let pending = pendingProviderCalls.removeValue(forKey: callToken) else {
+            return
+        }
+        pending.cancellation.cancel()
+        pending.progress.cancel()
+        cancelNestedIntents(for: callToken)
+        do {
+            _ = try callJavaScript("__tenonCancelProvider", arguments: [callToken])
+        } catch {
+            pending.continuation.resume(throwing: error)
+            transitionToFailed(error)
+            return
+        }
+        pending.continuation.resume(throwing: CancellationError())
+    }
+
+    func cancelNestedIntents(for callToken: String) {
+        let tokens = pendingNestedIntents.compactMap { token, pending in
+            pending.callToken == callToken ? token : nil
+        }
+        for token in tokens {
+            pendingNestedIntents.removeValue(forKey: token)?.task.cancel()
+        }
+    }
+
+    func cancelAllNestedIntents() {
+        let tasks = pendingNestedIntents.values.map(\.task)
+        pendingNestedIntents.removeAll()
+        for task in tasks {
+            task.cancel()
+        }
+    }
+}
+
+// MARK: - Bridge messages
+
+private extension PluginRuntime {
+    func drainBridgeMessages() throws {
+        var handledCount = 0
+        while true {
+            let drained = javaScriptMailbox.drain()
+            if let error = drained.errors.first {
+                throw PluginRuntimeError.javascriptException(error)
+            }
+            guard !drained.messages.isEmpty else { return }
+
+            handledCount += drained.messages.count
+            guard handledCount <= Self.maximumBridgeMessagesPerDrain else {
+                throw PluginRuntimeError.resourceLimitExceeded("bridge messages per turn")
+            }
+            for message in drained.messages {
+                guard message.threadIdentifier == executor.threadIdentifier else {
+                    throw PluginRuntimeError.bridgeProtocolViolation(
+                        "JavaScript callback arrived on a foreign thread"
+                    )
+                }
+                try handleJavaScriptMessage(message)
+            }
+        }
+    }
+
+    func handleJavaScriptMessage(_ message: PluginJavaScriptMessage) throws {
+        guard let object = message.payload.objectValue else {
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "\(message.topic) payload must be an object"
+            )
+        }
+
+        switch message.topic {
+        case "log":
+            emitLog(object["message"]?.stringValue ?? "")
+        case "runtime.fatal":
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                object["reason"]?.stringValue ?? "fatal JavaScript runtime violation"
+            )
+
+        case "intent.bind":
+            try bindIntent(object)
+        case "intent.send":
+            try sendIntent(object)
+        case "intent.list":
+            listIntents(object)
+        case "provider.send":
+            try sendNestedIntent(object)
+        case "provider.progress":
+            reportProviderProgress(object)
+        case "provider.reply":
+            settleProviderReply(object)
+
+        case "event.bind":
+            if let name = object["name"]?.stringValue {
+                eventSubscriptions.withLock { subscriptions in
+                    _ = subscriptions.insert(name)
+                }
+            }
+        case "event.unbind":
+            if let name = object["name"]?.stringValue {
+                eventSubscriptions.withLock { subscriptions in
+                    _ = subscriptions.remove(name)
+                }
+            }
+
+        case "timer.start":
+            try startTimer(object)
+        case "timer.cancel":
+            if let handle = object["handle"]?.intValue {
+                timers.removeValue(forKey: handle)?.timer.invalidate()
+            }
+
+        case "process.start":
+            startProcess(object)
+        case "process.cancel":
+            if let handle = object["handle"]?.intValue {
+                cancelProcess(handle)
+            }
+
+        case "watch.start":
+            startWatcher(object)
+        case "watch.cancel":
+            if let handle = object["handle"]?.intValue {
+                watchers.removeValue(forKey: handle)?.stop()
+            }
+
+        case "storage.set":
+            try persistStorage(object)
+        case "status.set":
+            statusBarText = object["text"]?.stringValue
+            markStateChanged()
+        case "view.register":
+            registerView(object)
+        case "view.set":
+            setViewBody(object)
+
+        default:
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "unknown bridge topic \(message.topic)"
+            )
+        }
+    }
+
+    func bindIntent(_ object: [String: IntentValue]) throws {
+        guard phase == .staging else {
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "intent handlers may bind only during staging"
+            )
+        }
+        guard let rawName = object["name"]?.stringValue else {
+            throw PluginRuntimeError.bridgeProtocolViolation("intent.bind missing name")
+        }
+        let intentID = try IntentID(rawName)
+        guard manifest.intents.provides.contains(where: { $0.name == intentID }) else {
+            throw PluginRuntimeError.undeclaredIntentHandler(intentID)
+        }
+        guard boundIntentIDs.insert(intentID).inserted else {
+            throw PluginRuntimeError.duplicateIntentHandler(intentID)
+        }
+    }
+
+    func sendIntent(_ object: [String: IntentValue]) throws {
+        guard let token = object["token"]?.stringValue else {
+            throw PluginRuntimeError.bridgeProtocolViolation("intent.send missing token")
+        }
+        guard pendingOutboundIntentTokens.count < Self.maximumPendingOutboundIntents else {
+            _ = try callJavaScript(
+                "__tenonSettleIntent",
+                arguments: [
+                    token,
+                    PluginRuntimeValueParsing.foundationObject(
+                        from: Self.overloadedResultValue()
+                    ),
+                ]
+            )
+            return
+        }
+        let request = try PluginRuntimeValueParsing.intentRequest(
+            name: object["name"],
+            input: object["input"],
+            options: object["options"]
+        )
+        pendingOutboundIntentTokens.insert(token)
+
+        let send = configuration.intents.send
+        let callback = callbackMailbox
+        Task.detached {
+            let result = await send(request)
+            callback.enqueue(.intentResult(token: token, result: result))
+        }
+    }
+
+    func listIntents(_ object: [String: IntentValue]) {
+        guard let token = object["token"]?.stringValue else { return }
+        guard pendingIntentListTokens.count < Self.maximumPendingOutboundIntents else {
+            _ = try? callJavaScript(
+                "__tenonSettleList",
+                arguments: [token, []]
+            )
+            return
+        }
+        pendingIntentListTokens.insert(token)
+        let list = configuration.intents.list
+        let callback = callbackMailbox
+        Task.detached {
+            let result = await list()
+            callback.enqueue(.intentList(token: token, value: result))
+        }
+    }
+
+    func sendNestedIntent(_ object: [String: IntentValue]) throws {
+        guard let callToken = object["callToken"]?.stringValue,
+              let token = object["token"]?.stringValue,
+              let pending = pendingProviderCalls[callToken]
+        else {
+            return
+        }
+        guard !pending.cancellation.isCancelled else {
+            cancelProviderCall(callToken)
+            return
+        }
+        let request = try PluginRuntimeValueParsing.intentRequest(
+            name: object["name"],
+            input: object["input"],
+            options: object["options"]
+        )
+        guard pendingNestedIntents.count < Self.maximumPendingOutboundIntents else {
+            _ = try callJavaScript(
+                "__tenonSettleNestedIntent",
+                arguments: [
+                    token,
+                    PluginRuntimeValueParsing.foundationObject(
+                        from: Self.overloadedResultValue()
+                    ),
+                ]
+            )
+            return
+        }
+        let coreRequest = IntentProviderSendRequest(
+            intentID: request.intentID,
+            input: request.input,
+            target: request.target,
+            idempotencyKey: request.idempotencyKey,
+            requestedTimeout: request.requestedTimeout,
+            scopeOverride: request.scopeOverride
+        )
+        let providerContext = pending.context
+        let cancellation = pending.cancellation
+        let callback = callbackMailbox
+        // The synchronous JavaScript bridge cannot await this operation. The runtime actor
+        // therefore owns the task handle until completion or outer-call termination.
+        let task = Task {
+            let result = await providerContext.send(coreRequest)
+            guard !Task.isCancelled, !cancellation.isCancelled else { return }
+            callback.enqueue(
+                .nestedIntentResult(
+                    callToken: callToken,
+                    token: token,
+                    result: result
+                )
+            )
+        }
+        pendingNestedIntents[token] = PendingNestedIntent(
+            callToken: callToken,
+            task: task
+        )
+        if pending.cancellation.isCancelled {
+            cancelProviderCall(callToken)
+        }
+    }
+
+    func reportProviderProgress(_ object: [String: IntentValue]) {
+        guard let callToken = object["callToken"]?.stringValue,
+              let pending = pendingProviderCalls[callToken],
+              let progress = PluginRuntimeValueParsing.progress(from: object["progress"])
+        else {
+            return
+        }
+        pending.progress.yield(progress)
+    }
+
+    func settleProviderReply(_ object: [String: IntentValue]) {
+        guard let callToken = object["callToken"]?.stringValue else { return }
+        guard let pending = pendingProviderCalls.removeValue(forKey: callToken) else {
+            lateProviderReplyCount += 1
+            markStateChanged()
+            return
+        }
+        pending.progress.cancel()
+        cancelNestedIntents(for: callToken)
+        guard !pending.cancellation.isCancelled else {
+            pending.continuation.resume(throwing: CancellationError())
+            return
+        }
+        if object["ok"]?.boolValue == true {
+            pending.continuation.resume(returning: .success(object["value"] ?? .null))
+        } else {
+            pending.continuation.resume(
+                returning: .failure(
+                    PluginRuntimeValueParsing.providerFailure(from: object["error"])
+                )
+            )
+        }
+    }
+}
+
+// MARK: - External callback delivery
+
+private extension PluginRuntime {
+    func consumeCallback(_ event: PluginRuntimeCallbackEvent) {
+        guard phase == .staging || phase == .active else { return }
+
+        do {
+            switch event {
+            case let .intentResult(token, result):
+                guard pendingOutboundIntentTokens.remove(token) != nil else { return }
+                _ = try callJavaScript(
+                    "__tenonSettleIntent",
+                    arguments: [
+                        token,
+                        PluginRuntimeValueParsing.foundationObject(
+                            from: PluginRuntimeValueParsing.intentResultValue(result)
+                        ),
+                    ]
+                )
+
+            case let .intentList(token, value):
+                guard pendingIntentListTokens.remove(token) != nil else { return }
+                _ = try callJavaScript(
+                    "__tenonSettleList",
+                    arguments: [
+                        token,
+                        PluginRuntimeValueParsing.foundationObject(from: value),
+                    ]
+                )
+
+            case let .nestedIntentResult(callToken, token, result):
+                guard let pending = pendingNestedIntents[token],
+                      pending.callToken == callToken
+                else {
+                    return
+                }
+                pendingNestedIntents.removeValue(forKey: token)
+                guard let providerCall = pendingProviderCalls[callToken] else {
+                    lateProviderReplyCount += 1
+                    markStateChanged()
+                    return
+                }
+                guard !providerCall.cancellation.isCancelled else {
+                    cancelProviderCall(callToken)
+                    return
+                }
+                _ = try callJavaScript(
+                    "__tenonSettleNestedIntent",
+                    arguments: [
+                        token,
+                        PluginRuntimeValueParsing.foundationObject(
+                            from: PluginRuntimeValueParsing.intentResultValue(result)
+                        ),
+                    ]
+                )
+
+            case let .cancelProvider(callToken):
+                cancelProviderCall(callToken)
+
+            case let .timerFired(handle):
+                guard timers[handle] != nil else { return }
+                let stillRegistered = try callJavaScript(
+                    "__tenonFireTimer",
+                    arguments: [handle]
+                ).toBool()
+                if !stillRegistered {
+                    timers.removeValue(forKey: handle)?.timer.invalidate()
+                } else if timers[handle]?.repeats == false {
+                    timers.removeValue(forKey: handle)?.timer.invalidate()
+                }
+
+            case let .processOutputAvailable(handle):
+                deliverProcessOutput(handle)
+
+            case let .processEndOfFile(handle, isStandardError):
+                markProcessEndOfFile(handle, isStandardError: isStandardError)
+
+            case let .processTerminated(handle, status):
+                markProcessTerminated(handle, status: status)
+
+            case let .watchedPaths(handle, paths):
+                guard watchers[handle] != nil else { return }
+                _ = try callJavaScript(
+                    "__tenonWatchPaths",
+                    arguments: [handle, paths]
+                )
+
+            case let .watchOverflow(handle):
+                guard watchers[handle] != nil else { return }
+                throw PluginRuntimeError.resourceLimitExceeded(
+                    "pending paths for watcher \(handle)"
+                )
+            }
+
+            try drainBridgeMessages()
+        } catch {
+            emitLog("callback bridge error: \(error)")
+            transitionToFailed(error)
+        }
+    }
+
+    func transitionToFailed(_ error: any Error) {
+        guard phase == .active || phase == .staging else { return }
+        phase = .failed
+        stopOwnedResources()
+        callbackMailbox.close()
+        let pending = pendingProviderCalls
+        pendingProviderCalls.removeAll()
+        cancelAllNestedIntents()
+        for (callToken, call) in pending {
+            call.cancellation.cancel()
+            call.progress.cancel()
+            _ = try? callJavaScript("__tenonCancelProvider", arguments: [callToken])
+            call.continuation.resume(throwing: error)
+        }
+        releaseJavaScriptResources()
+        markStateChanged()
+    }
+}
+
+// MARK: - Timers, processes, and file watches
+
+private extension PluginRuntime {
+    func startTimer(_ object: [String: IntentValue]) throws {
+        guard let handle = object["handle"]?.intValue,
+              let milliseconds = object["milliseconds"]?.doubleValue,
+              milliseconds.isFinite,
+              milliseconds >= 0
+        else {
+            throw PluginRuntimeError.bridgeProtocolViolation("invalid timer.start")
+        }
+        let repeats = object["repeats"]?.boolValue ?? false
+        guard !repeats || milliseconds >= 10 else {
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "repeating timer interval must be at least 10 milliseconds"
+            )
+        }
+        guard timers.count < Self.maximumTimers else {
+            throw PluginRuntimeError.resourceLimitExceeded("timers")
+        }
+        let callback = callbackMailbox
+        let timer = Timer(timeInterval: max(0.001, milliseconds / 1_000), repeats: repeats) {
+            _ in
+            callback.enqueue(.timerFired(handle: handle))
+        }
+        RunLoop.current.add(timer, forMode: .common)
+        timers[handle] = TimerResource(timer: timer, repeats: repeats)
+    }
+
+    func startProcess(_ object: [String: IntentValue]) {
+        guard let handle = object["handle"]?.intValue else {
+            emitLog("tenon.process.stream rejected: invalid process handle")
+            return
+        }
+        guard manifest.permissions.contains("process.exec") else {
+            reportPermissionViolation(
+                "tenon.process.stream requires permission process.exec"
+            )
+            rejectProcess(handle)
+            return
+        }
+        guard processes.count < Self.maximumProcesses else {
+            rejectProcess(
+                handle,
+                reason: "tenon.process.stream rejected: process limit reached"
+            )
+            return
+        }
+        guard let executable = object["executable"]?.stringValue,
+              !executable.isEmpty
+        else {
+            rejectProcess(
+                handle,
+                reason: "tenon.process.stream rejected: invalid process description"
+            )
+            return
+        }
+        let arguments = object["arguments"]?.arrayValue?.compactMap(\.stringValue) ?? []
+        guard arguments.count == (object["arguments"]?.arrayValue?.count ?? 0) else {
+            rejectProcess(
+                handle,
+                reason: "tenon.process.stream rejected: arguments must be strings"
+            )
+            return
+        }
+
+        let process = Process()
+        if executable.hasPrefix("/") {
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+        } else {
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = [executable] + arguments
+        }
+        if let cwd = object["cwd"]?.stringValue, !cwd.isEmpty {
+            process.currentDirectoryURL = URL(
+                fileURLWithPath: (cwd as NSString).expandingTildeInPath
+            )
+        }
+        if let environment = object["environment"]?.objectValue {
+            var merged = ProcessInfo.processInfo.environment
+            for (key, value) in environment {
+                if let value = value.stringValue {
+                    merged[key] = value
+                }
+            }
+            process.environment = merged
+        }
+
+        let outputPipe = Pipe()
+        let errorPipe = Pipe()
+        process.standardOutput = outputPipe
+        process.standardError = errorPipe
+
+        let output = outputPipe.fileHandleForReading
+        let standardError = errorPipe.fileHandleForReading
+        let callback = callbackMailbox
+        let outputMailbox = processOutputMailbox
+
+        output.readabilityHandler = { fileHandle in
+            let data = fileHandle.availableData
+            if data.isEmpty {
+                callback.enqueue(
+                    .processEndOfFile(handle: handle, isStandardError: false)
+                )
+            } else if outputMailbox.append(
+                data,
+                isStandardError: false,
+                handle: handle
+            ) {
+                callback.enqueue(.processOutputAvailable(handle: handle))
+            }
+        }
+        standardError.readabilityHandler = { fileHandle in
+            let data = fileHandle.availableData
+            if data.isEmpty {
+                callback.enqueue(
+                    .processEndOfFile(handle: handle, isStandardError: true)
+                )
+            } else if outputMailbox.append(
+                data,
+                isStandardError: true,
+                handle: handle
+            ) {
+                callback.enqueue(.processOutputAvailable(handle: handle))
+            }
+        }
+        process.terminationHandler = { process in
+            callback.enqueue(
+                .processTerminated(handle: handle, status: process.terminationStatus)
+            )
+        }
+
+        processOutputMailbox.register(handle: handle)
+        processes[handle] = ProcessResource(
+            process: process,
+            standardOutput: output,
+            standardError: standardError
+        )
+        do {
+            try processRun(process)
+        } catch {
+            cancelProcess(handle)
+            rejectProcess(
+                handle,
+                reason: "tenon.process.stream could not start \(executable): \(error)"
+            )
+        }
+    }
+
+    func rejectProcess(_ handle: Int, reason: String? = nil) {
+        if let reason {
+            emitLog(reason)
+        }
+        _ = try? callJavaScript("__tenonProcessExit", arguments: [handle, -1])
+    }
+
+    func deliverProcessOutput(_ handle: Int) {
+        guard processes[handle] != nil,
+              let batch = processOutputMailbox.drain(handle: handle)
+        else {
+            return
+        }
+        let stdout = String(decoding: batch.stdout, as: UTF8.self)
+        let stderr = String(decoding: batch.stderr, as: UTF8.self)
+        _ = try? callJavaScript(
+            "__tenonProcessOutput",
+            arguments: [handle, stdout, stderr, batch.overflowed]
+        )
+        if batch.overflowed, let resource = processes[handle], resource.process.isRunning {
+            resource.process.terminate()
+        }
+    }
+
+    func markProcessEndOfFile(_ handle: Int, isStandardError: Bool) {
+        guard var resource = processes[handle] else { return }
+        if isStandardError {
+            resource.standardErrorEnded = true
+            resource.standardError.readabilityHandler = nil
+        } else {
+            resource.standardOutputEnded = true
+            resource.standardOutput.readabilityHandler = nil
+        }
+        processes[handle] = resource
+        finishProcessIfComplete(handle)
+    }
+
+    func markProcessTerminated(_ handle: Int, status: Int32) {
+        guard var resource = processes[handle] else { return }
+        resource.terminationStatus = status
+        processes[handle] = resource
+        deliverProcessOutput(handle)
+        finishProcessIfComplete(handle)
+    }
+
+    func finishProcessIfComplete(_ handle: Int) {
+        guard let resource = processes[handle],
+              resource.standardOutputEnded,
+              resource.standardErrorEnded,
+              let status = resource.terminationStatus
+        else {
+            return
+        }
+        deliverProcessOutput(handle)
+        resource.process.terminationHandler = nil
+        try? resource.standardOutput.close()
+        try? resource.standardError.close()
+        processes.removeValue(forKey: handle)
+        processOutputMailbox.remove(handle: handle)
+        _ = try? callJavaScript("__tenonProcessExit", arguments: [handle, status])
+    }
+
+    func cancelProcess(_ handle: Int) {
+        guard let resource = processes.removeValue(forKey: handle) else { return }
+        resource.standardOutput.readabilityHandler = nil
+        resource.standardError.readabilityHandler = nil
+        resource.process.terminationHandler = nil
+        if resource.process.isRunning {
+            resource.process.terminate()
+        }
+        try? resource.standardOutput.close()
+        try? resource.standardError.close()
+        processOutputMailbox.remove(handle: handle)
+    }
+
+    func startWatcher(_ object: [String: IntentValue]) {
+        guard let handle = object["handle"]?.intValue else {
+            emitLog("tenon.fs.watch rejected: invalid watch handle")
+            return
+        }
+        guard manifest.permissions.contains("filesystem.read") else {
+            reportPermissionViolation("tenon.fs.watch requires permission filesystem.read")
+            rejectWatcher(handle)
+            return
+        }
+        guard watchers.count < Self.maximumWatchers else {
+            rejectWatcher(
+                handle,
+                reason: "tenon.fs.watch rejected: watcher limit reached"
+            )
+            return
+        }
+        guard let path = object["path"]?.stringValue,
+              !path.isEmpty
+        else {
+            rejectWatcher(
+                handle,
+                reason: "tenon.fs.watch rejected: invalid watch description"
+            )
+            return
+        }
+        let callback = callbackMailbox
+        let watcher = PathWatcher(
+            path: URL(fileURLWithPath: (path as NSString).expandingTildeInPath),
+            recursive: object["recursive"]?.boolValue ?? false,
+            label: "dev.tenon.plugin-watch.\(manifest.id.rawValue).\(handle)",
+            onOverflow: {
+                callback.enqueue(.watchOverflow(handle: handle))
+            }
+        ) { paths in
+            callback.enqueue(.watchedPaths(handle: handle, paths: paths))
+        }
+        watchers[handle] = watcher
+        guard watcherStart(watcher) else {
+            watchers.removeValue(forKey: handle)
+            rejectWatcher(
+                handle,
+                reason: "tenon.fs.watch rejected: FSEvents stream could not start"
+            )
+            return
+        }
+    }
+
+    func rejectWatcher(_ handle: Int, reason: String? = nil) {
+        if let reason {
+            emitLog(reason)
+        }
+        _ = try? callJavaScript("__tenonWatchRejected", arguments: [handle])
+    }
+}
+
+// MARK: - Contributions and snapshots
+
+private extension PluginRuntime {
+    func persistStorage(_ object: [String: IntentValue]) throws {
+        guard let token = object["token"]?.stringValue,
+              let key = object["key"]?.stringValue,
+              let value = object["value"]
+        else {
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "storage.set requires token, key, and value"
+            )
+        }
+        guard pendingStorageTokens.count < Self.maximumPendingStorageWrites else {
+            _ = try callJavaScript(
+                "__tenonSettleStorage",
+                arguments: [
+                    token,
+                    false,
+                    "too many pending storage writes",
+                ]
+            )
+            return
+        }
+        guard pendingStorageTokens.insert(token).inserted else {
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "duplicate storage write token"
+            )
+        }
+
+        let predecessor = storageCommitTail
+        let sink = configuration.persistStorage
+        let task = Task.detached { [weak self] in
+            await predecessor?.value
+            do {
+                try await sink(key, value)
+                await self?.settleStorage(token: token, errorMessage: nil)
+            } catch {
+                await self?.settleStorage(
+                    token: token,
+                    errorMessage: String(describing: error)
+                )
+            }
+        }
+        storageCommitTail = task
+    }
+
+    func settleStorage(token: String, errorMessage: String?) {
+        guard pendingStorageTokens.remove(token) != nil else { return }
+        guard phase == .staging || phase == .active || phase == .stopping else {
+            return
+        }
+        do {
+            _ = try callJavaScript(
+                "__tenonSettleStorage",
+                arguments: [
+                    token,
+                    errorMessage == nil,
+                    errorMessage ?? "",
+                ]
+            )
+            try drainBridgeMessages()
+        } catch {
+            emitLog("storage callback bridge error: \(error)")
+            transitionToFailed(error)
+        }
+    }
+
+    func registerView(_ object: [String: IntentValue]) {
+        guard let viewID = object["viewID"]?.stringValue else { return }
+        viewRegistrations[viewID] = ViewRegistration(
+            title: object["title"]?.stringValue ?? viewID,
+            instanced: object["instanced"]?.boolValue ?? false
+        )
+        markStateChanged()
+    }
+
+    func setViewBody(_ object: [String: IntentValue]) {
+        guard let viewID = object["viewID"]?.stringValue,
+              let registration = viewRegistrations[viewID],
+              let specification = object["specification"]
+        else {
+            return
+        }
+        let instanceID = object["instanceID"]?.stringValue
+        let key: String
+        if registration.instanced {
+            guard let instanceID else { return }
+            key = instanceID
+        } else {
+            key = Self.singletonViewKey
+        }
+        let parsed = PluginRuntimeValueParsing.viewBody(from: specification)
+        viewBodies[viewID, default: [:]][key] = ViewBody(
+            items: parsed.items,
+            body: parsed.body,
+            subtitle: parsed.subtitle,
+            actions: parsed.actions
+        )
+        markStateChanged()
+    }
+
+    func makeSnapshot() -> PluginRuntimeSnapshot {
+        PluginRuntimeSnapshot(
+            revision: revision,
+            manifest: manifest,
+            phase: phase,
+            statusBarText: statusBarText,
+            views: makeViewSnapshots(),
+            openViewInstances: openViewInstances.sorted {
+                ($0.viewID, $0.instanceID) < ($1.viewID, $1.instanceID)
+            },
+            permissionViolations: permissionViolations,
+            runtimeThreadIdentifier: executor.threadIdentifier,
+            pendingNestedIntentCount: pendingNestedIntents.count,
+            lateProviderReplyCount: lateProviderReplyCount
+        )
+    }
+
+    func makeViewSnapshots() -> [PluginViewInfo] {
+        var result: [PluginViewInfo] = []
+        for (viewID, registration) in viewRegistrations {
+            if registration.instanced {
+                for (instanceID, body) in viewBodies[viewID] ?? [:] {
+                    result.append(
+                        PluginViewInfo(
+                            viewID: viewID,
+                            instanceID: instanceID,
+                            instanced: true,
+                            title: registration.title,
+                            subtitle: body.subtitle,
+                            actions: body.actions,
+                            items: body.items,
+                            body: body.body
+                        )
+                    )
+                }
+            } else {
+                let body = viewBodies[viewID]?[Self.singletonViewKey]
+                    ?? ViewBody(items: [], body: nil, subtitle: nil, actions: [])
+                result.append(
+                    PluginViewInfo(
+                        viewID: viewID,
+                        instanceID: nil,
+                        instanced: false,
+                        title: registration.title,
+                        subtitle: body.subtitle,
+                        actions: body.actions,
+                        items: body.items,
+                        body: body.body
+                    )
+                )
+            }
+        }
+        return result.sorted {
+            ($0.viewID, $0.instanceID ?? "") < ($1.viewID, $1.instanceID ?? "")
+        }
+    }
+
+    func markStateChanged() {
+        revision &+= 1
+        stateEmitter.emit(makeSnapshot())
+    }
+
+    func reportPermissionViolation(_ message: String) {
+        guard permissionViolationSet.insert(message).inserted else { return }
+        permissionViolations.append(message)
+        emitLog(message)
+        markStateChanged()
+    }
+
+    func emitLog(_ message: String) {
+        let prefix = "[\(manifest.name)] "
+        let sink = configuration.log
+        Task.detached {
+            await sink(prefix + message)
+        }
+    }
+
+    func decodeActionIdentifier(_ identifier: String) -> Any {
+        guard identifier.hasPrefix("\u{1}") else { return identifier }
+        let json = String(identifier.dropFirst())
+        guard let data = json.data(using: .utf8),
+              let value = try? IntentValue(jsonData: data)
+        else {
+            return identifier
+        }
+        return PluginRuntimeValueParsing.foundationObject(from: value)
+    }
+
+    static func overloadedResultValue() -> IntentValue {
+        PluginRuntimeValueParsing.intentResultValue(
+            .failure(
+                error: IntentError(
+                    code: .kernel(.overloaded),
+                    details: nil,
+                    retryable: true,
+                    retryAfterMilliseconds: nil,
+                    outcome: .notStarted
+                ),
+                requestID: UUID(),
+                providerID: nil
+            )
+        )
+    }
 }

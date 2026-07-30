@@ -1,28 +1,33 @@
 import Foundation
+import TenonIntentCore
 
 public enum SlotContent: Equatable, Sendable {
     case terminal
-    case files
     case changes
     case docs
-    case browser(url: URL)
-    case pluginView(plugin: String, viewID: String)
+    /// One file open as a pane. Created by `workspace.tab.create.v1` or
+    /// `workspace.pane.content.set.v1`; the host owns the native editor.
+    case file(path: String)
+    case pluginView(pluginID: PluginID, viewID: String)
+    /// The host's default diff view, showing the change described by `request`.
+    /// Created by `workspace.tab.create.v1` with typed diff content.
+    case diff(DiffRequest)
     case empty
 
     public var busValue: String {
         switch self {
         case .terminal:
             return "terminal"
-        case .files:
-            return "files"
+        case .file(let path):
+            return "file:\(path)"
         case .changes:
             return "changes"
         case .docs:
             return "docs"
-        case .browser:
-            return "browser"
-        case .pluginView(let plugin, let viewID):
-            return "plugin-view:\(plugin):\(viewID)"
+        case .pluginView(let pluginID, let viewID):
+            return "plugin-view:\(pluginID.rawValue):\(viewID)"
+        case .diff(let request):
+            return "diff:\(request.fileName)"
         case .empty:
             return "empty"
         }
@@ -121,8 +126,13 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         self.activeTabID = activeTabID
     }
 
-    public init(id: UUID = UUID(), name: String, path: URL) {
-        let tab = Tab()
+    public init(
+        id: UUID = UUID(),
+        name: String,
+        path: URL,
+        content: SlotContent = .terminal
+    ) {
+        let tab = Tab(content: content)
         self.init(
             id: id,
             name: name,
@@ -203,9 +213,10 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         path: URL = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath,
             isDirectory: true
-        )
+        ),
+        content: SlotContent = .terminal
     ) {
-        let workspace = Workspace(name: name, path: path)
+        let workspace = Workspace(name: name, path: path, content: content)
         self.workspaces = [workspace]
         self.activeWorkspaceID = workspace.id
     }
@@ -262,6 +273,24 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         }
     }
 
+    /// Every `.pluginView` slot across all workspaces and tabs, as (slotID, pluginID,
+    /// viewID). The host reconciles plugin-view *instances* off this — one live instance
+    /// per pane holding a plugin view, keyed by the pane's slot id (T-012). Order is
+    /// stable (workspace → tab → slot).
+    public var pluginViewSlots: [(slotID: UUID, pluginID: PluginID, viewID: String)] {
+        workspaces.flatMap { workspace in
+            workspace.tabs.flatMap { tab in
+                tab.slots.compactMap {
+                    slot -> (slotID: UUID, pluginID: PluginID, viewID: String)? in
+                    guard case let .pluginView(pluginID, viewID) = slot.content else {
+                        return nil
+                    }
+                    return (slot.id, pluginID, viewID)
+                }
+            }
+        }
+    }
+
     public func slot(id: UUID) -> WorkspaceSlot? {
         for workspace in workspaces {
             for tab in workspace.tabs {
@@ -274,8 +303,12 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     }
 
     @discardableResult
-    public mutating func addWorkspace(name: String, path: URL) -> [WorkspaceEvent] {
-        let workspace = Workspace(name: name, path: path)
+    public mutating func addWorkspace(
+        name: String,
+        path: URL,
+        content: SlotContent = .terminal
+    ) -> [WorkspaceEvent] {
+        let workspace = Workspace(name: name, path: path, content: content)
         let tab = workspace.tabs[0]
         let slot = tab.slots[0]
         workspaces.append(workspace)
@@ -346,10 +379,10 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     }
 
     @discardableResult
-    public mutating func newTab() -> [WorkspaceEvent] {
+    public mutating func newTab(content: SlotContent = .terminal) -> [WorkspaceEvent] {
         guard let workspaceIndex = activeWorkspaceIndex else { return [] }
         let workspaceID = workspaces[workspaceIndex].id
-        let tab = Tab()
+        let tab = Tab(content: content)
         let slot = tab.slots[0]
 
         workspaces[workspaceIndex].tabs.append(tab)

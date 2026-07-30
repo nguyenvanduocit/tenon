@@ -1,9 +1,13 @@
 import Foundation
 import Observation
+import TenonIntentCore
 
 @Observable
 public final class WorkspaceStore {
     public private(set) var catalog: WorkspaceCatalog
+    /// Changes whenever a successful workspace mutation publishes a new catalog.
+    /// Cursor-based readers use this identity to reject mixed-version pages.
+    public private(set) var snapshotID = UUID()
 
     @ObservationIgnored
     public var onEvents: ((
@@ -11,12 +15,35 @@ public final class WorkspaceStore {
         _ snapshot: WorkspaceCatalog
     ) -> Void)?
 
-    public init(catalog: WorkspaceCatalog = WorkspaceCatalog()) {
+    /// The content a fresh pane opens with when the caller doesn't ask for a specific
+    /// one. The shell wires these to the user's `AppPreferences`; the default keeps the
+    /// bare store (and every test that never sets them) opening terminals.
+    @ObservationIgnored public var newTabContentProvider: () -> SlotContent = { .terminal }
+    @ObservationIgnored public var newSplitContentProvider: () -> SlotContent = { .terminal }
+    @ObservationIgnored public var newWorkspaceContentProvider: () -> SlotContent = { .terminal }
+
+    /// Opened views are recorded here so the empty-tab launcher can offer a
+    /// "recently opened" list. Nil in headless tests that don't exercise it.
+    public let recent: RecentStore?
+
+    /// Opened workspaces are recorded here so the sidebar's Add-Workspace menu can
+    /// offer them again after they're closed. Nil in headless tests that skip it.
+    public let recentWorkspaces: RecentWorkspaceStore?
+
+    public init(
+        catalog: WorkspaceCatalog = WorkspaceCatalog(),
+        recent: RecentStore? = nil,
+        recentWorkspaces: RecentWorkspaceStore? = nil
+    ) {
         self.catalog = catalog
+        self.recent = recent
+        self.recentWorkspaces = recentWorkspaces
     }
 
-    public func addWorkspace(name: String, path: URL) {
-        apply { $0.addWorkspace(name: name, path: path) }
+    public func addWorkspace(name: String, path: URL, content: SlotContent? = nil) {
+        if apply({ $0.addWorkspace(name: name, path: path, content: content ?? newWorkspaceContentProvider()) }) {
+            recentWorkspaces?.record(name: name, path: path)
+        }
     }
 
     public func removeWorkspace(_ id: UUID) {
@@ -27,8 +54,9 @@ public final class WorkspaceStore {
         apply { $0.selectWorkspace(id) }
     }
 
-    public func newTab() {
-        apply { $0.newTab() }
+    public func newTab(content: SlotContent? = nil) {
+        let resolved = content ?? newTabContentProvider()
+        if apply({ $0.newTab(content: resolved) }) { recent?.record(resolved) }
     }
 
     public func selectTab(_ id: UUID) {
@@ -48,22 +76,24 @@ public final class WorkspaceStore {
     }
 
     public func addSlot(content: SlotContent = .terminal) {
-        apply { $0.addSlot(content: content) }
+        if apply({ $0.addSlot(content: content) }) { recent?.record(content) }
     }
 
     public func splitActiveSlot(
         _ axis: SplitAxis,
-        content: SlotContent = .terminal
+        content: SlotContent? = nil
     ) {
-        apply { $0.splitActiveSlot(axis, content: content) }
+        let resolved = content ?? newSplitContentProvider()
+        if apply({ $0.splitActiveSlot(axis, content: resolved) }) { recent?.record(resolved) }
     }
 
     public func splitSlot(
         _ id: UUID,
         _ axis: SplitAxis,
-        content: SlotContent = .terminal
+        content: SlotContent? = nil
     ) {
-        apply { $0.splitSlot(id, axis, content: content) }
+        let resolved = content ?? newSplitContentProvider()
+        if apply({ $0.splitSlot(id, axis, content: resolved) }) { recent?.record(resolved) }
     }
 
     public func closeSlot(_ id: UUID) {
@@ -88,7 +118,23 @@ public final class WorkspaceStore {
     }
 
     public func setSlotContent(_ id: UUID, _ content: SlotContent) {
-        apply { $0.setSlotContent(id, content) }
+        if apply({ $0.setSlotContent(id, content) }) { recent?.record(content) }
+    }
+
+    /// Shows `request` in the active tab: reuses an existing diff pane if one is
+    /// already open there (so clicking file after file changes the same pane), and
+    /// otherwise splits the active slot to make one — never opens a new tab.
+    public func showDiff(_ request: DiffRequest) {
+        let content = SlotContent.diff(request)
+        if let existing = catalog.activeTab?.slots.first(where: {
+            if case .diff = $0.content { return true }
+            return false
+        }) {
+            setSlotContent(existing.id, content)
+            focusSlot(existing.id)
+        } else {
+            splitActiveSlot(.horizontal, content: content)
+        }
     }
 
     public func moveSlotToNewTab(_ id: UUID) {
@@ -111,12 +157,15 @@ public final class WorkspaceStore {
         apply { $0.applyResize(transaction) }
     }
 
-    private func apply(_ mutation: (inout WorkspaceCatalog) -> [WorkspaceEvent]) {
+    @discardableResult
+    private func apply(_ mutation: (inout WorkspaceCatalog) -> [WorkspaceEvent]) -> Bool {
         var next = catalog
         let events = mutation(&next)
-        guard !events.isEmpty else { return }
+        guard !events.isEmpty else { return false }
         catalog = next
+        snapshotID = UUID()
         onEvents?(events, next)
+        return true
     }
 }
 
@@ -124,165 +173,222 @@ public extension PluginHost {
     func emit(
         workspaceEvents events: [WorkspaceEvent],
         in snapshot: WorkspaceCatalog
-    ) {
-        guard !events.isEmpty else { return }
+    ) async {
+        guard !events.isEmpty else {
+            return
+        }
 
         for event in events {
             let representation = Self.busRepresentation(of: event)
-            emit(event: representation.name, payload: representation.payload)
+            await emit(
+                event: representation.name,
+                payload: representation.payload
+            )
         }
 
-        emit(event: "workspace.changed", payload: [
-            "workspaces": snapshot.workspaces.count,
-            "tabs": snapshot.workspaces.reduce(0) { $0 + $1.tabs.count },
-            "slots": snapshot.allSlotIDs.count,
-            "activeWorkspaceId": snapshot.activeWorkspaceID.uuidString,
-        ])
+        await emit(
+            event: "workspace.changed",
+            payload: .object([
+                "workspaces": .integer(Int64(snapshot.workspaces.count)),
+                "tabs": .integer(
+                    Int64(
+                        snapshot.workspaces.reduce(0) {
+                            $0 + $1.tabs.count
+                        }
+                    )
+                ),
+                "slots": .integer(Int64(snapshot.allSlotIDs.count)),
+                "activeWorkspaceId": .string(
+                    snapshot.activeWorkspaceID.uuidString
+                ),
+            ])
+        )
+        await reconcileViewInstances(from: snapshot)
     }
 
     private static func busRepresentation(
         of event: WorkspaceEvent
-    ) -> (name: String, payload: [String: Any]) {
+    ) -> (name: String, payload: IntentValue) {
         switch event {
         case .workspaceAdded(let workspace):
             return (
                 "workspace.added",
-                ["workspaceId": workspace.uuidString]
+                .object([
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .workspaceRemoved(let workspace):
             return (
                 "workspace.removed",
-                ["workspaceId": workspace.uuidString]
+                .object([
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .workspaceSelected(let workspace):
             return (
                 "workspace.selected",
-                ["workspaceId": workspace.uuidString]
+                .object([
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .tabOpened(let tab, let workspace):
             return (
                 "workspace.tab-opened",
-                [
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .tabClosed(let tab, let workspace):
             return (
                 "workspace.tab-closed",
-                [
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .tabSelected(let tab, let workspace):
             return (
                 "workspace.tab-selected",
-                [
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .slotOpened(let slot, let tab, let workspace):
             return (
                 "workspace.slot-opened",
-                [
-                    "slotId": slot.uuidString,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotId": .string(slot.uuidString),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .slotClosed(let slot, let tab, let workspace):
             return (
                 "workspace.slot-closed",
-                [
-                    "slotId": slot.uuidString,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotId": .string(slot.uuidString),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .slotFocused(let slot, let tab, let workspace):
             return (
                 "workspace.slot-focused",
-                [
-                    "slotId": slot.uuidString,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotId": .string(slot.uuidString),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
-        case .slotSplit(let original, let new, let axis, let tab, let workspace):
+        case let .slotSplit(
+            original,
+            new,
+            axis,
+            tab,
+            workspace
+        ):
             return (
                 "workspace.slot-split",
-                [
-                    "slotId": original.uuidString,
-                    "newSlotId": new.uuidString,
-                    "axis": axis.busValue,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotId": .string(original.uuidString),
+                    "newSlotId": .string(new.uuidString),
+                    "axis": .string(axis.busValue),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
         case .slotsMoved(let slots, let tab, let workspace):
             return (
                 "workspace.slots-moved",
-                [
-                    "slotIds": slots.map(\.uuidString),
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotIds": .array(
+                        slots.map {
+                            .string($0.uuidString)
+                        }
+                    ),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
-        case .slotsSwapped(let first, let second, let tab, let workspace):
+        case let .slotsSwapped(
+            first,
+            second,
+            tab,
+            workspace
+        ):
             return (
                 "workspace.slots-swapped",
-                [
-                    "firstSlotId": first.uuidString,
-                    "secondSlotId": second.uuidString,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "firstSlotId": .string(first.uuidString),
+                    "secondSlotId": .string(second.uuidString),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
-        case .slotsResized(let slots, let detached, let tab, let workspace):
+        case let .slotsResized(
+            slots,
+            detached,
+            tab,
+            workspace
+        ):
             return (
                 "workspace.slots-resized",
-                [
-                    "slotIds": slots.map(\.uuidString),
-                    "detached": detached,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotIds": .array(
+                        slots.map {
+                            .string($0.uuidString)
+                        }
+                    ),
+                    "detached": .bool(detached),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
-        case .slotContentChanged(let slot, let content, let tab, let workspace):
+        case let .slotContentChanged(
+            slot,
+            content,
+            tab,
+            workspace
+        ):
             return (
                 "workspace.slot-content-changed",
-                [
-                    "slotId": slot.uuidString,
-                    "content": content.busValue,
-                    "tabId": tab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotId": .string(slot.uuidString),
+                    "content": .string(content.busValue),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
 
-        case .slotMovedToTab(let slot, let fromTab, let toTab, let workspace):
+        case let .slotMovedToTab(
+            slot,
+            fromTab,
+            toTab,
+            workspace
+        ):
             return (
                 "workspace.slot-moved-to-tab",
-                [
-                    "slotId": slot.uuidString,
-                    "fromTabId": fromTab.uuidString,
-                    "toTabId": toTab.uuidString,
-                    "workspaceId": workspace.uuidString,
-                ]
+                .object([
+                    "slotId": .string(slot.uuidString),
+                    "fromTabId": .string(fromTab.uuidString),
+                    "toTabId": .string(toTab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
             )
         }
     }
@@ -292,9 +398,9 @@ private extension SplitAxis {
     var busValue: String {
         switch self {
         case .horizontal:
-            return "horizontal"
+            "horizontal"
         case .vertical:
-            return "vertical"
+            "vertical"
         }
     }
 }
