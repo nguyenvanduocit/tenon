@@ -28,7 +28,7 @@ All commands run from `poc/`:
 ./scripts/setup-ghosttykit.sh   # once per clone: downloads the pinned GhosttyKit.xcframework (~130 MB)
 swift run tenon         # build + launch the app (opens a window; needs a GUI session)
 swift test              # headless test suite, ~1s — the evidence bar for the PoC
-swift test --filter testEditingTheClockPluginOnDiskHotReloadsIt   # single test by name
+swift test --filter testFailedReloadRetainsActiveSessionAndContributions   # single test by name
 swift build             # compile check only
 ```
 
@@ -96,7 +96,7 @@ has no handwritten plugin helper; it uses declared canonical intents.
 
 ## Invariants — tests enforce these; do not weaken them
 
-1. **Plugins see only the `tenon` global.** `console` is explicitly deleted; `require`, `setTimeout`, `fetch` were never there. `testPluginsSeeOnlyTheTenonGlobal` fails if anything else leaks into plugin scope. A new capability means a new member on `tenon`, never a new global.
+1. **Plugins see only the `tenon` global.** Nothing beyond `tenon` and the ECMAScript builtins may be reachable from plugin scope: `require`, `setTimeout` and `fetch` were never there, and `console` must not be — a plugin logging through it would reach os_log unattributed, around `tenon.log`'s per-plugin attribution. A new capability means a new member on `tenon`, never a new global. `testRuntimeExportsOnlyTheClassifiedPublicSurface` pins the members of `tenon`; closing `globalThis` itself is T-037, and until it lands this invariant is a rule the suite does not yet enforce.
 2. **Plugins never touch native host types.** Terminal/WebKit/AppKit/Foundation-I/O state crosses only as bounded values, targeted events, contributions, resource handles, or intent results.
 3. **`TenonCore` imports no AppKit or SwiftUI.** UI concerns live in `TenonApp` only.
 4. **A broken plugin never takes down the host** (`testBrokenPluginIsReportedAndDoesNotKillHost`). It is logged, marked failed, and reloads itself when fixed.
