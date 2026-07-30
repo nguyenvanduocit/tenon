@@ -97,6 +97,21 @@ final class PaletteIntentInvokerTests: XCTestCase {
         )
         XCTAssertNotEqual(first.userGestureID, second.userGestureID)
 
+        // The plugin stays enabled here, so only the action-time assignment
+        // check can refuse a chord that moved since the menu was rendered.
+        let movedAssignment = KeyBinding(
+            target: target,
+            chord: try KeyChord(parsing: "cmd+shift+j")
+        )
+        XCTAssertNil(
+            PaletteIntentInvoker.prepare(
+                target: target,
+                expectedBinding: movedAssignment,
+                host: composition.host
+            ),
+            "an assignment that changed since rendering must not invoke"
+        )
+
         let invocationResult = await PaletteIntentInvoker.send(
             target: target,
             expectedBinding: binding,

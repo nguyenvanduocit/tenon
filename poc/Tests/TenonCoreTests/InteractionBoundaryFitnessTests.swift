@@ -148,7 +148,10 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
         assertContains(
             palette,
-            ["PaletteIntentInvoker.send("],
+            [
+                "PaletteIntentInvoker.send(",
+                "Text(key.display)",
+            ],
             file: "PaletteOverlay.swift"
         )
         assertContains(
@@ -166,6 +169,27 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
         XCTAssertFalse(keyBindingCommands.contains("intentRuntime.send("))
         XCTAssertFalse(palette.contains("intentRuntime.send("))
+
+        let commandsScene = try sourceSlice(
+            app,
+            from: ".commands {",
+            before: "Settings {"
+        )
+        XCTAssertEqual(
+            commandsScene.components(
+                separatedBy: ".keyboardShortcut("
+            ).count - 1,
+            1,
+            "the Commands scene owns exactly one static chord: Command Palette"
+        )
+        XCTAssertFalse(
+            commandsScene.contains("WorkspaceStore"),
+            "the Commands scene must not reach the workspace directly"
+        )
+        XCTAssertFalse(
+            commandsScene.contains("store."),
+            "the Commands scene must not reach the workspace directly"
+        )
     }
 
     func testFocusedEditorGhosttyAndPaletteControlsStayDirect() throws {
