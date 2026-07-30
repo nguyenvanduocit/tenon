@@ -5,19 +5,53 @@
 // the host's default diff view in a new tab,
 // never carved inline.
 //
-// Point "Repository path" at a repo in Settings (⌘,), or leave it on "~" and the
-// plugin uses the repo of the workspace you are in.
+// Instanced (T-012 model): every pane owns an independent panel bound to the repo of the
+// workspace that OWNS the pane, resolved through `workspace.state.v1`. The status bar is
+// one global surface, so it alone follows the selected workspace and the focused pane.
+//
+// Point "Repository path" at a repo in Settings (⌘,), or leave it on "~" and each panel
+// uses the repo of the workspace its pane lives in.
 
 var LOG_SEP = String.fromCharCode(31); // field separator for `git log --pretty`, not for actions
-var repoPath = null;
-var model = emptyModel();
-var commitMessage = "";
+var VIEW = "git";
+
+// instanceID (pane UUID) → this pane's panel state. `bar` drives only the status bar.
+var panes = {};
+var bar = makeState(null);
+
+// Project roots reported per pane (slot UUID → path) — a host fact shared by instances.
+var paneRoots = {};
+
+function makeState(instanceID) {
+  return {
+    id: instanceID,
+    workspaceId: null,
+    workspacePath: "",
+    repoPath: null,
+    model: emptyModel(),
+    commitMessage: "",
+    // Sticky project-root following (T-030): a panel follows the focused pane within its
+    // own workspace; the bar follows the focused pane anywhere.
+    followedRepo: "",
+    focusedSlot: null,
+    watch: null,
+    watchedRepo: null,
+    debounceHandle: null
+  };
+}
 
 function emptyModel() {
   return {
     isRepo: false, branch: "?", ahead: 0, behind: 0, upstream: null,
     hasHead: true, staged: [], changed: [], merge: [], recent: [],
   };
+}
+
+function paneList() {
+  var ids = Object.keys(panes);
+  var list = [];
+  for (var i = 0; i < ids.length; i++) list.push(panes[ids[i]]);
+  return list;
 }
 
 // --- repo resolution -------------------------------------------------------
@@ -27,7 +61,7 @@ function settingRepo() {
   return s && s !== "~" ? s : null;
 }
 
-/// The workspace the user is currently in — where "the repo" means, when no path is set.
+/// The workspace the user is currently in — what the status bar means by "the repo".
 async function workspacePath(call) {
   var result = call
     ? await call.send("workspace.state.v1", { limit: 256 })
@@ -43,6 +77,27 @@ async function workspacePath(call) {
     if (nodes[j].kind === "workspace") return nodes[j].path || "";
   }
   return "";
+}
+
+// The workspace that owns a pane: pane → tab → workspace, from the public state snapshot.
+async function owningWorkspace(instanceID, call) {
+  var result = call
+    ? await call.send("workspace.state.v1", { limit: 256 })
+    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
+  if (!result.ok) return { id: null, path: "" };
+  var nodes = result.value.nodes || [];
+  var workspacePaths = {};
+  var tabWorkspace = {};
+  var paneTab = null;
+  for (var i = 0; i < nodes.length; i++) {
+    var node = nodes[i];
+    if (node.kind === "workspace") workspacePaths[node.id] = node.path || "";
+    if (node.kind === "tab") tabWorkspace[node.id] = node.workspaceID;
+    if (node.kind === "pane" && node.id === instanceID) paneTab = node.tabID;
+  }
+  var workspaceId = paneTab ? tabWorkspace[paneTab] : null;
+  if (!workspaceId) return { id: null, path: "" };
+  return { id: workspaceId, path: workspacePaths[workspaceId] || "" };
 }
 
 function inlineText(value) {
@@ -77,42 +132,36 @@ async function exec(command, argumentsValue, workingDirectory, call) {
 }
 
 // An explicit "Repository path" setting always wins; otherwise discover the repo that
-// contains the current workspace. No generation guard needed any more: the setting is
-// re-read on every call, so a slow discovery can no longer answer for a stale path.
-// The project root of each pane that has one, plus the one we are currently following.
-// Sticky for the same reason the file tree's is: focusing this panel, a browser or a diff
-// must not drop the panel back to the workspace repo.
-var paneRoots = {};
-var focusedSlot = null;
-var followedRepo = "";
-
-async function resolveRepo(call) {
+// contains the state's own base — a panel's owning workspace, the bar's selected one.
+// The setting is re-read on every call, so a slow discovery cannot answer for a stale path.
+async function resolveRepo(st, call) {
   var explicit = settingRepo();
-  if (explicit) { repoPath = explicit; return repoPath; }
+  if (explicit) { st.repoPath = explicit; return st.repoPath; }
   // A pane's project root outranks the cached discovery: the agent moved, so do we.
-  if (followedRepo) { repoPath = followedRepo; return repoPath; }
-  if (repoPath) return repoPath;
-  var currentWorkspace = await workspacePath(call);
+  if (st.followedRepo) { st.repoPath = st.followedRepo; return st.repoPath; }
+  if (st.repoPath) return st.repoPath;
+  var base = st.id ? st.workspacePath : await workspacePath(call);
   var root = await exec(
     "/usr/bin/git",
     ["rev-parse", "--show-toplevel"],
-    currentWorkspace || "/",
+    base || "/",
     call
   );
-  if (settingRepo()) { repoPath = settingRepo(); return repoPath; }
-  if (root.ok && root.status === 0) repoPath = (root.stdout || "").trim();
-  return repoPath;
+  if (settingRepo()) { st.repoPath = settingRepo(); return st.repoPath; }
+  if (root.ok && root.status === 0) st.repoPath = (root.stdout || "").trim();
+  return st.repoPath;
 }
 
-async function git(args, call) {
-  var repo = await resolveRepo(call);
+async function git(st, args, call) {
+  var repo = await resolveRepo(st, call);
   if (!repo) return { ok: false, status: 1, stdout: "", stderr: "no repository" };
   return await exec("/usr/bin/git", args, repo, call);
 }
 
-// Runs a mutating command, reports the first error line as a toast, then refreshes.
-async function op(args, label, call) {
-  var r = await git(args, call);
+// Runs a mutating command, reports the first error line as a toast, then refreshes the
+// acting state AND the status bar, which summarises whatever just changed.
+async function op(st, args, label, call) {
+  var r = await git(st, args, call);
   if (!r.ok || r.status !== 0) {
     var msg = ((r.stderr || r.error || "") + "").trim().split("\n")[0];
     var input = {
@@ -122,7 +171,8 @@ async function op(args, label, call) {
     if (call) await call.send("ui.toast.v1", input);
     else await tenon.intents.send("ui.toast.v1", input);
   }
-  await refresh(call);
+  await refresh(st, call);
+  if (st !== bar) await refresh(bar, call);
 }
 
 // --- status parsing (porcelain v2, NUL-delimited) --------------------------
@@ -184,41 +234,49 @@ function parseLog(out) {
 
 // --- refresh ---------------------------------------------------------------
 
-async function refresh(call) {
-  var repo = await resolveRepo(call);
+async function refresh(st, call) {
+  var repo = await resolveRepo(st, call);
   if (!repo) {
-    model = emptyModel();
-    tenon.statusBar.set("⎇ no repo");
-    render();
+    st.model = emptyModel();
+    publish(st);
     return;
   }
   var status = await git(
+    st,
     ["status", "--porcelain=v2", "--branch", "-z", "--untracked-files=all"],
     call
   );
   if (!status.ok || status.status !== 0) {
-    model = emptyModel();
-    tenon.statusBar.set("⎇ no repo");
-    render();
+    st.model = emptyModel();
+    publish(st);
     return;
   }
   var next = parseStatus(status.stdout);
   var log = await git(
+    st,
     ["log", "-n", "5", "--pretty=%h" + LOG_SEP + "%s"],
     call
   );
   if (log.ok && log.status === 0) next.recent = parseLog(log.stdout);
-  model = next;
-  updateStatusBar();
-  render();
+  st.model = next;
+  publish(st);
+}
+
+function publish(st) {
+  if (st === bar) updateStatusBar();
+  else render(st);
 }
 
 function updateStatusBar() {
-  var count = model.staged.length + model.changed.length + model.merge.length;
+  if (!bar.model.isRepo) {
+    tenon.statusBar.set("⎇ no repo");
+    return;
+  }
+  var count = bar.model.staged.length + bar.model.changed.length + bar.model.merge.length;
   var sync = "";
-  if (model.ahead) sync += " ↑" + model.ahead;
-  if (model.behind) sync += " ↓" + model.behind;
-  tenon.statusBar.set("⎇ " + model.branch + (count ? " ±" + count : "") + sync);
+  if (bar.model.ahead) sync += " ↑" + bar.model.ahead;
+  if (bar.model.behind) sync += " ↓" + bar.model.behind;
+  tenon.statusBar.set("⎇ " + bar.model.branch + (count ? " ±" + count : "") + sync);
 }
 
 // --- view tree -------------------------------------------------------------
@@ -273,7 +331,9 @@ function sectionCard(title, entries, section, bulkLabel, bulkAction) {
   return { type: "card", children: children };
 }
 
-function render() {
+function render(st) {
+  if (!st.id || panes[st.id] !== st) return;
+  var model = st.model;
   var children = [];
 
   // Branch + sync controls.
@@ -293,7 +353,7 @@ function render() {
 
   // Commit box.
   children.push({ type: "card", children: [
-    { type: "field", label: "Commit message", children: [{ type: "textfield", value: commitMessage, placeholder: "Message…", action: { do: "commitMsg" } }] },
+    { type: "field", label: "Commit message", children: [{ type: "textfield", value: st.commitMessage, placeholder: "Message…", action: { do: "commitMsg" } }] },
     { type: "hstack", spacing: 8, children: [{ type: "spacer" }, btn("Commit staged", { do: "commit" }, "primary"), btn("Commit all", { do: "commitAll" })] },
   ] });
 
@@ -325,25 +385,25 @@ function render() {
     children = [{ type: "card", children: [{ type: "text", value: "No git repository. Set \"Repository path\" in Settings.", style: "caption", color: "muted" }] }];
   }
 
-  tenon.views.set("git", { title: "Git", body: { type: "vstack", spacing: 10, children: children } });
+  tenon.views.set(VIEW, { title: "Git", body: { type: "vstack", spacing: 10, children: children } }, st.id);
 }
 
 // --- actions ---------------------------------------------------------------
 
-function findEntry(section, path) {
-  var list = section === "staged" ? model.staged : section === "merge" ? model.merge : model.changed;
+function findEntry(st, section, path) {
+  var list = section === "staged" ? st.model.staged : section === "merge" ? st.model.merge : st.model.changed;
   for (var i = 0; i < list.length; i++) if (list[i].path === path) return list[i];
   return null;
 }
 
-async function openDiff(section, path) {
-  var e = findEntry(section, path);
+async function openDiff(st, section, path) {
+  var e = findEntry(st, section, path);
   var untracked = e ? (e.staged === "?" || e.unstaged === "?") : false;
   var res = await tenon.intents.send("workspace.content.open.v1", {
     content: {
       kind: "diff",
       source: "git",
-      repositoryPath: repoPath,
+      repositoryPath: st.repoPath,
       path: path,
       staged: section === "staged",
       untracked: untracked,
@@ -354,32 +414,32 @@ async function openDiff(section, path) {
   if (!res.ok) tenon.log("open diff failed: " + res.error.code);
 }
 
-async function discard(path) {
-  var e = findEntry("changed", path);
+async function discard(st, path) {
+  var e = findEntry(st, "changed", path);
   var result = await tenon.intents.send("ui.confirm.v1", {
     title: "Discard changes to " + shortName(path) + "? This cannot be undone.",
     destructive: true
   });
   if (!result.ok || !result.value.confirmed) return;
   if (e && (e.staged === "?" || e.unstaged === "?")) {
-    await op(["clean", "-f", "--", path], "Discard untracked " + shortName(path));
+    await op(st, ["clean", "-f", "--", path], "Discard untracked " + shortName(path));
   } else {
-    await op(["restore", "--worktree", "--", path], "Discard " + shortName(path));
+    await op(st, ["restore", "--worktree", "--", path], "Discard " + shortName(path));
   }
 }
 
-async function discardAll() {
+async function discardAll(st) {
   var result = await tenon.intents.send("ui.confirm.v1", {
-    title: "Discard all " + model.changed.length + " changed files? This cannot be undone.",
+    title: "Discard all " + st.model.changed.length + " changed files? This cannot be undone.",
     destructive: true
   });
   if (result.ok && result.value.confirmed) {
-    await op(["restore", "--worktree", "--", "."], "Discard tracked changes");
+    await op(st, ["restore", "--worktree", "--", "."], "Discard tracked changes");
   }
 }
 
-async function doCommit(includeAll) {
-  var msg = (commitMessage || "").trim();
+async function doCommit(st, includeAll) {
+  var msg = (st.commitMessage || "").trim();
   if (!msg) {
     var prompted = await tenon.intents.send("ui.prompt.v1", {
       title: "Commit message",
@@ -391,7 +451,7 @@ async function doCommit(includeAll) {
     if (!msg) return;
   }
   if (includeAll) {
-    var staged = await git(["add", "-A"]);
+    var staged = await git(st, ["add", "-A"]);
     if (!staged.ok || staged.status !== 0) {
       await tenon.intents.send("ui.toast.v1", {
         message: "Stage all failed",
@@ -400,13 +460,13 @@ async function doCommit(includeAll) {
       return;
     }
   }
-  commitMessage = "";
-  await op(["commit", "-m", msg], "Commit");
+  st.commitMessage = "";
+  await op(st, ["commit", "-m", msg], "Commit");
 }
 
 // The branch list, in the host's own pick list — the plugin describes it, the shell draws it.
-async function switchBranch(call) {
-  var r = await git(["branch", "--format=%(refname:short)"], call);
+async function switchBranch(st, call) {
+  var r = await git(st, ["branch", "--format=%(refname:short)"], call);
   var names = (r.stdout || "").split("\n").filter(Boolean);
   if (!names.length) {
     var toastInput = {
@@ -423,7 +483,7 @@ async function switchBranch(call) {
         id: name,
         label: name,
         icon: "arrow.triangle.branch",
-        detail: name === model.branch ? "current" : ""
+        detail: name === st.model.branch ? "current" : ""
       };
     }),
     placeholder: "Switch branch"
@@ -432,79 +492,155 @@ async function switchBranch(call) {
     ? await call.send("ui.pick.v1", pickInput)
     : await tenon.intents.send("ui.pick.v1", pickInput);
   var selected = choice.ok ? choice.value.selectedID : null;
-  if (selected && selected !== model.branch) {
-    await op(["switch", selected], "Switch to " + selected, call);
+  if (selected && selected !== st.model.branch) {
+    await op(st, ["switch", selected], "Switch to " + selected, call);
   }
 }
 
-tenon.views.register("git", { title: "Git" });
+tenon.views.register(VIEW, { title: "Git", instanced: true });
 
 // The action arrives as the object the view declared — no packing, no splitting.
-tenon.views.onSelect("git", async function (action, value) {
+tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
+  var st = panes[instanceID];
+  if (!st) return;
   switch (action.do) {
-    case "open": await openDiff(action.section, action.path); break;
-    case "stage": await op(["add", "--", action.path], "Stage"); break;
-    case "unstage": await op(model.hasHead ? ["restore", "--staged", "--", action.path] : ["rm", "--cached", "--", action.path], "Unstage"); break;
-    case "discard": await discard(action.path); break;
-    case "stageAll": await op(["add", "-A"], "Stage all"); break;
-    case "unstageAll": await op(model.hasHead ? ["restore", "--staged", "--", "."] : ["rm", "--cached", "-r", "--", "."], "Unstage all"); break;
-    case "discardAll": await discardAll(); break;
-    case "commit": await doCommit(false); break;
-    case "commitAll": await doCommit(true); break;
-    case "commitMsg": commitMessage = value || ""; break;
-    case "switchBranch": await switchBranch(); break;
-    case "fetch": await op(["fetch", "--all", "--prune"], "Fetch"); break;
-    case "pull": await op(["pull", "--ff-only"], "Pull"); break;
-    case "push": await op(["push"], "Push"); break;
-    case "stash": await op(["stash", "push", "--include-untracked"], "Stash"); break;
-    case "stashPop": await op(["stash", "pop"], "Pop stash"); break;
+    case "open": await openDiff(st, action.section, action.path); break;
+    case "stage": await op(st, ["add", "--", action.path], "Stage"); break;
+    case "unstage": await op(st, st.model.hasHead ? ["restore", "--staged", "--", action.path] : ["rm", "--cached", "--", action.path], "Unstage"); break;
+    case "discard": await discard(st, action.path); break;
+    case "stageAll": await op(st, ["add", "-A"], "Stage all"); break;
+    case "unstageAll": await op(st, st.model.hasHead ? ["restore", "--staged", "--", "."] : ["rm", "--cached", "-r", "--", "."], "Unstage all"); break;
+    case "discardAll": await discardAll(st); break;
+    case "commit": await doCommit(st, false); break;
+    case "commitAll": await doCommit(st, true); break;
+    case "commitMsg": st.commitMessage = value || ""; break;
+    case "switchBranch": await switchBranch(st); break;
+    case "fetch": await op(st, ["fetch", "--all", "--prune"], "Fetch"); break;
+    case "pull": await op(st, ["pull", "--ff-only"], "Pull"); break;
+    case "push": await op(st, ["push"], "Push"); break;
+    case "stash": await op(st, ["stash", "push", "--include-untracked"], "Stash"); break;
+    case "stashPop": await op(st, ["stash", "pop"], "Pop stash"); break;
     case "newBranch":
       if (value && value.trim()) {
-        await op(["switch", "-c", value.trim()], "Create branch " + value.trim());
+        await op(st, ["switch", "-c", value.trim()], "Create branch " + value.trim());
       }
       break;
   }
 });
 
+tenon.views.onOpen(VIEW, async function (instanceID) {
+  var st = makeState(instanceID);
+  panes[instanceID] = st;
+  var owner = await owningWorkspace(instanceID);
+  if (panes[instanceID] !== st) return;
+  st.workspaceId = owner.id;
+  st.workspacePath = owner.path;
+  render(st);
+  await refresh(st);
+  await watchRepo(st);
+});
+
+tenon.views.onClose(VIEW, function (instanceID) {
+  var st = panes[instanceID];
+  if (!st) return;
+  if (st.watch) st.watch.cancel();
+  if (st.debounceHandle !== null) tenon.timers.cancel(st.debounceHandle);
+  delete panes[instanceID];
+});
+
 // --- commands + lifecycle --------------------------------------------------
 
+// Commands arrive without a pane; they mean the panel the human is looking at — the
+// instance owned by the selected workspace — and fall back to the status bar's repo.
+async function commandTarget(call) {
+  var result = call
+    ? await call.send("workspace.state.v1", { limit: 256 })
+    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
+  var selected = null;
+  if (result.ok) {
+    var nodes = result.value.nodes || [];
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].kind === "workspace" && nodes[i].selected) selected = nodes[i].id;
+    }
+  }
+  var list = paneList();
+  for (var j = 0; j < list.length; j++) {
+    if (selected && list[j].workspaceId === selected) return list[j];
+  }
+  return bar;
+}
+
 tenon.intents.handle("dev.tenon.git.refresh.v1", async function (_, call) {
-  await refresh(call);
+  var st = await commandTarget(call);
+  await refresh(st, call);
+  if (st !== bar) await refresh(bar, call);
   return {};
 });
 
 tenon.intents.handle("dev.tenon.git.switch-branch.v1", async function (_, call) {
-  await switchBranch(call);
+  await switchBranch(await commandTarget(call), call);
   return {};
 });
 
 tenon.intents.handle("dev.tenon.git.fetch.v1", async function (_, call) {
-  await op(["fetch", "--all", "--prune"], "Fetch", call);
+  await op(await commandTarget(call), ["fetch", "--all", "--prune"], "Fetch", call);
   return {};
 });
 
 tenon.intents.handle("dev.tenon.git.pull.v1", async function (_, call) {
-  await op(["pull", "--ff-only"], "Pull", call);
+  await op(await commandTarget(call), ["pull", "--ff-only"], "Pull", call);
   return {};
 });
 
 tenon.intents.handle("dev.tenon.git.push.v1", async function (_, call) {
-  await op(["push"], "Push", call);
+  await op(await commandTarget(call), ["push"], "Push", call);
   return {};
 });
 
 tenon.intents.handle("dev.tenon.git.stage-all.v1", async function (_, call) {
-  await op(["add", "-A"], "Stage all", call);
+  await op(await commandTarget(call), ["add", "-A"], "Stage all", call);
   return {};
 });
 
 tenon.events.on("settings.changed", function (e) {
-  if (e.key === "repoPath") { repoPath = null; refresh(); }
+  if (e.key !== "repoPath") return;
+  bar.repoPath = null;
+  refresh(bar);
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) {
+    list[i].repoPath = null;
+    refresh(list[i]);
+    watchRepo(list[i]);
+  }
 });
 
-// Switching workspace means a different repo: re-resolve instead of showing the old one
-// until the next tick.
-tenon.events.on("workspace.selected", function () { repoPath = null; refresh(); });
+// The status bar is the one surface that means "where the human is": it re-resolves on
+// selection. Panel instances stay bound to the workspaces that own their panes.
+tenon.events.on("workspace.selected", function () {
+  bar.repoPath = null;
+  bar.followedRepo = "";
+  bar.focusedSlot = null;
+  refresh(bar);
+});
+
+// A pane can move between workspaces; its instance keeps its panel but re-resolves the
+// workspace that owns it. Owners that did not change cause no work.
+tenon.events.on("workspace.changed", async function () {
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) {
+    var st = list[i];
+    var owner = await owningWorkspace(st.id);
+    if (!owner.id || panes[st.id] !== st) continue;
+    if (owner.id === st.workspaceId && owner.path === st.workspacePath) continue;
+    st.workspaceId = owner.id;
+    st.workspacePath = owner.path;
+    st.repoPath = null;
+    st.followedRepo = "";
+    st.focusedSlot = null;
+    await refresh(st);
+    await watchRepo(st);
+  }
+});
 
 // A pane's project root moved — an agent stepped into its own worktree. Published only on
 // a real root change, never on an ordinary `cd`, so this cannot restart `git status` on
@@ -514,57 +650,73 @@ tenon.events.on("pane.cwd-changed", function (event) {
   if (!slot) return;
   if (event.projectRoot) paneRoots[slot] = event.projectRoot;
   else delete paneRoots[slot];
-  if (slot !== focusedSlot) return;
-  followRepo(event.projectRoot || "");
+  if (bar.focusedSlot === slot) followRepo(bar, event.projectRoot || "");
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].focusedSlot === slot) followRepo(list[i], event.projectRoot || "");
+  }
 });
 
 tenon.events.on("workspace.slot-focused", function (event) {
   var slot = event.slotId;
   if (!slot) return;
-  focusedSlot = slot;
-  if (!paneRoots[slot]) return;
-  followRepo(paneRoots[slot]);
+  bar.focusedSlot = slot;
+  if (paneRoots[slot]) followRepo(bar, paneRoots[slot]);
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) {
+    var st = list[i];
+    if (event.workspaceId && st.workspaceId && event.workspaceId !== st.workspaceId) {
+      continue;
+    }
+    st.focusedSlot = slot;
+    if (paneRoots[slot]) followRepo(st, paneRoots[slot]);
+  }
 });
 
 tenon.events.on("workspace.slot-closed", function (event) {
   if (event.slotId) delete paneRoots[event.slotId];
 });
 
-// Re-point the panel AND its filesystem watch at the new repo in one step; without the
+// Re-point a panel AND its filesystem watch at the new repo in one step; without the
 // re-watch the panel would show the new repo but keep reacting to writes in the old one.
-function followRepo(root) {
-  if (followedRepo === root) return;
-  followedRepo = root;
-  repoPath = null;
-  refresh();
-  watchRepo();
+function followRepo(st, root) {
+  if (st.followedRepo === root) return;
+  st.followedRepo = root;
+  st.repoPath = null;
+  refresh(st);
+  watchRepo(st);
 }
 
 // The working tree also changes underneath us — a build writes, a rebase runs in another
-// pane. Watch the repo instead of re-running `git status` on a timer and hoping.
-var debounceHandle = null;
-function debouncedRefresh() {
-  if (debounceHandle !== null) tenon.timers.cancel(debounceHandle);
-  debounceHandle = tenon.timers.after(400, function () {
-    debounceHandle = null;
-    refresh();
+// pane. Watch each panel's repo instead of re-running `git status` on a timer and hoping.
+function debouncedRefresh(st) {
+  if (st.debounceHandle !== null) tenon.timers.cancel(st.debounceHandle);
+  st.debounceHandle = tenon.timers.after(400, function () {
+    st.debounceHandle = null;
+    refresh(st);
   });
 }
-var repoWatch = null;
-var watchedRepo = null;
 
-async function watchRepo() {
-  var repo = await resolveRepo();
-  if (!repo || watchedRepo === repo) return;
-  if (repoWatch) repoWatch.cancel();
-  repoWatch = tenon.fs.watch(repo, { recursive: true }, debouncedRefresh);
-  watchedRepo = repoWatch ? repo : null;
+async function watchRepo(st) {
+  if (!st.id) return; // the status bar re-polls on the timer; only panels watch
+  var repo = await resolveRepo(st);
+  if (!repo || st.watchedRepo === repo || panes[st.id] !== st) return;
+  if (st.watch) st.watch.cancel();
+  st.watch = tenon.fs.watch(repo, { recursive: true }, function () {
+    debouncedRefresh(st);
+  });
+  st.watchedRepo = st.watch ? repo : null;
 }
 
-// The backstop: the watcher covers the working tree, this catches everything else
-// (a fetch landing new upstream commits) and re-points the watch after a repo change.
-tenon.timers.every(15000, function () { watchRepo(); refresh(); });
+// The backstop: the watchers cover working trees, this catches everything else
+// (a fetch landing new upstream commits) and re-points watches after a repo change.
+tenon.timers.every(15000, function () {
+  refresh(bar);
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) {
+    watchRepo(list[i]);
+    refresh(list[i]);
+  }
+});
 
-render();
-refresh();
-watchRepo();
+refresh(bar);

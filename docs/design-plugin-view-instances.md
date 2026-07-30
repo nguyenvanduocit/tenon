@@ -73,6 +73,23 @@ Instanced behavior:
 - contributions for one instance include that ID;
 - native resources use the validated `(PluginID, instanceID)` ownership key.
 
+## Workspace-owned instance state
+
+An instanced view whose content depends on a workspace — a file tree's root, a git panel's
+repository, a sessions list's project — binds that content to the workspace that OWNS its
+pane, never to the globally selected workspace. The owner is resolved through the public
+`workspace.state.v1` snapshot (pane → tab → workspace); events that carry `workspaceId`
+(`workspace.slot-focused`) are filtered per instance against that owner. Switching the
+selection therefore mutates no inactive workspace's view, and returning to a workspace
+restores exactly the state it had (`WorkspaceScopedViewStateTests`).
+
+Every shipped workspace-dependent view — `browser`, `file-explorer/tree`, `git/git`,
+`claude-sessions/sessions` — is instanced. `view-gallery` stays singleton deliberately:
+its demo content depends on no workspace, and one shared body across panes is the point.
+Global surfaces remain selection-scoped by design: the git status bar summarises the
+selected workspace and the focused pane, because "one global surface" and "one view
+instance" are different owners.
+
 ## Host reconciliation
 
 The workspace catalog is authoritative; SwiftUI appearance callbacks are not.

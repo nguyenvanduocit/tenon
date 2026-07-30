@@ -12,11 +12,14 @@ final class FileExplorerPluginTests: XCTestCase {
             .appendingPathComponent("plugins/file-explorer")
     }
 
+    private static let instanceID = "AAAAAAAA-0000-0000-0000-00000000FE01"
+
     func testTreeKeepsDirectoryFirstHidesDotGitAndPublishesMenus() async throws {
         let root = "/tmp/tenon-file-explorer"
         let bridge = FileExplorerIntentBridge(root: root)
         let runtime = try makeRuntime(root: root, bridge: bridge)
         _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "tree", instanceID: Self.instanceID)
 
         let ready = await eventually {
             await runtime.snapshot().views.first?.items.count == 3
@@ -62,6 +65,7 @@ final class FileExplorerPluginTests: XCTestCase {
         let bridge = FileExplorerIntentBridge(root: root)
         let runtime = try makeRuntime(root: root, bridge: bridge)
         _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "tree", instanceID: Self.instanceID)
         let initialReady = await eventually {
             await runtime.snapshot().views.first?.items.count == 3
         }
@@ -70,6 +74,7 @@ final class FileExplorerPluginTests: XCTestCase {
         let sourceDirectory = root + "/src"
         let selectedDirectory = try await runtime.invokeViewSelect(
             viewID: "tree",
+            instanceID: Self.instanceID,
             itemID: sourceDirectory
         )
         XCTAssertTrue(selectedDirectory)
@@ -82,11 +87,13 @@ final class FileExplorerPluginTests: XCTestCase {
         let readme = root + "/README.md"
         let opened = try await runtime.invokeViewSelect(
             viewID: "tree",
+            instanceID: Self.instanceID,
             itemID: readme
         )
         XCTAssertTrue(opened)
         let openedToSide = try await runtime.invokeViewSelect(
             viewID: "tree",
+            instanceID: Self.instanceID,
             itemID: readme,
             value: .string("open-side")
         )
@@ -131,6 +138,7 @@ final class FileExplorerPluginTests: XCTestCase {
         let bridge = FileExplorerIntentBridge(root: root)
         let runtime = try makeRuntime(root: root, bridge: bridge)
         _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "tree", instanceID: Self.instanceID)
         let ready = await eventually {
             await runtime.snapshot().views.first?.items.count == 3
         }
@@ -139,12 +147,14 @@ final class FileExplorerPluginTests: XCTestCase {
         let sourceDirectory = root + "/src"
         let newFile = try await runtime.invokeViewSelect(
             viewID: "tree",
+            instanceID: Self.instanceID,
             itemID: sourceDirectory,
             value: .string("new-file")
         )
         XCTAssertTrue(newFile)
         let submitted = try await runtime.invokeViewSubmit(
             viewID: "tree",
+            instanceID: Self.instanceID,
             itemID: "draft",
             text: "helper.swift"
         )
@@ -153,6 +163,7 @@ final class FileExplorerPluginTests: XCTestCase {
         for action in ["reveal", "copy-path", "open-external", "trash"] {
             let invoked = try await runtime.invokeViewSelect(
                 viewID: "tree",
+                instanceID: Self.instanceID,
                 itemID: readme,
                 value: .string(action)
             )

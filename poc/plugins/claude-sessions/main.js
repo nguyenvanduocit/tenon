@@ -6,6 +6,10 @@
 // path with every non-alphanumeric character replaced by "-". This plugin reads
 // those transcripts through canonical intents plus settings and view contributions.
 //
+// Instanced (T-012 model): every pane owns an independent list bound to the project of
+// the workspace that OWNS the pane, resolved through `workspace.state.v1`, so the global
+// selection can change without touching an inactive pane's list.
+//
 // Scanning is two passes, so only the sessions actually shown are read:
 //   1. `stat` over the directory  → id, last activity, size — cheap, sorts the list;
 //   2. `awk` over just the newest N → title, prompt/reply counts, git branch.
@@ -26,11 +30,28 @@ var AWK =
   'END { if (f != "") emit() }\n' +
   'function emit() { printf "%s\\t%d\\t%d\\t%s\\t%s\\n", f, p, r, t, first }\n';
 
-var sessions = [];
-var project = "";
-var notice = "Loading…";
-// Guards against a slow scan clobbering a newer one (settings can change twice in a row).
-var generation = 0;
+// instanceID (pane UUID) → this pane's list state.
+var panes = {};
+
+function makePane(instanceID) {
+  return {
+    id: instanceID,
+    workspaceId: null,
+    workspacePath: "",
+    project: "",
+    sessions: [],
+    notice: "Loading…",
+    // Guards against a slow scan clobbering a newer one (settings can change twice in a row).
+    generation: 0
+  };
+}
+
+function paneList() {
+  var ids = Object.keys(panes);
+  var list = [];
+  for (var i = 0; i < ids.length; i++) list.push(panes[ids[i]]);
+  return list;
+}
 
 // --- resolving what to scan ------------------------------------------------
 
@@ -38,25 +59,31 @@ function setting(key) {
   return (tenon.settings.get(key) || "").trim();
 }
 
-// The directory whose sessions we show: an explicit setting wins, otherwise the
-// workspace the user is currently in.
-async function currentProject(call) {
-  var explicit = setting("projectPath");
-  if (explicit) return explicit;
+// The directory whose sessions a pane shows: an explicit setting wins, otherwise the
+// workspace that owns the pane.
+function resolveProject(st) {
+  return setting("projectPath") || st.workspacePath;
+}
+
+// The workspace that owns a pane: pane → tab → workspace, from the public state snapshot.
+async function owningWorkspace(instanceID, call) {
   var result = call
     ? await call.send("workspace.state.v1", { limit: 256 })
     : await tenon.intents.send("workspace.state.v1", { limit: 256 });
-  if (!result.ok) return "";
+  if (!result.ok) return { id: null, path: "" };
   var nodes = result.value.nodes || [];
+  var workspacePaths = {};
+  var tabWorkspace = {};
+  var paneTab = null;
   for (var i = 0; i < nodes.length; i++) {
-    if (nodes[i].kind === "workspace" && nodes[i].selected) {
-      return nodes[i].path || "";
-    }
+    var node = nodes[i];
+    if (node.kind === "workspace") workspacePaths[node.id] = node.path || "";
+    if (node.kind === "tab") tabWorkspace[node.id] = node.workspaceID;
+    if (node.kind === "pane" && node.id === instanceID) paneTab = node.tabID;
   }
-  for (var j = 0; j < nodes.length; j++) {
-    if (nodes[j].kind === "workspace") return nodes[j].path || "";
-  }
-  return "";
+  var workspaceId = paneTab ? tabWorkspace[paneTab] : null;
+  if (!workspaceId) return { id: null, path: "" };
+  return { id: workspaceId, path: workspacePaths[workspaceId] || "" };
 }
 
 function sessionsDir(path) {
@@ -105,19 +132,19 @@ async function exec(command, argumentsValue, workingDirectory, call) {
 
 // --- scanning --------------------------------------------------------------
 
-async function scan(call) {
-  project = await currentProject(call);
-  var gen = ++generation;
-  if (!project) {
-    sessions = [];
-    notice = "Open a workspace to see its Claude Code sessions.";
-    render();
+async function scan(st, call) {
+  st.project = resolveProject(st);
+  var gen = ++st.generation;
+  if (!st.project) {
+    st.sessions = [];
+    st.notice = "Open a workspace to see its Claude Code sessions.";
+    render(st);
     return;
   }
-  notice = "Scanning…";
-  render();
+  st.notice = "Scanning…";
+  render(st);
 
-  var dir = sessionsDir(project);
+  var dir = sessionsDir(st.project);
   var result = await exec(
     "/bin/sh",
     [
@@ -125,22 +152,22 @@ async function scan(call) {
       "cd " + shellPath(dir)
         + ' 2>/dev/null || exit 3\nstat -f "%m %z %N" "$PWD"/*.jsonl 2>/dev/null\n'
     ],
-    project,
+    st.project,
     call
   );
-  if (gen !== generation) return;
+  if (gen !== st.generation || panes[st.id] !== st) return;
   if (!result.ok || result.status !== 0) {
-    sessions = [];
-    notice = result.error || result.stderr || "Could not read the sessions directory.";
-    render();
+    st.sessions = [];
+    st.notice = result.error || result.stderr || "Could not read the sessions directory.";
+    render(st);
     return;
   }
   var found = parseStat(result.stdout || "");
   found.sort(function (a, b) { return b.mtime - a.mtime; });
-  sessions = found.slice(0, parseInt(setting("limit") || "25", 10) || 25);
-  notice = null;
-  render();
-  if (sessions.length) await enrich(gen, call);
+  st.sessions = found.slice(0, parseInt(setting("limit") || "25", 10) || 25);
+  st.notice = null;
+  render(st);
+  if (st.sessions.length) await enrich(st, gen, call);
 }
 
 function parseStat(out) {
@@ -165,15 +192,15 @@ function parseStat(out) {
   return found;
 }
 
-async function enrich(gen, call) {
+async function enrich(st, gen, call) {
   // LC_ALL=C is load-bearing: a transcript carries pasted images and binary tool output,
   // and awk in a UTF-8 locale aborts the whole run on the first byte it cannot decode
   // ("towc: multibyte conversion failure") — leaving every session unnamed. Byte mode
   // reads them as bytes, and is ~2x faster besides.
   var args = ["LC_ALL=C", "/usr/bin/awk", AWK];
-  for (var i = 0; i < sessions.length; i++) args.push(sessions[i].path);
-  var result = await exec("/usr/bin/env", args, project, call);
-  if (gen !== generation) return;
+  for (var i = 0; i < st.sessions.length; i++) args.push(st.sessions[i].path);
+  var result = await exec("/usr/bin/env", args, st.project, call);
+  if (gen !== st.generation || panes[st.id] !== st) return;
   if (!result.ok || result.status !== 0) {
     tenon.log(
       "claude-sessions: could not read session details: "
@@ -182,7 +209,7 @@ async function enrich(gen, call) {
     return;
   }
   var byPath = {};
-  for (var j = 0; j < sessions.length; j++) byPath[sessions[j].path] = sessions[j];
+  for (var j = 0; j < st.sessions.length; j++) byPath[st.sessions[j].path] = st.sessions[j];
   var lines = (result.stdout || "").split("\n");
   for (var k = 0; k < lines.length; k++) {
     var fields = lines[k].split("\t");
@@ -195,7 +222,7 @@ async function enrich(gen, call) {
     if (firstPrompt) session.branch = firstPrompt.gitBranch || "";
     session.title = (titleRecord && titleRecord.aiTitle) || promptTitle(firstPrompt) || "";
   }
-  render();
+  render(st);
 }
 
 function parseJSON(text) {
@@ -270,7 +297,8 @@ function sessionRow(session) {
   };
 }
 
-function render() {
+function render(st) {
+  if (panes[st.id] !== st) return;
   var children = [
     {
       type: "hstack",
@@ -281,12 +309,12 @@ function render() {
         { type: "button", label: "New session", action: "new", style: "primary" },
       ],
     },
-    { type: "text", value: project || "no project directory", style: "caption", color: "muted" },
+    { type: "text", value: st.project || "no project directory", style: "caption", color: "muted" },
   ];
 
-  if (notice) {
-    children.push({ type: "card", children: [{ type: "text", value: notice, color: "muted" }] });
-  } else if (!sessions.length) {
+  if (st.notice) {
+    children.push({ type: "card", children: [{ type: "text", value: st.notice, color: "muted" }] });
+  } else if (!st.sessions.length) {
     children.push({
       type: "card",
       children: [
@@ -297,23 +325,42 @@ function render() {
   } else {
     // One card holding the whole list, hairlines between rows — a list, not a stack of boxes.
     var rows = [];
-    for (var i = 0; i < sessions.length; i++) {
+    for (var i = 0; i < st.sessions.length; i++) {
       if (i > 0) rows.push({ type: "divider" });
-      rows.push(sessionRow(sessions[i]));
+      rows.push(sessionRow(st.sessions[i]));
     }
     children.push({ type: "card", children: rows });
   }
 
-  tenon.views.set(VIEW, { title: "Claude Sessions", body: { type: "vstack", spacing: 10, children: children } });
+  tenon.views.set(VIEW, {
+    title: "Claude Sessions",
+    body: { type: "vstack", spacing: 10, children: children }
+  }, st.id);
 }
 
 // --- wiring ----------------------------------------------------------------
 
-tenon.views.register(VIEW, { title: "Claude Sessions" });
+tenon.views.register(VIEW, { title: "Claude Sessions", instanced: true });
 
-tenon.views.onSelect(VIEW, async function (action) {
+tenon.views.onOpen(VIEW, async function (instanceID) {
+  var st = makePane(instanceID);
+  panes[instanceID] = st;
+  var owner = await owningWorkspace(instanceID);
+  if (panes[instanceID] !== st) return;
+  st.workspaceId = owner.id;
+  st.workspacePath = owner.path;
+  await scan(st);
+});
+
+tenon.views.onClose(VIEW, function (instanceID) {
+  delete panes[instanceID];
+});
+
+tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
+  var st = panes[instanceID];
+  if (!st) return;
   if (action === "refresh") {
-    await scan();
+    await scan(st);
   } else if (action === "new") {
     await tenon.intents.send("terminal.run.v1", { command: "claude" });
   } else if (action.indexOf("resume:") === 0) {
@@ -339,19 +386,28 @@ tenon.intents.handle("dev.tenon.claude-sessions.open.v1", async function (_, cal
 });
 
 tenon.intents.handle("dev.tenon.claude-sessions.refresh.v1", async function (_, call) {
-  await scan(call);
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) await scan(list[i], call);
   return {};
 });
 
-tenon.events.on("settings.changed", function () { scan(); });
+tenon.events.on("settings.changed", function () {
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) scan(list[i]);
+});
 
-// Follow the user between workspaces — but only re-scan when the directory really changed,
-// since workspace.changed fires on every tab and split.
-tenon.events.on("workspace.selected", rescanIfProjectChanged);
-tenon.events.on("workspace.changed", rescanIfProjectChanged);
-
-async function rescanIfProjectChanged() {
-  if (await currentProject() !== project) await scan();
-}
-
-scan();
+// A pane can move between workspaces; its instance keeps its list but re-resolves the
+// workspace that owns it, and rescans only when that project really changed —
+// workspace.changed fires on every tab and split.
+tenon.events.on("workspace.changed", async function () {
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) {
+    var st = list[i];
+    var owner = await owningWorkspace(st.id);
+    if (!owner.id || panes[st.id] !== st) continue;
+    if (owner.id === st.workspaceId && owner.path === st.workspacePath) continue;
+    st.workspaceId = owner.id;
+    st.workspacePath = owner.path;
+    await scan(st);
+  }
+});
