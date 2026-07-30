@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TenonCore
+import TenonIntentCore
 
 /// The shell composition root: a single top title bar — traffic lights, app identity,
 /// and the tab strip share one row — over a body of workspace navigation and a
@@ -10,10 +11,15 @@ struct ContentView: View {
     var host: PluginHost
     var store: WorkspaceStore
     var pool: SurfacePool
+    var webPool: PluginWebSurfacePool
+    var intentRuntime: AppIntentRuntime
     var router: DragRouter
+    var palette: CommandPaletteState
+    var pluginUI: PluginUIState
 
-    @State private var sidebarVisible = true
-    @State private var sidebarWidth: CGFloat = SidebarResize.defaultWidth
+    @State private var sidebarVisible = AppPreferencesStore.shared.preferences.sidebarVisibleOnLaunch
+    @State private var sidebarWidth: CGFloat =
+        CGFloat(AppPreferencesStore.shared.preferences.sidebarWidth)
     /// Sidebar width captured when a resize drag begins, so a drag that ends in a
     /// collapse can restore the width the sidebar re-opens at.
     @State private var resizeStartWidth: CGFloat?
@@ -45,28 +51,36 @@ struct ContentView: View {
                 if sidebarVisible {
                     WorkspaceSidebarView(store: store)
                         .frame(width: sidebarWidth)
-
-                    sidebarDivider
                 }
 
                 VStack(spacing: 0) {
-                    WorkspaceStageView(store: store, pool: pool, host: host, router: router)
+                    WorkspaceStageView(
+                        store: store,
+                        pool: pool,
+                        webPool: webPool,
+                        host: host,
+                        router: router
+                    )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
                     Rectangle()
                         .fill(TenonTheme.line)
                         .frame(height: 1)
 
-                    WorkspaceStatusBar(store: store, pool: pool, host: host)
+                    WorkspaceStatusBar(host: host)
                         .frame(height: TenonTheme.statusBarHeight)
                 }
             }
-            .overlay(alignment: .leading) {
-                if sidebarVisible {
-                    sidebarResizeHandle
-                        // Centre the grab strip on the 1-pt divider at x = sidebarWidth.
-                        .offset(x: sidebarWidth - (sidebarHandleWidth - 1) / 2)
-                }
+        }
+        // The sidebar's right edge is one continuous border from the top of the title
+        // bar down to the status bar: hover or drag it anywhere and the whole line
+        // lights amber and resizes the sidebar — so the strip inside the title bar
+        // behaves exactly like the strip below it instead of being a dead static rule.
+        .overlay(alignment: .leading) {
+            if sidebarVisible {
+                sidebarEdge
+                    // Centre the grab strip on the 1-pt line at x = sidebarWidth.
+                    .offset(x: sidebarWidth - (sidebarHandleWidth - 1) / 2)
             }
         }
         .background(TenonTheme.ink)
@@ -77,59 +91,78 @@ struct ContentView: View {
         // title bar next to the traffic lights (browser-style), instead of below a
         // wasted strip that shows the desktop through the transparent titlebar.
         .ignoresSafeArea(.container, edges: .top)
-    }
-
-    /// The 1-pt divider between sidebar and stage. Brightens while it is being
-    /// hovered or dragged so the resize affordance is discoverable.
-    private var sidebarDivider: some View {
-        Rectangle()
-            .fill(resizeHovering || resizeStartWidth != nil ? TenonTheme.amber : TenonTheme.line)
-            .frame(width: 1)
-            .animation(.easeOut(duration: 0.12), value: resizeHovering)
-    }
-
-    /// Invisible strip overlaid on the divider. Dragging it resizes the sidebar;
-    /// pulling narrower than `SidebarResize.minWidth` collapses it. Translation is
-    /// read in `.global` space so the strip moving with the divider never skews it.
-    private var sidebarResizeHandle: some View {
-        Color.clear
-            .frame(width: sidebarHandleWidth)
-            .frame(maxHeight: .infinity)
-            .contentShape(Rectangle())
-            .onHover { inside in
-                resizeHovering = inside
-                if inside {
-                    NSCursor.resizeLeftRight.push()
-                } else {
-                    NSCursor.pop()
-                }
-            }
-            .gesture(
-                DragGesture(minimumDistance: 1, coordinateSpace: .global)
-                    .onChanged { value in
-                        let base = resizeStartWidth ?? sidebarWidth
-                        if resizeStartWidth == nil { resizeStartWidth = sidebarWidth }
-                        switch SidebarResize.resolve(
-                            proposedWidth: base + value.translation.width
-                        ) {
-                        case .resize(let width):
-                            sidebarWidth = width
-                        case .collapse:
-                            resizeStartWidth = nil
-                            // The handle unmounts on collapse, so its hover-exit
-                            // never fires — balance the pushed resize cursor here.
-                            if resizeHovering {
-                                resizeHovering = false
-                                NSCursor.pop()
-                            }
-                            withAnimation(.easeInOut(duration: 0.15)) {
-                                sidebarVisible = false
-                            }
-                            sidebarWidth = base
-                        }
-                    }
-                    .onEnded { _ in resizeStartWidth = nil }
+        // The command palette floats over the whole shell (title bar included) when
+        // presented; it renders nothing otherwise. State lives outside the accent
+        // rebuild below, so opening/closing it survives a theme change.
+        .overlay {
+            PaletteOverlay(
+                host: host,
+                intentRuntime: intentRuntime,
+                palette: palette
             )
-            .accessibilityIdentifier("tenon.sidebarResize")
+        }
+        // Host presentation for plugin-only `ui.pick/prompt/confirm/toast.v1`
+        // intents. Renders nothing until an authorized request arrives.
+        .overlay { PluginUIOverlay(state: pluginUI) }
+        // Rebuild the whole shell when the accent changes so every chrome element
+        // re-reads TenonTheme.amber. Reading the shared store here registers the
+        // observation; terminal surfaces persist in the pool across the rebuild.
+        .id(AppPreferencesStore.shared.preferences.accent)
+    }
+
+    /// The sidebar's right edge: a 1-pt line centred inside an invisible grab strip,
+    /// spanning the full window height so it reads and behaves as one border from the
+    /// title bar through the content. The line brightens to amber while hovered or
+    /// dragged; dragging resizes the sidebar and pulling narrower than
+    /// `SidebarResize.minWidth` collapses it. Translation is read in `.global` space so
+    /// the strip moving with the divider never skews the drag.
+    private var sidebarEdge: some View {
+        ZStack {
+            Rectangle()
+                .fill(resizeHovering || resizeStartWidth != nil ? TenonTheme.amber : TenonTheme.line)
+                .frame(width: 1)
+                .animation(.easeOut(duration: 0.12), value: resizeHovering)
+
+            Color.clear
+                .frame(width: sidebarHandleWidth)
+                .contentShape(Rectangle())
+                .onHover { inside in
+                    resizeHovering = inside
+                    if inside {
+                        NSCursor.resizeLeftRight.push()
+                    } else {
+                        NSCursor.pop()
+                    }
+                }
+                .gesture(
+                    DragGesture(minimumDistance: 1, coordinateSpace: .global)
+                        .onChanged { value in
+                            let base = resizeStartWidth ?? sidebarWidth
+                            if resizeStartWidth == nil { resizeStartWidth = sidebarWidth }
+                            switch SidebarResize.resolve(
+                                proposedWidth: base + value.translation.width
+                            ) {
+                            case .resize(let width):
+                                sidebarWidth = width
+                            case .collapse:
+                                resizeStartWidth = nil
+                                // The edge unmounts on collapse, so its hover-exit
+                                // never fires — balance the pushed resize cursor here.
+                                if resizeHovering {
+                                    resizeHovering = false
+                                    NSCursor.pop()
+                                }
+                                withAnimation(.easeInOut(duration: 0.15)) {
+                                    sidebarVisible = false
+                                }
+                                sidebarWidth = base
+                            }
+                        }
+                        .onEnded { _ in resizeStartWidth = nil }
+                )
+        }
+        .frame(width: sidebarHandleWidth)
+        .frame(maxHeight: .infinity)
+        .accessibilityIdentifier("tenon.sidebarResize")
     }
 }

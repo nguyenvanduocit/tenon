@@ -7,6 +7,7 @@ import SwiftUI
 /// only thing the emulator contributes to that surface is the `terminal.title-changed`
 /// event. A new backend means writing one more conformance here and changing one
 /// line in `TenonApp.swift`. No plugin code changes.
+@MainActor
 protocol TerminalSurface: AnyObject {
     /// Shown in the UI so it's obvious which backend is live.
     var backendName: String { get }
@@ -19,10 +20,23 @@ protocol TerminalSurface: AnyObject {
 
     /// Route keyboard focus back to this surface after shell interaction.
     func focus()
+
+    /// The current visible screen as plain text — feeds `tenon-cli pane.read` and the
+    /// tui-idle heuristic. PTY-less backends have nothing to show and default to "".
+    var renderedText: String { get }
+
+    /// Whether the pane's child process has exited — feeds `tenon-cli pane.wait --for exit`.
+    var processExited: Bool { get }
+
+    /// How many shell commands have finished (OSC 133) — feeds `pane.wait --for command-finished`.
+    var commandFinishedCount: Int { get }
 }
 
 extension TerminalSurface {
     func focus() {}
+    var renderedText: String { "" }
+    var processExited: Bool { false }
+    var commandFinishedCount: Int { 0 }
 }
 
 // MARK: - Stub backend

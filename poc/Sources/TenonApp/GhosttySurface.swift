@@ -131,8 +131,24 @@ struct GhosttySurfaceSize: Equatable {
 
 /// Owns the single `ghostty_app_t`. libghostty is initialized once per process;
 /// every surface shares this app and gets its own `ghostty_surface_t`.
+@MainActor
 final class GhosttyRuntime {
     static let shared = GhosttyRuntime()
+
+    /// Surface callbacks carry an opaque monotonically increasing token rather
+    /// than an unretained Swift object pointer. A callback already queued when a
+    /// surface is torn down therefore resolves to nil instead of dereferencing
+    /// freed memory, and tokens are never reused during the process lifetime.
+    private final class WeakView {
+        weak var value: GhosttyNSView?
+
+        init(_ value: GhosttyNSView) {
+            self.value = value
+        }
+    }
+
+    private static var nextViewToken: UInt = 1
+    private static var liveViews: [UInt: WeakView] = [:]
 
     private(set) var app: ghostty_app_t?
     private var config: ghostty_config_t?
@@ -164,81 +180,32 @@ final class GhosttyRuntime {
         rt.userdata = nil
         rt.supports_selection_clipboard = false
         rt.wakeup_cb = { _ in
-            DispatchQueue.main.async { GhosttyRuntime.shared.tick() }
+            GhosttyRuntime.wakeupCallback()
         }
         rt.action_cb = { _, target, action in
-            GhosttyRuntime.handleAction(target: target, action: action)
+            GhosttyRuntime.actionCallback(target: target, action: action)
         }
         rt.read_clipboard_cb = { userdata, _, state in
-            // userdata is the surface's userdata (our view); complete with the pasteboard.
-            let text = NSPasteboard.general.string(forType: .string) ?? ""
-            text.withCString { ptr in
-                ghostty_surface_complete_clipboard_request(
-                    GhosttyRuntime.surface(fromViewUserdata: userdata), ptr, state, false
-                )
-            }
-            return true
+            GhosttyRuntime.readClipboardCallback(userdata: userdata, state: state)
         }
         rt.confirm_read_clipboard_cb = { userdata, content, state, request in
-            guard let view = GhosttyRuntime.view(fromUserdata: userdata),
-                  let content,
-                  let state
-            else { return }
-
-            // The C string is callback-scoped. The opaque state remains valid until
-            // the request is completed or its surface is torn down.
-            let contents = String(cString: content)
-            let stateBits = UInt(bitPattern: state)
-            DispatchQueue.main.async { [weak view] in
-                guard let view,
-                      let state = UnsafeMutableRawPointer(bitPattern: stateBits)
-                else { return }
-
-                let kind: GhosttyClipboardConfirmationKind
-                switch request {
-                case GHOSTTY_CLIPBOARD_REQUEST_PASTE:
-                    kind = .unsafePaste
-                case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ:
-                    kind = .osc52Read
-                case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE:
-                    // OSC 52 writes carry their confirmation requirement on
-                    // write_clipboard_cb and do not complete through this state.
-                    return
-                default:
-                    return
-                }
-                view.requestClipboardConfirmation(
-                    kind: kind,
-                    contents: contents,
-                    state: state
-                )
-            }
+            GhosttyRuntime.confirmReadClipboardCallback(
+                userdata: userdata,
+                content: content,
+                state: state,
+                request: request
+            )
         }
         rt.write_clipboard_cb = { userdata, _, content, len, requiresConfirmation in
-            guard let view = GhosttyRuntime.view(fromUserdata: userdata),
-                  let content,
-                  len > 0
-            else { return }
-            var contents: String?
-            for item in UnsafeBufferPointer(start: content, count: Int(len)) {
-                guard let data = item.data, let mime = item.mime,
-                      String(cString: mime).hasPrefix("text/plain") else { continue }
-                contents = String(cString: data)
-                break
-            }
-            guard let contents else { return }
-            DispatchQueue.main.async { [weak view] in
-                guard let view else { return }
-                GhosttyClipboardWriter.request(
-                    contents: contents,
-                    requiresConfirmation: requiresConfirmation,
-                    window: view.window
-                )
-            }
+            GhosttyRuntime.writeClipboardCallback(
+                userdata: userdata,
+                content: content,
+                length: len,
+                requiresConfirmation: requiresConfirmation
+            )
         }
         rt.close_surface_cb = { userdata, _ in
-            guard let view = GhosttyRuntime.view(fromUserdata: userdata) else { return }
-            DispatchQueue.main.async { view.onProcessExit?() }
+            GhosttyRuntime.closeSurfaceCallback(userdata: userdata)
         }
 
         guard let created = ghostty_app_new(&rt, cfg) else {
@@ -253,6 +220,147 @@ final class GhosttyRuntime {
     func tick() {
         guard let app else { return }
         ghostty_app_tick(app)
+    }
+
+    fileprivate static func register(_ view: GhosttyNSView) -> UInt {
+        let token = nextViewToken
+        precondition(token != 0, "ghostty callback token space exhausted")
+        nextViewToken &+= 1
+        liveViews[token] = WeakView(view)
+        return token
+    }
+
+    fileprivate static func unregister(_ token: UInt) {
+        liveViews.removeValue(forKey: token)
+    }
+
+    private nonisolated static func wakeupCallback() {
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                shared.tick()
+            }
+            return
+        }
+        DispatchQueue.main.async {
+            shared.tick()
+        }
+    }
+
+    private nonisolated static func actionCallback(
+        target: ghostty_target_s,
+        action: ghostty_action_s
+    ) -> Bool {
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                handleAction(target: target, action: action)
+            }
+        }
+        DispatchQueue.main.async {
+            _ = handleAction(target: target, action: action)
+        }
+        return false
+    }
+
+    private nonisolated static func readClipboardCallback(
+        userdata: UnsafeMutableRawPointer?,
+        state: UnsafeMutableRawPointer?
+    ) -> Bool {
+        let userdataBits = userdata.map(UInt.init(bitPattern:))
+        let stateBits = state.map(UInt.init(bitPattern:))
+        if Thread.isMainThread {
+            return MainActor.assumeIsolated {
+                readClipboard(userdataBits: userdataBits, stateBits: stateBits)
+            }
+        }
+        return DispatchQueue.main.sync {
+            MainActor.assumeIsolated {
+                readClipboard(userdataBits: userdataBits, stateBits: stateBits)
+            }
+        }
+    }
+
+    private nonisolated static func confirmReadClipboardCallback(
+        userdata: UnsafeMutableRawPointer?,
+        content: UnsafePointer<CChar>?,
+        state: UnsafeMutableRawPointer?,
+        request: ghostty_clipboard_request_e
+    ) {
+        guard let content else { return }
+        let contents = String(cString: content)
+        let userdataBits = userdata.map(UInt.init(bitPattern:))
+        let stateBits = state.map(UInt.init(bitPattern:))
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                confirmReadClipboard(
+                    userdataBits: userdataBits,
+                    contents: contents,
+                    stateBits: stateBits,
+                    request: request
+                )
+            }
+            return
+        }
+        DispatchQueue.main.async {
+            confirmReadClipboard(
+                userdataBits: userdataBits,
+                contents: contents,
+                stateBits: stateBits,
+                request: request
+            )
+        }
+    }
+
+    private nonisolated static func writeClipboardCallback(
+        userdata: UnsafeMutableRawPointer?,
+        content: UnsafePointer<ghostty_clipboard_content_s>?,
+        length: Int,
+        requiresConfirmation: Bool
+    ) {
+        guard let content, length > 0 else { return }
+        var contents: String?
+        for item in UnsafeBufferPointer(start: content, count: length) {
+            guard let data = item.data, let mime = item.mime,
+                  String(cString: mime).hasPrefix("text/plain")
+            else {
+                continue
+            }
+            contents = String(cString: data)
+            break
+        }
+        guard let contents else { return }
+        let userdataBits = userdata.map(UInt.init(bitPattern:))
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                writeClipboard(
+                    userdataBits: userdataBits,
+                    contents: contents,
+                    requiresConfirmation: requiresConfirmation
+                )
+            }
+            return
+        }
+        DispatchQueue.main.async {
+            writeClipboard(
+                userdataBits: userdataBits,
+                contents: contents,
+                requiresConfirmation: requiresConfirmation
+            )
+        }
+    }
+
+    private nonisolated static func closeSurfaceCallback(
+        userdata: UnsafeMutableRawPointer?
+    ) {
+        let userdataBits = userdata.map(UInt.init(bitPattern:))
+        if Thread.isMainThread {
+            MainActor.assumeIsolated {
+                closeSurface(userdataBits: userdataBits)
+            }
+            return
+        }
+        DispatchQueue.main.async {
+            closeSurface(userdataBits: userdataBits)
+        }
     }
 
     private static func handleAction(target: ghostty_target_s, action: ghostty_action_s) -> Bool {
@@ -284,25 +392,97 @@ final class GhosttyRuntime {
             DispatchQueue.main.async { view.onGotoSplit?() }
             return true
 
+        case GHOSTTY_ACTION_COMMAND_FINISHED:
+            // OSC 133 semantic-prompt marker: a foreground shell command just finished.
+            guard let view = view(fromTarget: target) else { return true }
+            DispatchQueue.main.async { view.commandFinishedCount += 1 }
+            return true
+
         default:
             return false
         }
     }
 
+    private static func readClipboard(
+        userdataBits: UInt?,
+        stateBits: UInt?
+    ) -> Bool {
+        guard let view = view(fromTokenBits: userdataBits),
+              let surface = view.surface
+        else {
+            return false
+        }
+        let state = stateBits.flatMap(UnsafeMutableRawPointer.init(bitPattern:))
+        let text = NSPasteboard.general.string(forType: .string) ?? ""
+        text.withCString { pointer in
+            ghostty_surface_complete_clipboard_request(surface, pointer, state, false)
+        }
+        return true
+    }
+
+    private static func confirmReadClipboard(
+        userdataBits: UInt?,
+        contents: String,
+        stateBits: UInt?,
+        request: ghostty_clipboard_request_e
+    ) {
+        guard let view = view(fromTokenBits: userdataBits),
+              let state = stateBits.flatMap(UnsafeMutableRawPointer.init(bitPattern:))
+        else {
+            return
+        }
+
+        let kind: GhosttyClipboardConfirmationKind
+        switch request {
+        case GHOSTTY_CLIPBOARD_REQUEST_PASTE:
+            kind = .unsafePaste
+        case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_READ:
+            kind = .osc52Read
+        case GHOSTTY_CLIPBOARD_REQUEST_OSC_52_WRITE:
+            // OSC 52 writes carry their confirmation requirement on
+            // write_clipboard_cb and do not complete through this state.
+            return
+        default:
+            return
+        }
+        view.requestClipboardConfirmation(
+            kind: kind,
+            contents: contents,
+            state: state
+        )
+    }
+
+    private static func writeClipboard(
+        userdataBits: UInt?,
+        contents: String,
+        requiresConfirmation: Bool
+    ) {
+        guard let view = view(fromTokenBits: userdataBits) else { return }
+        GhosttyClipboardWriter.request(
+            contents: contents,
+            requiresConfirmation: requiresConfirmation,
+            window: view.window
+        )
+    }
+
+    private static func closeSurface(userdataBits: UInt?) {
+        view(fromTokenBits: userdataBits)?.onProcessExit?()
+    }
+
     private static func view(fromUserdata userdata: UnsafeMutableRawPointer?) -> GhosttyNSView? {
-        guard let userdata else { return nil }
-        return Unmanaged<GhosttyNSView>.fromOpaque(userdata).takeUnretainedValue()
+        view(fromTokenBits: userdata.map(UInt.init(bitPattern:)))
+    }
+
+    private static func view(fromTokenBits token: UInt?) -> GhosttyNSView? {
+        guard let token else { return nil }
+        return liveViews[token]?.value
     }
 
     private static func view(fromTarget target: ghostty_target_s) -> GhosttyNSView? {
         guard target.tag == GHOSTTY_TARGET_SURFACE,
               let surface = target.target.surface,
               let userdata = ghostty_surface_userdata(surface) else { return nil }
-        return Unmanaged<GhosttyNSView>.fromOpaque(userdata).takeUnretainedValue()
-    }
-
-    private static func surface(fromViewUserdata userdata: UnsafeMutableRawPointer?) -> ghostty_surface_t? {
-        view(fromUserdata: userdata)?.surface
+        return view(fromUserdata: userdata)
     }
 
     private static func resourcesDir() -> String? {
@@ -334,6 +514,28 @@ final class GhosttyRuntime {
 
 // MARK: - The NSView hosting one ghostty surface
 
+/// Uniquely owned native resources whose teardown is independent of actor state.
+///
+/// Swift 6 treats `NSView.deinit` as nonisolated even when the view is
+/// `@MainActor`. Keeping these values behind one plain owner lets ARC perform
+/// deterministic teardown without weakening the view's actor isolation.
+private final class GhosttyNSViewResources {
+    var surface: ghostty_surface_t?
+    var keyWindowObservers: [NSObjectProtocol] = []
+    var cStrings: [UnsafeMutablePointer<CChar>] = []
+    var envVarsBuffer: UnsafeMutablePointer<ghostty_env_var_s>?
+
+    deinit {
+        keyWindowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        if let surface {
+            ghostty_surface_free(surface)
+        }
+        cStrings.forEach { free($0) }
+        envVarsBuffer?.deallocate()
+    }
+}
+
+@MainActor
 final class GhosttyNSView: NSView {
     var onTitleChange: ((String) -> Void)?
     var onProcessExit: (() -> Void)?
@@ -342,12 +544,24 @@ final class GhosttyNSView: NSView {
     var onGotoSplit: (() -> Void)?
     var onFocusGained: (() -> Void)?
 
-    private(set) var surface: ghostty_surface_t?
+    private let resources = GhosttyNSViewResources()
+    private(set) var surface: ghostty_surface_t? {
+        get { resources.surface }
+        set { resources.surface = newValue }
+    }
     private(set) var appliedDisplayID: UInt32?
+    private var callbackToken: UInt?
+    /// Bumped each time the shell reports a finished command (OSC 133 → COMMAND_FINISHED), so
+    /// `tenon-cli pane.wait --for command-finished` can detect a completion since it started.
+    var commandFinishedCount = 0
     private var pendingSurfaceCreation = false
-    private var cStrings: [UnsafeMutablePointer<CChar>] = []
+    /// Input handed to this pane before its surface existed, flushed once it does.
+    private var pendingInput = ""
+    /// Owned backing for `ghostty_surface_config_s.env_vars` — the pointer must outlive the config
+    /// passed to `ghostty_surface_new`, so it lives in `resources`, not a local.
     private let command: String?
     private let workingDirectory: URL
+    private let environment: [String: String]
 
     // Set while interpretKeyEvents() runs so insertText() can tell "text from this
     // key press" apart from programmatic insertion.
@@ -357,18 +571,19 @@ final class GhosttyNSView: NSView {
     private var _markedRange = NSRange(location: NSNotFound, length: 0)
     private var _selectedRange = NSRange(location: 0, length: 0)
 
-    private var keyWindowObservers: [NSObjectProtocol] = []
-
     init(
         command: String? = nil,
         workingDirectory: URL = URL(
             fileURLWithPath: NSHomeDirectory(),
             isDirectory: true
-        )
+        ),
+        environment: [String: String] = [:]
     ) {
         self.command = command
         self.workingDirectory = workingDirectory
+        self.environment = environment
         super.init(frame: .zero)
+        callbackToken = GhosttyRuntime.register(self)
         wantsLayer = true
     }
 
@@ -378,11 +593,14 @@ final class GhosttyNSView: NSView {
     }
 
     deinit {
-        keyWindowObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        if let surface {
-            ghostty_surface_free(surface)
+        if let callbackToken {
+            // Swift 6 deinits are nonisolated. The registry only holds a weak
+            // reference (already nil as deallocation begins), so deferred
+            // main-actor removal cannot expose the dying view to a callback.
+            DispatchQueue.main.async {
+                GhosttyRuntime.unregister(callbackToken)
+            }
         }
-        cStrings.forEach { free($0) }
     }
 
     // MARK: Surface lifecycle
@@ -390,8 +608,8 @@ final class GhosttyNSView: NSView {
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
 
-        keyWindowObservers.forEach { NotificationCenter.default.removeObserver($0) }
-        keyWindowObservers = []
+        resources.keyWindowObservers.forEach { NotificationCenter.default.removeObserver($0) }
+        resources.keyWindowObservers = []
 
         guard let window else { return }
 
@@ -401,18 +619,24 @@ final class GhosttyNSView: NSView {
         updateSurfaceGeometry()
 
         for name in [NSWindow.didBecomeKeyNotification, NSWindow.didResignKeyNotification] {
-            keyWindowObservers.append(NotificationCenter.default.addObserver(
+            resources.keyWindowObservers.append(NotificationCenter.default.addObserver(
                 forName: name, object: window, queue: .main
             ) { [weak self] _ in
-                self?.syncFocus()
+                // NotificationCenter promises this block on the main queue; the
+                // imported Objective-C callback lacks an actor annotation.
+                MainActor.assumeIsolated {
+                    self?.syncFocus()
+                }
             })
         }
-        keyWindowObservers.append(NotificationCenter.default.addObserver(
+        resources.keyWindowObservers.append(NotificationCenter.default.addObserver(
             forName: NSWindow.didChangeScreenNotification,
             object: window,
             queue: .main
         ) { [weak self] _ in
-            self?.updateSurfaceGeometry()
+            MainActor.assumeIsolated {
+                self?.updateSurfaceGeometry()
+            }
         })
 
         // Focus is model-driven: this surface must NOT grab first responder on
@@ -438,18 +662,35 @@ final class GhosttyNSView: NSView {
         config.platform = ghostty_platform_u(
             macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(self).toOpaque())
         )
-        config.userdata = Unmanaged.passUnretained(self).toOpaque()
+        config.userdata = callbackToken.flatMap(UnsafeMutableRawPointer.init(bitPattern:))
         config.scale_factor = Double(window?.backingScaleFactor ?? 2.0)
         config.context = GHOSTTY_SURFACE_CONTEXT_SPLIT
         config.wait_after_command = false
 
         if let directory = strdup(workingDirectory.path) {
-            cStrings.append(directory)
+            resources.cStrings.append(directory)
             config.working_directory = UnsafePointer(directory)
         }
         if let command, let commandPointer = strdup(command) {
-            cStrings.append(commandPointer)
+            resources.cStrings.append(commandPointer)
             config.command = UnsafePointer(commandPointer)
+        }
+        if !environment.isEmpty {
+            let buffer = UnsafeMutablePointer<ghostty_env_var_s>.allocate(capacity: environment.count)
+            var count = 0
+            for (key, value) in environment {
+                guard let keyPointer = strdup(key), let valuePointer = strdup(value) else { continue }
+                resources.cStrings.append(keyPointer)
+                resources.cStrings.append(valuePointer)
+                (buffer + count).initialize(to: ghostty_env_var_s(
+                    key: UnsafePointer(keyPointer),
+                    value: UnsafePointer(valuePointer)
+                ))
+                count += 1
+            }
+            resources.envVarsBuffer = buffer
+            config.env_vars = buffer
+            config.env_var_count = numericCast(count)
         }
 
         surface = ghostty_surface_new(app, &config)
@@ -461,6 +702,14 @@ final class GhosttyNSView: NSView {
         ghostty_surface_set_size(surface, backingSize.width, backingSize.height)
         updateSurfaceGeometry()
         syncFocus()
+
+        // Input that arrived before this surface existed (a pane opened and handed a command
+        // in the same click) goes in now that there is a PTY to write to.
+        if !pendingInput.isEmpty {
+            let queued = pendingInput
+            pendingInput = ""
+            sendText(queued)
+        }
     }
 
     private func backingPixelSize() -> (width: UInt32, height: UInt32)? {
@@ -720,7 +969,13 @@ final class GhosttyNSView: NSView {
     }
 
     func sendText(_ text: String) {
-        guard let surface else { return }
+        // A pane created this instant has no `ghostty_surface_t` yet — it is built when the
+        // view lands in a window. Dropping the text here made `terminal.run.v1`
+        // open a terminal tab and then do nothing; hold it until `createSurface` flushes it.
+        guard let surface else {
+            pendingInput += text
+            return
+        }
         let bytes = Array(text.utf8)
         bytes.withUnsafeBufferPointer { buffer in
             guard let base = buffer.baseAddress else { return }
@@ -853,7 +1108,7 @@ final class GhosttyNSView: NSView {
 
 // MARK: - NSTextInputClient (minimal: enough for typing + basic IME)
 
-extension GhosttyNSView: NSTextInputClient {
+extension GhosttyNSView: @MainActor NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
         let text = (string as? String) ?? (string as? NSAttributedString)?.string ?? ""
         unmarkText()
@@ -932,11 +1187,13 @@ final class GhosttySurface: TerminalSurface {
         workingDirectory: URL = URL(
             fileURLWithPath: NSHomeDirectory(),
             isDirectory: true
-        )
+        ),
+        environment: [String: String] = [:]
     ) {
         view = GhosttyNSView(
             command: command,
-            workingDirectory: workingDirectory
+            workingDirectory: workingDirectory,
+            environment: environment
         )
         view.onTitleChange = { [weak self] title in self?.onTitleChange?(title) }
         view.onProcessExit = { [weak self] in self?.onProcessExit?() }
@@ -948,6 +1205,7 @@ final class GhosttySurface: TerminalSurface {
 
     var renderedCells: [GhosttyRenderedCell] { view.renderedCells }
     var renderedText: String { view.renderedText }
+    var commandFinishedCount: Int { view.commandFinishedCount }
     var surfaceSize: GhosttySurfaceSize? { view.surfaceSize }
     var foregroundPID: UInt64? { view.foregroundPID }
     var processExited: Bool { view.processExited }
@@ -959,7 +1217,7 @@ final class GhosttySurface: TerminalSurface {
         view.window?.makeFirstResponder(view)
     }
 
-    /// Write bytes into the slot's PTY, as if typed — backs `tenon.terminal.write`.
+    /// Write bytes into the slot's PTY, as if typed — backs `terminal.write.v1`.
     func sendText(_ text: String) {
         view.sendText(text)
     }

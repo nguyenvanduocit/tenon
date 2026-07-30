@@ -1,147 +1,492 @@
 import AppKit
+import Observation
 import SwiftUI
 import TenonCore
+import TenonIntentCore
 
 @main
 struct TenonApp: App {
-    @State private var host: PluginHost
-    @State private var store: WorkspaceStore
-    @State private var pool: SurfacePool
-    @State private var router = DragRouter()
+    @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self)
+    private var appDelegate
+
+    @State private var composition: AppComposition?
+    @State private var constructionError: String?
 
     init() {
-        NSApplication.shared.setActivationPolicy(.regular)
+        DiffSnapshot.renderIfRequested()
 
-        let host = PluginHost(pluginsRoot: resolvedPluginsRoot())
-        let initialWorkspacePath = resolvedInitialWorkspacePath()
-        let store = WorkspaceStore(
-            catalog: WorkspaceCatalog(path: initialWorkspacePath)
-        )
-        let stub = ProcessInfo.processInfo.environment["TENON_STUB_TERMINAL"] != nil
-        let pool = SurfacePool(backendName: stub ? "Stub" : "libghostty") {
-            workspacePath in
-            stub
-                ? StubTerminalSurface() as TerminalSurface
-                : GhosttySurface(workingDirectory: workspacePath)
+        do {
+            _composition = State(
+                initialValue: try AppComposition()
+            )
+            _constructionError = State(initialValue: nil)
+        } catch {
+            _composition = State(initialValue: nil)
+            _constructionError = State(
+                initialValue: String(describing: error)
+            )
         }
-        Self.wire(host: host, store: store, pool: pool)
-
-        _host = State(initialValue: host)
-        _store = State(initialValue: store)
-        _pool = State(initialValue: pool)
-    }
-
-    /// The whole app, as plumbing: workspace events fan out to plugins and clean up
-    /// surfaces; terminal surfaces drive the workspace back (ghostty keybindings,
-    /// shell exits, focus clicks) and feed the plugin bus (titles).
-    private static func wire(host: PluginHost, store: WorkspaceStore, pool: SurfacePool) {
-        store.onEvents = { [weak host, weak pool] events, snapshot in
-            host?.emit(workspaceEvents: events, in: snapshot)
-            pool?.retainOnly(Set(snapshot.allSlotIDs))
-            for event in events {
-                if case .slotFocused(let slotID, _, _) = event {
-                    // Deferred so a just-split slot's view is in the window first.
-                    DispatchQueue.main.async { pool?.focusSurface(for: slotID) }
-                }
-            }
-        }
-
-        pool.onTitleChange = { [weak host] title, slotID in
-            host?.terminalTitleChanged(title, slotID: slotID)
-        }
-
-        // The plugin platform's view of (and hands on) the workspace + terminal.
-        host.onTerminalWrite = { [weak store, weak pool] text in
-            guard let slotID = store?.catalog.activeSlotID else { return }
-            pool?.sendText(text, to: slotID)
-        }
-        host.workspaceStateProvider = { [weak store] in
-            guard let catalog = store?.catalog else {
-                return [
-                    "workspaces": [],
-                    "tabs": [],
-                    "activeWorkspaceId": NSNull(),
-                    "activeSlotId": NSNull(),
-                ]
-            }
-            return workspacePayload(catalog)
-        }
-        host.onWorkspaceCommand = { [weak store] command in
-            // Deferred: a plugin may issue this mid-event-dispatch.
-            DispatchQueue.main.async {
-                switch command {
-                case .newTab: store?.newTab()
-                case .split(let axis): store?.splitActiveSlot(axis)
-                case .focusSlot(let slotID): store?.focusSlot(slotID)
-                case .closeSlot(let slotID): store?.closeSlot(slotID)
-                }
-            }
-        }
-        pool.onNewTab = { [weak store] in store?.newTab() }
-        pool.onNewSplit = { [weak store] axis in store?.splitActiveSlot(axis) }
-        pool.onFocusNextSlot = { [weak store] in store?.focusNextSlot() }
-        pool.onSlotFocusGained = { [weak store] slotID in store?.focusSlot(slotID) }
-        pool.onShellExited = { [weak store] slotID in store?.closeSlot(slotID) }
     }
 
     var body: some Scene {
         WindowGroup("Tenon") {
-            ContentView(host: host, store: store, pool: pool, router: router)
+            if let composition {
+                ContentView(
+                    host: composition.host,
+                    store: composition.store,
+                    pool: composition.terminalSurfaces,
+                    webPool: composition.webSurfaces,
+                    intentRuntime: composition.intentRuntime,
+                    router: composition.router,
+                    palette: composition.palette,
+                    pluginUI: composition.userInterface
+                )
                 .frame(minWidth: 980, minHeight: 620)
-                .onAppear {
-                    host.loadAll()
-                    host.startWatching()
-                    host.startTicking(interval: 1.0)
-                    NSApp.activate(ignoringOtherApps: true)
-                    // Terminal surfaces no longer self-focus on mount, so the
-                    // launch focus is bootstrapped here from the model's active
-                    // slot. Deferred so the first canvas configure has created
-                    // and mounted the surface first.
-                    if let slotID = store.catalog.activeSlotID {
-                        DispatchQueue.main.async { pool.focusSurface(for: slotID) }
+                .overlay(alignment: .top) {
+                    if let error = composition.startupError {
+                        StartupErrorBanner(message: error)
                     }
                 }
+                .task {
+                    appDelegate.bind(composition)
+                    await composition.start()
+                }
+            } else {
+                StartupFailureView(
+                    message: constructionError
+                        ?? "The app could not create its local runtime."
+                )
+            }
         }
         .windowStyle(.hiddenTitleBar)
         .commands {
-            CommandGroup(after: .newItem) {
-                Button("New Tab") { store.newTab() }
-                    .keyboardShortcut("t")
-                Button("Split Right") { store.splitActiveSlot(.horizontal) }
-                    .keyboardShortcut("d")
-                Button("Split Down") { store.splitActiveSlot(.vertical) }
-                    .keyboardShortcut("d", modifiers: [.command, .shift])
-                Button("Close Slot") { store.closeActiveSlot() }
-                    .keyboardShortcut("w")
-                Divider()
-                Button("Next Tab") { store.selectNextTab() }
-                    .keyboardShortcut("]", modifiers: [.command, .shift])
-                Button("Previous Tab") { store.selectPreviousTab() }
-                    .keyboardShortcut("[", modifiers: [.command, .shift])
-                Button("Next Slot") { store.focusNextSlot() }
-                    .keyboardShortcut("]")
+            if let composition {
+                CommandGroup(after: .newItem) {
+                    Button("Command Palette") {
+                        composition.palette.toggle()
+                    }
+                    .keyboardShortcut(
+                        "p",
+                        modifiers: [.command, .shift]
+                    )
+                }
+                PluginKeyBindingCommands(
+                    host: composition.host,
+                    intentRuntime: composition.intentRuntime
+                )
             }
         }
 
         Settings {
-            SettingsView(host: host)
+            if let composition {
+                SettingsView(
+                    host: composition.host,
+                    prefs: AppPreferencesStore.shared
+                )
+            } else {
+                StartupFailureView(
+                    message: constructionError
+                        ?? "The app runtime is unavailable."
+                )
+            }
         }
     }
 }
 
+@MainActor
+@Observable
+final class AppComposition {
+    let host: PluginHost
+    let store: WorkspaceStore
+    let terminalSurfaces: SurfacePool
+    let webSurfaces: PluginWebSurfacePool
+    let intentRuntime: AppIntentRuntime
+    let cliServer: CLISocketServer
+    let router = DragRouter()
+    let palette = CommandPaletteState()
+    let userInterface: PluginUIState
+
+    private(set) var startupError: String?
+    private(set) var isStarted = false
+
+    @ObservationIgnored
+    private var lifecycleTask: Task<Void, Never>?
+
+    @ObservationIgnored
+    private var lifecycleID: UUID?
+
+    convenience init() throws {
+        try self.init(paths: AppStatePaths.resolve())
+    }
+
+    init(paths: AppStatePaths) throws {
+        let underTest =
+            ProcessInfo.processInfo
+                .environment["XCTestConfigurationFilePath"] != nil
+                || NSClassFromString("XCTestCase") != nil
+        let cliServer = CLISocketServer(enabled: !underTest)
+        if cliServer.role == .secondary {
+            exit(0)
+        }
+        let socketPath = cliServer.socketPath ?? ""
+
+        NSApplication.shared.setActivationPolicy(.regular)
+
+        let pluginsRoot = paths.pluginInventoryRoot
+        let prefs = AppPreferencesStore.shared
+        let store = WorkspaceStore(
+            catalog: WorkspaceCatalog(
+                path: resolvedInitialWorkspacePath(),
+                content: prefs.preferences.newWorkspaceContent
+                    .slotContent()
+            ),
+            recent: RecentStore(
+                fileURL: paths.workspaceStateRoot.appendingPathComponent(
+                    ".recent-views.json"
+                )
+            ),
+            recentWorkspaces: RecentWorkspaceStore(
+                fileURL: paths.workspaceStateRoot.appendingPathComponent(
+                    ".recent-workspaces.json"
+                )
+            )
+        )
+
+        let useStub =
+            ProcessInfo.processInfo
+                .environment["TENON_STUB_TERMINAL"] != nil
+        let terminalSurfaces = SurfacePool(
+            backendName: useStub ? "Stub" : "libghostty"
+        ) { slotID, workspacePath in
+            if useStub {
+                return StubTerminalSurface()
+            }
+            return GhosttySurface(
+                workingDirectory: workspacePath,
+                environment: [
+                    "TENON_SOCKET_PATH": socketPath,
+                    "TENON_PANE_ID": slotID.uuidString,
+                ]
+            )
+        }
+        let webSurfaces = PluginWebSurfacePool()
+        let userInterface = PluginUIState()
+        let intentRuntime = try AppIntentRuntime(
+            stateRoot: paths.runtimeStateRoot,
+            workspaceStore: store,
+            terminalSurfaces: terminalSurfaces,
+            webSurfaces: webSurfaces,
+            userInterface: userInterface
+        )
+        let host = try PluginHost(
+            pluginsRoot: pluginsRoot,
+            stateRoot: paths.pluginStateRoot,
+            kernel: intentRuntime.kernel,
+            // The inventory root is the app bundle (or the developer root standing in for
+            // it), so everything the host loads shipped with the app and carries the
+            // consent the user gave by installing it. A user-installed plugin directory
+            // would need its own authorization rather than this one.
+            authorization: .bundledInventory,
+            invocationScopeProvider: { @MainActor [weak store] in
+                guard let store else {
+                    return InvocationScope()
+                }
+                return InvocationScope(
+                    workspaceID: store.catalog.activeWorkspaceID,
+                    paneID: store.catalog.activeSlotID
+                )
+            }
+        )
+
+        self.host = host
+        self.store = store
+        self.terminalSurfaces = terminalSurfaces
+        self.webSurfaces = webSurfaces
+        self.intentRuntime = intentRuntime
+        self.cliServer = cliServer
+        self.userInterface = userInterface
+
+        Self.wire(
+            host: host,
+            store: store,
+            terminalSurfaces: terminalSurfaces,
+            webSurfaces: webSurfaces
+        )
+        Self.wireDefaultContent(store: store, prefs: prefs)
+
+        cliServer.onRequest = { action, respond in
+            Task { @MainActor in
+                respond(
+                    await CLICommandExecutor.execute(
+                        action,
+                        runtime: intentRuntime
+                    )
+                )
+            }
+        }
+    }
+
+    func start() async {
+        if let lifecycleTask {
+            await lifecycleTask.value
+            return
+        }
+        guard !isStarted else { return }
+
+        let id = UUID()
+        let task = Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.performStart()
+        }
+        lifecycleID = id
+        lifecycleTask = task
+        await task.value
+        if lifecycleID == id {
+            lifecycleID = nil
+            lifecycleTask = nil
+        }
+    }
+
+    func stop() async {
+        let starting = lifecycleTask
+        starting?.cancel()
+        await starting?.value
+        lifecycleID = nil
+        lifecycleTask = nil
+
+        await host.shutdown()
+        webSurfaces.disposeAll()
+        do {
+            try await intentRuntime.stop()
+        } catch {
+            startupError = String(describing: error)
+        }
+        isStarted = false
+    }
+}
+
+@MainActor
+final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
+    private weak var composition: AppComposition?
+    private var terminationTask: Task<Void, Never>?
+
+    func bind(_ composition: AppComposition) {
+        self.composition = composition
+    }
+
+    func applicationShouldTerminate(
+        _ sender: NSApplication
+    ) -> NSApplication.TerminateReply {
+        guard let composition else {
+            return .terminateNow
+        }
+        guard terminationTask == nil else {
+            return .terminateLater
+        }
+
+        terminationTask = Task { @MainActor [weak self] in
+            await composition.stop()
+            sender.reply(toApplicationShouldTerminate: true)
+            self?.terminationTask = nil
+        }
+        return .terminateLater
+    }
+}
+
+private extension AppComposition {
+    func performStart() async {
+        do {
+            try Task.checkCancellation()
+            try await intentRuntime.start()
+            try Task.checkCancellation()
+            try await host.loadAll()
+            webSurfaces.reconcile(catalog: store.catalog, host: host)
+            try Task.checkCancellation()
+            try host.startWatching()
+
+            for workspace in store.catalog.workspaces {
+                store.recentWorkspaces?.record(
+                    name: workspace.name,
+                    path: workspace.path
+                )
+            }
+            isStarted = true
+            startupError = nil
+            NSApp.activate(ignoringOtherApps: true)
+            await Task.yield()
+            if let slotID = store.catalog.activeSlotID {
+                terminalSurfaces.focusSurface(for: slotID)
+            }
+        } catch is CancellationError {
+            return
+        } catch {
+            startupError = String(describing: error)
+        }
+    }
+
+    static func wire(
+        host: PluginHost,
+        store: WorkspaceStore,
+        terminalSurfaces: SurfacePool,
+        webSurfaces: PluginWebSurfacePool
+    ) {
+        host.onPluginLifecycleChanged = {
+            [weak host, weak store, weak webSurfaces] _ in
+            guard let host, let store else { return }
+            webSurfaces?.reconcile(catalog: store.catalog, host: host)
+        }
+
+        store.onEvents = {
+            [weak host, weak terminalSurfaces, weak webSurfaces]
+                events,
+                snapshot in
+            terminalSurfaces?.retainOnly(Set(snapshot.allSlotIDs))
+            if let host {
+                webSurfaces?.reconcile(catalog: snapshot, host: host)
+            }
+            Task { @MainActor [weak host] in
+                await host?.emit(
+                    workspaceEvents: events,
+                    in: snapshot
+                )
+            }
+            for event in events {
+                if case let .slotFocused(slotID, _, _) = event {
+                    Task { @MainActor [weak terminalSurfaces] in
+                        await Task.yield()
+                        terminalSurfaces?.focusSurface(for: slotID)
+                    }
+                }
+            }
+        }
+
+        terminalSurfaces.onTitleChange = {
+            [weak host] title, slotID in
+            Task { @MainActor [weak host] in
+                await host?.terminalTitleChanged(
+                    title,
+                    slotID: slotID
+                )
+            }
+        }
+        terminalSurfaces.onNewTab = {
+            [weak store] in store?.newTab()
+        }
+        terminalSurfaces.onNewSplit = {
+            [weak store] axis in
+            store?.splitActiveSlot(axis)
+        }
+        terminalSurfaces.onFocusNextSlot = {
+            [weak store] in store?.focusNextSlot()
+        }
+        terminalSurfaces.onSlotFocusGained = {
+            [weak store] slotID in store?.focusSlot(slotID)
+        }
+        terminalSurfaces.onShellExited = {
+            [weak store] slotID in store?.closeSlot(slotID)
+        }
+        webSurfaces.onNavigationEvent = {
+            [weak host] event in
+            Task { @MainActor [weak host] in
+                guard let host,
+                      host.plugins.contains(where: {
+                          $0.id == event.key.pluginID
+                              && $0.installationID
+                                  == event.key.installation.installationID
+                              && $0.isEnabled
+                              && $0.isLoaded
+                              && $0.permissions.contains("web.view")
+                      })
+                else {
+                    return
+                }
+                await host.emit(
+                    event: event.name,
+                    payload: event.payload,
+                    to: event.key.pluginID
+                )
+            }
+        }
+    }
+
+    static func wireDefaultContent(
+        store: WorkspaceStore,
+        prefs: AppPreferencesStore
+    ) {
+        store.newTabContentProvider = {
+            prefs.preferences.newTabContent.slotContent()
+        }
+        store.newSplitContentProvider = {
+            prefs.preferences.newSplitContent.slotContent()
+        }
+        store.newWorkspaceContentProvider = {
+            prefs.preferences.newWorkspaceContent.slotContent()
+        }
+    }
+}
+
+private struct StartupErrorBanner: View {
+    let message: String
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "exclamationmark.triangle.fill")
+            Text(message)
+                .lineLimit(3)
+        }
+        .font(TenonTheme.interfaceFont(size: 12))
+        .foregroundStyle(Color.white)
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .background(Color.red.opacity(0.9))
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: 8,
+                style: .continuous
+            )
+        )
+        .padding(.top, 48)
+    }
+}
+
+private struct StartupFailureView: View {
+    let message: String
+
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.triangle")
+                .font(.system(size: 28))
+            Text("Tenon could not start")
+                .font(.headline)
+            Text(message)
+                .font(.system(.caption, design: .monospaced))
+                .multilineTextAlignment(.center)
+                .textSelection(.enabled)
+        }
+        .padding(32)
+        .frame(
+            minWidth: 640,
+            minHeight: 420
+        )
+    }
+}
+
 /// Resolve the first workspace independently of how the app was launched.
-/// Finder/LaunchServices commonly starts apps with `/` as their process cwd,
-/// which is not a useful project root.
 func resolvedInitialWorkspacePath(
-    environment: [String: String] = ProcessInfo.processInfo.environment,
-    currentDirectoryPath: String = FileManager.default.currentDirectoryPath,
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+    environment: [String: String] =
+        ProcessInfo.processInfo.environment,
+    currentDirectoryPath: String =
+        FileManager.default.currentDirectoryPath,
+    homeDirectory: URL =
+        FileManager.default.homeDirectoryForCurrentUser
 ) -> URL {
     if let override = environment["TENON_WORKSPACE_PATH"]?
         .trimmingCharacters(in: .whitespacesAndNewlines),
-       !override.isEmpty {
+       !override.isEmpty
+    {
         return URL(
-            fileURLWithPath: (override as NSString).expandingTildeInPath,
+            fileURLWithPath:
+                (override as NSString).expandingTildeInPath,
             isDirectory: true
         ).standardizedFileURL
     }
@@ -154,103 +499,4 @@ func resolvedInitialWorkspacePath(
         return launchDirectory
     }
     return homeDirectory.standardizedFileURL
-}
-
-func workspacePayload(_ catalog: WorkspaceCatalog) -> [String: Any] {
-    let workspaces = catalog.workspaces.map { workspace -> [String: Any] in
-        [
-            "id": workspace.id.uuidString,
-            "name": workspace.name,
-            "path": workspace.path.path,
-            "selected": workspace.id == catalog.activeWorkspaceID,
-            "activeTabId": workspace.activeTabID.uuidString,
-            "tabs": workspace.tabs.map { tab -> [String: Any] in
-                [
-                    "id": tab.id.uuidString,
-                    "selected": tab.id == workspace.activeTabID,
-                    "activeSlotId": tab.activeSlotID?.uuidString as Any? ?? NSNull(),
-                    "slotIds": tab.slots.map { $0.id.uuidString },
-                    "slots": tab.slots.map { slot -> [String: Any] in
-                        [
-                            "id": slot.id.uuidString,
-                            "content": slot.content.busValue,
-                            "rect": [
-                                "x": slot.rect.x,
-                                "y": slot.rect.y,
-                                "width": slot.rect.width,
-                                "height": slot.rect.height,
-                            ],
-                        ]
-                    },
-                ]
-            },
-        ]
-    }
-    let activeTabs = catalog.activeWorkspace?.tabs.map { tab -> [String: Any] in
-        [
-            "id": tab.id.uuidString,
-            "slotIds": tab.slots.map { $0.id.uuidString },
-            "selected": tab.id == catalog.activeWorkspace?.activeTabID,
-        ]
-    } ?? []
-
-    return [
-        "workspaces": workspaces,
-        "tabs": activeTabs,
-        "activeWorkspaceId": catalog.activeWorkspaceID.uuidString,
-        "activeSlotId": catalog.activeSlotID?.uuidString as Any? ?? NSNull(),
-    ]
-}
-
-/// Installed builds use a writable plugin root. The bundled plugin folders are
-/// copied there once; user settings and plugin-local state stay outside the app
-/// bundle. Developers can point at a source tree with `TENON_PLUGINS_DIR`.
-private func resolvedPluginsRoot() -> URL {
-    if let override = ProcessInfo.processInfo.environment["TENON_PLUGINS_DIR"] {
-        return URL(fileURLWithPath: override, isDirectory: true)
-    }
-
-    let fileManager = FileManager.default
-    let applicationSupport = fileManager.urls(
-        for: .applicationSupportDirectory,
-        in: .userDomainMask
-    )[0]
-    let root = applicationSupport
-        .appendingPathComponent("Tenon", isDirectory: true)
-        .appendingPathComponent("plugins", isDirectory: true)
-    do {
-        try fileManager.createDirectory(
-            at: root,
-            withIntermediateDirectories: true
-        )
-        if let bundled = Bundle.main.resourceURL?
-            .appendingPathComponent("plugins", isDirectory: true) {
-            try seedBundledPlugins(from: bundled, into: root, fileManager: fileManager)
-        }
-    } catch {
-        NSLog("tenon: failed to prepare plugin directory: \(error)")
-    }
-    return root
-}
-
-private func seedBundledPlugins(
-    from bundledRoot: URL,
-    into writableRoot: URL,
-    fileManager: FileManager
-) throws {
-    guard fileManager.fileExists(atPath: bundledRoot.path) else { return }
-    for bundledPlugin in try fileManager.contentsOfDirectory(
-        at: bundledRoot,
-        includingPropertiesForKeys: [.isDirectoryKey],
-        options: [.skipsHiddenFiles]
-    ) where
-        (try bundledPlugin.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    {
-        let destination = writableRoot.appendingPathComponent(
-            bundledPlugin.lastPathComponent,
-            isDirectory: true
-        )
-        guard !fileManager.fileExists(atPath: destination.path) else { continue }
-        try fileManager.copyItem(at: bundledPlugin, to: destination)
-    }
 }

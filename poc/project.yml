@@ -2,21 +2,67 @@ name: Tenon
 
 options:
   minimumXcodeGenVersion: 2.45.4
+  transitivelyLinkDependencies: true
   deploymentTarget:
     macOS: "14.0"
 
 settings:
   base:
-    SWIFT_VERSION: "5.0"
+    SWIFT_VERSION: "6.0"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
+packages:
+  Neon:
+    url: https://github.com/kylemacomber/Neon
+    revision: ce8d252
+  STTextView:
+    path: Vendor/STTextView
+  STTextViewPluginNeon:
+    path: Vendor/STTextView-Plugin-Neon
+  SwiftCollections:
+    url: https://github.com/apple/swift-collections.git
+    exactVersion: 1.6.0
+  SwiftJSONSchema:
+    url: https://github.com/ajevans99/swift-json-schema
+    exactVersion: 0.13.1
+  SwiftTreeSitter:
+    url: https://github.com/ChimeHQ/SwiftTreeSitter
+    from: 0.9.0
+  TreeSitterTSX:
+    path: Vendor/TreeSitterTSX
+
 targets:
+  TenonIntentCore:
+    type: framework.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TenonIntentCore
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
+    dependencies:
+      - package: SwiftCollections
+        product: OrderedCollections
+      - package: SwiftJSONSchema
+        product: JSONSchema
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.intent-core
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
   TenonCore:
     type: framework
     platform: macOS
     deploymentTarget: "14.0"
     sources:
       - path: Sources/TenonCore
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
+    dependencies:
+      - target: TenonIntentCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.core
@@ -29,6 +75,9 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Sources/TenonApp
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
       - path: Resources/ghostty
         type: folder
         buildPhase: resources
@@ -38,8 +87,25 @@ targets:
       - path: plugins
         type: folder
         buildPhase: resources
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
     dependencies:
+      - target: TenonIntentCore
       - target: TenonCore
+      - target: TenonCLI
+        copy:
+          destination: executables
+      - package: STTextView
+        product: STTextView
+      - package: STTextViewPluginNeon
+        product: STTextView-Plugin-Neon
+      - package: Neon
+        product: Neon
+      - package: SwiftTreeSitter
+        product: SwiftTreeSitter
+      - package: TreeSitterTSX
+        product: TreeSitterTSX
       - framework: GhosttyKit.xcframework
         embed: false
       - sdk: AppKit.framework
@@ -62,10 +128,37 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon
         PRODUCT_NAME: Tenon
         PRODUCT_MODULE_NAME: TenonApp
-        GENERATE_INFOPLIST_FILE: YES
+        INFOPLIST_FILE: Tenon-Info.plist
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         COMBINE_HIDPI_IMAGES: YES
+
+  # The `tenon-cli` command bundled into Tenon.app (Contents/MacOS) so Settings → CLI → Install
+  # can copy a self-contained binary into the user's PATH. TenonCore is compiled directly into the
+  # tool (not linked as the app's framework) so the installed copy runs standalone — the CLI sources
+  # use `#if canImport(TenonCore)` to also build as a separate SwiftPM module.
+  TenonCLI:
+    type: tool
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TenonCLI
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
+      - path: Sources/TenonCore
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
+    dependencies:
+      - target: TenonIntentCore
+      - sdk: JavaScriptCore.framework
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.cli
+        PRODUCT_NAME: tenon-cli
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
 
   TenonCoreTests:
     type: bundle.unit-test
@@ -73,11 +166,31 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Tests/TenonCoreTests
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
     dependencies:
+      - target: TenonIntentCore
       - target: TenonCore
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.core-tests
+        GENERATE_INFOPLIST_FILE: YES
+
+  TenonIntentCoreTests:
+    type: bundle.unit-test
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Tests/TenonIntentCoreTests
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
+    dependencies:
+      - target: TenonIntentCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.intent-core-tests
         GENERATE_INFOPLIST_FILE: YES
 
   TenonAppTests:
@@ -86,6 +199,9 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Tests/TenonAppTests
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
     dependencies:
       - target: Tenon
     settings:
@@ -99,6 +215,9 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Tests/TenonIntegrationTests
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
     dependencies:
       - target: Tenon
     settings:
@@ -118,6 +237,9 @@ targets:
     deploymentTarget: "14.0"
     sources:
       - path: Tests/TenonUITests
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
     dependencies:
       - target: Tenon
     settings:
@@ -136,6 +258,7 @@ schemes:
     test:
       config: Debug
       targets:
+        - TenonIntentCoreTests
         - TenonCoreTests
         - TenonAppTests
         - TenonIntegrationTests

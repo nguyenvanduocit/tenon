@@ -22,9 +22,15 @@ struct ShellTitleBar: View {
                     alignment: .leading
                 )
 
-            Rectangle()
-                .fill(TenonTheme.line)
-                .frame(width: 1)
+            // With the sidebar open, the shell's full-height resize edge draws this
+            // seam (and makes it draggable), so the title bar must not stack a second
+            // static rule at the same x. With the sidebar closed there is no edge
+            // below, so the identity/tabs separator lives here.
+            if !sidebarVisible {
+                Rectangle()
+                    .fill(TenonTheme.line)
+                    .frame(width: 1)
+            }
 
             rightZone
                 .frame(maxWidth: .infinity)
@@ -123,11 +129,23 @@ struct ShellTitleBar: View {
     private var slotControls: some View {
         Menu {
             Button("Terminal") { store.addSlot(content: .terminal) }
-            Button("Files") { store.addSlot(content: .files) }
+            Button("Files") {
+                store.addSlot(
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
+                )
+            }
             Button("Diff") { store.addSlot(content: .changes) }
             Button("Docs") { store.addSlot(content: .docs) }
             Button("Browser") {
-                store.addSlot(content: .browser(url: BrowserConfigStore.shared.homeURL))
+                store.addSlot(
+                    content: .pluginView(
+                        pluginID: "dev.tenon.browser",
+                        viewID: "browser"
+                    )
+                )
             }
         } label: {
             Label("Add slot", systemImage: "square.grid.2x2")

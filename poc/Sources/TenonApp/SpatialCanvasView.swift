@@ -221,7 +221,11 @@ struct SpatialCanvasView: NSViewRepresentable {
     let activeSlotID: UUID?
     let store: WorkspaceStore
     let pool: SurfacePool
+    let webPool: PluginWebSurfacePool
     let host: PluginHost
+    let pluginSnapshots: [PluginSnapshot]
+    let pluginViewSections: [PluginViewSection]
+    let webSurfaceTitles: [WebSurfaceKey: String]
     let router: DragRouter
 
     func makeNSView(context: Context) -> SpatialCanvasNSView {
@@ -236,9 +240,20 @@ struct SpatialCanvasView: NSViewRepresentable {
             activeSlotID: activeSlotID,
             store: store,
             pool: pool,
+            webPool: webPool,
             host: host,
+            pluginSnapshots: pluginSnapshots,
+            pluginViewSections: pluginViewSections,
+            webSurfaceTitles: webSurfaceTitles,
             router: router
         )
+    }
+
+    static func dismantleNSView(
+        _ view: SpatialCanvasNSView,
+        coordinator: Coordinator
+    ) {
+        view.stopMouseMonitoring()
     }
 }
 
@@ -278,16 +293,12 @@ final class SpatialCanvasNSView: NSView {
         nil
     }
 
-    deinit {
-        if let mouseMonitor {
-            NSEvent.removeMonitor(mouseMonitor)
-        }
-    }
-
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window != nil {
             installMouseMonitorIfNeeded()
+        } else {
+            stopMouseMonitoring()
         }
     }
 
@@ -330,7 +341,11 @@ final class SpatialCanvasNSView: NSView {
         activeSlotID: UUID?,
         store: WorkspaceStore,
         pool: SurfacePool,
+        webPool: PluginWebSurfacePool,
         host: PluginHost,
+        pluginSnapshots: [PluginSnapshot],
+        pluginViewSections: [PluginViewSection],
+        webSurfaceTitles: [WebSurfaceKey: String],
         router: DragRouter
     ) {
         self.store = store
@@ -345,6 +360,30 @@ final class SpatialCanvasNSView: NSView {
             cards.removeValue(forKey: id)
         }
 
+        let activePluginRenderIdentities = Set(
+            pluginSnapshots.compactMap {
+                plugin -> PluginRenderIdentity? in
+                guard plugin.isEnabled,
+                      plugin.isLoaded,
+                      let installationID = plugin.installationID
+                else {
+                    return nil
+                }
+                return PluginRenderIdentity(
+                    installation: PluginInstallationKey(
+                        pluginID: plugin.id,
+                        installationID: installationID
+                    ),
+                    allowsWebView: plugin.permissions.contains("web.view")
+                )
+            }
+        )
+        for card in cards.values {
+            card.invalidatePluginContent(
+                unlessActiveIn: activePluginRenderIdentities
+            )
+        }
+
         for slot in tab.slots {
             let card = cards[slot.id] ?? makeCard(slotID: slot.id)
             if card.superview == nil {
@@ -356,10 +395,17 @@ final class SpatialCanvasNSView: NSView {
                 title: SlotPresentation.title(
                     for: slot,
                     workspacePath: workspacePath,
-                    pool: pool
+                    pool: pool,
+                    webPool: webPool,
+                    pluginSnapshots: pluginSnapshots,
+                    pluginViewSections: pluginViewSections,
+                    webSurfaceTitles: webSurfaceTitles
                 ),
                 isActive: slot.id == activeSlotID,
+                store: store,
                 pool: pool,
+                webPool: webPool,
+                pluginSnapshots: pluginSnapshots,
                 host: host
             )
         }
@@ -368,6 +414,7 @@ final class SpatialCanvasNSView: NSView {
         for id in Array(cards.keys) where !visibleIDs.contains(id) {
             cards[id]?.removeFromSuperview()
         }
+        webPool.reconcile(catalog: store.catalog, host: host)
 
         displayedSlots = tab.spatialSlots
         applyFrames(displayedSlots)
@@ -612,6 +659,12 @@ final class SpatialCanvasNSView: NSView {
         }
     }
 
+    func stopMouseMonitoring() {
+        guard let mouseMonitor else { return }
+        NSEvent.removeMonitor(mouseMonitor)
+        self.mouseMonitor = nil
+    }
+
     /// The local monitor only bridges body clicks that the hosted terminal or
     /// built-in content consumes. Header, resize, and close interactions own
     /// their selection semantics and must never pre-focus a slot.
@@ -671,6 +724,11 @@ final class SpatialCanvasNSView: NSView {
     }
 }
 
+private struct PluginRenderIdentity: Hashable {
+    let installation: PluginInstallationKey
+    let allowsWebView: Bool
+}
+
 final class SpatialSlotCardView: NSView {
     let slotID: UUID
     var onClose: ((UUID) -> Void)?
@@ -684,6 +742,7 @@ final class SpatialSlotCardView: NSView {
     private let closeButton = SlotCloseButton()
     private var contentHost: NSHostingView<AnyView>?
     private var contentKey = ""
+    private var pluginRenderIdentity: PluginRenderIdentity?
 
     private static let northwestSoutheastCursor = diagonalResizeCursor(
         symbol: "arrow.up.left.and.arrow.down.right"
@@ -929,22 +988,61 @@ final class SpatialSlotCardView: NSView {
         workspacePath: URL,
         title newTitle: String,
         isActive: Bool,
+        store: WorkspaceStore?,
         pool: SurfacePool,
+        webPool: PluginWebSurfacePool,
+        pluginSnapshots: [PluginSnapshot],
         host: PluginHost
     ) {
         glyph.stringValue = SlotPresentation.glyph(for: slot.content)
         title.stringValue = newTitle
         setState(isActive: isActive, previewIsValid: nil)
 
-        let key = "\(slot.content.busValue)|\(workspacePath.standardizedFileURL.path)"
+        // An empty slot rebinds the return key when it becomes the active pane,
+        // so fold active state into the cache key for empties only — other
+        // content ignores it and keeps its live surface across focus changes.
+        let activeSuffix = slot.content == .empty ? "|active=\(isActive)" : ""
+        let nextPluginRenderIdentity: PluginRenderIdentity?
+        if case let .pluginView(pluginID, _) = slot.content,
+           let plugin = pluginSnapshots.first(where: {
+               $0.id == pluginID && $0.isEnabled && $0.isLoaded
+           }),
+           let installationID = plugin.installationID {
+            nextPluginRenderIdentity = PluginRenderIdentity(
+                installation: PluginInstallationKey(
+                    pluginID: pluginID,
+                    installationID: installationID
+                ),
+                allowsWebView: plugin.permissions.contains("web.view")
+            )
+        } else {
+            nextPluginRenderIdentity = nil
+        }
+        let installationSuffix: String
+        if let nextPluginRenderIdentity {
+            let installationID = nextPluginRenderIdentity.installation
+                .installationID.uuidString.lowercased()
+            installationSuffix =
+                "|installation=\(installationID)"
+                + "|web.view=\(nextPluginRenderIdentity.allowsWebView)"
+        } else if case .pluginView = slot.content {
+            installationSuffix = "|installation=inactive"
+        } else {
+            installationSuffix = ""
+        }
+        let key = "\(slot.content.busValue)|\(workspacePath.standardizedFileURL.path)\(activeSuffix)\(installationSuffix)"
         guard key != contentKey else { return }
         contentKey = key
+        pluginRenderIdentity = nextPluginRenderIdentity
         let root = AnyView(
             BuiltInSlotContentView(
                 slot: slot,
                 workspacePath: workspacePath,
                 host: host,
-                pool: pool
+                pool: pool,
+                webPool: webPool,
+                store: store,
+                isActive: isActive
             )
             .preferredColorScheme(.dark)
         )
@@ -958,6 +1056,20 @@ final class SpatialSlotCardView: NSView {
             self.contentHost = contentHost
         }
         needsLayout = true
+    }
+
+    fileprivate func invalidatePluginContent(
+        unlessActiveIn activeIdentities: Set<PluginRenderIdentity>
+    ) {
+        guard let pluginRenderIdentity,
+              !activeIdentities.contains(pluginRenderIdentity)
+        else {
+            return
+        }
+        contentHost?.removeFromSuperview()
+        contentHost = nil
+        contentKey = ""
+        self.pluginRenderIdentity = nil
     }
 
     func setState(isActive: Bool, previewIsValid: Bool?) {
@@ -1082,7 +1194,11 @@ enum SlotTypeOption: CaseIterable {
         case .terminal:
             return .terminal
         case .files:
-            return .files
+            // Files is the bundled file-explorer plugin's tree, not a host content type.
+            return .pluginView(
+                pluginID: "dev.tenon.file-explorer",
+                viewID: "tree"
+            )
         case .changes:
             return .changes
         case .docs:

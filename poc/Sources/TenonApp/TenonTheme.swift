@@ -1,5 +1,22 @@
 import AppKit
 import SwiftUI
+import TenonCore
+
+/// The live accent colour for Tenon's chrome, swapped from the user's `AccentColor`
+/// preference at launch and whenever Settings changes it. Kept process-wide so
+/// `TenonTheme.amber` stays the single accent source every view already reads; the
+/// shell rebuilds its view tree on an accent change so the new colour propagates.
+enum ThemeRuntime {
+    @MainActor
+    private(set) static var accentNS = NSColor(
+        hex: AccentColor.amber.hex
+    )
+
+    @MainActor
+    static func setAccent(_ accent: AccentColor) {
+        accentNS = NSColor(hex: accent.hex)
+    }
+}
 
 enum TenonTheme {
     static let ink = Color(nsColor: .tenonInk)
@@ -9,7 +26,10 @@ enum TenonTheme {
     static let line = Color(nsColor: .tenonLine)
     static let text = Color(nsColor: .tenonText)
     static let muted = Color(nsColor: .tenonMuted)
-    static let amber = Color(nsColor: .tenonAmber)
+    /// The user's accent. Computed so a launch/Settings accent swap is reflected the
+    /// next time a view reads it (the shell forces that read by rebuilding on change).
+    @MainActor
+    static var amber: Color { Color(nsColor: .tenonAmber) }
     static let inkNS = NSColor.tenonInk
     static let chromeNS = NSColor.tenonChrome
     static let chromeRaisedNS = NSColor.tenonChromeRaised
@@ -17,7 +37,8 @@ enum TenonTheme {
     static let lineNS = NSColor.tenonLine
     static let textNS = NSColor.tenonText
     static let mutedNS = NSColor.tenonMuted
-    static let amberNS = NSColor.tenonAmber
+    @MainActor
+    static var amberNS: NSColor { .tenonAmber }
 
     static let sidebarWidth: CGFloat = 232
     static let titleBarHeight: CGFloat = 46
@@ -64,7 +85,10 @@ extension NSColor {
     static let tenonLine = NSColor(hex: 0x282E36)
     static let tenonText = NSColor(hex: 0xE8EBEF)
     static let tenonMuted = NSColor(hex: 0x8E96A2)
-    static let tenonAmber = NSColor(hex: 0xE6A33A)
+    /// Reads the live accent so every existing `TenonTheme.amber*` reference follows
+    /// the user's chosen colour without any call site changing.
+    @MainActor
+    static var tenonAmber: NSColor { ThemeRuntime.accentNS }
 
     convenience init(hex: UInt32, alpha: CGFloat = 1) {
         self.init(

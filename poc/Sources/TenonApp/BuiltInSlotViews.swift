@@ -2,13 +2,20 @@ import AppKit
 import Observation
 import SwiftUI
 import TenonCore
-import WebKit
+import TenonIntentCore
 
 struct BuiltInSlotContentView: View {
     let slot: WorkspaceSlot
     let workspacePath: URL
     var host: PluginHost
     var pool: SurfacePool
+    var webPool: PluginWebSurfacePool
+    /// Present for real panes; nil in preview/detached rendering. An empty slot
+    /// needs it to fill itself in place.
+    var store: WorkspaceStore?
+    /// Whether this slot is the active pane — an empty slot only claims the
+    /// return-key default action while active.
+    var isActive: Bool = false
 
     var body: some View {
         switch slot.content {
@@ -18,46 +25,79 @@ struct BuiltInSlotContentView: View {
                 workspacePath: workspacePath
             ).makeView()
 
-        case .files:
-            FilesSlotView(root: workspacePath)
+        case .file(let path):
+            FileSlotView(path: path)
 
         case .changes:
-            ChangesSlotView(root: workspacePath)
+            ChangesPanelView(root: workspacePath, store: store)
 
         case .docs:
             DocsSlotView(root: workspacePath)
 
-        case .browser(let url):
-            WebBrowserSlotView(slotID: slot.id, seedURL: url, pool: pool)
+        case .pluginView(let pluginID, let viewID):
+            PluginSlotView(
+                pluginID: pluginID,
+                viewID: viewID,
+                slotID: slot.id,
+                host: host,
+                webPool: webPool
+            )
 
-        case .pluginView(let plugin, let viewID):
-            PluginSlotView(plugin: plugin, viewID: viewID, host: host)
+        case .diff(let request):
+            DiffSlotView(request: request)
 
         case .empty:
-            EmptySlotView()
+            EmptySlotView(slotID: slot.id, store: store, isActive: isActive)
         }
     }
 }
 
 enum SlotPresentation {
+    @MainActor
     static func title(
         for slot: WorkspaceSlot,
         workspacePath: URL,
-        pool: SurfacePool
+        pool: SurfacePool,
+        webPool: PluginWebSurfacePool,
+        pluginSnapshots: [PluginSnapshot],
+        pluginViewSections: [PluginViewSection],
+        webSurfaceTitles: [WebSurfaceKey: String]
     ) -> String {
         switch slot.content {
         case .terminal:
             return pool.titles[slot.id] ?? "Ghostty — shell"
-        case .files:
-            return "Files — \(workspacePath.lastPathComponent)"
+        case .file(let path):
+            return (path as NSString).lastPathComponent
         case .changes:
             return "Changes — working tree"
         case .docs:
             return "Docs — README"
-        case .browser(let url):
-            return pool.titles[slot.id] ?? "Browser — \(url.host ?? url.absoluteString)"
-        case .pluginView(_, let viewID):
-            return viewID
+        case .pluginView(let pluginID, let viewID):
+            // An instanced view's tab shows the web page title for THIS pane (keyed by
+            // its slot id); a singleton view falls back to a viewID-keyed title (T-012).
+            // Failing both, the tab takes the title the plugin registered — the raw
+            // viewID is a last resort, not the normal answer, or every plugin pane reads
+            // like a variable name ("tree", "sessions") instead of "Files", "Sessions".
+            let registered = pluginViewSections.first {
+                $0.pluginID == pluginID && $0.viewID == viewID
+                    && ($0.instanceID == nil || $0.instanceID == slot.id.uuidString)
+            }?.title
+            var webTitle: String?
+            for surfaceID in [slot.id.uuidString, viewID] {
+                guard let key = webPool.key(
+                    pluginID: pluginID,
+                    surfaceID: surfaceID,
+                    plugins: pluginSnapshots
+                ), let title = webSurfaceTitles[key]
+                else {
+                    continue
+                }
+                webTitle = title
+                break
+            }
+            return webTitle ?? registered ?? viewID
+        case .diff(let request):
+            return request.title
         case .empty:
             return "Empty slot"
         }
@@ -67,232 +107,19 @@ enum SlotPresentation {
         switch content {
         case .terminal:
             return ">_"
-        case .files:
+        case .file:
             return "F"
         case .changes:
             return "±"
         case .docs:
             return "#"
-        case .browser:
-            return "◎"
         case .pluginView:
             return "◇"
+        case .diff:
+            return "Δ"
         case .empty:
             return "·"
         }
-    }
-}
-
-// MARK: - Files
-
-private struct FileBrowserEntry: Equatable, Identifiable, Sendable {
-    let url: URL
-    let isDirectory: Bool
-    var id: String { url.path }
-}
-
-@MainActor
-@Observable
-private final class FileBrowserModel {
-    private(set) var workspaceRoot: URL?
-    private(set) var currentPath: URL?
-    private(set) var entries: [FileBrowserEntry] = []
-    private(set) var selectedFileName: String?
-    private(set) var preview = ""
-    private(set) var error: String?
-    private(set) var isLoading = false
-
-    private var directoryTask: Task<Void, Never>?
-    private var previewTask: Task<Void, Never>?
-
-    func loadWorkspace(_ path: URL) {
-        let standardized = path.standardizedFileURL
-        guard workspaceRoot != standardized else { return }
-        workspaceRoot = standardized
-        loadDirectory(standardized)
-    }
-
-    func loadDirectory(_ path: URL) {
-        directoryTask?.cancel()
-        previewTask?.cancel()
-        currentPath = path.standardizedFileURL
-        selectedFileName = nil
-        preview = ""
-        error = nil
-        isLoading = true
-
-        directoryTask = Task { [weak self] in
-            do {
-                let rows = try await Task.detached(priority: .userInitiated) {
-                    let keys: [URLResourceKey] = [
-                        .isDirectoryKey,
-                        .isHiddenKey,
-                        .nameKey,
-                    ]
-                    return try FileManager.default
-                        .contentsOfDirectory(
-                            at: path,
-                            includingPropertiesForKeys: keys,
-                            options: [.skipsHiddenFiles]
-                        )
-                        .map { url -> FileBrowserEntry in
-                            let values = try url.resourceValues(forKeys: Set(keys))
-                            return FileBrowserEntry(
-                                url: url,
-                                isDirectory: values.isDirectory == true
-                            )
-                        }
-                        .sorted {
-                            if $0.isDirectory != $1.isDirectory {
-                                return $0.isDirectory && !$1.isDirectory
-                            }
-                            return $0.url.lastPathComponent.localizedStandardCompare(
-                                $1.url.lastPathComponent
-                            ) == .orderedAscending
-                        }
-                }.value
-                guard !Task.isCancelled else { return }
-                self?.entries = rows
-                self?.isLoading = false
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.entries = []
-                self?.isLoading = false
-                self?.error = error.localizedDescription
-            }
-        }
-    }
-
-    func open(_ entry: FileBrowserEntry) {
-        if entry.isDirectory {
-            loadDirectory(entry.url)
-            return
-        }
-
-        previewTask?.cancel()
-        selectedFileName = entry.url.lastPathComponent
-        preview = ""
-        error = nil
-        previewTask = Task { [weak self] in
-            do {
-                let text = try await Task.detached(priority: .userInitiated) {
-                    let handle = try FileHandle(forReadingFrom: entry.url)
-                    defer { try? handle.close() }
-                    let data = try handle.read(upToCount: 256_000) ?? Data()
-                    return String(data: data, encoding: .utf8)
-                        ?? "Binary file — preview unavailable."
-                }.value
-                guard !Task.isCancelled else { return }
-                self?.preview = text
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.error = error.localizedDescription
-            }
-        }
-    }
-
-    func goUp() {
-        guard let workspaceRoot,
-              let currentPath,
-              currentPath.standardizedFileURL != workspaceRoot.standardizedFileURL
-        else { return }
-        let parent = currentPath.deletingLastPathComponent().standardizedFileURL
-        guard parent.path.hasPrefix(workspaceRoot.path) else { return }
-        loadDirectory(parent)
-    }
-
-    func cancel() {
-        directoryTask?.cancel()
-        previewTask?.cancel()
-    }
-}
-
-private struct FilesSlotView: View {
-    let root: URL
-    @State private var model = FileBrowserModel()
-
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 7) {
-                Button {
-                    model.goUp()
-                } label: {
-                    Image(systemName: "chevron.left")
-                }
-                .buttonStyle(.plain)
-                .help("Parent folder")
-
-                Text(model.currentPath?.path.replacingOccurrences(
-                    of: root.path,
-                    with: root.lastPathComponent
-                ) ?? root.lastPathComponent)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                Spacer()
-                if model.isLoading {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .font(TenonTheme.utilityFont(size: 9))
-            .foregroundStyle(TenonTheme.muted)
-            .padding(.horizontal, 9)
-            .frame(height: 27)
-            .background(TenonTheme.chromeRaised)
-
-            List(model.entries) { entry in
-                Button {
-                    model.open(entry)
-                } label: {
-                    HStack(spacing: 7) {
-                        Image(systemName: entry.isDirectory ? "folder.fill" : "doc")
-                            .foregroundStyle(
-                                entry.isDirectory ? TenonTheme.amber.opacity(0.78) : TenonTheme.muted
-                            )
-                            .frame(width: 13)
-                        Text(entry.url.lastPathComponent)
-                            .lineLimit(1)
-                            .truncationMode(.middle)
-                        Spacer()
-                    }
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .listRowBackground(Color.clear)
-            }
-            .listStyle(.plain)
-            .scrollContentBackground(.hidden)
-            .font(TenonTheme.utilityFont(size: 10))
-
-            if let selected = model.selectedFileName {
-                Divider().overlay(TenonTheme.line)
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(selected)
-                        .font(TenonTheme.interfaceFont(size: 10, weight: .semibold))
-                        .foregroundStyle(TenonTheme.text)
-                    ScrollView([.horizontal, .vertical]) {
-                        Text(model.preview)
-                            .font(TenonTheme.utilityFont(size: 9))
-                            .foregroundStyle(TenonTheme.muted)
-                            .textSelection(.enabled)
-                            .frame(maxWidth: .infinity, alignment: .topLeading)
-                    }
-                }
-                .padding(8)
-                .frame(maxHeight: 160)
-            }
-
-            if let error = model.error {
-                Text(error)
-                    .font(TenonTheme.utilityFont(size: 9))
-                    .foregroundStyle(Color.red.opacity(0.82))
-                    .padding(8)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-            }
-        }
-        .background(TenonTheme.panel)
-        .onAppear { model.loadWorkspace(root) }
-        .onChange(of: root) { _, newRoot in model.loadWorkspace(newRoot) }
-        .onDisappear { model.cancel() }
     }
 }
 
@@ -519,468 +346,124 @@ private struct DocsSlotView: View {
     }
 }
 
-// MARK: - Web and plugins
+// MARK: - Plugins
 
-@MainActor
-@Observable
-private final class WebBrowserModel: NSObject, WKUIDelegate {
-    let webView: WKWebView
-
-    var addressText = ""
-    var canGoBack = false
-    var canGoForward = false
-    var isLoading = false
-    var progress = 0.0
-    var isReaderMode = false
-
-    private let slotID: UUID
-    private let config: BrowserConfigStore
-    private let pool: SurfacePool
-    private var observations: [NSKeyValueObservation] = []
-    private var readerSourceURL: URL?
-
-    init(slotID: UUID, seedURL: URL, config: BrowserConfigStore, pool: SurfacePool) {
-        self.slotID = slotID
-        self.config = config
-        self.pool = pool
-        webView = WKWebView(frame: .zero, configuration: WKWebViewConfiguration())
-        super.init()
-
-        webView.underPageBackgroundColor = .clear
-        webView.uiDelegate = self
-        wireObservations()
-
-        load(config.lastURL(forSlot: slotID) ?? seedURL)
-    }
-
-    /// Every navigation goes through here so the current user-agent config is applied
-    /// on each load — change the UA in settings, reload, and it takes effect.
-    private func load(_ url: URL) {
-        webView.customUserAgent = config.userAgent.customUAString
-        addressText = url.absoluteString
-        webView.load(URLRequest(url: url))
-    }
-
-    private func wireObservations() {
-        observations = [
-            webView.observe(\.canGoBack, options: [.new]) { [weak self] _, change in
-                guard let value = change.newValue else { return }
-                Task { @MainActor in self?.canGoBack = value }
-            },
-            webView.observe(\.canGoForward, options: [.new]) { [weak self] _, change in
-                guard let value = change.newValue else { return }
-                Task { @MainActor in self?.canGoForward = value }
-            },
-            webView.observe(\.isLoading, options: [.new]) { [weak self] _, change in
-                guard let value = change.newValue else { return }
-                Task { @MainActor in self?.isLoading = value }
-            },
-            webView.observe(\.estimatedProgress, options: [.new]) { [weak self] _, change in
-                guard let value = change.newValue else { return }
-                Task { @MainActor in self?.progress = value }
-            },
-            webView.observe(\.url, options: [.new]) { [weak self] _, change in
-                guard let newURL = change.newValue, let url = newURL else { return }
-                Task { @MainActor in self?.didNavigate(to: url) }
-            },
-            webView.observe(\.title, options: [.new]) { [weak self] _, _ in
-                Task { @MainActor in self?.publishTitle() }
-            },
-        ]
-    }
-
-    private func didNavigate(to url: URL) {
-        // A real navigation (link click, redirect) leaves reader mode behind.
-        if isReaderMode, url != readerSourceURL {
-            isReaderMode = false
-            readerSourceURL = nil
-        }
-        addressText = url.absoluteString
-        if !isReaderMode {
-            config.rememberURL(url, forSlot: slotID)
-        }
-        publishTitle()
-    }
-
-    private func publishTitle() {
-        let pageTitle = (webView.title ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        let title: String
-        if !pageTitle.isEmpty {
-            title = isReaderMode ? "Reader — \(pageTitle)" : pageTitle
-        } else {
-            title = webView.url?.host ?? "Browser"
-        }
-        pool.setTitle(title, for: slotID)
-    }
-
-    func submitAddress() {
-        guard let url = BrowserAddress.resolve(addressText, searchTemplate: config.searchTemplate) else { return }
-        load(url)
-    }
-
-    func goBack() { webView.goBack() }
-    func goForward() { webView.goForward() }
-
-    func reloadOrStop() {
-        if isLoading {
-            webView.stopLoading()
-        } else {
-            webView.customUserAgent = config.userAgent.customUAString
-            webView.reload()
-        }
-    }
-
-    func goHome() {
-        load(config.homeURL)
-    }
-
-    // MARK: - Reader view
-
-    /// Toggle a distraction-free rendering of the current page's main content.
-    func toggleReader() {
-        if isReaderMode {
-            isReaderMode = false
-            let source = readerSourceURL
-            readerSourceURL = nil
-            publishTitle()
-            if let source { load(source) }
-            return
-        }
-
-        guard let source = webView.url, source.scheme?.hasPrefix("http") == true else { return }
-        readerSourceURL = source
-        webView.evaluateJavaScript(Self.readerExtractionScript) { [weak self] result, _ in
-            Task { @MainActor in self?.presentReader(from: result, source: source) }
-        }
-    }
-
-    private func presentReader(from result: Any?, source: URL) {
-        guard
-            let json = result as? String,
-            let data = json.data(using: .utf8),
-            let parsed = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let bodyHTML = parsed["html"] as? String,
-            !bodyHTML.isEmpty
-        else {
-            readerSourceURL = nil
-            return
-        }
-        isReaderMode = true
-        webView.loadHTMLString(
-            Self.readerDocument(
-                title: (parsed["title"] as? String) ?? "",
-                byline: (parsed["byline"] as? String) ?? "",
-                bodyHTML: bodyHTML
-            ),
-            baseURL: source
-        )
-        publishTitle()
-    }
-
-    /// Heuristic extraction: score candidate containers by paragraph text, clone the
-    /// winner, strip chrome, absolutize URLs, and hand back a JSON payload.
-    private static let readerExtractionScript = """
-    (function () {
-      var pool = Array.from(document.querySelectorAll('article, main, [role=main]'));
-      if (pool.length === 0) pool = Array.from(document.querySelectorAll('div, section'));
-      var best = null, bestScore = 0;
-      pool.forEach(function (el) {
-        var score = 0;
-        el.querySelectorAll('p').forEach(function (p) {
-          var l = (p.innerText || '').trim().length;
-          if (l > 25) score += l;
-        });
-        if (el.tagName === 'ARTICLE' || el.tagName === 'MAIN') score *= 1.5;
-        if (score > bestScore) { bestScore = score; best = el; }
-      });
-      if (!best) best = document.body;
-      var clone = best.cloneNode(true);
-      clone.querySelectorAll('script,style,noscript,nav,aside,header,footer,form,iframe,button,svg,object,embed,[aria-hidden=true],[role=navigation],[role=complementary]')
-        .forEach(function (n) { n.remove(); });
-      clone.querySelectorAll('img').forEach(function (img) {
-        try { img.src = img.src; } catch (e) {}
-        img.removeAttribute('srcset'); img.removeAttribute('loading');
-      });
-      clone.querySelectorAll('a').forEach(function (a) { try { a.href = a.href; } catch (e) {} });
-      var h1 = document.querySelector('h1');
-      var title = (h1 && h1.innerText) || document.title || '';
-      var bl = document.querySelector('[rel=author], .byline, .author, [itemprop=author]');
-      var byline = bl ? (bl.innerText || '').trim() : '';
-      return JSON.stringify({ title: title.trim(), byline: byline, html: clone.innerHTML });
-    })();
-    """
-
-    private static func readerDocument(title: String, byline: String, bodyHTML: String) -> String {
-        func esc(_ s: String) -> String {
-            s.replacingOccurrences(of: "&", with: "&amp;")
-                .replacingOccurrences(of: "<", with: "&lt;")
-                .replacingOccurrences(of: ">", with: "&gt;")
-        }
-        let heading = title.isEmpty ? "" : "<h1>\(esc(title))</h1>"
-        let bylineRow = byline.isEmpty ? "" : "<p class=\"byline\">\(esc(byline))</p>"
-        let docTitle = title.isEmpty ? "Reader" : esc(title)
-        return """
-        <!doctype html>
-        <html><head><meta charset="utf-8">
-        <meta name="viewport" content="width=device-width, initial-scale=1">
-        <title>\(docTitle)</title>
-        <style>
-          :root { color-scheme: light dark; }
-          img, pre, table { max-width: 100%; }
-          body {
-            margin: 0 auto; padding: 48px 24px 96px; max-width: 44rem;
-            font: 18px/1.7 -apple-system, ui-serif, Georgia, serif;
-            color: #1a1a1a; background: #faf9f7;
-          }
-          h1 { font-size: 1.9em; line-height: 1.2; margin: 0 0 .15em; font-family: -apple-system, system-ui, sans-serif; }
-          .byline { color: #6a6a6a; font-size: .8em; margin: 0 0 2em; font-family: -apple-system, system-ui, sans-serif; }
-          p { margin: 0 0 1.15em; }
-          img { height: auto; border-radius: 6px; display: block; margin: 1.5em auto; }
-          a { color: #b5651d; }
-          pre, code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85em; }
-          pre { background: rgba(0,0,0,.05); padding: 12px 14px; border-radius: 6px; overflow-x: auto; }
-          blockquote { margin: 1.2em 0; padding-left: 1em; border-left: 3px solid rgba(0,0,0,.18); color: #555; }
-          h2, h3, h4 { font-family: -apple-system, system-ui, sans-serif; line-height: 1.25; margin: 1.6em 0 .5em; }
-          hr { border: none; border-top: 1px solid rgba(0,0,0,.12); margin: 2em 0; }
-          @media (prefers-color-scheme: dark) {
-            body { color: #d8d4cc; background: #1c1b19; }
-            .byline { color: #9a948a; }
-            a { color: #e0a458; }
-            pre { background: rgba(255,255,255,.06); }
-            blockquote { border-left-color: rgba(255,255,255,.2); color: #b0aa9e; }
-            hr { border-top-color: rgba(255,255,255,.12); }
-          }
-        </style></head>
-        <body>\(heading)\(bylineRow)\(bodyHTML)</body></html>
-        """
-    }
-
-    // Route target="_blank" / window.open into the same pane — a basic browser has one view.
-    func webView(
-        _ webView: WKWebView,
-        createWebViewWith configuration: WKWebViewConfiguration,
-        for navigationAction: WKNavigationAction,
-        windowFeatures: WKWindowFeatures
-    ) -> WKWebView? {
-        if navigationAction.targetFrame == nil {
-            webView.load(navigationAction.request)
-        }
-        return nil
-    }
-}
-
-private struct WebContentView: NSViewRepresentable {
-    let webView: WKWebView
-
-    func makeNSView(context: Context) -> WKWebView { webView }
-    func updateNSView(_ nsView: WKWebView, context: Context) {}
-
-    static func dismantleNSView(_ nsView: WKWebView, coordinator: Void) {
-        nsView.stopLoading()
-    }
-}
-
-private struct WebBrowserSlotView: View {
-    @State private var model: WebBrowserModel
-    @State private var showConfig = false
-
-    init(slotID: UUID, seedURL: URL, pool: SurfacePool) {
-        _model = State(
-            initialValue: WebBrowserModel(slotID: slotID, seedURL: seedURL, config: .shared, pool: pool)
-        )
-    }
-
-    var body: some View {
-        VStack(spacing: 0) {
-            chrome
-            progressBar
-            WebContentView(webView: model.webView)
-        }
-        .background(TenonTheme.panel)
-        .popover(isPresented: $showConfig, arrowEdge: .top) {
-            BrowserConfigPopover().frame(width: 264)
-        }
-    }
-
-    private var chrome: some View {
-        HStack(spacing: 5) {
-            navButton("chevron.left", enabled: model.canGoBack, help: "Back") { model.goBack() }
-            navButton("chevron.right", enabled: model.canGoForward, help: "Forward") { model.goForward() }
-            navButton(
-                model.isLoading ? "xmark" : "arrow.clockwise",
-                enabled: true,
-                help: model.isLoading ? "Stop" : "Reload"
-            ) { model.reloadOrStop() }
-            navButton("house", enabled: true, help: "Home") { model.goHome() }
-            navButton(
-                "book",
-                enabled: true,
-                help: model.isReaderMode ? "Exit reader view" : "Reader view",
-                active: model.isReaderMode
-            ) { model.toggleReader() }
-
-            TextField("Search or enter address", text: $model.addressText)
-                .textFieldStyle(.plain)
-                .font(TenonTheme.utilityFont(size: 10))
-                .foregroundStyle(TenonTheme.text)
-                .onSubmit { model.submitAddress() }
-                .padding(.horizontal, 8)
-                .frame(height: 21)
-                .background(TenonTheme.panel)
-                .clipShape(RoundedRectangle(cornerRadius: 5))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 5).stroke(TenonTheme.line, lineWidth: 1)
-                )
-
-            navButton("gearshape", enabled: true, help: "Browser settings") { showConfig = true }
-        }
-        .padding(.horizontal, 8)
-        .frame(height: 31)
-        .background(TenonTheme.chromeRaised)
-    }
-
-    private var progressBar: some View {
-        ProgressView(value: model.progress)
-            .progressViewStyle(.linear)
-            .tint(TenonTheme.amber)
-            .opacity(model.isLoading && model.progress > 0 && model.progress < 1 ? 1 : 0)
-            .frame(height: 2)
-    }
-
-    private func navButton(
-        _ symbol: String,
-        enabled: Bool,
-        help: String,
-        active: Bool = false,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            Image(systemName: symbol)
-                .font(.system(size: 11, weight: .medium))
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(!enabled)
-        .foregroundStyle(
-            active
-                ? TenonTheme.amber
-                : (enabled ? TenonTheme.text.opacity(0.82) : TenonTheme.muted.opacity(0.4))
-        )
-        .help(help)
-    }
-}
-
-private struct BrowserConfigPopover: View {
-    @Bindable private var config = BrowserConfigStore.shared
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
-            Text("BROWSER")
-                .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
-                .tracking(0.8)
-                .foregroundStyle(TenonTheme.muted)
-
-            field("Home page") {
-                TextField("https://…", text: $config.homeURLString)
-                    .textFieldStyle(.roundedBorder)
-                    .font(TenonTheme.utilityFont(size: 10))
-            }
-
-            field("Search engine") {
-                Picker("", selection: $config.searchEngineID) {
-                    ForEach(BrowserSearchEngine.all) { engine in
-                        Text(engine.label).tag(engine.id)
-                    }
-                }
-                .pickerStyle(.menu)
-                .labelsHidden()
-            }
-
-            field("User agent") {
-                Picker("", selection: $config.userAgent) {
-                    ForEach(BrowserUserAgent.allCases) { agent in
-                        Text(agent.label).tag(agent)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-            }
-
-            Toggle(isOn: $config.remembersLastURL) {
-                Text("Remember last page per pane")
-                    .font(TenonTheme.utilityFont(size: 10))
-                    .foregroundStyle(TenonTheme.text)
-            }
-            .toggleStyle(.checkbox)
-        }
-        .padding(14)
-    }
-
-    private func field<Content: View>(
-        _ label: String,
-        @ViewBuilder content: () -> Content
-    ) -> some View {
-        VStack(alignment: .leading, spacing: 4) {
-            Text(label)
-                .font(TenonTheme.utilityFont(size: 9))
-                .foregroundStyle(TenonTheme.muted)
-            content()
-        }
-    }
-}
-
+/// Renders a plugin's declarative rows (`PluginRowItem`) as an indented tree. The
+/// disclosure chevron, container-accented icon, and dotfile dimming are all driven
+/// off the row's own fields — no knowledge of any specific plugin (VISION §6).
 private struct PluginSlotView: View {
-    let plugin: String
+    let pluginID: PluginID
     let viewID: String
+    let slotID: UUID
     var host: PluginHost
+    var webPool: PluginWebSurfacePool
+
+    /// This pane's section: the singleton (nil instance) or our own slot's instance.
+    private func matches(_ section: PluginViewSection) -> Bool {
+        guard section.pluginID == pluginID,
+              section.viewID == viewID
+        else {
+            return false
+        }
+        return section.instanceID == nil || section.instanceID == slotID.uuidString
+    }
 
     var body: some View {
-        if let section = host.pluginViews.first(where: {
-            $0.pluginName == plugin && $0.viewID == viewID
-        }) {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 1) {
-                    ForEach(section.items) { item in
-                        Button {
-                            host.invokeViewSelect(
-                                pluginName: plugin,
+        // Match the singleton section (instanceID nil) or THIS pane's own instance
+        // (instanceID == our slot id) — never another pane's instance (T-012).
+        if let section = host.pluginViews.first(where: matches) {
+            if let tree = section.body {
+                // A rich view-tree: render it natively. A button's action re-uses the
+                // same onSelect route a row click takes (one event shape). A `webview`
+                // node resolves to the plugin's host-owned surface.
+                let node = PluginNodeView(
+                    node: tree,
+                    onAction: { action, value in
+                        Task { @MainActor in
+                            _ = await host.invokeViewSelect(
+                                pluginID: pluginID,
                                 viewID: viewID,
-                                itemID: item.id
+                                instanceID: section.instanceID,
+                                itemID: action,
+                                value: value.map(IntentValue.string)
                             )
-                        } label: {
-                            HStack(spacing: 6) {
-                                if let icon = item.icon {
-                                    Image(systemName: icon)
-                                        .font(.system(size: 10))
-                                        .foregroundStyle(TenonTheme.muted)
-                                }
-                                Text(item.label)
-                                    .lineLimit(1)
-                                    .truncationMode(.middle)
-                                Spacer()
-                            }
-                            .padding(.leading, CGFloat(item.depth) * 12)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .contentShape(Rectangle())
                         }
-                        .buttonStyle(.plain)
-                        .font(TenonTheme.utilityFont(size: 10))
-                        .foregroundStyle(TenonTheme.text.opacity(0.86))
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 3)
+                    },
+                    webSurface: { surfaceID in
+                        guard let key = webPool.key(
+                            pluginID: pluginID,
+                            surfaceID: surfaceID,
+                            host: host
+                        ) else {
+                            return AnyView(
+                                Text("Web surface unavailable")
+                                    .font(TenonTheme.utilityFont(size: 10))
+                                    .foregroundStyle(TenonTheme.muted)
+                                    .frame(
+                                        maxWidth: .infinity,
+                                        maxHeight: .infinity
+                                    )
+                            )
+                        }
+                        return AnyView(
+                            WebSurfaceView(
+                                surface: webPool.surface(for: key)
+                            )
+                                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        )
                     }
+                )
+                if Self.containsWebview(tree) {
+                    // A web-hosting view (a browser): fill the pane, no scroll or padding,
+                    // so the WKWebView takes all the space under the plugin's chrome.
+                    node
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .background(TenonTheme.panel)
+                } else {
+                    ScrollView {
+                        node
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                    }
+                    .background(TenonTheme.panel)
                 }
-                .padding(.vertical, 6)
+            } else {
+                PluginRowsView(
+                    title: section.title,
+                    subtitle: section.subtitle,
+                    actions: section.actions,
+                    items: section.items,
+                    onSelect: { itemID, menuID in
+                        Task { @MainActor in
+                            _ = await host.invokeViewSelect(
+                                pluginID: pluginID,
+                                viewID: viewID,
+                                instanceID: section.instanceID,
+                                itemID: itemID,
+                                value: menuID.map(IntentValue.string)
+                            )
+                        }
+                    },
+                    onSubmit: { itemID, text in
+                        Task { @MainActor in
+                            _ = await host.invokeViewSubmit(
+                                pluginID: pluginID,
+                                viewID: viewID,
+                                instanceID: section.instanceID,
+                                itemID: itemID,
+                                text: text
+                            )
+                        }
+                    }
+                )
             }
-            .background(TenonTheme.panel)
         } else {
             VStack(spacing: 7) {
                 Image(systemName: "puzzlepiece.extension")
                     .font(.title2)
                 Text("Plugin view unavailable")
                     .font(TenonTheme.interfaceFont(size: 11, weight: .medium))
-                Text("\(plugin) · \(viewID)")
+                Text("\(pluginID.rawValue) · \(viewID)")
                     .font(TenonTheme.utilityFont(size: 9))
             }
             .foregroundStyle(TenonTheme.muted)
@@ -988,19 +471,310 @@ private struct PluginSlotView: View {
             .background(TenonTheme.panel)
         }
     }
+
+    /// True when the view-tree hosts a `webview` node anywhere — a browser-style pane
+    /// that should fill rather than scroll.
+    static func containsWebview(_ node: PluginViewNode) -> Bool {
+        if case .webview = node { return true }
+        return children(of: node).contains(where: containsWebview)
+    }
+
+    private static func children(of node: PluginViewNode) -> [PluginViewNode] {
+        switch node {
+        case let .vstack(_, c), let .hstack(_, c): return c
+        case let .box(_, _, _, c): return c
+        case let .card(c): return c
+        case let .grid(_, _, c): return c
+        case let .field(_, c): return c
+        default: return []
+        }
+    }
+
 }
 
-private struct EmptySlotView: View {
+/// Renders one node of a plugin's declarative view-tree (`PluginViewNode`) as native
+/// SwiftUI, recursing into containers. Style tokens resolve against `TenonTheme`, so a
+/// plugin's UI tracks the app's colors and light/dark for free (design-plugin-views.md).
+/// The host knows nothing about any specific plugin — it paints the vocabulary (VISION §6).
+/// A `textfield` node: a local editable buffer that submits on Enter and re-syncs when
+/// the plugin pushes a new `value` (e.g. the address bar after a navigation).
+private struct PluginTextFieldView: View {
+    let value: String
+    let placeholder: String
+    let onSubmit: (String) -> Void
+
+    @State private var draft: String = ""
+
     var body: some View {
-        VStack(spacing: 7) {
-            Image(systemName: "square.dashed")
-                .font(.title2)
-            Text("Empty slot")
-                .font(TenonTheme.utilityFont(size: 10))
+        TextField(placeholder, text: $draft)
+            .textFieldStyle(.plain)
+            .font(TenonTheme.interfaceFont(size: 12))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(TenonTheme.chromeRaised)
+            .clipShape(RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(TenonTheme.line, lineWidth: 1))
+            .onSubmit { onSubmit(draft) }
+            .onAppear { draft = value }
+            .onChange(of: value) { _, newValue in draft = newValue }
+    }
+}
+
+/// A `browserBar` node: a native browser toolbar the host paints pretty — SF Symbol
+/// back/forward/reload buttons and a Safari-style address field over a chrome material
+/// with a hairline bottom divider. It owns only presentation: every control routes to
+/// the plugin's `onSelect` through the fixed action ids `back`/`forward`/`reload`/`go`,
+/// so the plugin keeps all navigation logic and URL resolution (invariants 2 & 6). The
+/// address field mirrors the live URL the plugin pushes and re-syncs on redirects and
+/// link clicks, but never clobbers what the user is mid-typing.
+private struct BrowserBarView: View {
+    let url: String
+    let placeholder: String
+    let onAction: (String, String?) -> Void
+
+    @State private var draft: String = ""
+    @State private var hovered: String?
+    @FocusState private var addressFocused: Bool
+
+    var body: some View {
+        HStack(spacing: 3) {
+            navButton("chevron.left", "back")
+            navButton("chevron.right", "forward")
+            navButton("arrow.clockwise", "reload")
+            addressField
         }
-        .foregroundStyle(TenonTheme.muted)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
+        .background(TenonTheme.chrome)
+        .overlay(alignment: .bottom) {
+            Rectangle().fill(TenonTheme.line).frame(height: 1)
+        }
+    }
+
+    private func navButton(_ symbol: String, _ action: String) -> some View {
+        let isHovering = hovered == action
+        return Button { onAction(action, nil) } label: {
+            Image(systemName: symbol)
+                .font(.system(size: 12, weight: .medium))
+                .foregroundStyle(isHovering ? TenonTheme.text : TenonTheme.muted)
+                .frame(width: 26, height: 24)
+                .contentShape(RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+        .background(
+            RoundedRectangle(cornerRadius: 5)
+                .fill(isHovering ? TenonTheme.text.opacity(0.07) : Color.clear)
+        )
+        .onHover { hovering in
+            if hovering { hovered = action }
+            else if hovered == action { hovered = nil }
+        }
+    }
+
+    private var addressField: some View {
+        HStack(spacing: 6) {
+            Image(systemName: "magnifyingglass")
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(TenonTheme.muted.opacity(0.7))
+            TextField(placeholder, text: $draft)
+                .textFieldStyle(.plain)
+                .font(TenonTheme.interfaceFont(size: 12))
+                .foregroundStyle(TenonTheme.text)
+                .focused($addressFocused)
+                .onSubmit { onAction("go", draft) }
+        }
+        .padding(.horizontal, 9)
+        .padding(.vertical, 5)
+        .background(TenonTheme.chromeRaised)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(addressFocused ? TenonTheme.amber.opacity(0.55) : TenonTheme.line, lineWidth: 1)
+        )
+        .onAppear { draft = url }
+        // Mirror real navigations (redirects, link clicks) into the field, but leave the
+        // user's in-progress typing alone.
+        .onChange(of: url) { _, newValue in if !addressFocused { draft = newValue } }
+    }
+}
+
+private struct PluginNodeView: View {
+    let node: PluginViewNode
+    /// (action id, submitted text). Text is nil for a plain button, the typed value
+    /// for a `textfield` submit — one route the JS `onSelect(id, value?)` handles.
+    let onAction: (String, String?) -> Void
+    /// Renders a `webview` node's host-owned `WKWebView` surface; nil outside a pane,
+    /// where the node degrades to a placeholder.
+    var webSurface: ((String) -> AnyView)? = nil
+
+    var body: some View {
+        switch node {
+        case let .vstack(spacing, children):
+            VStack(alignment: .leading, spacing: spacing) { childViews(children) }
+        case let .hstack(spacing, children):
+            HStack(spacing: spacing) { childViews(children) }
+        case let .box(padding, background, cornerRadius, children):
+            VStack(alignment: .leading, spacing: 6) { childViews(children) }
+                .padding(padding)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(background ? TenonTheme.chromeRaised : Color.clear)
+                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        case let .card(children):
+            VStack(alignment: .leading, spacing: 6) { childViews(children) }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(TenonTheme.chromeRaised)
+                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(TenonTheme.line, lineWidth: 1))
+        case let .text(value, style, weight, color):
+            Text(value)
+                .font(Self.font(style, weight))
+                .foregroundStyle(Self.color(color, style: style))
+                .textSelection(.enabled)
+        case let .badge(value, tint):
+            Text(value)
+                .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
+                .foregroundStyle(Self.color(tint, style: .caption))
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(Self.color(tint, style: .caption).opacity(0.14))
+                .clipShape(Capsule())
+        case let .button(label, action, style):
+            Button { onAction(action, nil) } label: {
+                Text(label)
+                    .font(TenonTheme.interfaceFont(size: 11, weight: .medium))
+                    .foregroundStyle(style == .primary ? TenonTheme.ink : TenonTheme.text)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 5)
+                    .background(style == .primary ? TenonTheme.amber : TenonTheme.chromeRaised)
+                    .clipShape(RoundedRectangle(cornerRadius: 5))
+                    .overlay {
+                        if style != .primary {
+                            RoundedRectangle(cornerRadius: 5).stroke(TenonTheme.line, lineWidth: 1)
+                        }
+                    }
+            }
+            .buttonStyle(.plain)
+        case let .image(systemName):
+            Image(systemName: systemName)
+                .font(.system(size: 12))
+                .foregroundStyle(TenonTheme.muted)
+        case .spacer:
+            Spacer(minLength: 0)
+        case .divider:
+            Divider().overlay(TenonTheme.line)
+        case let .grid(columns, spacing, children):
+            LazyVGrid(
+                columns: Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .topLeading), count: columns),
+                alignment: .leading,
+                spacing: spacing
+            ) { childViews(children) }
+        case let .stat(label, value):
+            VStack(alignment: .leading, spacing: 2) {
+                Text(value)
+                    .font(TenonTheme.interfaceFont(size: 17, weight: .semibold))
+                    .foregroundStyle(TenonTheme.text)
+                Text(label)
+                    .font(TenonTheme.interfaceFont(size: 10))
+                    .foregroundStyle(TenonTheme.muted)
+            }
+        case let .keyValue(label, value, tint):
+            HStack(spacing: 8) {
+                Text(label)
+                    .font(TenonTheme.interfaceFont(size: 11.5))
+                    .foregroundStyle(TenonTheme.muted)
+                Spacer(minLength: 8)
+                Text(value)
+                    .font(TenonTheme.interfaceFont(size: 11.5, weight: .medium))
+                    .foregroundStyle(tint == .default ? TenonTheme.text : Self.color(tint, style: .body))
+                    .textSelection(.enabled)
+            }
+        case let .progress(value, tint):
+            ProgressView(value: value)
+                .progressViewStyle(.linear)
+                .tint(tint == .default ? TenonTheme.amber : Self.color(tint, style: .body))
+        case let .field(label, children):
+            VStack(alignment: .leading, spacing: 4) {
+                Text(label)
+                    .font(TenonTheme.interfaceFont(size: 10, weight: .semibold))
+                    .foregroundStyle(TenonTheme.muted)
+                childViews(children)
+            }
+        case let .textfield(value, placeholder, action):
+            PluginTextFieldView(value: value, placeholder: placeholder) { text in
+                onAction(action, text)
+            }
+        case let .webview(surfaceID):
+            if let webSurface {
+                webSurface(surfaceID)
+            } else {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(TenonTheme.chromeRaised)
+                    .overlay(
+                        Text("web surface")
+                            .font(TenonTheme.utilityFont(size: 10))
+                            .foregroundStyle(TenonTheme.muted)
+                    )
+            }
+        case let .browserBar(url, placeholder):
+            BrowserBarView(url: url, placeholder: placeholder, onAction: onAction)
+        }
+    }
+
+    @ViewBuilder
+    private func childViews(_ children: [PluginViewNode]) -> some View {
+        ForEach(Array(children.enumerated()), id: \.offset) { _, child in
+            PluginNodeView(node: child, onAction: onAction, webSurface: webSurface)
+        }
+    }
+
+    private static func font(_ style: TextStyle, _ weight: FontWeight) -> Font {
+        let w = fontWeight(weight)
+        switch style {
+        case .title: return TenonTheme.interfaceFont(size: 15, weight: w)
+        case .body: return TenonTheme.interfaceFont(size: 12, weight: w)
+        case .caption: return TenonTheme.interfaceFont(size: 10.5, weight: w)
+        case .code: return TenonTheme.utilityFont(size: 11, weight: w)
+        }
+    }
+
+    private static func fontWeight(_ weight: FontWeight) -> Font.Weight {
+        switch weight {
+        case .regular: return .regular
+        case .medium: return .medium
+        case .semibold: return .semibold
+        }
+    }
+
+    private static func color(_ token: ColorToken, style: TextStyle) -> Color {
+        switch token {
+        case .default: return style == .caption ? TenonTheme.muted : TenonTheme.text
+        case .text: return TenonTheme.text
+        case .muted: return TenonTheme.muted
+        case .amber: return TenonTheme.amber
+        case .green: return Color(nsColor: NSColor(hex: 0x61C28B))
+        case .red: return Color(nsColor: NSColor(hex: 0xED6A5E))
+        }
+    }
+}
+
+/// An empty pane reuses the empty-tab launcher card; its actions fill this exact
+/// slot in place via `setSlotContent` rather than adding a new one.
+private struct EmptySlotView: View {
+    let slotID: UUID
+    var store: WorkspaceStore?
+    var isActive: Bool
+
+    var body: some View {
+        EmptyStateCard(
+            title: "This panel is empty",
+            subtitle: "No terminal running yet",
+            recents: store?.recent?.recent ?? [],
+            isDefaultAction: isActive,
+            onLaunch: { store?.setSlotContent(slotID, $0) }
+        )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .background(TenonTheme.panel)
+        .background(TenonTheme.ink)
     }
 }
 
