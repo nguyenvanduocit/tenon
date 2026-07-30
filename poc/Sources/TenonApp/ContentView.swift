@@ -17,6 +17,11 @@ struct ContentView: View {
     var palette: CommandPaletteState
     var pluginUI: PluginUIState
 
+    /// Per-slot editor state (scroll/selection/unsaved buffer). Owned here — above
+    /// the stage — because it must survive the pane views SwiftUI destroys on every
+    /// tab switch; `SurfacePool` is the same idea for terminal surfaces (T-016).
+    @State private var editorStates = EditorPaneStateStore()
+
     @State private var sidebarVisible = AppPreferencesStore.shared.preferences.sidebarVisibleOnLaunch
     @State private var sidebarWidth: CGFloat =
         CGFloat(AppPreferencesStore.shared.preferences.sidebarWidth)
@@ -62,6 +67,7 @@ struct ContentView: View {
                         pool: pool,
                         webPool: webPool,
                         host: host,
+                        editorStates: editorStates,
                         router: router
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)

@@ -8,6 +8,7 @@ struct WorkspaceStageView: View {
     var pool: SurfacePool
     var webPool: PluginWebSurfacePool
     var host: PluginHost
+    var editorStates: EditorPaneStateStore
     var router: DragRouter
 
     var body: some View {
@@ -27,6 +28,7 @@ struct WorkspaceStageView: View {
                     pool: pool,
                     webPool: webPool,
                     host: host,
+                    editorStates: editorStates,
                     pluginSnapshots: pluginSnapshots,
                     pluginViewSections: pluginViewSections,
                     webSurfaceTitles: webSurfaceTitles,

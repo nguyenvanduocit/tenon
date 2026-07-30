@@ -242,6 +242,7 @@ struct SpatialCanvasView: NSViewRepresentable {
     let pool: SurfacePool
     let webPool: PluginWebSurfacePool
     let host: PluginHost
+    let editorStates: EditorPaneStateStore
     let pluginSnapshots: [PluginSnapshot]
     let pluginViewSections: [PluginViewSection]
     let webSurfaceTitles: [WebSurfaceKey: String]
@@ -261,6 +262,7 @@ struct SpatialCanvasView: NSViewRepresentable {
             pool: pool,
             webPool: webPool,
             host: host,
+            editorStates: editorStates,
             pluginSnapshots: pluginSnapshots,
             pluginViewSections: pluginViewSections,
             webSurfaceTitles: webSurfaceTitles,
@@ -362,6 +364,7 @@ final class SpatialCanvasNSView: NSView {
         pool: SurfacePool,
         webPool: PluginWebSurfacePool,
         host: PluginHost,
+        editorStates: EditorPaneStateStore,
         pluginSnapshots: [PluginSnapshot],
         pluginViewSections: [PluginViewSection],
         webSurfaceTitles: [WebSurfaceKey: String],
@@ -424,6 +427,7 @@ final class SpatialCanvasNSView: NSView {
                 store: store,
                 pool: pool,
                 webPool: webPool,
+                editorStates: editorStates,
                 pluginSnapshots: pluginSnapshots,
                 host: host
             )
@@ -1068,6 +1072,7 @@ final class SpatialSlotCardView: NSView {
         store: WorkspaceStore?,
         pool: SurfacePool,
         webPool: PluginWebSurfacePool,
+        editorStates: EditorPaneStateStore,
         pluginSnapshots: [PluginSnapshot],
         host: PluginHost
     ) {
@@ -1118,6 +1123,7 @@ final class SpatialSlotCardView: NSView {
                 host: host,
                 pool: pool,
                 webPool: webPool,
+                editorStates: editorStates,
                 store: store,
                 isActive: isActive
             )

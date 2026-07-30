@@ -10,6 +10,9 @@ struct BuiltInSlotContentView: View {
     var host: PluginHost
     var pool: SurfacePool
     var webPool: PluginWebSurfacePool
+    /// Per-slot editor state (scroll/selection/unsaved buffer), so a file pane
+    /// survives its view being destroyed on a pane switch (T-016).
+    var editorStates: EditorPaneStateStore
     /// Present for real panes; nil in preview/detached rendering. An empty slot
     /// needs it to fill itself in place.
     var store: WorkspaceStore?
@@ -26,7 +29,11 @@ struct BuiltInSlotContentView: View {
             ).makeView()
 
         case .file(let path):
-            FileSlotView(path: path)
+            FileSlotView(
+                path: path,
+                slotID: slot.id,
+                editorStates: editorStates
+            )
 
         case .changes:
             ChangesPanelView(root: workspacePath, store: store)
