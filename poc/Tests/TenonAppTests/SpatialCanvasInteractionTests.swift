@@ -398,7 +398,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
                     y: 0,
                     width: 3,
                     height: 3,
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: activeID
@@ -619,7 +622,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let files = try XCTUnwrap(typeMenu.item(withTitle: "Files") as? SlotMenuItem)
         files.invoke()
 
-        XCTAssertEqual(fixture.store.catalog.slot(id: slotID)?.content, .files)
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: slotID)?.content,
+            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
+        )
     }
 
     func testHeaderMenuAppearsForHeaderRegionAndNotTheBody() throws {
@@ -726,7 +732,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
                 activeWorkspaceID: workspace.id
             )
         )
-        let pool = SurfacePool(backendName: "Stub") { _ in
+        let pool = SurfacePool(backendName: "Stub") { _, _ in
             StubTerminalSurface()
         }
         let host = PluginHost(

@@ -1,0 +1,73 @@
+{
+  "id": "dev.tenon.claude-sessions",
+  "name": "claude-sessions",
+  "version": "0.1.0",
+  "displayName": "Claude Sessions",
+  "icon": "clock.arrow.circlepath",
+  "permissions": ["process.exec", "terminal.write", "workspace.control"],
+  "intents": {
+    "uses": [
+      "process.exec.v1",
+      "terminal.run.v1",
+      "workspace.state.v1",
+      "workspace.tab.create.v1"
+    ],
+    "provides": [
+      {
+        "name": "dev.tenon.claude-sessions.open.v1",
+        "title": "Open Claude Sessions",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": {
+          "category": "Open",
+          "icon": "clock.arrow.circlepath",
+          "keywords": ["claude", "session", "resume", "history", "transcript"]
+        }
+      },
+      {
+        "name": "dev.tenon.claude-sessions.refresh.v1",
+        "title": "Claude Sessions: Refresh",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "read", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": {
+          "category": "Claude Sessions",
+          "icon": "arrow.clockwise",
+          "keywords": ["claude", "session", "refresh"]
+        }
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "projectPath",
+      "label": "Project directory",
+      "type": "string",
+      "default": "",
+      "group": "Scanning"
+    },
+    {
+      "key": "claudeHome",
+      "label": "Claude home",
+      "type": "string",
+      "default": "~/.claude",
+      "group": "Scanning"
+    },
+    {
+      "key": "limit",
+      "label": "Sessions shown",
+      "type": "select",
+      "default": "25",
+      "group": "Scanning",
+      "options": [
+        { "value": "10", "label": "10 most recent" },
+        { "value": "25", "label": "25 most recent" },
+        { "value": "50", "label": "50 most recent" },
+        { "value": "100", "label": "100 most recent" }
+      ]
+    }
+  ]
+}

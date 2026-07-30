@@ -1,8 +1,85 @@
 {
+  "id": "dev.tenon.git",
   "name": "git",
-  "version": "0.1.0",
-  "permissions": ["process.exec"],
+  "version": "0.2.0",
+  "permissions": [
+    "process.exec",
+    "workspace.control",
+    "filesystem.read"
+  ],
+  "intents": {
+    "uses": [
+      "process.exec.v1",
+      "workspace.state.v1",
+      "workspace.tab.create.v1",
+      "ui.pick.v1",
+      "ui.prompt.v1",
+      "ui.confirm.v1",
+      "ui.toast.v1"
+    ],
+    "provides": [
+      {
+        "name": "dev.tenon.git.refresh.v1",
+        "title": "Git: Refresh",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "read", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Git", "icon": "arrow.clockwise", "keywords": ["git", "refresh", "status"] }
+      },
+      {
+        "name": "dev.tenon.git.switch-branch.v1",
+        "title": "Git: Switch Branch…",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Git", "icon": "arrow.triangle.branch", "keywords": ["git", "branch", "switch"] }
+      },
+      {
+        "name": "dev.tenon.git.fetch.v1",
+        "title": "Git: Fetch",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Git", "icon": "arrow.down.circle", "keywords": ["git", "fetch", "remote"] }
+      },
+      {
+        "name": "dev.tenon.git.pull.v1",
+        "title": "Git: Pull",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Git", "icon": "arrow.down", "keywords": ["git", "pull", "remote"] }
+      },
+      {
+        "name": "dev.tenon.git.push.v1",
+        "title": "Git: Push",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Git", "icon": "arrow.up", "keywords": ["git", "push", "remote"] }
+      },
+      {
+        "name": "dev.tenon.git.stage-all.v1",
+        "title": "Git: Stage All",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Git", "icon": "plus.circle", "keywords": ["git", "stage", "add"] }
+      }
+    ]
+  },
   "settings": [
-    { "key": "repoPath", "label": "Repository path", "type": "string", "default": "~" }
+    {
+      "key": "repoPath",
+      "label": "Repository path",
+      "type": "string",
+      "default": "~"
+    }
   ]
 }

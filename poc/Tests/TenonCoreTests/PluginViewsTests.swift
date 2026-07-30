@@ -1,99 +1,212 @@
+import Foundation
+import TenonIntentCore
 import XCTest
 @testable import TenonCore
 
-/// `tenon.views` — the plugin surface that fills a slot (`SlotContent.pluginView`). It is
-/// free tier (UI contribution, VISION §5), keyed by viewID so one plugin can offer several.
 final class PluginViewsTests: XCTestCase {
-    private var root: URL!
-
-    override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("tenon-views-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: root)
-    }
-
-    @discardableResult
-    private func writePlugin(dir: String, manifest: String, js: String) throws -> URL {
-        let pluginDir = root.appendingPathComponent(dir)
-        try FileManager.default.createDirectory(at: pluginDir, withIntermediateDirectories: true)
-        try manifest.write(to: pluginDir.appendingPathComponent("manifest.json"), atomically: true, encoding: .utf8)
-        try js.write(to: pluginDir.appendingPathComponent("main.js"), atomically: true, encoding: .utf8)
-        return pluginDir
-    }
-
-    func testPermissionlessPluginContributesSlotViews() throws {
-        try writePlugin(
-            dir: "viewer",
-            manifest: #"{"name":"viewer","version":"1","permissions":[]}"#,
-            js: """
-            tenon.views.register("graph", { title: "Git Graph" });
-            tenon.views.set("graph", { items: [ {id:"c1", label:"commit one"}, {id:"c2", label:"commit two", icon:"circle"} ] });
+    func testDeclarativeBodyParsesIntoNativeViewTree() async throws {
+        let runtime = try makeRuntime(
+            source: """
+            tenon.views.register("panel", { title: "Panel" });
+            tenon.views.set("panel", {
+              title: "Panel",
+              subtitle: "native",
+              actions: [{ id: "refresh", icon: "arrow.clockwise" }],
+              body: {
+                type: "vstack",
+                spacing: 8,
+                children: [
+                  { type: "text", value: "Build passing", weight: "semibold" },
+                  { type: "badge", value: "main", tint: "green" },
+                  { type: "progress", value: 0.42, tint: "amber" }
+                ]
+              }
+            });
             """
         )
-        let host = PluginHost(pluginsRoot: root)
-        host.loadAll()
-
-        let views = host.pluginViews.filter { $0.pluginName == "viewer" }
-        XCTAssertEqual(views.map(\.viewID), ["graph"])
-        XCTAssertEqual(views.first?.title, "Git Graph")
-        XCTAssertEqual(views.first?.items.map(\.label), ["commit one", "commit two"])
-        XCTAssertEqual(views.first?.items.last?.icon, "circle")
-        XCTAssertEqual(host.plugins.first?.permissionViolations, [], "views are free-tier UI — no permission needed")
+        _ = try await runtime.start()
+        let snapshot = await runtime.snapshot()
+        let view = try XCTUnwrap(snapshot.views.first)
+        XCTAssertEqual(view.title, "Panel")
+        XCTAssertEqual(view.subtitle, "native")
+        XCTAssertEqual(view.actions.map(\.id), ["refresh"])
+        XCTAssertEqual(
+            view.body,
+            .vstack(
+                spacing: 8,
+                children: [
+                    .text(
+                        "Build passing",
+                        style: .body,
+                        weight: .semibold,
+                        color: .default
+                    ),
+                    .badge("main", tint: .green),
+                    .progress(value: 0.42, tint: .amber),
+                ]
+            )
+        )
+        _ = await runtime.shutdown()
     }
 
-    func testViewSelectRoutesToTheHandler() throws {
-        try writePlugin(
-            dir: "viewer",
-            manifest: #"{"name":"viewer","version":"1"}"#,
-            js: """
-            tenon.views.register("files", { title: "Files" });
-            tenon.views.set("files", { items: [ {id:"/a", label:"a"} ] });
-            tenon.views.onSelect("files", function (id) { tenon.log("picked " + id); });
+    func testStructuredAndStringActionsRoundTripToHandler() async throws {
+        let logs = ViewLogSink()
+        let runtime = try makeRuntime(
+            source: """
+            tenon.views.register("panel", { title: "Panel" });
+            tenon.views.set("panel", {
+              body: {
+                type: "vstack",
+                children: [
+                  {
+                    type: "button",
+                    label: "Stage",
+                    action: { operation: "stage", path: "a.swift" }
+                  },
+                  { type: "button", label: "Refresh", action: "refresh" }
+                ]
+              }
+            });
+            tenon.views.onSelect("panel", function (action) {
+              tenon.log(typeof action === "string"
+                ? action
+                : action.operation + ":" + action.path);
+            });
+            """,
+            log: { line in await logs.append(line) }
+        )
+        _ = try await runtime.start()
+
+        let snapshot = await runtime.snapshot()
+        guard case let .vstack(_, children) = try XCTUnwrap(
+            snapshot.views.first?.body
+        ),
+            case let .button(_, structuredAction, _) = children[0],
+            case let .button(_, stringAction, _) = children[1]
+        else {
+            return XCTFail("expected two parsed buttons")
+        }
+        let structured = try await runtime.invokeViewSelect(
+            viewID: "panel",
+            itemID: structuredAction
+        )
+        let string = try await runtime.invokeViewSelect(
+            viewID: "panel",
+            itemID: stringAction
+        )
+        XCTAssertTrue(structured)
+        XCTAssertTrue(string)
+        let delivered = await eventually {
+            let lines = await logs.values()
+            return lines.contains("[view-tests] stage:a.swift")
+                && lines.contains("[view-tests] refresh")
+        }
+        XCTAssertTrue(delivered)
+        _ = await runtime.shutdown()
+    }
+
+    func testProgressValuesAreClampedAtParsingBoundary() async throws {
+        let runtime = try makeRuntime(
+            source: """
+            tenon.views.register("panel", { title: "Panel" });
+            tenon.views.set("panel", {
+              body: {
+                type: "vstack",
+                children: [
+                  { type: "progress", value: -2 },
+                  { type: "progress", value: 5 }
+                ]
+              }
+            });
             """
         )
-        let host = PluginHost(pluginsRoot: root)
-        host.loadAll()
-
-        XCTAssertTrue(host.invokeViewSelect(pluginName: "viewer", viewID: "files", itemID: "/a"))
-        XCTAssertTrue(host.log.contains("[viewer] picked /a"), "log: \(host.log)")
+        _ = try await runtime.start()
+        let snapshot = await runtime.snapshot()
+        let view = try XCTUnwrap(snapshot.views.first)
+        XCTAssertEqual(
+            view.body,
+            .vstack(
+                spacing: 8,
+                children: [
+                    .progress(value: 0, tint: .default),
+                    .progress(value: 1, tint: .default),
+                ]
+            )
+        )
+        _ = await runtime.shutdown()
     }
 
-    func testOnePluginCanProvideSeveralViews() throws {
-        try writePlugin(
-            dir: "multi",
-            manifest: #"{"name":"multi","version":"1"}"#,
-            js: """
-            tenon.views.register("graph", { title: "Graph" });
-            tenon.views.set("graph", { items: [] });
-            tenon.views.register("log", { title: "Log" });
-            tenon.views.set("log", { items: [ {id:"1", label:"entry"} ] });
-            """
+    private func makeRuntime(
+        source: String,
+        log: @escaping PluginRuntimeConfiguration.Log = { _ in }
+    ) throws -> PluginRuntime {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent(
+                "tenon-views-\(UUID().uuidString)",
+                isDirectory: true
+            )
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
         )
-        let host = PluginHost(pluginsRoot: root)
-        host.loadAll()
-
-        let ids = host.pluginViews.filter { $0.pluginName == "multi" }.map(\.viewID).sorted()
-        XCTAssertEqual(ids, ["graph", "log"])
+        try source.write(
+            to: directory.appendingPathComponent("main.js"),
+            atomically: true,
+            encoding: .utf8
+        )
+        return try PluginRuntime(
+            configuration: PluginRuntimeConfiguration(
+                manifest: try PluginManifest(
+                    id: "dev.tenon.view-tests",
+                    name: "view-tests",
+                    version: "1"
+                ),
+                directory: directory,
+                intents: PluginRuntimeIntentBridge(
+                    send: { _ in Self.unavailable() },
+                    list: { .array([]) }
+                ),
+                log: log
+            )
+        )
     }
 
-    /// Disabling the providing plugin removes its views — the slot the shell was rendering
-    /// falls back to a placeholder, keeping the empty state valid (VISION §6).
-    func testDisablingAPluginRemovesItsViews() throws {
-        try writePlugin(
-            dir: "viewer",
-            manifest: #"{"name":"viewer","version":"1"}"#,
-            js: #"tenon.views.register("graph", { title: "Graph" }); tenon.views.set("graph", { items: [] });"#
+    private func eventually(
+        attempts: Int = 200,
+        operation: () async -> Bool
+    ) async -> Bool {
+        for _ in 0 ..< attempts {
+            if await operation() {
+                return true
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        return false
+    }
+
+    private static func unavailable() -> IntentResult {
+        .failure(
+            error: IntentError(
+                code: .kernel(.providerUnavailable),
+                details: nil,
+                retryable: false,
+                retryAfterMilliseconds: nil,
+                outcome: .notStarted
+            ),
+            requestID: UUID(),
+            providerID: nil
         )
-        let host = PluginHost(pluginsRoot: root)
-        host.loadAll()
-        XCTAssertEqual(host.pluginViews.count, 1)
+    }
+}
 
-        host.setEnabled(false, pluginNamed: "viewer")
+private actor ViewLogSink {
+    private var lines: [String] = []
 
-        XCTAssertTrue(host.pluginViews.isEmpty, "a disabled plugin contributes no views")
+    func append(_ line: String) {
+        lines.append(line)
+    }
+
+    func values() -> [String] {
+        lines
     }
 }

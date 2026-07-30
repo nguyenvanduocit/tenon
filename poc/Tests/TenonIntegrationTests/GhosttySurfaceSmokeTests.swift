@@ -179,7 +179,7 @@ final class GhosttySurfaceSmokeTests: XCTestCase {
         let firstPath = URL(fileURLWithPath: "/tmp/one", isDirectory: true)
         let secondPath = URL(fileURLWithPath: "/tmp/two", isDirectory: true)
         var requestedPaths: [URL] = []
-        let pool = SurfacePool(backendName: "Test") { workspacePath in
+        let pool = SurfacePool(backendName: "Test") { _, workspacePath in
             requestedPaths.append(workspacePath)
             return TestTerminalSurface(workingDirectory: workspacePath)
         }

@@ -1,8 +1,86 @@
 {
+  "id": "dev.tenon.file-explorer",
   "name": "file-explorer",
-  "version": "0.1.0",
-  "permissions": ["filesystem.read", "terminal.write"],
+  "displayName": "Files",
+  "icon": "folder",
+  "version": "0.2.0",
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write",
+    "terminal.write",
+    "workspace.control",
+    "shell.open"
+  ],
+  "intents": {
+    "uses": [
+      "filesystem.directory.list.v1",
+      "filesystem.directory.create.v1",
+      "filesystem.file.create.v1",
+      "filesystem.path.move.v1",
+      "filesystem.path.trash.v1",
+      "file.open.v1",
+      "file.reveal.v1",
+      "clipboard.write.v1",
+      "terminal.write.v1",
+      "workspace.state.v1",
+      "workspace.tab.create.v1",
+      "workspace.pane.split.v1",
+      "workspace.pane.content.set.v1"
+    ],
+    "provides": [
+      {
+        "name": "dev.tenon.file-explorer.open.v1",
+        "title": "Files: Open",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Open", "icon": "folder", "keywords": ["files", "tree", "explorer"] }
+      },
+      {
+        "name": "dev.tenon.file-explorer.cd-root.v1",
+        "title": "Files: cd to Root",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "policy", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Files", "icon": "terminal", "keywords": ["cd", "root", "terminal"] }
+      },
+      {
+        "name": "dev.tenon.file-explorer.reveal-root.v1",
+        "title": "Files: Reveal Root in Finder",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "policy", "external": true },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Files", "icon": "arrow.up.forward.app", "keywords": ["finder", "reveal", "root"] }
+      },
+      {
+        "name": "dev.tenon.file-explorer.refresh.v1",
+        "title": "Files: Refresh",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "read", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Files", "icon": "arrow.clockwise", "keywords": ["files", "refresh", "reload"] }
+      },
+      {
+        "name": "dev.tenon.file-explorer.collapse-all.v1",
+        "title": "Files: Collapse All",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Files", "icon": "rectangle.compress.vertical", "keywords": ["files", "collapse", "tree"] }
+      }
+    ]
+  },
   "settings": [
-    { "key": "rootPath", "label": "Root path", "type": "string", "default": "~" }
+    {
+      "key": "rootPath",
+      "label": "Root path (empty follows the workspace)",
+      "type": "string",
+      "default": ""
+    }
   ]
 }

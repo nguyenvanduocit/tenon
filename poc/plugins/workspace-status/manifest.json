@@ -1,5 +1,10 @@
 {
+  "id": "dev.tenon.workspace-status",
   "name": "workspace-status",
   "version": "0.1.0",
-  "permissions": []
+  "permissions": [],
+  "intents": {
+    "uses": [],
+    "provides": []
+  }
 }

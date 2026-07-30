@@ -1,5 +1,65 @@
 {
+  "id": "dev.tenon.hello-palette",
   "name": "hello-palette",
   "version": "0.1.0",
-  "permissions": ["terminal.read", "network.fetch"]
+  "permissions": ["terminal.read"],
+  "intents": {
+    "uses": [],
+    "provides": [
+      {
+        "name": "dev.tenon.hello-palette.greet.v1",
+        "title": "Say Hello",
+        "description": "Writes the next greeting to the plugin log.",
+        "audiences": ["plugin", "palette"],
+        "effects": {
+          "kind": "write",
+          "idempotency": "none",
+          "confirmation": "never",
+          "external": false
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false
+        },
+        "palette": {
+          "category": "Hello",
+          "icon": "hand.wave",
+          "keywords": ["hello", "greet"]
+        }
+      },
+      {
+        "name": "dev.tenon.hello-palette.reset.v1",
+        "title": "Reset Greeting Counter",
+        "description": "Resets the plugin-owned greeting counter.",
+        "audiences": ["plugin", "palette"],
+        "effects": {
+          "kind": "write",
+          "idempotency": "none",
+          "confirmation": "never",
+          "external": false
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false
+        },
+        "palette": {
+          "category": "Hello",
+          "icon": "arrow.counterclockwise",
+          "keywords": ["reset", "counter"]
+        }
+      }
+    ]
+  }
 }

@@ -1,0 +1,76 @@
+{
+  "id": "dev.tenon.browser",
+  "name": "browser",
+  "version": "1.0.0",
+  "displayName": "Browser",
+  "icon": "globe",
+  "permissions": ["web.view", "workspace.control"],
+  "intents": {
+    "uses": [
+      "browser.surface.load.v1",
+      "browser.surface.back.v1",
+      "browser.surface.forward.v1",
+      "browser.surface.reload.v1",
+      "workspace.tab.create.v1"
+    ],
+    "provides": [
+      {
+        "name": "dev.tenon.browser.open.v1",
+        "title": "Open Browser",
+        "description": "Opens an independent browser surface in a new tab.",
+        "audiences": ["plugin", "palette"],
+        "effects": {
+          "kind": "write",
+          "idempotency": "none",
+          "confirmation": "never",
+          "external": false
+        },
+        "inputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false
+        },
+        "outputSchema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "type": "object",
+          "additionalProperties": false
+        },
+        "palette": {
+          "category": "Open",
+          "icon": "globe",
+          "keywords": ["web", "url", "site", "internet"]
+        }
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "homeURL",
+      "label": "Home URL",
+      "type": "string",
+      "default": "https://duckduckgo.com",
+      "group": "Home & search"
+    },
+    {
+      "key": "searchEngine",
+      "label": "Search engine",
+      "type": "select",
+      "default": "https://duckduckgo.com/?q=",
+      "group": "Home & search",
+      "options": [
+        {
+          "value": "https://duckduckgo.com/?q=",
+          "label": "DuckDuckGo"
+        },
+        {
+          "value": "https://www.google.com/search?q=",
+          "label": "Google"
+        },
+        {
+          "value": "https://www.bing.com/search?q=",
+          "label": "Bing"
+        }
+      ]
+    }
+  ]
+}

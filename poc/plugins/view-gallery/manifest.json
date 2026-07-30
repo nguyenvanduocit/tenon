@@ -1,0 +1,15 @@
+{
+  "id": "dev.tenon.view-gallery",
+  "name": "view-gallery",
+  "version": "0.1.0",
+  "permissions": [],
+  "intents": {
+    "uses": [
+      "ui.pick.v1",
+      "ui.prompt.v1",
+      "ui.confirm.v1",
+      "ui.toast.v1"
+    ],
+    "provides": []
+  }
+}

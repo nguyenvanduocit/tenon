@@ -263,7 +263,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: activeSlotID,
                     rect: GridRect(x: 0, y: 0, width: 6, height: 12),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: activeSlotID
@@ -317,7 +320,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: UUID(),
                     rect: GridRect(x: 3, y: 0, width: 9, height: 12),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: activeSlotID
@@ -349,14 +355,22 @@ final class WorkspaceCatalogTests: XCTestCase {
         catalog.closeSlot(originalID)
         let tabID = try XCTUnwrap(catalog.activeTab?.id)
 
-        catalog.addSlot(content: .browser(url: URL(string: "https://example.com")!))
+        catalog.addSlot(
+            content: .pluginView(
+                pluginID: "dev.tenon.browser",
+                viewID: "browser"
+            )
+        )
 
         let tab = try XCTUnwrap(catalog.activeTab)
         let slot = try XCTUnwrap(tab.slots.first)
         XCTAssertEqual(tab.id, tabID)
         XCTAssertEqual(tab.slots.count, 1)
         XCTAssertEqual(slot.rect, fullGrid)
-        XCTAssertEqual(slot.content, .browser(url: URL(string: "https://example.com")!))
+        XCTAssertEqual(
+            slot.content,
+            .pluginView(pluginID: "dev.tenon.browser", viewID: "browser")
+        )
         XCTAssertEqual(tab.activeSlotID, slot.id)
     }
 
@@ -455,7 +469,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: leftID,
                     rect: GridRect(x: 0, y: 0, width: 3, height: 12),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
                 WorkspaceSlot(
                     id: middleID,
@@ -489,7 +506,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: leftID,
                     rect: GridRect(x: 0, y: 0, width: 6, height: 12),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
                 WorkspaceSlot(
                     id: rightID,
@@ -546,11 +566,11 @@ final class WorkspaceCatalogTests: XCTestCase {
         let slotID = try XCTUnwrap(catalog.activeSlotID)
         let contents: [SlotContent] = [
             .terminal,
-            .files,
+            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree"),
             .changes,
             .docs,
-            .browser(url: URL(string: "https://example.com")!),
-            .pluginView(plugin: "git", viewID: "graph"),
+            .pluginView(pluginID: "dev.tenon.browser", viewID: "browser"),
+            .pluginView(pluginID: "dev.tenon.git", viewID: "graph"),
             .empty,
         ]
 
@@ -580,7 +600,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: secondID,
                     rect: GridRect(x: 6, y: 0, width: 3, height: 3),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: firstID
@@ -643,7 +666,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: secondID,
                     rect: GridRect(x: 6, y: 0, width: 3, height: 3),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: firstID
@@ -680,7 +706,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: secondID,
                     rect: GridRect(x: 6, y: 0, width: 3, height: 3),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: firstID
@@ -735,7 +764,10 @@ final class WorkspaceCatalogTests: XCTestCase {
                 WorkspaceSlot(
                     id: secondID,
                     rect: GridRect(x: 6, y: 0, width: 3, height: 3),
-                    content: .files
+                    content: .pluginView(
+                        pluginID: "dev.tenon.file-explorer",
+                        viewID: "tree"
+                    )
                 ),
             ],
             activeSlotID: firstID
@@ -763,7 +795,10 @@ final class WorkspaceCatalogTests: XCTestCase {
     func testApplySwapTransactionSwapsGeometryButKeepsContentWithIdentity() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let firstID = try XCTUnwrap(catalog.activeSlotID)
-        catalog.setSlotContent(firstID, .files)
+        catalog.setSlotContent(
+            firstID,
+            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
+        )
         catalog.splitActiveSlot(.horizontal, content: .changes)
         let secondID = try XCTUnwrap(catalog.activeSlotID)
         let firstRect = try XCTUnwrap(catalog.slot(id: firstID)?.rect)
@@ -778,7 +813,10 @@ final class WorkspaceCatalogTests: XCTestCase {
 
         XCTAssertEqual(catalog.slot(id: firstID)?.rect, secondRect)
         XCTAssertEqual(catalog.slot(id: secondID)?.rect, firstRect)
-        XCTAssertEqual(catalog.slot(id: firstID)?.content, .files)
+        XCTAssertEqual(
+            catalog.slot(id: firstID)?.content,
+            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
+        )
         XCTAssertEqual(catalog.slot(id: secondID)?.content, .changes)
         XCTAssertTrue(events.contains { if case .slotsSwapped = $0 { return true }; return false })
     }
@@ -866,7 +904,10 @@ final class WorkspaceCatalogTests: XCTestCase {
     func testMoveSlotToNewTabReparentsKeepingIdentityAndReflowsSource() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let leftID = try XCTUnwrap(catalog.activeSlotID)
-        catalog.setSlotContent(leftID, .files)
+        catalog.setSlotContent(
+            leftID,
+            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
+        )
         catalog.splitActiveSlot(.horizontal, content: .terminal)
         let rightID = try XCTUnwrap(catalog.activeSlotID)
         let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
@@ -951,7 +992,13 @@ final class WorkspaceCatalogTests: XCTestCase {
     func testMoveSlotIntoExistingTabSplitsFullTargetAndFocusesIt() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let sourceLeft = try XCTUnwrap(catalog.activeSlotID)
-        catalog.splitActiveSlot(.horizontal, content: .files)
+        catalog.splitActiveSlot(
+            .horizontal,
+            content: .pluginView(
+                pluginID: "dev.tenon.file-explorer",
+                viewID: "tree"
+            )
+        )
         let movingID = try XCTUnwrap(catalog.activeSlotID)
         let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
         catalog.newTab()
@@ -966,7 +1013,10 @@ final class WorkspaceCatalogTests: XCTestCase {
         let targetTab = try XCTUnwrap(catalog.activeTab)
         XCTAssertEqual(Set(targetTab.slots.map(\.id)), Set([targetOriginal, movingID]))
         XCTAssertEqual(targetTab.activeSlotID, movingID)
-        XCTAssertEqual(catalog.slot(id: movingID)?.content, .files)
+        XCTAssertEqual(
+            catalog.slot(id: movingID)?.content,
+            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
+        )
         XCTAssertEqual(
             catalog.slot(id: targetOriginal)?.rect,
             GridRect(x: 0, y: 0, width: 6, height: 12)
@@ -1136,7 +1186,12 @@ final class WorkspaceStoreTests: XCTestCase {
         var received: [(events: [WorkspaceEvent], snapshot: WorkspaceCatalog)] = []
         store.onEvents = { events, snapshot in received.append((events, snapshot)) }
 
-        store.addSlot(content: .files)
+        store.addSlot(
+            content: .pluginView(
+                pluginID: "dev.tenon.file-explorer",
+                viewID: "tree"
+            )
+        )
 
         XCTAssertEqual(store.catalog.activeTab?.slots.count, 2)
         XCTAssertEqual(received.count, 1)
@@ -1152,63 +1207,5 @@ final class WorkspaceStoreTests: XCTestCase {
         store.selectWorkspace(store.catalog.activeWorkspaceID)
 
         XCTAssertEqual(batches, 0)
-    }
-}
-
-final class WorkspacePluginBridgeTests: XCTestCase {
-    private var root: URL!
-
-    override func setUpWithError() throws {
-        root = FileManager.default.temporaryDirectory
-            .appendingPathComponent("tenon-workspace-bridge-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
-    }
-
-    override func tearDownWithError() throws {
-        try? FileManager.default.removeItem(at: root)
-    }
-
-    func testStructuralEventsReachPermissionlessPluginWithCatalogTotals() throws {
-        let directory = root.appendingPathComponent("observer")
-        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-        try #"{"name":"observer","version":"1","permissions":[]}"#
-            .write(
-                to: directory.appendingPathComponent("manifest.json"),
-                atomically: true,
-                encoding: .utf8
-            )
-        try """
-        tenon.events.on("workspace.added", function (e) { tenon.log("workspace: " + e.workspaceId); });
-        tenon.events.on("workspace.slot-split", function (e) { tenon.log("split: " + e.axis); });
-        tenon.events.on("workspace.changed", function (e) {
-          tenon.statusBar.set(e.workspaces + " workspaces, " + e.tabs + " tabs, " + e.slots + " slots");
-        });
-        """.write(
-            to: directory.appendingPathComponent("main.js"),
-            atomically: true,
-            encoding: .utf8
-        )
-
-        let host = PluginHost(pluginsRoot: root)
-        host.loadAll()
-        let store = WorkspaceStore()
-        store.onEvents = { [weak host] events, snapshot in
-            host?.emit(workspaceEvents: events, in: snapshot)
-        }
-
-        store.addWorkspace(
-            name: "Two",
-            path: URL(fileURLWithPath: "/tmp/two", isDirectory: true)
-        )
-        let addedWorkspaceID = store.catalog.activeWorkspaceID
-        store.splitActiveSlot(.vertical)
-
-        XCTAssertTrue(
-            host.log.contains("[observer] workspace: \(addedWorkspaceID.uuidString)"),
-            "log: \(host.log)"
-        )
-        XCTAssertTrue(host.log.contains("[observer] split: vertical"), "log: \(host.log)")
-        XCTAssertEqual(host.statusItems.map(\.text), ["2 workspaces, 2 tabs, 3 slots"])
-        XCTAssertEqual(host.plugins.first?.permissionViolations, [])
     }
 }
