@@ -14,6 +14,28 @@ public enum SlotContent: Equatable, Sendable {
     case diff(DiffRequest)
     case empty
 
+    /// Whether a pane already showing `self` is where `content` belongs when the host is
+    /// asked to open it. The pane holding a file takes the next file and the pane holding a
+    /// diff takes the next diff, a plugin view only ever yields to that same view, and a
+    /// blank pane takes anything. This is the rule that keeps browsing a file tree from
+    /// burying the workspace in panes.
+    public func yieldsPane(to content: SlotContent) -> Bool {
+        switch (self, content) {
+        case (.empty, _):
+            return true
+        case (.terminal, .terminal),
+             (.changes, .changes),
+             (.docs, .docs),
+             (.file, .file),
+             (.diff, .diff):
+            return true
+        case let (.pluginView(pluginID, viewID), .pluginView(otherPluginID, otherViewID)):
+            return pluginID == otherPluginID && viewID == otherViewID
+        default:
+            return false
+        }
+    }
+
     public var busValue: String {
         switch self {
         case .terminal:
@@ -457,6 +479,38 @@ public struct WorkspaceCatalog: Equatable, Sendable {
 
     @discardableResult
     public mutating func addSlot(content: SlotContent = .terminal) -> [WorkspaceEvent] {
+        openSlot(content: content, near: activeTab?.activeSlotID)
+    }
+
+    /// A second pane showing what `id` shows. Placement is the same policy `addSlot` uses,
+    /// anchored on the duplicated pane rather than the focused one, so duplicating a pane
+    /// nobody is looking at never resizes the pane they are.
+    @discardableResult
+    public mutating func duplicateSlot(_ id: UUID) -> [WorkspaceEvent] {
+        guard let content = activeTab?.slots.first(where: { $0.id == id })?.content
+        else { return [] }
+        return openSlot(content: content, near: id)
+    }
+
+    /// Whether `duplicateSlot(_:)` would produce a pane: free canvas exists, or the pane is
+    /// big enough to split along one axis. The header menu asks so it can grey the item out
+    /// instead of offering a click that does nothing.
+    public func canDuplicateSlot(_ id: UUID) -> Bool {
+        guard let tab = activeTab,
+              let slot = tab.slots.first(where: { $0.id == id })
+        else { return false }
+        if SpatialLayout.bestEmptyRect(in: tab.spatialSlots, near: id) != nil { return true }
+        return slot.rect.width >= SpatialLayout.minimumWidth * 2 ||
+            slot.rect.height >= SpatialLayout.minimumHeight * 2
+    }
+
+    /// Where a new pane goes: the free canvas next to `anchor` when the layout has any,
+    /// otherwise `anchor` splits along the axis that still fits.
+    @discardableResult
+    private mutating func openSlot(
+        content: SlotContent,
+        near anchor: UUID?
+    ) -> [WorkspaceEvent] {
         guard let location = activeTabLocation else { return [] }
         let current = workspaces[location.workspace].tabs[location.tab]
         let newSlotID = UUID()
@@ -485,7 +539,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
 
         if let rect = SpatialLayout.bestEmptyRect(
             in: current.spatialSlots,
-            near: current.activeSlotID
+            near: anchor
         ) {
             let slot = WorkspaceSlot(id: newSlotID, rect: rect, content: content)
             workspaces[location.workspace].tabs[location.tab].slots.append(slot)
@@ -504,13 +558,15 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             ]
         }
 
-        guard let active = current.activeSlot else { return [] }
+        guard let anchor,
+              let anchorSlot = current.slots.first(where: { $0.id == anchor })
+        else { return [] }
         let axis: SplitAxis =
-            active.rect.width < SpatialLayout.minimumWidth * 2 &&
-            active.rect.height >= SpatialLayout.minimumHeight * 2
+            anchorSlot.rect.width < SpatialLayout.minimumWidth * 2 &&
+            anchorSlot.rect.height >= SpatialLayout.minimumHeight * 2
                 ? .vertical
                 : .horizontal
-        return splitActiveSlot(axis, content: content)
+        return splitSlot(anchor, axis, content: content)
     }
 
     @discardableResult
@@ -904,6 +960,18 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 workspace: workspaces[location.workspace].id
             ),
         ]
+    }
+
+    /// Grows one pane of the active tab into the free columns beside it — what a
+    /// double-click on a pane header asks for. The caller names a pane, never a
+    /// geometry, so the fill rule stays in `SpatialLayout` and the commit stays the
+    /// same validated `applyResize` path every other geometry change takes.
+    @discardableResult
+    public mutating func fillSlotWidth(_ id: UUID) -> [WorkspaceEvent] {
+        guard let location = activeTabLocation else { return [] }
+        let tab = workspaces[location.workspace].tabs[location.tab]
+        guard tab.slots.contains(where: { $0.id == id }) else { return [] }
+        return applyResize(SpatialLayout.fillWidth(tab.spatialSlots, slotID: id))
     }
 
     private var activeWorkspaceIndex: Int? {

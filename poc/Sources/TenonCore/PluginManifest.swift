@@ -276,19 +276,26 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
     public let keywords: [String]
     public let key: String?
     public let when: String?
+    /// Marks a creation verb — something that opens a terminal, a view, an agent. A
+    /// launcher surface (the tab strip's `+`) offers exactly these; the palette still
+    /// offers everything. Default `false`, so a destructive or navigational command
+    /// never volunteers itself under a plus sign.
+    public let launcher: Bool
 
     public init(
         category: String? = nil,
         icon: String? = nil,
         keywords: [String] = [],
         key: String? = nil,
-        when: String? = nil
+        when: String? = nil,
+        launcher: Bool = false
     ) {
         self.category = category
         self.icon = icon
         self.keywords = keywords
         self.key = key
         self.when = when
+        self.launcher = launcher
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -297,6 +304,7 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         case keywords
         case key
         case when
+        case launcher
     }
 
     private struct AnyCodingKey: CodingKey {
@@ -343,6 +351,10 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         ) ?? []
         key = try container.decodeIfPresent(String.self, forKey: .key)
         when = try container.decodeIfPresent(String.self, forKey: .when)
+        launcher = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .launcher
+        ) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -354,6 +366,9 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         }
         try container.encodeIfPresent(key, forKey: .key)
         try container.encodeIfPresent(when, forKey: .when)
+        if launcher {
+            try container.encode(launcher, forKey: .launcher)
+        }
     }
 }
 

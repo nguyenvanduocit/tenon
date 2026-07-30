@@ -13,15 +13,20 @@ struct WorkspaceSidebarView: View {
         // an open menu whenever its owning view re-renders, which reads as a shift a
         // beat after the menu appears (a terminal grabbing focus mutates the catalog).
         // So the rows live in their own view, and this one reads only the recents
-        // (`RecentWorkspaceStore` is `@Observable`) — the menu stays put through
-        // catalog churn yet still refreshes when the recent list actually changes.
+        // (`RecentWorkspaceStore` is `@Observable`) plus `store.openWorkspaceFolders`,
+        // which republishes when a workspace opens or closes and stays silent through
+        // tab/slot churn — the menu stays put yet still refreshes when its own list changes.
         WorkspaceRowList(store: store)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(TenonTheme.chrome)
             .contentShape(Rectangle())
             .contextMenu {
                 Button("Add Workspace…") { chooseWorkspace() }
-                let recents = Array((store.recentWorkspaces?.recent ?? []).prefix(5))
+                // Filtered before the cap, so five offers stay five offers no matter how
+                // many of the remembered workspaces happen to be open.
+                let offered = store.recentWorkspaces?
+                    .recent(excludingFolders: store.openWorkspaceFolders) ?? []
+                let recents = Array(offered.prefix(5))
                 if !recents.isEmpty {
                     Divider()
                     // Flat, plain-text items — no titled `Section` and no `Label`
@@ -36,12 +41,15 @@ struct WorkspaceSidebarView: View {
             }
     }
 
-    /// Re-open a remembered workspace: surface it if it's already open, otherwise add it.
-    /// The catalog is read here in the click handler — not in the view body — so
-    /// re-opening the same folder never spawns a duplicate, without tying the menu to
-    /// the catalog's churn.
+    /// Re-open a remembered workspace. The menu only offers closed ones, but a workspace can
+    /// open between the menu appearing and the click landing — so surface that one instead of
+    /// adding a duplicate. The catalog is read here in the click handler, not in the view
+    /// body, which keeps this check off the open menu's re-layout path.
     private func openRecent(_ entry: RecentWorkspaceStore.Entry) {
-        if let open = store.catalog.workspaces.first(where: { $0.path == entry.path }) {
+        let folder = RecentWorkspaceStore.folderKey(entry.path)
+        if let open = store.catalog.workspaces.first(where: {
+            RecentWorkspaceStore.folderKey($0.path) == folder
+        }) {
             store.selectWorkspace(open.id)
         } else {
             store.addWorkspace(name: entry.name, path: entry.path)

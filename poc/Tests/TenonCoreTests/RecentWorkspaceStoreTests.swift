@@ -1,3 +1,4 @@
+import Observation
 import XCTest
 @testable import TenonCore
 
@@ -63,5 +64,91 @@ final class RecentWorkspaceStoreTests: XCTestCase {
         store.addWorkspace(name: "Beta", path: url("/tmp/beta"))
 
         XCTAssertEqual(store.recentWorkspaces?.recent.map(\.name), ["Beta", "Alpha"])
+    }
+
+    /// The menu offers what you can't already reach: a workspace sitting in the catalog is
+    /// one sidebar row away, so it drops out of the recent list until it's closed again.
+    func testRecentExcludesTheWorkspacesThatAreOpen() {
+        let store = RecentWorkspaceStore(fileURL: fileURL)
+        store.record(name: "A", path: url("/tmp/a"))
+        store.record(name: "B", path: url("/tmp/b"))
+        store.record(name: "C", path: url("/tmp/c"))
+
+        let offered = store.recent(excludingFolders: [
+            RecentWorkspaceStore.folderKey(url("/tmp/b"))
+        ])
+
+        XCTAssertEqual(offered.map(\.name), ["C", "A"], "the open workspace is not offered again")
+        XCTAssertEqual(store.recent.count, 3, "the remembered list itself is untouched")
+    }
+
+    /// The two sides spell the same folder differently — the open panel hands back a
+    /// directory URL (`/tmp/a/`), the recents file rehydrates a plain path (`/tmp/a`) —
+    /// so the comparison standardizes instead of matching `URL` identity.
+    func testFolderKeyIgnoresTrailingSlashesAndRelativeSegments() {
+        XCTAssertEqual(
+            RecentWorkspaceStore.folderKey(URL(fileURLWithPath: "/tmp/a", isDirectory: true)),
+            RecentWorkspaceStore.folderKey(URL(fileURLWithPath: "/tmp/a"))
+        )
+        XCTAssertEqual(
+            RecentWorkspaceStore.folderKey(url("/tmp/./nested/../a")),
+            RecentWorkspaceStore.folderKey(url("/tmp/a"))
+        )
+    }
+
+    /// `openWorkspaceFolders` is what the sidebar menu filters against, so it has to name
+    /// exactly the workspaces the catalog is holding right now.
+    func testOpenWorkspaceFoldersFollowTheCatalog() throws {
+        let store = WorkspaceStore(
+            catalog: WorkspaceCatalog(name: "Alpha", path: url("/tmp/alpha"))
+        )
+        let alpha = RecentWorkspaceStore.folderKey(url("/tmp/alpha"))
+        let beta = RecentWorkspaceStore.folderKey(url("/tmp/beta"))
+        XCTAssertEqual(store.openWorkspaceFolders, [alpha])
+
+        store.addWorkspace(name: "Beta", path: url("/tmp/beta"))
+        XCTAssertEqual(store.openWorkspaceFolders, [alpha, beta])
+
+        let opened = try XCTUnwrap(store.catalog.workspaces.first { $0.name == "Beta" })
+        store.removeWorkspace(opened.id)
+        XCTAssertEqual(store.openWorkspaceFolders, [alpha], "closing a workspace offers it again")
+    }
+
+    /// The menu reads this instead of the catalog precisely because the catalog churns on
+    /// every tab and pane change, and macOS re-lays-out an open menu whose view re-renders.
+    /// So the set must stay silent through that churn (see `WorkspaceSidebarView`).
+    func testOpenWorkspaceFoldersStaySilentThroughTabAndPaneChurn() {
+        let store = WorkspaceStore(
+            catalog: WorkspaceCatalog(name: "Alpha", path: url("/tmp/alpha"))
+        )
+        let republished = expectation(description: "openWorkspaceFolders republished")
+        republished.isInverted = true
+        withObservationTracking {
+            _ = store.openWorkspaceFolders
+        } onChange: {
+            republished.fulfill()
+        }
+
+        store.newTab()
+        store.splitActiveSlot(.horizontal)
+        store.setSlotContent(store.catalog.activeSlotID!, .docs)
+        wait(for: [republished], timeout: 0.1)
+    }
+
+    /// The other half of that trade: a workspace opening *must* refresh the menu, or the
+    /// folder someone just opened keeps being offered as a recent one.
+    func testOpeningAWorkspaceRepublishesTheOpenFolders() {
+        let store = WorkspaceStore(
+            catalog: WorkspaceCatalog(name: "Alpha", path: url("/tmp/alpha"))
+        )
+        let republished = expectation(description: "openWorkspaceFolders republished")
+        withObservationTracking {
+            _ = store.openWorkspaceFolders
+        } onChange: {
+            republished.fulfill()
+        }
+
+        store.addWorkspace(name: "Beta", path: url("/tmp/beta"))
+        wait(for: [republished], timeout: 1)
     }
 }

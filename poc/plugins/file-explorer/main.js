@@ -38,9 +38,17 @@ async function workspaceRoot() {
   return "~";
 }
 
+// The project root of each pane that has one, as reported by the host, plus the one we are
+// currently following. `followedRoot` is deliberately sticky: focusing a pane that has no
+// directory of its own — this tree, a browser, a diff — must leave the tree where it is
+// rather than snapping back to the workspace.
+var paneRoots = {};
+var focusedSlot = null;
+var followedRoot = "";
+
 async function resolveRoot() {
   var configured = (tenon.settings.get(SETTING_ROOT) || "").trim();
-  return configured || await workspaceRoot();
+  return configured || followedRoot || await workspaceRoot();
 }
 
 var FILE_MENU = [
@@ -170,7 +178,7 @@ async function openFile(path, forceSplit) {
       });
     }
   } else {
-    result = await tenon.intents.send("workspace.tab.create.v1", {
+    result = await tenon.intents.send("workspace.content.open.v1", {
       content: { kind: "file", path: path }
     });
   }
@@ -349,6 +357,33 @@ tenon.events.on("settings.changed", async function (event) {
 
 tenon.events.on("workspace.selected", async function () {
   await retarget(await resolveRoot());
+});
+
+// A pane's project root moved — typically an agent stepping into its own `git worktree`.
+// The host publishes this only when the resolved ROOT actually changed, never on an
+// ordinary `cd` inside one repository, so following it cannot thrash the tree.
+tenon.events.on("pane.cwd-changed", async function (event) {
+  var slot = event.slotId;
+  if (!slot) return;
+  if (event.projectRoot) paneRoots[slot] = event.projectRoot;
+  else delete paneRoots[slot];
+  if (slot !== focusedSlot) return;
+  followedRoot = event.projectRoot || "";
+  await retarget(await resolveRoot());
+});
+
+// Follow the pane the human is actually working in.
+tenon.events.on("workspace.slot-focused", async function (event) {
+  var slot = event.slotId;
+  if (!slot) return;
+  focusedSlot = slot;
+  if (!paneRoots[slot]) return;
+  followedRoot = paneRoots[slot];
+  await retarget(await resolveRoot());
+});
+
+tenon.events.on("workspace.slot-closed", function (event) {
+  if (event.slotId) delete paneRoots[event.slotId];
 });
 
 (async function start() {

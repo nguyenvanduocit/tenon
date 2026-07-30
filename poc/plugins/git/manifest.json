@@ -11,7 +11,7 @@
     "uses": [
       "process.exec.v1",
       "workspace.state.v1",
-      "workspace.tab.create.v1",
+      "workspace.content.open.v1",
       "ui.pick.v1",
       "ui.prompt.v1",
       "ui.confirm.v1",

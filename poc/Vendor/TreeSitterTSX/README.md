@@ -1,7 +1,9 @@
 # TreeSitterTSX
 
 The tree-sitter **TSX** grammar — TypeScript *with* JSX — exposed as a local
-SwiftPM package so kero can link `tree_sitter_tsx()`.
+SwiftPM package so Tenon can link `tree_sitter_tsx()`. Its library product
+remains `TreeSitterTSX`, backed by the uniquely named
+`TenonTreeSitterTSX` module.
 
 ## Why this is vendored
 
@@ -13,16 +15,15 @@ assertion and the grammar has to pick one. So parsing a `.tsx` file with the
 `typescript` grammar turns every element into a parse error and the whole JSX
 body of the file renders miscolored.
 
-kero's grammars otherwise come from `STTextView-Plugin-Neon`, which *does*
-carry a `TreeSitterTSX` target — but it's unreachable: the package's only
-product is `STTextView-Plugin-Neon`, `TreeSitterResource` doesn't depend on the
-TSX target, and `TreeSitterLanguage` has no `.tsx` case. Nothing in the graph
-references it, so SwiftPM never builds it and Xcode can't link a bare target
-that isn't part of a product. Short of forking the plugin, vendoring the
-grammar is the way to get the symbol.
+Tenon's other grammars come from `STTextView-Plugin-Neon`. Its public product
+exposes the plugin and its registered languages, while the package's
+`TreeSitterTSX` target sits outside that product graph. Tenon therefore exports
+the same grammar sources through the standalone `TreeSitterTSX` product and
+the uniquely named `TenonTreeSitterTSX` target. This gives SwiftPM and Xcode an
+addressable TSX module while both packages coexist in one graph.
 
-Only the parser is vendored, not the queries: TSX's `highlights.scm` is
-byte-identical to TypeScript's, which kero already reaches through
+The package vendors the parser. TSX's `highlights.scm` is byte-identical to
+TypeScript's, which Tenon already reaches through
 `TreeSitterTypeScriptQueries`. The JSX captures come from JavaScript's
 `highlights-jsx.scm`; `SyntaxHighlighting.highlightsData(for:)` merges the
 three.
@@ -30,15 +31,15 @@ three.
 ## Provenance
 
 Copied verbatim from `STTextView-Plugin-Neon` 0.8.1 (commit `5a30db4`),
-`Sources/TreeSitterTSX/` — the same revision kero pins in
-`kero.xcodeproj/project.pbxproj`, so the grammar matches the queries and the
-tree-sitter runtime the rest of the highlighting stack uses (grammar ABI
-`LANGUAGE_VERSION 13`). `Package.swift` mirrors that package's target
-declaration (`cSettings: [.headerSearchPath("src")]`) and adds the library
-product that upstream is missing.
+`Sources/TreeSitterTSX/` — the same revision Tenon pins for the plugin, so the
+grammar matches the queries and the tree-sitter runtime the rest of the
+highlighting stack uses (grammar ABI `LANGUAGE_VERSION 13`). `Package.swift`
+keeps that source layout and header search path, adds the unique
+`TenonTreeSitterTSX` module name, and exports it through the `TreeSitterTSX`
+library product.
 
 To update, re-copy `include/` and `src/` from the plugin checkout at the
-revision kero pins:
+revision Tenon pins:
 
 ```sh
 cp -R "$CHECKOUTS/STTextView-Plugin-Neon/Sources/TreeSitterTSX/"{include,src} \

@@ -95,6 +95,12 @@ final class WorkspaceIntentProvider {
                 return await self.setPaneContent(envelope: envelope)
             },
             IntentProviderBinding(
+                intentID: try CoreIntentName.workspaceContentOpen.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return await self.openContent(envelope: envelope)
+            },
+            IntentProviderBinding(
                 intentID: try CoreIntentName.workspaceTabNext.intentID
             ) { envelope, context in
                 try context.checkCancellation()
@@ -307,6 +313,59 @@ private extension WorkspaceIntentProvider {
                 return failure(
                     codes.contentUnavailable,
                     reason: "pane-content-update-failed"
+                )
+            }
+            return AppIntentProviderSupport.emptySuccess
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return failure(
+                codes.contentUnavailable,
+                reason: "content-is-invalid"
+            )
+        }
+    }
+
+    /// Places content without the caller choosing a pane: the pane already showing this
+    /// kind of content takes it, and otherwise one is split beside. The scope pane names
+    /// the tab; a scope without a pane opens into the scoped workspace's active tab.
+    func openContent(envelope: IntentEnvelope) -> IntentProviderReply {
+        do {
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            guard let value = object["content"] else {
+                throw AppIntentInputError.missingOrInvalidField("content")
+            }
+            let content = try Self.content(from: value)
+
+            if let paneID = envelope.scope.paneID {
+                guard store.catalog.slot(id: paneID) != nil else {
+                    return failure(
+                        codes.paneNotFound,
+                        reason: "pane-scope-not-found"
+                    )
+                }
+                store.focusSlot(paneID)
+            } else if !selectScopedWorkspace(envelope.scope) {
+                return failure(
+                    codes.workspaceNotFound,
+                    reason: "workspace-scope-not-found"
+                )
+            }
+
+            let tabsBefore = store.catalog.activeWorkspace?.tabs.count
+            store.openContent(content)
+            guard store.catalog.activeTab?.slots.contains(where: {
+                $0.content == content
+            }) == true else {
+                return failure(
+                    codes.layoutUnavailable,
+                    reason: "content-cannot-be-placed"
+                )
+            }
+            guard store.catalog.activeWorkspace?.tabs.count == tabsBefore else {
+                return failure(
+                    codes.workspaceUnavailable,
+                    reason: "placement-opened-a-tab"
                 )
             }
             return AppIntentProviderSupport.emptySuccess

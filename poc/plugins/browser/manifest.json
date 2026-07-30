@@ -38,7 +38,8 @@
         "palette": {
           "category": "Open",
           "icon": "globe",
-          "keywords": ["web", "url", "site", "internet"]
+          "keywords": ["web", "url", "site", "internet"],
+          "launcher": true
         }
       }
     ]

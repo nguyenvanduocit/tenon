@@ -32,9 +32,12 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             ShellTitleBar(
+                host: host,
                 store: store,
                 pool: pool,
+                intentRuntime: intentRuntime,
                 router: router,
+                palette: palette,
                 sidebarVisible: sidebarVisible,
                 sidebarWidth: sidebarWidth,
                 onToggleSidebar: {

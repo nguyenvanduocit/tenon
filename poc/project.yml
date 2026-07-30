@@ -93,9 +93,6 @@ targets:
     dependencies:
       - target: TenonIntentCore
       - target: TenonCore
-      - target: TenonCLI
-        copy:
-          destination: executables
       - package: STTextView
         product: STTextView
       - package: STTextViewPluginNeon
@@ -132,33 +129,6 @@ targets:
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         COMBINE_HIDPI_IMAGES: YES
-
-  # The `tenon-cli` command bundled into Tenon.app (Contents/MacOS) so Settings → CLI → Install
-  # can copy a self-contained binary into the user's PATH. TenonCore is compiled directly into the
-  # tool (not linked as the app's framework) so the installed copy runs standalone — the CLI sources
-  # use `#if canImport(TenonCore)` to also build as a separate SwiftPM module.
-  TenonCLI:
-    type: tool
-    platform: macOS
-    deploymentTarget: "14.0"
-    sources:
-      - path: Sources/TenonCLI
-        excludes:
-          - "**/.omc"
-          - "**/.omc/**"
-      - path: Sources/TenonCore
-        excludes:
-          - "**/.omc"
-          - "**/.omc/**"
-    dependencies:
-      - target: TenonIntentCore
-      - sdk: JavaScriptCore.framework
-    settings:
-      base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.cli
-        PRODUCT_NAME: tenon-cli
-        GENERATE_INFOPLIST_FILE: YES
-        SKIP_INSTALL: YES
 
   TenonCoreTests:
     type: bundle.unit-test

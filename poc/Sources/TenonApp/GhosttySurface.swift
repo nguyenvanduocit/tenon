@@ -398,6 +398,18 @@ final class GhosttyRuntime {
             DispatchQueue.main.async { view.commandFinishedCount += 1 }
             return true
 
+        case GHOSTTY_ACTION_PWD:
+            // OSC 7: the shell reports its working directory, on each prompt after a `cd`.
+            // Push, not poll — which is why the pane's cwd needs no timer and no
+            // foreground-pid inspection. A full-screen TUI emits no prompt, so the last
+            // reported directory persists for its duration; that is the directory the work
+            // belongs to, and the value we want the panels anchored to.
+            guard let view = view(fromTarget: target),
+                  let pwdPtr = action.action.pwd.pwd else { return true }
+            let pwd = String(cString: pwdPtr)
+            DispatchQueue.main.async { view.onPwdChange?(pwd) }
+            return true
+
         default:
             return false
         }
@@ -538,6 +550,8 @@ private final class GhosttyNSViewResources {
 @MainActor
 final class GhosttyNSView: NSView {
     var onTitleChange: ((String) -> Void)?
+    /// The shell's working directory, reported through OSC 7 (`GHOSTTY_ACTION_PWD`).
+    var onPwdChange: ((String) -> Void)?
     var onProcessExit: (() -> Void)?
     var onNewTab: (() -> Void)?
     var onNewSplit: ((SplitAxis) -> Void)?
@@ -1174,6 +1188,8 @@ extension GhosttyNSView: @MainActor NSTextInputClient {
 final class GhosttySurface: TerminalSurface {
     let backendName = "libghostty"
     var onTitleChange: ((String) -> Void)?
+    /// The shell's working directory, reported through OSC 7 (`GHOSTTY_ACTION_PWD`).
+    var onPwdChange: ((String) -> Void)?
     var onProcessExit: (() -> Void)?
     var onNewTab: (() -> Void)?
     var onNewSplit: ((SplitAxis) -> Void)?
@@ -1196,6 +1212,7 @@ final class GhosttySurface: TerminalSurface {
             environment: environment
         )
         view.onTitleChange = { [weak self] title in self?.onTitleChange?(title) }
+        view.onPwdChange = { [weak self] pwd in self?.onPwdChange?(pwd) }
         view.onProcessExit = { [weak self] in self?.onProcessExit?() }
         view.onNewTab = { [weak self] in self?.onNewTab?() }
         view.onNewSplit = { [weak self] orientation in self?.onNewSplit?(orientation) }

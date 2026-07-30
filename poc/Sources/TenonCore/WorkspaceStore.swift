@@ -30,6 +30,12 @@ public final class WorkspaceStore {
     /// offer them again after they're closed. Nil in headless tests that skip it.
     public let recentWorkspaces: RecentWorkspaceStore?
 
+    /// The folders the open workspaces are rooted at, republished only when a workspace
+    /// opens or closes. The sidebar's Add-Workspace menu filters its recent list against
+    /// this instead of reading `catalog`, so tab/slot churn can't re-layout an open menu
+    /// (see `WorkspaceSidebarView`).
+    public private(set) var openWorkspaceFolders: Set<String>
+
     public init(
         catalog: WorkspaceCatalog = WorkspaceCatalog(),
         recent: RecentStore? = nil,
@@ -38,6 +44,7 @@ public final class WorkspaceStore {
         self.catalog = catalog
         self.recent = recent
         self.recentWorkspaces = recentWorkspaces
+        self.openWorkspaceFolders = WorkspaceStore.folders(in: catalog)
     }
 
     public func addWorkspace(name: String, path: URL, content: SlotContent? = nil) {
@@ -96,6 +103,13 @@ public final class WorkspaceStore {
         if apply({ $0.splitSlot(id, axis, content: resolved) }) { recent?.record(resolved) }
     }
 
+    /// A second pane showing what this pane shows. The content is copied, not shared: a
+    /// duplicated terminal is a new shell, a duplicated editor is the same file open twice.
+    public func duplicateSlot(_ id: UUID) {
+        guard let content = catalog.slot(id: id)?.content else { return }
+        if apply({ $0.duplicateSlot(id) }) { recent?.record(content) }
+    }
+
     public func closeSlot(_ id: UUID) {
         apply { $0.closeSlot(id) }
     }
@@ -121,20 +135,39 @@ public final class WorkspaceStore {
         if apply({ $0.setSlotContent(id, content) }) { recent?.record(content) }
     }
 
-    /// Shows `request` in the active tab: reuses an existing diff pane if one is
-    /// already open there (so clicking file after file changes the same pane), and
-    /// otherwise splits the active slot to make one — never opens a new tab.
-    public func showDiff(_ request: DiffRequest) {
-        let content = SlotContent.diff(request)
-        if let existing = catalog.activeTab?.slots.first(where: {
-            if case .diff = $0.content { return true }
-            return false
-        }) {
-            setSlotContent(existing.id, content)
-            focusSlot(existing.id)
+    /// Opens `content` in the active tab, reusing the pane that already shows this kind of
+    /// surface — so clicking file after file in the tree changes one editor instead of
+    /// spawning tabs — and otherwise splitting the active pane to make one. Placement is
+    /// host policy: this never opens a tab. `SlotContent.yieldsPane(to:)` decides which
+    /// panes qualify.
+    public func openContent(_ content: SlotContent) {
+        if let existing = reusableSlotID(for: content) {
+            setSlotContent(existing, content)
+            focusSlot(existing)
         } else {
             splitActiveSlot(.horizontal, content: content)
         }
+    }
+
+    /// The pane in the active tab that should take `content`, or nil when one must be
+    /// split. A pane already showing this kind of surface wins over a blank one, and the
+    /// focused pane wins over pane order, so repeated opens keep landing where the person
+    /// is already looking.
+    private func reusableSlotID(for content: SlotContent) -> UUID? {
+        guard let tab = catalog.activeTab else { return nil }
+        let candidates = tab.slots.filter { $0.content.yieldsPane(to: content) }
+
+        func preferred(_ slots: [WorkspaceSlot]) -> UUID? {
+            if let active = tab.activeSlotID,
+               slots.contains(where: { $0.id == active })
+            {
+                return active
+            }
+            return slots.first?.id
+        }
+
+        return preferred(candidates.filter { $0.content != .empty })
+            ?? preferred(candidates)
     }
 
     public func moveSlotToNewTab(_ id: UUID) {
@@ -157,6 +190,10 @@ public final class WorkspaceStore {
         apply { $0.applyResize(transaction) }
     }
 
+    public func fillSlotWidth(_ id: UUID) {
+        apply { $0.fillSlotWidth(id) }
+    }
+
     @discardableResult
     private func apply(_ mutation: (inout WorkspaceCatalog) -> [WorkspaceEvent]) -> Bool {
         var next = catalog
@@ -164,8 +201,16 @@ public final class WorkspaceStore {
         guard !events.isEmpty else { return false }
         catalog = next
         snapshotID = UUID()
+        // Assigned only on a real change: an unconditional write would republish this on
+        // every tab and slot mutation, which is exactly the churn it exists to avoid.
+        let folders = WorkspaceStore.folders(in: next)
+        if folders != openWorkspaceFolders { openWorkspaceFolders = folders }
         onEvents?(events, next)
         return true
+    }
+
+    private static func folders(in catalog: WorkspaceCatalog) -> Set<String> {
+        Set(catalog.workspaces.map { RecentWorkspaceStore.folderKey($0.path) })
     }
 }
 

@@ -23,7 +23,8 @@
         "palette": {
           "category": "Open",
           "icon": "clock.arrow.circlepath",
-          "keywords": ["claude", "session", "resume", "history", "transcript"]
+          "keywords": ["claude", "session", "resume", "history", "transcript"],
+          "launcher": true
         }
       },
       {

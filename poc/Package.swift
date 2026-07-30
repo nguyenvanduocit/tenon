@@ -67,6 +67,12 @@ let package = Package(
                 .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),
                 .product(name: "TreeSitterTSX", package: "TreeSitterTSX"),
             ],
+            resources: [
+                // The app mark and icon. Declared so `swift build` handles the catalog
+                // instead of warning that it is unhandled; see ShellTitleBar for how the
+                // mark is loaded, because SwiftPM does not run `actool`.
+                .process("Assets.xcassets"),
+            ],
             linkerSettings: [
                 // The prebuilt static library inside the xcframework. `.unsafeFlags`
                 // is the Muxy pattern too — acceptable because tenon is an
@@ -96,7 +102,10 @@ let package = Package(
         // builds and ships independently of the terminal stack.
         .executableTarget(
             name: "TenonCLI",
-            dependencies: ["TenonIntentCore", "TenonCore"]
+            dependencies: ["TenonIntentCore", "TenonCore"],
+            swiftSettings: [
+                .define("TENON_CLI_IMPORTS_CORE_MODULE"),
+            ]
         ),
 
         .testTarget(name: "TenonIntentCoreTests", dependencies: ["TenonIntentCore"]),

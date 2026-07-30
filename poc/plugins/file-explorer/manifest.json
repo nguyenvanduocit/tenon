@@ -24,6 +24,7 @@
       "terminal.write.v1",
       "workspace.state.v1",
       "workspace.tab.create.v1",
+      "workspace.content.open.v1",
       "workspace.pane.split.v1",
       "workspace.pane.content.set.v1"
     ],
@@ -35,7 +36,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "folder", "keywords": ["files", "tree", "explorer"] }
+        "palette": { "category": "Open", "icon": "folder", "keywords": ["files", "tree", "explorer"], "launcher": true }
       },
       {
         "name": "dev.tenon.file-explorer.cd-root.v1",

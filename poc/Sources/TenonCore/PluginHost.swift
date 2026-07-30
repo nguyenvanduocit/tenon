@@ -80,6 +80,7 @@ public struct PluginIntentPresentation: Sendable, Equatable, Identifiable {
     public let keywords: [String]
     public let key: String?
     public let when: String?
+    public let launcher: Bool
 
     public var id: IntentID {
         intentID
@@ -1454,6 +1455,35 @@ public final class PluginHost {
         )
     }
 
+    /// A pane's directories changed: its shell moved, or a human pinned the pane's root.
+    ///
+    /// EVENT rather than INTENT (boundary law step 2): a fact that already happened on a
+    /// host-owned channel whose producer — the surface — exists whether or not any plugin
+    /// observes it. No reply, no deadline, no authorization decision.
+    ///
+    /// Named `pane.*` and NOT `terminal.*` deliberately: `emit` gates every `terminal.`
+    /// event behind the `terminal.read` permission, and a plugin must not have to request
+    /// permission to read terminal *contents* merely to learn which directory to show.
+    /// A pane's directory is a pane fact, in the same class as the workspace paths already
+    /// broadcast to every plugin through `workspace.selected`.
+    public func paneCwdChanged(
+        _ directory: ProjectRoot.PaneDirectory,
+        slotID: UUID
+    ) async {
+        var payload: [String: IntentValue] = [
+            "slotId": .string(slotID.uuidString),
+            "cwd": .string(directory.cwd.path),
+            "pinned": .bool(directory.source == .pinned),
+        ]
+        if let root = directory.projectRoot {
+            payload["projectRoot"] = .string(root.path)
+        }
+        await emit(
+            event: "pane.cwd-changed",
+            payload: .object(payload)
+        )
+    }
+
     @discardableResult
     public func invokeViewSelect(
         pluginID: PluginID,
@@ -2299,7 +2329,8 @@ private extension PluginHost {
                 icon: palette.icon,
                 keywords: palette.keywords,
                 key: palette.key,
-                when: palette.when
+                when: palette.when,
+                launcher: palette.launcher
             )
         }.sorted {
             $0.intentID.rawValue < $1.intentID.rawValue

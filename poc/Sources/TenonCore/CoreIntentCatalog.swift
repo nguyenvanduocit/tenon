@@ -40,6 +40,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case workspacePaneFocus = "workspace.pane.focus.v1"
     case workspacePaneClose = "workspace.pane.close.v1"
     case workspacePaneContentSet = "workspace.pane.content.set.v1"
+    case workspaceContentOpen = "workspace.content.open.v1"
     case workspaceTabNext = "workspace.tab.next.v1"
     case workspaceTabPrevious = "workspace.tab.previous.v1"
     case workspacePaneFocusNext = "workspace.pane.focus-next.v1"
@@ -109,6 +110,7 @@ public extension CoreIntentName {
              .workspacePaneFocus,
              .workspacePaneClose,
              .workspacePaneContentSet,
+             .workspaceContentOpen,
              .workspaceTabNext,
              .workspaceTabPrevious,
              .workspacePaneFocusNext,
@@ -168,6 +170,7 @@ public extension CoreIntentName {
              .workspacePaneFocus,
              .workspacePaneClose,
              .workspacePaneContentSet,
+             .workspaceContentOpen,
              .workspaceTabNext,
              .workspaceTabPrevious,
              .workspacePaneFocusNext,
@@ -1385,6 +1388,36 @@ private extension CoreIntentCatalog {
                 errors: [
                     "dev.tenon.core.pane-not-found",
                     "dev.tenon.core.content-unavailable",
+                ],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(15),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .workspaceContentOpen,
+                title: "Open content",
+                description: """
+                Opens content in the tab identified by invocation scope, reusing the pane \
+                that already shows this kind of content and otherwise splitting a pane. \
+                Placement is host policy and never opens a tab.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "content": CoreIntentSchema.workspaceContentInput
+                    ],
+                    required: ["content"]
+                ),
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.write),
+                errors: [
+                    "dev.tenon.core.workspace-unavailable",
+                    "dev.tenon.core.workspace-not-found",
+                    "dev.tenon.core.pane-not-found",
+                    "dev.tenon.core.content-unavailable",
+                    "dev.tenon.core.layout-unavailable",
                 ],
                 bindings: [workspaceControl],
                 admission: .interactive,

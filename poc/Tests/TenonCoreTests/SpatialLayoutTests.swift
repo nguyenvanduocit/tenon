@@ -627,6 +627,86 @@ final class SpatialLayoutTests: XCTestCase {
         XCTAssertEqual(resize.affectedSlotIDs, [])
     }
 
+    func testFillWidthReachesBothCanvasEdgesWhenNothingSharesTheBand() {
+        let original = [
+            slot(a, 0, 0, 12, 6),
+            slot(b, 4, 6, 4, 6),
+        ]
+
+        let transaction = SpatialLayout.fillWidth(original, slotID: b)
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertFalse(transaction.isDetached)
+        XCTAssertEqual(transaction.baseline, original)
+        XCTAssertEqual(transaction.proposal, [
+            slot(a, 0, 0, 12, 6),
+            slot(b, 0, 6, 12, 6),
+        ])
+        XCTAssertEqual(transaction.affectedSlotIDs, [b])
+        XCTAssertEqual(original[1].rect, GridRect(x: 4, y: 6, width: 4, height: 6))
+    }
+
+    func testFillWidthStopsAtNeighborsInsteadOfShrinkingThem() {
+        let transaction = SpatialLayout.fillWidth(
+            [
+                slot(a, 0, 0, 3, 12),
+                slot(b, 3, 0, 3, 6),
+                slot(c, 9, 0, 3, 12),
+            ],
+            slotID: b
+        )
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, [
+            slot(a, 0, 0, 3, 12),
+            slot(b, 3, 0, 6, 6),
+            slot(c, 9, 0, 3, 12),
+        ])
+        XCTAssertEqual(transaction.affectedSlotIDs, [b])
+    }
+
+    func testFillWidthStopsAtAPaneThatOnlyPartiallySharesItsRows() {
+        let transaction = SpatialLayout.fillWidth(
+            [
+                slot(a, 3, 0, 3, 4),
+                slot(b, 9, 2, 3, 4),
+                slot(c, 6, 6, 3, 3),
+            ],
+            slotID: a
+        )
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, [
+            slot(a, 0, 0, 9, 4),
+            slot(b, 9, 2, 3, 4),
+            slot(c, 6, 6, 3, 3),
+        ])
+        XCTAssertEqual(transaction.affectedSlotIDs, [a])
+    }
+
+    func testFillWidthIsANoOpWhenThePaneAlreadySpansItsBand() {
+        let original = [
+            slot(a, 0, 0, 12, 6),
+            slot(b, 0, 6, 12, 6),
+        ]
+
+        let transaction = SpatialLayout.fillWidth(original, slotID: a)
+
+        XCTAssertFalse(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, original)
+        XCTAssertEqual(transaction.affectedSlotIDs, [])
+    }
+
+    func testFillWidthOfAnUnknownSlotIsInvalid() {
+        let original = [slot(a, 0, 0, 12, 12)]
+
+        let transaction = SpatialLayout.fillWidth(original, slotID: d)
+
+        XCTAssertFalse(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, original)
+        XCTAssertEqual(transaction.affectedSlotIDs, [])
+    }
+
     private func slot(
         _ id: UUID,
         _ x: Int,

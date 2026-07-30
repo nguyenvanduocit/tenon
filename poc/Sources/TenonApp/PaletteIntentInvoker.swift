@@ -36,6 +36,29 @@ enum PaletteIntentInvoker {
         )
     }
 
+    /// Invoke a ranked command by its ID — the path both command surfaces take: the
+    /// palette (⌘⇧P) and the tab strip's `+` launcher. `nil` means the intent went away
+    /// between ranking and clicking (a plugin unloaded mid-session).
+    static func send(
+        commandID: String,
+        host: PluginHost,
+        runtime: AppIntentRuntime
+    ) async -> IntentResult? {
+        guard let presentation = host.intentPresentations.first(
+            where: { $0.intentID.rawValue == commandID }
+        ) else {
+            return nil
+        }
+        return await send(
+            target: KeyBindingTarget(
+                pluginID: presentation.pluginID,
+                intentID: presentation.intentID
+            ),
+            host: host,
+            runtime: runtime
+        )
+    }
+
     static func send(
         target: KeyBindingTarget,
         expectedBinding: KeyBinding? = nil,

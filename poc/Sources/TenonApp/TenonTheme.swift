@@ -41,8 +41,13 @@ enum TenonTheme {
     static var amberNS: NSColor { .tenonAmber }
 
     static let sidebarWidth: CGFloat = 232
-    static let titleBarHeight: CGFloat = 46
+    // Kept close to the 28-pt band macOS lays the traffic lights out in, so the tab
+    // strip reads as one row with them instead of floating below their centre line.
+    static let titleBarHeight: CGFloat = 36
     static let trafficLightInset: CGFloat = 78
+    // A tab chip's floor. A short title — "~/p/t/poc" — would otherwise shrink the chip
+    // to a stub the pointer has to hunt for; the title's own cap keeps the ceiling.
+    static let tabMinWidth: CGFloat = 140
     static let statusBarHeight: CGFloat = 24
     static let slotHeaderHeight: CGFloat = 31
     static let slotGutter: CGFloat = 8

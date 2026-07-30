@@ -45,6 +45,23 @@ public final class RecentWorkspaceStore {
         RecentWorkspaceStore.write(next, to: fileURL)
     }
 
+    /// The remembered workspaces that aren't in `openFolders`, newest first. The menu offers
+    /// what you can't already reach: a workspace sitting in the catalog is one sidebar row
+    /// away, so repeating it here is noise. The remembered list itself is untouched — the
+    /// entry comes back the moment that workspace closes.
+    public func recent(excludingFolders openFolders: Set<String>) -> [Entry] {
+        recent.filter { !openFolders.contains(RecentWorkspaceStore.folderKey($0.path)) }
+    }
+
+    /// The identity of the folder a workspace is rooted at. Two `URL`s naming the same
+    /// folder are not `==` — the open panel hands back a directory URL (`/tmp/a/`) while
+    /// this file rehydrates a plain path (`/tmp/a`) — so matching a workspace to a
+    /// remembered path compares this key. Standardizing is pure string work, unlike
+    /// `URL(fileURLWithPath:)`, which asks the filesystem whether the folder exists.
+    public static func folderKey(_ url: URL) -> String {
+        url.standardizedFileURL.path
+    }
+
     public func clear() {
         recent = []
         RecentWorkspaceStore.write([], to: fileURL)

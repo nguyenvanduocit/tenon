@@ -94,7 +94,7 @@ final class FileExplorerPluginTests: XCTestCase {
         let routed = await eventually {
             let requests = await bridge.requests()
             return requests.contains {
-                $0.intentID.rawValue == "workspace.tab.create.v1"
+                $0.intentID.rawValue == "workspace.content.open.v1"
                     && $0.input.objectValue?["content"]?
                     .objectValue?["path"]?.stringValue == readme
             } && requests.contains {
@@ -107,7 +107,7 @@ final class FileExplorerPluginTests: XCTestCase {
         let requests = await bridge.requests()
         XCTAssertTrue(
             requests.contains {
-                $0.intentID.rawValue == "workspace.tab.create.v1"
+                $0.intentID.rawValue == "workspace.content.open.v1"
                     && $0.input.objectValue?["content"]?
                     .objectValue?["path"]?.stringValue == readme
             }

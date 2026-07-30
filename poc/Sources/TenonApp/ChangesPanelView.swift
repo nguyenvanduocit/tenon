@@ -497,14 +497,14 @@ struct ChangesPanelView: View {
     private func open(_ entry: ChangeEntry) {
         guard let store, !model.repoRoot.isEmpty else { return }
         // Reuse the tab's diff pane if it exists, else open one beside — never a new tab.
-        store.showDiff(DiffRequest(
+        store.openContent(.diff(DiffRequest(
             source: .git(
                 repoPath: model.repoRoot, path: entry.path,
                 staged: entry.staged, untracked: entry.untracked, origPath: nil
             ),
             fileName: entry.name,
             title: entry.name + (entry.staged ? " (staged)" : "")
-        ))
+        )))
     }
 
     private func placeholder(icon: String, text: String) -> some View {

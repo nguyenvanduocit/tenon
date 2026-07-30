@@ -7,12 +7,16 @@ Interaction selection follows
 
 Clicking a file in the Files pane opens it **beside** the tree, in a host-native editor:
 STTextView with a line-number gutter, tree-sitter colours, the system find bar, and ⌘S.
+The next file clicked lands in that same editor, so browsing a tree costs one pane and no
+tabs at all.
 
 The pane is `SlotContent.file(path)` — a host content type, exactly like the diff view
 T-010 added. Built-in SwiftUI opens it through the typed workspace service DIRECT. A plugin,
-CLI, or agent sends `workspace.tab.create.v1` or `workspace.pane.content.set.v1` with the
-canonical file-content value and never touches a document/native editor type. Both adapters
-reach the same typed workspace mutation.
+CLI, or agent sends `workspace.content.open.v1` with the canonical file-content value and
+never touches a document/native editor type; the host resolves which pane takes it
+(`docs/design-pane-slots.md`). A caller that wants a specific pane or a new tab instead
+still has `workspace.pane.content.set.v1` and `workspace.tab.create.v1`. Every adapter
+reaches the same typed workspace mutation.
 
 ## Why the dependencies look like this
 

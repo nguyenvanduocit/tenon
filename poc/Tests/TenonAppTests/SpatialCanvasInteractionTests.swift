@@ -498,7 +498,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertEqual(card.frame.origin, CGPoint(x: 0, y: 300))
     }
 
-    func testHeaderContextMenuOffersSplitStackChangeTypeAndClose() throws {
+    func testHeaderContextMenuOffersSplitStackDuplicateAndClose() throws {
         let slotID = UUID()
         let fixture = makeCanvasFixture(
             slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
@@ -510,19 +510,16 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
         XCTAssertEqual(
             menu.items.map(\.title),
-            ["Split", "Stack", "", "Change Type", "", "Close"]
+            ["Split", "Stack", "Duplicate", "", "Close"]
         )
         XCTAssertTrue(try menuItem(menu, "Split").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Stack").isEnabled)
+        XCTAssertTrue(try menuItem(menu, "Duplicate").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Close").isEnabled)
-
-        let typeMenu = try XCTUnwrap(menu.item(withTitle: "Change Type")?.submenu)
-        XCTAssertEqual(
-            typeMenu.items.map(\.title),
-            ["Terminal", "Files", "Diff", "Docs"]
+        XCTAssertTrue(
+            menu.items.allSatisfy { $0.submenu == nil },
+            "the pane menu is flat — no submenu to walk into"
         )
-        XCTAssertEqual(typeMenu.item(withTitle: "Terminal")?.state, .on)
-        XCTAssertEqual(typeMenu.item(withTitle: "Files")?.state, .off)
     }
 
     func testHeaderContextMenuSplitTargetsTheClickedSlotNotTheActiveOne() throws {
@@ -609,23 +606,48 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertNotNil(fixture.store.catalog.slot(id: activeID))
     }
 
-    func testHeaderContextMenuChangeTypeUpdatesTheSlotContent() throws {
-        let slotID = UUID()
+    func testHeaderContextMenuDuplicateOpensASecondPaneWithTheSameContent() throws {
+        let activeID = UUID()
+        let clickedID = UUID()
+        let tree = SlotContent.pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
         let fixture = makeCanvasFixture(
-            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
-            activeSlotID: slotID
+            slots: [
+                workspaceSlot(activeID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(clickedID, x: 6, y: 0, width: 6, height: 12, content: tree),
+            ],
+            activeSlotID: activeID
         )
         defer { fixture.window.orderOut(nil) }
 
-        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
-        let typeMenu = try XCTUnwrap(menu.item(withTitle: "Change Type")?.submenu)
-        let files = try XCTUnwrap(typeMenu.item(withTitle: "Files") as? SlotMenuItem)
-        files.invoke()
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: clickedID))
+        try menuItem(menu, "Duplicate").invoke()
 
+        let tab = try XCTUnwrap(fixture.store.catalog.activeTab)
+        XCTAssertEqual(tab.slots.count, 3)
+        let copy = try XCTUnwrap(tab.slots.first { $0.id != activeID && $0.id != clickedID })
+        XCTAssertEqual(copy.content, tree, "the copy shows what the clicked pane showed")
+        XCTAssertEqual(tab.activeSlotID, copy.id)
         XCTAssertEqual(
-            fixture.store.catalog.slot(id: slotID)?.content,
-            .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
+            fixture.store.catalog.slot(id: activeID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12),
+            "duplicating the clicked pane left the other one alone"
         )
+    }
+
+    func testHeaderContextMenuDisablesDuplicateWhenThePaneCanNeitherFitNorSplit() throws {
+        let crampedID = UUID()
+        let fixture = makeCanvasFixture(
+            slots: [
+                workspaceSlot(crampedID, x: 0, y: 0, width: 3, height: 3),
+                workspaceSlot(UUID(), x: 3, y: 0, width: 9, height: 12),
+                workspaceSlot(UUID(), x: 0, y: 3, width: 3, height: 9),
+            ],
+            activeSlotID: crampedID
+        )
+        defer { fixture.window.orderOut(nil) }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: crampedID))
+        XCTAssertFalse(try menuItem(menu, "Duplicate").isEnabled)
     }
 
     func testHeaderMenuAppearsForHeaderRegionAndNotTheBody() throws {

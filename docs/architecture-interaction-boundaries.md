@@ -276,7 +276,7 @@ requires the change protocol below.
 | Browser surface | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` | plugin |
 | User interaction | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1`, `ui.toast.v1` | plugin |
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
-| Workspace | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
+| Workspace | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
 | Network | `network.fetch.v1` | plugin, CLI, agent |
 
 Core intents have exactly two audience profiles:
@@ -299,7 +299,7 @@ execution topology is the following closed map:
 | `system` | `file.reveal.v1`, `file.open.v1`, `clipboard.write.v1` |
 | `process` | `process.exec.v1` |
 | `network` | `network.fetch.v1` |
-| `workspace` | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
+| `workspace` | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
 | `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.viewport.read.v1` |
 | `terminalWait` | `terminal.wait.v1` |
 | `browser` | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` |
@@ -334,6 +334,13 @@ Current EVENT inventory:
 
 - workspace/tab/pane/content/focus facts emitted by `WorkspaceStore`;
 - terminal title, command-finished, exit, and other terminal facts;
+- `pane.cwd-changed`: a pane's working directory and resolved project root. Published by
+  the host after it resolves the root (`ProjectRoot.resolve`), and only when the *root*
+  moves — an ordinary `cd` inside one repository updates the pane and notifies nobody, so
+  observers cannot be made to thrash by shell noise. Named `pane.*` rather than
+  `terminal.*` deliberately: the `terminal.` prefix gates delivery on the `terminal.read`
+  permission, and observing which directory a pane is anchored to must not require
+  permission to read terminal contents;
 - targeted browser URL/title/loading/navigation facts;
 - plugin view user facts delivered to the owning plugin (`onSelect`, `onSubmit`,
   `onOpen`, `onClose`);

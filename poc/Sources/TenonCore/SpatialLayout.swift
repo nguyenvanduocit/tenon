@@ -502,6 +502,73 @@ public enum SpatialLayout {
         )
     }
 
+    /// Grows one slot sideways until it meets the slots that share its rows, or the
+    /// canvas edge where none do. Nothing else moves: a neighbour is a stop, never
+    /// something to shrink, so filling never rearranges the rest of the layout. A slot
+    /// that already spans its band yields an invalid transaction, so a caller can tell
+    /// "nothing to fill" from a change without diffing rects itself.
+    public static func fillWidth(
+        _ slots: [SpatialSlot],
+        slotID: UUID
+    ) -> ResizeLayoutTransaction {
+        guard isValid(slots),
+              let target = slots.first(where: { $0.id == slotID })
+        else {
+            return ResizeLayoutTransaction(
+                isValid: false,
+                isDetached: false,
+                baseline: slots,
+                proposal: slots,
+                affectedSlotIDs: []
+            )
+        }
+
+        // Slots overlap the target's rows or they do not; a non-overlapping layout
+        // leaves those that do entirely to one side of it, so their near edges are
+        // exactly the two stops.
+        let sharingRows = slots.filter { other in
+            other.id != slotID && spansOverlap(
+                target.rect.y,
+                target.rect.height,
+                other.rect.y,
+                other.rect.height
+            )
+        }
+        let left = sharingRows
+            .filter { $0.rect.right <= target.rect.x }
+            .map(\.rect.right)
+            .max() ?? 0
+        let right = sharingRows
+            .filter { $0.rect.x >= target.rect.right }
+            .map(\.rect.x)
+            .min() ?? columns
+        let filled = GridRect(
+            x: left,
+            y: target.rect.y,
+            width: right - left,
+            height: target.rect.height
+        )
+        let proposal = replacingRect(in: slots, slotID: slotID, with: filled)
+
+        guard filled != target.rect, isValid(proposal) else {
+            return ResizeLayoutTransaction(
+                isValid: false,
+                isDetached: false,
+                baseline: slots,
+                proposal: slots,
+                affectedSlotIDs: []
+            )
+        }
+
+        return ResizeLayoutTransaction(
+            isValid: true,
+            isDetached: false,
+            baseline: slots,
+            proposal: proposal,
+            affectedSlotIDs: [slotID]
+        )
+    }
+
     public static func move(
         _ slots: [SpatialSlot],
         slotID: UUID,

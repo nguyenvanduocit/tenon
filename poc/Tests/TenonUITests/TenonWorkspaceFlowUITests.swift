@@ -18,7 +18,8 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
     /// keep the two in sync; this struct is the machine-readable half of that contract.
     private enum A11y {
         static let tab = "tenon.tab"          // one per tab chip in the tab bar
-        static let newTab = "tenon.newTab"    // the "+" button in the tab bar
+        static let newTab = "tenon.newTab"    // the "+" launcher button in the tab bar
+        static let launcherRow = "tenon.launcher.row."  // + one command ID, per launcher entry
         static let canvas = "tenon.canvas"    // the active tab's spatial canvas
         static let slot = "tenon.slot"        // one per slot rendered on the canvas
     }
@@ -61,16 +62,30 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
         XCTAssertTrue(waitFor { self.tabCount == 2 }, "⌘T did not open a second tab (was \(tabCount))")
     }
 
-    /// The "+" button is an equivalent, mouse-driven path to a new tab — proves the button
-    /// is wired, not just the menu shortcut.
-    func testPlusButtonOpensAnAdditionalTab() {
+    /// The "+" button opens the launcher, and picking "New Tab" from it is the
+    /// mouse-driven path to a new tab. This proves the whole projection is live: the
+    /// popover's rows come from `core-commands`' manifest, and clicking one invokes that
+    /// plugin's intent — not a hardcoded shell action.
+    func testPlusButtonLauncherOpensAnAdditionalTab() {
         XCTAssertTrue(canvas.waitForExistence(timeout: 15))
         let plus = app.descendants(matching: .any).matching(identifier: A11y.newTab).firstMatch
-        XCTAssertTrue(plus.waitForExistence(timeout: 5), "new-tab button missing")
+        XCTAssertTrue(plus.waitForExistence(timeout: 5), "launcher button missing")
 
         plus.click()
 
-        XCTAssertTrue(waitFor { self.tabCount == 2 }, "+ button did not open a second tab")
+        let newTabRow = app.descendants(matching: .any)
+            .matching(identifier: A11y.launcherRow + "dev.tenon.core-commands.tab.new.v1")
+            .firstMatch
+        XCTAssertTrue(
+            newTabRow.waitForExistence(timeout: 5),
+            "launcher did not offer the plugin-declared New Tab entry"
+        )
+        newTabRow.click()
+
+        XCTAssertTrue(
+            waitFor { self.tabCount == 2 },
+            "the launcher's New Tab did not open a second tab"
+        )
     }
 
     // MARK: - Split

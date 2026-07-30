@@ -79,9 +79,18 @@ async function exec(command, argumentsValue, workingDirectory, call) {
 // An explicit "Repository path" setting always wins; otherwise discover the repo that
 // contains the current workspace. No generation guard needed any more: the setting is
 // re-read on every call, so a slow discovery can no longer answer for a stale path.
+// The project root of each pane that has one, plus the one we are currently following.
+// Sticky for the same reason the file tree's is: focusing this panel, a browser or a diff
+// must not drop the panel back to the workspace repo.
+var paneRoots = {};
+var focusedSlot = null;
+var followedRepo = "";
+
 async function resolveRepo(call) {
   var explicit = settingRepo();
   if (explicit) { repoPath = explicit; return repoPath; }
+  // A pane's project root outranks the cached discovery: the agent moved, so do we.
+  if (followedRepo) { repoPath = followedRepo; return repoPath; }
   if (repoPath) return repoPath;
   var currentWorkspace = await workspacePath(call);
   var root = await exec(
@@ -330,7 +339,7 @@ function findEntry(section, path) {
 async function openDiff(section, path) {
   var e = findEntry(section, path);
   var untracked = e ? (e.staged === "?" || e.unstaged === "?") : false;
-  var res = await tenon.intents.send("workspace.tab.create.v1", {
+  var res = await tenon.intents.send("workspace.content.open.v1", {
     content: {
       kind: "diff",
       source: "git",
@@ -496,6 +505,40 @@ tenon.events.on("settings.changed", function (e) {
 // Switching workspace means a different repo: re-resolve instead of showing the old one
 // until the next tick.
 tenon.events.on("workspace.selected", function () { repoPath = null; refresh(); });
+
+// A pane's project root moved — an agent stepped into its own worktree. Published only on
+// a real root change, never on an ordinary `cd`, so this cannot restart `git status` on
+// every directory the shell walks through.
+tenon.events.on("pane.cwd-changed", function (event) {
+  var slot = event.slotId;
+  if (!slot) return;
+  if (event.projectRoot) paneRoots[slot] = event.projectRoot;
+  else delete paneRoots[slot];
+  if (slot !== focusedSlot) return;
+  followRepo(event.projectRoot || "");
+});
+
+tenon.events.on("workspace.slot-focused", function (event) {
+  var slot = event.slotId;
+  if (!slot) return;
+  focusedSlot = slot;
+  if (!paneRoots[slot]) return;
+  followRepo(paneRoots[slot]);
+});
+
+tenon.events.on("workspace.slot-closed", function (event) {
+  if (event.slotId) delete paneRoots[event.slotId];
+});
+
+// Re-point the panel AND its filesystem watch at the new repo in one step; without the
+// re-watch the panel would show the new repo but keep reacting to writes in the old one.
+function followRepo(root) {
+  if (followedRepo === root) return;
+  followedRepo = root;
+  repoPath = null;
+  refresh();
+  watchRepo();
+}
 
 // The working tree also changes underneath us — a build writes, a rebase runs in another
 // pane. Watch the repo instead of re-running `git status` on a timer and hoping.

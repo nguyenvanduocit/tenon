@@ -23,7 +23,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Workspace", "icon": "plus.square", "keywords": ["tab", "create", "open"], "key": "cmd+t" }
+        "palette": { "category": "New", "icon": "plus.square", "keywords": ["tab", "create", "open"], "key": "cmd+t", "launcher": true }
       },
       {
         "name": "dev.tenon.core-commands.terminal.new.v1",
@@ -32,7 +32,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Workspace", "icon": "terminal", "keywords": ["shell", "term", "console"] }
+        "palette": { "category": "New", "icon": "terminal", "keywords": ["shell", "term", "console"], "launcher": true }
       },
       {
         "name": "dev.tenon.core-commands.pane.split-right.v1",
@@ -41,7 +41,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Workspace", "icon": "rectangle.split.2x1", "keywords": ["pane", "vertical", "divide"], "key": "cmd+d" }
+        "palette": { "category": "Split", "icon": "rectangle.split.2x1", "keywords": ["pane", "vertical", "divide"], "key": "cmd+d", "launcher": true }
       },
       {
         "name": "dev.tenon.core-commands.pane.split-down.v1",
@@ -50,7 +50,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Workspace", "icon": "rectangle.split.1x2", "keywords": ["pane", "horizontal", "divide"], "key": "cmd+shift+d" }
+        "palette": { "category": "Split", "icon": "rectangle.split.1x2", "keywords": ["pane", "horizontal", "divide"], "key": "cmd+shift+d", "launcher": true }
       },
       {
         "name": "dev.tenon.core-commands.pane.close.v1",
@@ -68,7 +68,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "arrow.triangle.branch", "keywords": ["git", "diff", "status", "vcs"] }
+        "palette": { "category": "Open", "icon": "arrow.triangle.branch", "keywords": ["git", "diff", "status", "vcs"], "launcher": true }
       },
       {
         "name": "dev.tenon.core-commands.docs.open.v1",
@@ -77,7 +77,7 @@
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "book", "keywords": ["documentation", "readme", "help", "manual"] }
+        "palette": { "category": "Open", "icon": "book", "keywords": ["documentation", "readme", "help", "manual"], "launcher": true }
       },
       {
         "name": "dev.tenon.core-commands.tab.next.v1",

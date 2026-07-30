@@ -2,14 +2,18 @@
 
 import PackageDescription
 
-// The tree-sitter TSX grammar (TypeScript + JSX), vendored so kero can link it.
-// See README.md for why this can't just come from STTextView-Plugin-Neon.
+// The tree-sitter TSX grammar (TypeScript + JSX), exposed through a
+// Tenon-namespaced target so it can coexist with STTextView-Plugin-Neon.
 let package = Package(
     name: "TreeSitterTSX",
     products: [
-        .library(name: "TreeSitterTSX", targets: ["TreeSitterTSX"])
+        .library(name: "TreeSitterTSX", targets: ["TenonTreeSitterTSX"])
     ],
     targets: [
-        .target(name: "TreeSitterTSX", cSettings: [.headerSearchPath("src")])
+        .target(
+            name: "TenonTreeSitterTSX",
+            path: "Sources/TreeSitterTSX",
+            cSettings: [.headerSearchPath("src")]
+        )
     ]
 )

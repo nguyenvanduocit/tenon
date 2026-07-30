@@ -69,7 +69,10 @@ Geometry operations produce immutable transactions:
 - best empty rectangle;
 - move;
 - swap;
-- attached/detached resize.
+- attached/detached resize;
+- fill width — the slot grows sideways to the panes sharing its rows, or to the canvas
+  edge where none do. Neighbours are stops, never shrunk, so nothing else moves. A slot
+  already spanning its band yields an invalid (no-op) transaction.
 
 A transaction contains baseline, proposal, affected IDs, kind, and validity. The workspace
 applies it only when:
@@ -90,6 +93,7 @@ Typed operations include:
 - add/split/close/focus/next/previous slot;
 - set slot content;
 - move slot to new/existing tab;
+- fill slot width;
 - apply spatial move/swap/resize transaction.
 
 Every mutation returns `[WorkspaceEvent]`. Empty means no state change. Events describe
@@ -128,6 +132,7 @@ The current public inventory is:
 - `workspace.pane.focus.v1`;
 - `workspace.pane.close.v1`;
 - `workspace.pane.content.set.v1`;
+- `workspace.content.open.v1`;
 - `workspace.tab.next.v1`;
 - `workspace.tab.previous.v1`;
 - `workspace.pane.focus-next.v1`;
@@ -136,6 +141,14 @@ The current public inventory is:
 Workspace and pane targeting uses caller-selectable `options.scope.workspaceID/paneID`;
 policy authorizes the designation. The input schema contains operation data only (for
 example split axis or content descriptor).
+
+`workspace.content.open.v1` is the one intent that does not ask the caller to choose a
+pane: placement is host policy. The pane in the scope pane's tab that already shows this
+kind of content takes it — a file pane takes the next file, a diff pane the next diff, a
+plugin view yields only to that same view, a blank pane takes anything — and with no such
+pane the scope pane splits horizontally. It never opens a tab. `WorkspaceStore.openContent`
+is the single typed implementation; the built-in Changes panel calls it DIRECT and this
+intent is its public adapter.
 
 Future move/swap/resize intents require a concrete public use case and explicit bounded
 schema. They MUST adapt to the existing typed transactions rather than creating a second
@@ -174,7 +187,9 @@ owner.
 ## Rendering
 
 `SpatialCanvasView` renders the authoritative grid rectangles and translates drag/resize
-gestures into `SpatialLayout` proposals. It does not own layout rules.
+gestures into `SpatialLayout` proposals. It does not own layout rules. Click count is part
+of the gesture, not the geometry: a pane header answers a second click with fill width, the
+way a window title bar answers one with zoom, while every other region keeps its drag.
 
 Preview is ephemeral. Only a validated committed transaction mutates `WorkspaceCatalog`.
 Keyboard focus and accessibility IDs follow the active slot UUID.

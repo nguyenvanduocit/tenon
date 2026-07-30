@@ -15,6 +15,11 @@ protocol TerminalSurface: AnyObject {
     /// Emulator reported a new window title (OSC 0/2). Wired to `PluginHost.terminalTitleChanged`.
     var onTitleChange: ((String) -> Void)? { get set }
 
+    /// Shell reported its working directory (OSC 7). Wired to `SurfacePool`, which resolves
+    /// the pane's project root from it. A backend that cannot report one keeps the default
+    /// below and the pane simply holds the directory it started in.
+    var onPwdChange: ((String) -> Void)? { get set }
+
     /// The SwiftUI view for this surface.
     func makeView() -> AnyView
 
@@ -33,6 +38,13 @@ protocol TerminalSurface: AnyObject {
 }
 
 extension TerminalSurface {
+    /// A backend with no directory reporting. Assigning is accepted and discarded, so a
+    /// conformer opts in by declaring its own stored property rather than by being special-cased.
+    var onPwdChange: ((String) -> Void)? {
+        get { nil }
+        set {}
+    }
+
     func focus() {}
     var renderedText: String { "" }
     var processExited: Bool { false }
@@ -47,6 +59,9 @@ extension TerminalSurface {
 final class StubTerminalSurface: TerminalSurface {
     let backendName = "Stub"
     var onTitleChange: ((String) -> Void)?
+    /// The stub has no PTY to emit OSC 7, but it carries the hook so the pane-directory
+    /// rule can be driven — and asserted — without a terminal.
+    var onPwdChange: ((String) -> Void)?
     private(set) var focusCount = 0
 
     func focus() {

@@ -31,10 +31,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 38, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 38)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 38)
-        XCTAssertEqual(compiled.dispatchRules.count, 38)
+        XCTAssertEqual(revisions, Array(repeating: 39, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 39)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 39)
+        XCTAssertEqual(compiled.dispatchRules.count, 39)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -58,8 +58,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 38)
-        XCTAssertEqual(actualNames.count, 38)
+        XCTAssertEqual(Set(actualNames).count, 39)
+        XCTAssertEqual(actualNames.count, 39)
 
         let forbiddenFragments = [
             "tenon.",
@@ -580,7 +580,7 @@ final class CoreIntentCatalogTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(CoreIntentName.allCases.count, 38)
+        XCTAssertEqual(CoreIntentName.allCases.count, 39)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -633,6 +633,7 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .workspacePaneFocus,
                 .workspacePaneClose,
                 .workspacePaneContentSet,
+                .workspaceContentOpen,
                 .workspaceTabNext,
                 .workspaceTabPrevious,
                 .workspacePaneFocusNext,
@@ -917,6 +918,12 @@ private extension CoreIntentCatalogTests {
                 output: [],
                 requiredOutput: []
             ),
+            .workspaceContentOpen: SchemaShape(
+                ["content"],
+                required: ["content"],
+                output: [],
+                requiredOutput: []
+            ),
             .workspaceTabNext: emptyShape(),
             .workspaceTabPrevious: emptyShape(),
             .workspacePaneFocusNext: emptyShape(),
@@ -971,6 +978,7 @@ private extension CoreIntentCatalogTests {
             .workspacePaneFocus: ["workspace.control"],
             .workspacePaneClose: ["workspace.control"],
             .workspacePaneContentSet: ["workspace.control"],
+            .workspaceContentOpen: ["workspace.control"],
             .workspaceTabNext: ["workspace.control"],
             .workspaceTabPrevious: ["workspace.control"],
             .workspacePaneFocusNext: ["workspace.control"],

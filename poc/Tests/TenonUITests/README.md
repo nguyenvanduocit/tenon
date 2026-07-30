@@ -19,8 +19,9 @@ The shell publishes these identifiers from the SwiftUI/AppKit views in `Sources/
 
 | Identifier      | Put it on…                                   | Why the test needs it |
 |-----------------|----------------------------------------------|-----------------------|
-| `tenon.tab`     | each tab chip in the tab bar (same id on all)| counts tabs — `⌘T` / `+` must raise the count |
-| `tenon.newTab`  | the `+` new-tab button                       | mouse-driven "create" path, distinct from the shortcut |
+| `tenon.tab`     | each tab chip in the tab bar (same id on all)| counts tabs — `⌘T` / the `+` launcher must raise the count |
+| `tenon.newTab`  | the `+` launcher button                      | mouse-driven "create" path, distinct from the shortcut |
+| `tenon.launcher.row.<commandID>` | each row in the `+` launcher popover | proves the popover projects plugin-declared launcher intents, and that clicking one invokes that plugin |
 | `tenon.canvas`  | the active tab's spatial-canvas container    | launch/readiness anchor; scopes slot lookups |
 | `tenon.slot`    | each slot view on the canvas (same id on all)| counts slots — split/close change the count; drag reorders them |
 

@@ -375,6 +375,12 @@ private extension AppComposition {
                 )
             }
         }
+        terminalSurfaces.onPaneDirectoryChange = {
+            [weak host] directory, slotID in
+            Task { @MainActor [weak host] in
+                await host?.paneCwdChanged(directory, slotID: slotID)
+            }
+        }
         terminalSurfaces.onNewTab = {
             [weak store] in store?.newTab()
         }

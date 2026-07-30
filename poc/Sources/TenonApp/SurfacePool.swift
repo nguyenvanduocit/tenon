@@ -18,9 +18,16 @@ struct TerminalObservation: Equatable {
 @MainActor
 final class SurfacePool {
     private(set) var titles: [UUID: String] = [:]
+    /// Where each pane's shell is, and the project root that cwd resolves to. Rides beside
+    /// `titles` for the same reason: it is per-slot shell state the header and the panels
+    /// both read, and the workspace model must not learn about terminals to carry it.
+    private(set) var directories: [UUID: ProjectRoot.PaneDirectory] = [:]
 
     // Wired once by TenonApp.
     @ObservationIgnored var onTitleChange: ((String, UUID) -> Void)?
+    /// Fires only when a pane's *project root* actually moves — an ordinary `cd` inside one
+    /// repository updates `directories` and stays silent here, so the panels never thrash.
+    @ObservationIgnored var onPaneDirectoryChange: ((ProjectRoot.PaneDirectory, UUID) -> Void)?
     @ObservationIgnored var onNewTab: (() -> Void)?
     @ObservationIgnored var onNewSplit: ((SplitAxis) -> Void)?
     @ObservationIgnored var onFocusNextSlot: (() -> Void)?
@@ -36,6 +43,9 @@ final class SurfacePool {
     /// builds its surface on the next SwiftUI render, so `terminal.run.v1` would otherwise
     /// write into nothing; the text waits here and flushes the moment the surface is built.
     @ObservationIgnored private var pendingText: [UUID: String] = [:]
+    /// "Set Project Directory…" per pane. A pin outranks whatever the shell reports, and
+    /// clearing it ("Use Automatic") re-resolves from the pane's current cwd.
+    @ObservationIgnored private var pinnedRoots: [UUID: URL] = [:]
 
     init(
         backendName: String,
@@ -50,10 +60,20 @@ final class SurfacePool {
             return existing
         }
         let surface = makeSurface(slotID, workspacePath)
+        // Seed from the directory the shell is actually starting in, so a pane reports a
+        // project root immediately — before any OSC 7 arrives, and even where the bundle
+        // ships no shell integration to emit one.
+        updateDirectory(cwd: workspacePath, for: slotID)
         surface.onTitleChange = { [weak self] title in
             guard let self else { return }
             self.titles[slotID] = title
             self.onTitleChange?(title, slotID)
+        }
+        surface.onPwdChange = { [weak self] pwd in
+            self?.updateDirectory(
+                cwd: URL(fileURLWithPath: pwd, isDirectory: true),
+                for: slotID
+            )
         }
         if let ghostty = surface as? GhosttySurface {
             ghostty.onProcessExit = { [weak self] in self?.onShellExited?(slotID) }
@@ -73,6 +93,42 @@ final class SurfacePool {
     /// tab bar show, riding the same `titles` registry terminals write to.
     func setTitle(_ title: String, for slotID: UUID) {
         titles[slotID] = title
+    }
+
+    /// Where a pane's shell is, and what that resolves to. `nil` for a pane that has never
+    /// had a surface built.
+    func paneDirectory(for slotID: UUID) -> ProjectRoot.PaneDirectory? {
+        directories[slotID]
+    }
+
+    /// "Set Project Directory…" (`root`) and "Use Automatic" (`nil`). Re-resolves the pane
+    /// against its current cwd and publishes only if the anchor actually moved.
+    func pinProjectRoot(_ root: URL?, for slotID: UUID) {
+        pinnedRoots[slotID] = root
+        guard let cwd = directories[slotID]?.cwd else { return }
+        updateDirectory(cwd: cwd, for: slotID)
+    }
+
+    /// Whether a pane's root is a human's pin rather than the resolved one.
+    func hasPinnedProjectRoot(for slotID: UUID) -> Bool {
+        pinnedRoots[slotID] != nil
+    }
+
+    /// The single place a pane's directories change. Records the new cwd unconditionally —
+    /// the status bar shows it, and it churns on every `cd` — but calls back only when the
+    /// *project root* moved, which is what Files and Git re-root on.
+    private func updateDirectory(cwd: URL, for slotID: UUID) {
+        let next = ProjectRoot.PaneDirectory(cwd: cwd, pinned: pinnedRoots[slotID])
+        let previous = directories[slotID]
+        guard previous != next else { return }
+        directories[slotID] = next
+        guard let previous else {
+            onPaneDirectoryChange?(next, slotID)
+            return
+        }
+        if ProjectRoot.rerootsPanels(from: previous.resolution, to: next.resolution) {
+            onPaneDirectoryChange?(next, slotID)
+        }
     }
 
     /// Route keyboard focus to an existing slot's surface.
@@ -140,6 +196,8 @@ final class SurfacePool {
         for key in surfaces.keys where !slotIDs.contains(key) {
             surfaces.removeValue(forKey: key)
             titles.removeValue(forKey: key)
+            directories.removeValue(forKey: key)
+            pinnedRoots.removeValue(forKey: key)
         }
         // Text queued for a pane that closed before it ever rendered has nowhere to go.
         for key in pendingText.keys where !slotIDs.contains(key) {

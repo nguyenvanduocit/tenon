@@ -13,6 +13,7 @@ public struct Command: Sendable, Equatable, Identifiable {
     public let keywords: [String]  // search aliases ("prefs" finds "Settings")
     public let key: KeyChord?      // assigned binding; nil commands remain palette-only
     public let when: String?       // visibility predicate; nil = always visible
+    public let isLauncher: Bool    // a creation verb → offered by the tab strip's `+`
 
     public init(
         id: String,
@@ -22,7 +23,8 @@ public struct Command: Sendable, Equatable, Identifiable {
         icon: String? = nil,
         keywords: [String] = [],
         key: KeyChord? = nil,
-        when: String? = nil
+        when: String? = nil,
+        isLauncher: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -32,6 +34,7 @@ public struct Command: Sendable, Equatable, Identifiable {
         self.keywords = keywords
         self.key = key
         self.when = when
+        self.isLauncher = isLauncher
     }
 }
 
@@ -85,6 +88,13 @@ public struct CommandIndex: Sendable, Equatable {
 
     public mutating func setCommands(_ commands: [Command]) {
         self.commands = commands
+    }
+
+    /// The subset a launcher surface projects: the creation verbs plugins declared with
+    /// `palette.launcher`. Ranking is untouched — the `+` menu is the palette with a
+    /// narrower set, not a second ordering.
+    public var launcherOnly: CommandIndex {
+        CommandIndex(commands.filter(\.isLauncher))
     }
 
     /// Rank commands for `query`. Empty query → visible commands by frecency then

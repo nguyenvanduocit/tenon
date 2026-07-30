@@ -901,6 +901,58 @@ final class WorkspaceCatalogTests: XCTestCase {
         })
     }
 
+    func testFillSlotWidthGrowsThePaneIntoTheFreeColumnsBesideIt() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let leftID = try XCTUnwrap(catalog.activeSlotID)
+        catalog.splitActiveSlot(.horizontal)
+        let topRightID = try XCTUnwrap(catalog.activeSlotID)
+        catalog.splitSlot(topRightID, .vertical)
+        let tabID = try XCTUnwrap(catalog.activeTab?.id)
+        // A detached west drag leaves columns 6..8 of the top band empty, which is the
+        // only way a pane ends up with free space to grow back into.
+        catalog.applyResize(SpatialLayout.resize(
+            try XCTUnwrap(catalog.activeTab?.spatialSlots),
+            slotID: topRightID,
+            direction: .west,
+            deltaColumns: 2,
+            deltaRows: 0
+        ))
+        XCTAssertEqual(
+            catalog.slot(id: topRightID)?.rect,
+            GridRect(x: 8, y: 0, width: 4, height: 6)
+        )
+
+        let events = catalog.fillSlotWidth(topRightID)
+
+        XCTAssertEqual(
+            catalog.slot(id: topRightID)?.rect,
+            GridRect(x: 6, y: 0, width: 6, height: 6)
+        )
+        XCTAssertEqual(
+            catalog.slot(id: leftID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12)
+        )
+        XCTAssertEqual(events, [
+            .slotsResized(
+                slots: [topRightID],
+                detached: false,
+                tab: tabID,
+                workspace: catalog.activeWorkspaceID
+            ),
+        ])
+    }
+
+    func testFillSlotWidthOfAFullBandPaneOrAnUnknownPaneIsANoOp() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let leftID = try XCTUnwrap(catalog.activeSlotID)
+        catalog.splitActiveSlot(.horizontal)
+        let before = catalog
+
+        XCTAssertEqual(catalog.fillSlotWidth(leftID), [])
+        XCTAssertEqual(catalog.fillSlotWidth(UUID()), [])
+        XCTAssertEqual(catalog, before)
+    }
+
     func testMoveSlotToNewTabReparentsKeepingIdentityAndReflowsSource() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let leftID = try XCTUnwrap(catalog.activeSlotID)

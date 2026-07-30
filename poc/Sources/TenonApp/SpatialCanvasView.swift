@@ -13,6 +13,12 @@ enum SpatialCanvasHitRegion: Equatable {
     case body
 }
 
+/// What a press on a pane means once its click count is known.
+enum SpatialCanvasPress: Equatable {
+    case begin(SpatialCanvasHitRegion)
+    case fillWidth
+}
+
 enum SpatialCanvasCommit: Equatable {
     case move(SpatialLayoutTransaction)
     case swap(SpatialLayoutTransaction)
@@ -82,6 +88,19 @@ final class SpatialCanvasInteractionCoordinator {
         if point.x >= bounds.maxX - edge { return .resize(.east) }
         if point.y <= bounds.minY + header { return .header }
         return .body
+    }
+
+    /// A pane header answers a second click the way a window title bar does — it grows
+    /// the pane into the space beside it. Every other region keeps its drag, whatever
+    /// the click count, so a rapid pair on a resize edge still resizes.
+    static func press(
+        region: SpatialCanvasHitRegion,
+        clickCount: Int
+    ) -> SpatialCanvasPress {
+        if region == .header, clickCount >= 2 {
+            return .fillWidth
+        }
+        return .begin(region)
     }
 
     func setCanvasSize(_ size: CGSize) {
@@ -435,6 +454,9 @@ final class SpatialCanvasNSView: NSView {
         card.onEnd = { [weak self] in
             self?.end()
         }
+        card.onFillWidth = { [weak self] id in
+            self?.store?.fillSlotWidth(id)
+        }
         card.onRequestMenu = { [weak self] id in
             self?.slotContextMenu(for: id)
         }
@@ -445,7 +467,9 @@ final class SpatialCanvasNSView: NSView {
     /// Builds the pane header's contextual menu. It lives here, not on the card,
     /// because the actions are just projections of existing `WorkspaceStore`
     /// operations — the card stays a dumb view with no store reference. "Split"
-    /// and "Stack" reuse the shell toolbar's exact vocabulary (right / down).
+    /// and "Stack" reuse the shell toolbar's exact vocabulary (right / down), and
+    /// "Duplicate" is `WorkspaceStore.duplicateSlot` — a second pane showing what
+    /// this one shows, wherever the layout has room for it.
     func slotContextMenu(for slotID: UUID) -> NSMenu? {
         guard let store,
               let slot = store.catalog.slot(id: slotID)
@@ -471,20 +495,14 @@ final class SpatialCanvasNSView: NSView {
             store?.splitSlot(slotID, .vertical)
         })
 
-        menu.addItem(.separator())
+        menu.addItem(SlotMenuItem(
+            title: "Duplicate",
+            isEnabled: store.catalog.canDuplicateSlot(slotID)
+        ) { [weak store] in
+            store?.duplicateSlot(slotID)
+        })
 
-        let changeType = NSMenuItem(title: "Change Type", action: nil, keyEquivalent: "")
-        let typeMenu = NSMenu()
-        typeMenu.autoenablesItems = false
-        for option in SlotTypeOption.allCases {
-            let item = SlotMenuItem(title: option.title, isEnabled: true) { [weak store] in
-                store?.setSlotContent(slotID, option.content)
-            }
-            item.state = slot.content == option.content ? .on : .off
-            typeMenu.addItem(item)
-        }
-        changeType.submenu = typeMenu
-        menu.addItem(changeType)
+        addDirectorySection(to: menu, slotID: slotID)
 
         menu.addItem(.separator())
 
@@ -493,6 +511,56 @@ final class SpatialCanvasNSView: NSView {
         })
 
         return menu
+    }
+
+    /// Where this pane is, and what it is anchored to — the two directories shown as one
+    /// pair so the difference between them is legible, plus the pin that overrides the
+    /// automatic answer. A pane with no directory (a browser, a diff) shows nothing here.
+    private func addDirectorySection(to menu: NSMenu, slotID: UUID) {
+        guard let pool, let directory = pool.paneDirectory(for: slotID) else { return }
+
+        menu.addItem(.separator())
+        menu.addItem(disabledInfoItem(
+            "Current Directory: " + abbreviate(directory.cwd)
+        ))
+        let rootLabel: String = directory.projectRoot.map(abbreviate) ?? "None"
+        let marker = directory.source == .pinned ? "PINNED" : "AUTO"
+        menu.addItem(disabledInfoItem(
+            "Project Directory (\(marker)): \(rootLabel)"
+        ))
+
+        menu.addItem(SlotMenuItem(title: "Set Project Directory…", isEnabled: true) {
+            [weak pool] in
+            guard let pool else { return }
+            let panel = NSOpenPanel()
+            panel.canChooseDirectories = true
+            panel.canChooseFiles = false
+            panel.allowsMultipleSelection = false
+            panel.directoryURL = directory.projectRoot ?? directory.cwd
+            guard panel.runModal() == .OK, let chosen = panel.url else { return }
+            pool.pinProjectRoot(chosen, for: slotID)
+        })
+        menu.addItem(SlotMenuItem(
+            title: "Use Automatic Directory",
+            isEnabled: directory.source == .pinned
+        ) { [weak pool] in
+            pool?.pinProjectRoot(nil, for: slotID)
+        })
+    }
+
+    /// A non-actionable label. `menu.autoenablesItems` is already false, so a plain
+    /// disabled item stays readable rather than being culled.
+    private func disabledInfoItem(_ title: String) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.isEnabled = false
+        return item
+    }
+
+    private func abbreviate(_ url: URL) -> String {
+        let path = url.path
+        let home = NSHomeDirectory()
+        guard path == home || path.hasPrefix(home + "/") else { return path }
+        return "~" + path.dropFirst(home.count)
     }
 
     func begin(
@@ -735,6 +803,7 @@ final class SpatialSlotCardView: NSView {
     var onBegin: ((UUID, SpatialCanvasHitRegion, CGPoint) -> Void)?
     var onDrag: ((_ canvasPoint: CGPoint, _ windowPoint: CGPoint) -> Void)?
     var onEnd: (() -> Void)?
+    var onFillWidth: ((UUID) -> Void)?
     var onRequestMenu: ((UUID) -> NSMenu?)?
 
     private let glyph = NSTextField(labelWithString: "")
@@ -886,7 +955,15 @@ final class SpatialSlotCardView: NSView {
             at: local,
             in: bounds
         )
-        onBegin?(slotID, region, canvasPoint)
+        switch SpatialCanvasInteractionCoordinator.press(
+            region: region,
+            clickCount: event.clickCount
+        ) {
+        case .begin(let region):
+            onBegin?(slotID, region, canvasPoint)
+        case .fillWidth:
+            onFillWidth?(slotID)
+        }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -1165,44 +1242,5 @@ final class SlotMenuItem: NSMenuItem {
 
     @objc private func fire() {
         invoke()
-    }
-}
-
-/// The slot content types offered by the header's "Change Type" submenu — the
-/// same set the tab bar's "Add slot" menu exposes.
-enum SlotTypeOption: CaseIterable {
-    case terminal
-    case files
-    case changes
-    case docs
-
-    var title: String {
-        switch self {
-        case .terminal:
-            return "Terminal"
-        case .files:
-            return "Files"
-        case .changes:
-            return "Diff"
-        case .docs:
-            return "Docs"
-        }
-    }
-
-    var content: SlotContent {
-        switch self {
-        case .terminal:
-            return .terminal
-        case .files:
-            // Files is the bundled file-explorer plugin's tree, not a host content type.
-            return .pluginView(
-                pluginID: "dev.tenon.file-explorer",
-                viewID: "tree"
-            )
-        case .changes:
-            return .changes
-        case .docs:
-            return .docs
-        }
     }
 }
