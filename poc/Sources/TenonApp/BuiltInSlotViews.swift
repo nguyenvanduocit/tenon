@@ -29,11 +29,21 @@ struct BuiltInSlotContentView: View {
             ).makeView()
 
         case .file(let path):
-            FileSlotView(
-                path: path,
-                slotID: slot.id,
-                editorStates: editorStates
-            )
+            // One file-pane content kind, three renderers. The choice is a pure rule so it
+            // can be asserted without a window; unrecognised files keep the editor, which
+            // is legible for anything.
+            switch FilePaneKind.kind(forPath: path) {
+            case .image:
+                ImageSlotView(path: path)
+            case .web:
+                WebPreviewSlotView(path: path)
+            case .text:
+                FileSlotView(
+                    path: path,
+                    slotID: slot.id,
+                    editorStates: editorStates
+                )
+            }
 
         case .changes:
             ChangesPanelView(root: workspacePath, store: store)

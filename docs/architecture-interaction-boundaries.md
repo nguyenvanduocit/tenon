@@ -210,6 +210,16 @@ Current DIRECT inventory:
   focus. **Placement itself is not decided here**: it stays inside
   `workspace.content.open.v1`, whose contract already makes it host policy — reuse the pane
   showing this kind of content, otherwise split, never open a tab;
+- file-pane renderer selection (T-038): `SlotContent.file(path:)` and its native editor
+  were already host-owned, so rendering a PNG as a picture or an HTML file as a page
+  crosses no ownership boundary — same-owner DIRECT, no new intent, no new plugin, no new
+  `tenon` member. `FilePaneKind` is the pure rule that picks the renderer, asserted without
+  a window. The HTML preview deliberately does **not** borrow `PluginWebSurfacePool`: that
+  pool keys surfaces by plugin installation so each plugin owns a persistent browser
+  profile, and minting a fake installation would give a host pane a plugin's identity and
+  its cookie jar. The preview is a renderer, not a browser — no JavaScript, ephemeral data
+  store, read access scoped to the file's own directory, and any navigation away is
+  refused;
 - plugin-host administration from the Settings UI;
 - pure parsers, ranking, schemas, and value transformations;
 - `tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the
