@@ -151,6 +151,32 @@ codesign --force --deep --sign - "$DEST_APP"
 # --- 9. Verify ---------------------------------------------------------------
 step "Verifying install"
 codesign --verify --deep --strict "$DEST_APP" && echo "signature: valid (ad-hoc)"
+
+# The CLI is the one payload the app cannot rebuild for itself: Settings ▸ CLI ▸ Install
+# copies this exact file into ~/.local/bin, so it has to survive leaving the bundle. Check
+# the artifact that ships rather than the one that was built — this runs after ditto and
+# after codesign, so it also catches a copy that arrived but did not survive them.
+INSTALLED_CLI="$DEST_APP/Contents/MacOS/tenon-cli"
+[ -x "$INSTALLED_CLI" ] || {
+    echo "error: $INSTALLED_CLI is missing or not executable — Settings ▸ CLI ▸ Install would have nothing to copy" >&2
+    exit 1
+}
+# Relocatable means: nothing outside the OS. A link into /Users, the checkout, the build
+# tree, or the bundle's own Frameworks would work here and break in ~/.local/bin — the app
+# binary beside it genuinely links @rpath/TenonCore.framework, so this is the difference
+# that matters, not a hypothetical.
+#
+# Tested on content rather than on grep's exit status: BSD `grep -qv` reports no match here
+# where `grep -v` prints three lines, so the -q form would have waved a broken binary
+# through — the exact failure this check exists to catch.
+FOREIGN_LINKS="$(otool -L "$INSTALLED_CLI" | tail -n +2 |
+    grep -vE '^[[:space:]]+(/usr/lib/|/System/Library/Frameworks/)' || true)"
+if [ -n "$FOREIGN_LINKS" ]; then
+    echo "error: bundled tenon-cli links something outside the OS, so it will not run once copied out of the bundle:" >&2
+    echo "$FOREIGN_LINKS" >&2
+    exit 1
+fi
+echo "tenon-cli: bundled, signed, and self-contained"
 INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
     "$DEST_APP/Contents/Info.plist" 2>/dev/null || echo '?')"
 echo "installed: $DEST_APP (version $INSTALLED_VERSION, id $BUNDLE_ID)"

@@ -63,7 +63,18 @@ the T-022 defect-fix worker (session `46aca5a4`), which owns `Package.swift` and
 - [x] The tab strip sits on the traffic lights' row rather than below it
 - [x] `poc/scripts/generate-app-icon.sh` regenerates every appiconset size from the SVG
       masters, so the PNGs are derived artifacts and not hand-maintained
-- [ ] `Image("TenonMark")` resolves under `swift run tenon` — **owned by the T-022 fix**
-- [ ] The asset catalog is tracked in git, so the reference at `ShellTitleBar.swift:69` does
-      not ship dangling for every other clone
-- [ ] Committed with the rest of the pane/launcher changeset
+- [x] The mark resolves under `swift run tenon` — **shipped by the T-022 fix**, verified
+      2026-07-31 at `17bf0a6`: `Package.swift:84-89` declares `.process("Assets.xcassets")`
+      on the `TenonApp` target, and `AppMark.resolve()` (`AppMark.swift:19-31`) tries the
+      `actool`-compiled `NSImage(named:)` first, then reads the vector out of
+      `Bundle.module` for the SwiftPM path where `actool` never ran. `ShellTitleBar.swift:69`
+      consumes it with an SF Symbol fallback, so the title bar cannot draw nothing
+- [x] The asset catalog is tracked in git, so the reference at `ShellTitleBar.swift:69` does
+      not ship dangling for every other clone — **89 files** under
+      `poc/Sources/TenonApp/Assets.xcassets/` are tracked (`git ls-files`)
+- [x] Committed with the rest of the pane/launcher changeset — working tree clean at
+      `17bf0a6`, nothing from this task left unstaged
+
+Human-verify-only (tracked as item 1 of `.kanban/reports/human-verification-checklist.md`):
+the mark's pixels in a running window, title-bar drag/double-click, and the tab strip
+sitting on the traffic lights' row.

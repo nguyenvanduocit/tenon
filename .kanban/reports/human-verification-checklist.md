@@ -68,8 +68,32 @@ check exit silently.
     `TENON_TRUST_PLUGIN_INVENTORY=1`, matched exactly, to get the old behaviour. `"true"`
     deliberately does not count. *(T-033)*
 
+## Landed after this list was first written
+
+12. **Attention dots** — run something long in one pane and let a command finish in another,
+    then look: the working pane and the finished-but-unseen pane are marked differently, the
+    tab chip and sidebar row go bold with a count, and the title bar carries the total. Look
+    at a pane and its mark clears; nothing re-marks it while you watch. Then switch away from
+    Tenon entirely and let a command finish — **from the installed `.app`**, one notification
+    banner per burst, and clicking it lands you on that pane even across workspaces.
+    `swift run` deliberately no-ops the banner (`UNUserNotificationCenter` needs a bundle id),
+    so this half needs the packaged app. *(T-029)*
+
+13. **Settings ▸ CLI ▸ Install, from the installed app** — open Settings in
+    `/Applications/Tenon.app` (not `swift run`), go to CLI, and click Install. The button
+    must be enabled, not the *"No tenon-cli binary is available in this build"* message.
+    Then, in a fresh terminal, `tenon-cli ping` against the running app. The bundled binary
+    is verified self-contained by the installer, and it runs from an unrelated directory —
+    what a person still has to confirm is the button and the round trip. *(T-045)*
+
+14. **A real supervised fleet** — copy `poc/examples/fleet-review/` into `poc/plugins/`,
+    restart, and run "Fleet Review" from the palette with a real `claude` on PATH. Three
+    panes should appear and work *at the same time* — that concurrency is what the
+    `terminalWait` lane change bought, and the headless test can only prove the intents
+    overlap, not that three agents really run side by side. Watch the attention dots while
+    they think, then read one transcript in full in its own pane. *(T-048)*
+
 ## Carries no human-visible surface
 
-T-023 (build cache), T-029 core half (the state machine; its surfaces are still in flight),
-T-037 (plugin global scope closure), T-019 and T-021 (verification only, no behaviour
-change), T-020 (audit only).
+T-023 (build cache), T-037 (plugin global scope closure), T-019 and T-021 (verification
+only, no behaviour change), T-020 (audit only).

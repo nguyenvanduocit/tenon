@@ -165,13 +165,19 @@ Expected files:
       in the pane header menu, backed by `SurfacePool.pinProjectRoot(_:for:)`; the pin
       outranks whatever the shell reports, reverting re-resolves from the pane's *current*
       cwd (not the one it was pinned at), and a pin dies with its pane
-- [ ] ~~the pin survives what T-027 restores~~ — **DESCOPED**, by coordinator decision.
-      T-027 is the task that adds catalog persistence (Codable over the workspace tree plus
-      a store). A pin field bolted onto `Slot` from here would be a *second* persistence
-      path for one object — precisely what invariant 6 forbids — and would put a second
-      agent inside `Workspace.swift`. Handed off below instead of half-built.
+- [x] The pin survives what T-027 restores — **delivered by T-027**, which owns the one
+      persistence path for the workspace tree. Bolting a pin field onto `Slot` from here
+      would have been a second persistence path for one object, which invariant 6 forbids,
+      so this task specified the field and handed it over instead of half-building it.
+      T-027 took it verbatim: `projectRootPin: String?` on the persisted pane
+      (`WorkspaceCatalogStore.swift:80`), replayed through `pinProjectRoot(_:for:)` on
+      restore, and asserted end to end by `WorkspaceCatalogRelaunchTests.swift:70-74` —
+      *"the T-030 project-root pin survives the relaunch verbatim"*
 
-## Handoff to T-027 (catalog persistence)
+## Handoff to T-027 (catalog persistence) — ACCEPTED AND SHIPPED
+
+T-027 implemented exactly the field specified below; the spec is kept as the record of what
+was asked for and why.
 
 The pane pin currently lives in memory, in `SurfacePool.pinnedRoots` (`SurfacePool.swift`),
 so it survives pane switches and dies with the pane — but not a relaunch. To make it

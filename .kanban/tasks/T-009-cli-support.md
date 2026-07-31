@@ -42,6 +42,33 @@ muxy (wire framing + security model), orca (agent-first verb UX). Feasibility de
 - [x] Phase 2: core-commands extended (next-tab/prev-tab/focus-next-slot/switch-workspace) via one action surface; blocked+allowed capability pairs
 - [x] TRUE SINGLETON: LSMultipleInstancesProhibited in Tenon-Info.plist (verified in built .app) + runtime socket-lock
 - [x] Settings → CLI → Install: copies self-contained tenon-cli into ~/.local/bin (verified relocatable via otool)
-- [ ] Phase 3: scrollback paging spike + `--for command-finished`
-- [ ] Follow-up: bundle a self-contained tenon-cli inside Tenon.app so Install works from the packaged app (needs static-link/build-phase; dev `swift run` flow already works via the sibling binary)
-- [x] `swift build` + `swift test` clean (298 green); no private API; TenonCore imports no AppKit
+- [x] Phase 3, `--for command-finished`: shipped and now asserted. The OSC 133
+      semantic-prompt marker bumps a per-pane count (`GhosttySurface.swift:396-398`),
+      `SurfacePool` carries it into the observation, and `terminal.wait.v1` is met when the
+      count rises above the one read at wait time (`TerminalIntentProvider.swift:228-270`),
+      with an immediate give-up when the process exits without ever finishing a command.
+      It had **no test** until 2026-07-31 — see "The coverage this task quoted" below
+- [x] Phase 3, remaining items handed to **[T-044](T-044-terminal-scrollback-paging.md)**:
+      scrollback paging (`read --cursor`) and push-idle. Neither is built; `terminal.viewport.read.v1`
+      still answers the visible screen only
+- [x] Follow-up handed to **[T-045](T-045-bundle-tenon-cli-in-the-app.md)**: bundle a
+      self-contained `tenon-cli` inside `Tenon.app` so Install works from the packaged app.
+      The dev `swift run` flow already works via the sibling binary
+- [x] `swift build` + `swift test` clean; no private API; TenonCore imports no AppKit —
+      298 green when this task shipped, **756 / 0** at `17bf0a6` on 2026-07-31 after the
+      terminal-verb tests were brought inside the suite
+
+## The coverage this task quoted
+
+This task recorded *"`swift build` + `swift test` clean (298 green)"*. That number never
+included `TerminalIntentProviderTests` — the only tests of the CLI's terminal verbs — because
+`poc/Tests/TenonAppTests/` was never declared in `Package.swift` and `swift test` therefore
+never built it. Three of its four files no longer compile at all.
+
+Fixed here: `TerminalIntentProviderTests.swift` moved to `TenonAppStateTests/`, where the
+suite runs it, and extended with three `command-finished` cases — met on a rise, ignores
+commands that finished before the wait began, and gives up immediately when the shell dies
+mid-command. Each is mutation-proven (break the rule → that named assertion goes red →
+restore). Full suite **756 / 0** at `17bf0a6`, up from 750: three tests that had never run,
+plus the three new ones. The rot left behind in that directory is
+**[T-043](T-043-tenonapptests-outside-the-evidence-bar.md)**.

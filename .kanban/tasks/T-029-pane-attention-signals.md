@@ -182,9 +182,11 @@ clear; `kill` a shell for the red-dot/exit case.
       — recorded in the DIRECT inventory (~line 198) BEFORE wiring: same-owner DIRECT,
       NO plugin EVENT ships with this task; future plugin visibility = new classified
       EVENT through the law
-- [ ] `swift build` + `swift test` green; launch smoke with a long-running command in one
-      pane and a finished one in another, and one human look at the dots
-      — DONE: build exit 0 (warnings-as-errors ON), full suite **750/750, 0 failures**
-      on 5919bb3, launch smoke alive 8 s on a private socket, empty log, `PaneAttentionTests`
-      10/10. REMAINING (human-only): run a long command in one pane + a finished one in
-      another and look at the dots/bold/badge; and the system banner from the installed app
+- [x] `swift build` + `swift test` green; launch smoke — build exit 0 (warnings-as-errors
+      ON), full suite **750/750, 0 failures**, re-measured on the committed tree at
+      `17bf0a6` (2026-07-31 02:51) after the app half landed at `1af0192`; launch smoke
+      alive 8 s on a private socket, empty log; `PaneAttentionTests` 10/10
+- [ ] **Human-verify-only** — run a long command in one pane and a finished one in another,
+      then look at the dots / bold / badge; and the system banner from the installed `.app`
+      (`UNUserNotificationCenter` needs a bundle id, so bare `swift run` no-ops by design).
+      Tracked as item 12 of `.kanban/reports/human-verification-checklist.md`

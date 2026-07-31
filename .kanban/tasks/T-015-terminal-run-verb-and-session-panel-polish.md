@@ -41,16 +41,15 @@ for the user hits this, not just claude-sessions.
 - [x] `terminal.run` blocked+allowed pair (invariant 5)
 - [x] claude-sessions Resume emits `runInTerminal("claude --resume <id>")`
 - [x] Command lands in a terminal opened in the same click (pending-text flush in SurfacePool)
-- [ ] `swift build` clean + full `swift test` green
+- [x] `swift build` clean + full `swift test` green — measured on the committed tree at
+      `17bf0a6` (2026-07-31 02:51): build exit 0 under warnings-as-errors, full suite
+      **750 tests / 0 failures**
 
 ## Status
-Sources build green with all of it. The full suite cannot run yet: @d7f580dd is mid-way
-through deleting `SlotContent.files`, so WorkspaceTests / RecentStoreTests /
-WorkspaceDefaultContentTests / AppPreferencesTests / CoreCommandsPluginTests /
-WorkspaceContentCapabilityTests do not compile. **No compile error is in any file of mine**
-(`swift build --build-tests` error list is entirely theirs). PaneTargetTests was already
-moved off `.files` by me so they don't have to touch a file I hold. Waiting on a watcher for
-the test target to build, then running the whole suite.
+COMPLETE. The suite this task was waiting on now runs: @d7f580dd's `SlotContent.files`
+deletion landed long ago and the test target compiles. Everything this task shipped
+(`PaneTarget.preferredTerminal`, `WorkspaceCommand.runInTerminal`, the SurfacePool
+pending-text flush, the claude-sessions panel) is committed and covered by that green run.
 
 ## Follow-up handed to T-014 (their file)
 `BuiltInSlotViews.swift:63-69` titles a `.pluginView` pane with the raw viewID, so this panel's

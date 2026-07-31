@@ -70,12 +70,3 @@ follows selection+focus globally — one global surface, selection-scoped by des
   must not imply sharing per-workspace view-instance state.
 - Classify any interaction change using `docs/architecture-interaction-boundaries.md` before
   changing its transport or public surface.
-
-## Criteria
-- [ ] Add a deterministic regression that opens equivalent plugin views in two workspaces,
-      switches between them, and proves their state is independent
-- [ ] Every view update is routed with sufficient workspace/pane/view-instance identity
-- [ ] Inactive workspaces are not mutated merely because the global selection changed
-- [ ] File Browser follows its owning workspace root while retaining per-instance UI state
-- [ ] Check other shipped plugin views for the same cross-workspace leakage
-- [ ] `swift build` and the relevant test suites pass
