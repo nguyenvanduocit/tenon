@@ -81,7 +81,14 @@ struct TenonApp: App {
             if let composition {
                 SettingsView(
                     host: composition.host,
-                    prefs: AppPreferencesStore.shared
+                    prefs: AppPreferencesStore.shared,
+                    automation: composition.automationScheduler,
+                    runNow: { pluginID, scheduleID in
+                        await composition.runAutomationNow(
+                            pluginID: pluginID,
+                            scheduleID: scheduleID
+                        )
+                    }
                 )
             } else {
                 StartupFailureView(
@@ -499,10 +506,35 @@ private extension AppComposition {
                 }
                 guard let self else { return }
                 for firing in self.automationScheduler.tick(now: Date()) {
-                    await self.host.automationFired(firing)
+                    await self.deliverAndRecord(firing)
                 }
             }
         }
+    }
+
+    /// T-060: Run now. Mints a manual firing for an armed schedule and sends it down
+    /// the exact path a scheduled one takes — the plugin sees only the payload's
+    /// `trigger` differ. An unarmed schedule has nothing to fire and does nothing.
+    func runAutomationNow(pluginID: PluginID, scheduleID: String) async {
+        guard let firing = automationScheduler.manualFiring(
+            pluginID: pluginID,
+            scheduleID: scheduleID,
+            now: Date()
+        ) else { return }
+        await deliverAndRecord(firing)
+    }
+
+    /// The one place a firing is delivered and remembered — the tick loop and Run
+    /// now share it, so the history can never disagree with delivery.
+    private func deliverAndRecord(
+        _ firing: AutomationScheduler.Firing
+    ) async {
+        let delivered = await host.automationFired(firing)
+        automationScheduler.recordRun(
+            firing,
+            firedAt: Date(),
+            delivered: delivered
+        )
     }
 
     func performStart() async {

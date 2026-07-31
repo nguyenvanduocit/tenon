@@ -1480,21 +1480,25 @@ public final class PluginHost {
     /// channel: their URLs and titles belong to one installation. The app shell checks
     /// the installation identity before calling this method; the host then resolves the
     /// current session by its stable manifest ID.
+    /// Returns whether a live, subscribed generation actually took the event. The
+    /// outcome is host state (T-060's run history reads it); plugin-facing `publish`
+    /// keeps ignoring it, so a publisher still never learns who listened (T-049).
+    @discardableResult
     public func emit(
         event: String,
         payload: IntentValue,
         to pluginID: PluginID
-    ) async {
+    ) async -> Bool {
         guard let session = sessions[pluginID] else {
-            return
+            return false
         }
         if event.hasPrefix("terminal."),
            !session.snapshot.manifest.permissions.contains("terminal.read")
         {
-            return
+            return false
         }
         guard await session.runtime.handles(event: event) else {
-            return
+            return false
         }
         do {
             try await session.runtime.emit(
@@ -1506,7 +1510,9 @@ public final class PluginHost {
                 "host: event \(event) failed for \(pluginID.rawValue): "
                     + Self.diagnostic(for: error)
             )
+            return false
         }
+        return true
     }
 
     /// A plugin published a fact on one of its own channels (T-049).
@@ -1552,7 +1558,10 @@ public final class PluginHost {
     /// channel: a schedule is the owning plugin's own manifest declaration, so its
     /// firing is never broadcast and needs no permission gate. A firing for a plugin
     /// whose session is gone (mid-retirement, disabled) drops silently in `emit`.
-    public func automationFired(_ firing: AutomationScheduler.Firing) async {
+    @discardableResult
+    public func automationFired(
+        _ firing: AutomationScheduler.Firing
+    ) async -> Bool {
         await emit(
             event: "automation.fired",
             payload: .object([
@@ -1561,7 +1570,7 @@ public final class PluginHost {
                     firing.scheduledFor.formatted(.iso8601)
                 ),
                 "late": .bool(firing.late),
-                "trigger": .string("scheduled"),
+                "trigger": .string(firing.trigger.rawValue),
             ]),
             to: firing.pluginID
         )

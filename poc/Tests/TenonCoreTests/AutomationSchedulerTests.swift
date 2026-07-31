@@ -34,7 +34,8 @@ final class AutomationSchedulerTests: XCTestCase {
                     pluginID: "dev.test.a",
                     scheduleID: "tick",
                     scheduledFor: due,
-                    late: false
+                    late: false,
+                    trigger: .scheduled
                 ),
             ]
         )
@@ -109,7 +110,8 @@ final class AutomationSchedulerTests: XCTestCase {
                     pluginID: "dev.test.a",
                     scheduleID: "morning",
                     scheduledFor: date(2026, 8, 2, 9, 0),
-                    late: true
+                    late: true,
+                    trigger: .scheduled
                 ),
             ]
         )
@@ -206,6 +208,174 @@ final class AutomationSchedulerTests: XCTestCase {
         XCTAssertEqual(
             scheduler.tick(now: t0.addingTimeInterval(60)).map(\.pluginID),
             ["dev.test.a", "dev.test.b"]
+        )
+    }
+
+    // MARK: - T-060: listings, Run now, run history
+
+    func testListingsExposeActiveSchedulesSortedWithNextDue() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        let daily = try AutomationScheduleSpec(
+            id: "morning",
+            cadence: .daily(hour: 9, minute: 0)
+        )
+        scheduler.reconcile(
+            [
+                snapshot(id: "dev.test.b", schedules: [try every60()]),
+                snapshot(id: "dev.test.a", schedules: [daily, try every60()]),
+                snapshot(
+                    id: "dev.test.disabled",
+                    schedules: [try every60()],
+                    isEnabled: false
+                ),
+            ],
+            now: t0
+        )
+
+        XCTAssertEqual(
+            scheduler.listings(),
+            [
+                AutomationScheduler.ScheduleListing(
+                    pluginID: "dev.test.a",
+                    spec: daily,
+                    nextDue: daily.nextOccurrence(after: t0, calendar: saigon)
+                ),
+                AutomationScheduler.ScheduleListing(
+                    pluginID: "dev.test.a",
+                    spec: try every60(),
+                    nextDue: t0.addingTimeInterval(60)
+                ),
+                AutomationScheduler.ScheduleListing(
+                    pluginID: "dev.test.b",
+                    spec: try every60(),
+                    nextDue: t0.addingTimeInterval(60)
+                ),
+            ],
+            "listings show every armed schedule, deterministically ordered; a disabled plugin's schedule is not armed"
+        )
+    }
+
+    func testListingsTrackTheAdvancedPhaseAfterAFiring() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        scheduler.reconcile(
+            [snapshot(id: "dev.test.a", schedules: [try every60()])],
+            now: t0
+        )
+        _ = scheduler.tick(now: t0.addingTimeInterval(60))
+
+        XCTAssertEqual(
+            scheduler.listings().map(\.nextDue),
+            [t0.addingTimeInterval(120)],
+            "next-due must be the live phase, not the reconcile-time one"
+        )
+    }
+
+    func testManualFiringCarriesManualTriggerAndLeavesPhaseUntouched() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        scheduler.reconcile(
+            [snapshot(id: "dev.test.a", schedules: [try every60()])],
+            now: t0
+        )
+
+        let runNowAt = t0.addingTimeInterval(10)
+        let firing = try XCTUnwrap(
+            scheduler.manualFiring(
+                pluginID: "dev.test.a",
+                scheduleID: "tick",
+                now: runNowAt
+            )
+        )
+        XCTAssertEqual(
+            firing,
+            AutomationScheduler.Firing(
+                pluginID: "dev.test.a",
+                scheduleID: "tick",
+                scheduledFor: runNowAt,
+                late: false,
+                trigger: .manual
+            )
+        )
+        XCTAssertEqual(
+            scheduler.tick(now: t0.addingTimeInterval(60)).map(\.scheduledFor),
+            [t0.addingTimeInterval(60)],
+            "Run now must not shift the schedule's phase"
+        )
+    }
+
+    func testManualFiringForAnUnarmedScheduleReturnsNil() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        scheduler.reconcile(
+            [
+                snapshot(id: "dev.test.a", schedules: [try every60()]),
+                snapshot(
+                    id: "dev.test.disabled",
+                    schedules: [try every60()],
+                    isEnabled: false
+                ),
+            ],
+            now: t0
+        )
+
+        XCTAssertNil(
+            scheduler.manualFiring(
+                pluginID: "dev.test.a",
+                scheduleID: "no-such-schedule",
+                now: t0
+            )
+        )
+        XCTAssertNil(
+            scheduler.manualFiring(
+                pluginID: "dev.test.disabled",
+                scheduleID: "tick",
+                now: t0
+            ),
+            "a disabled plugin's schedule is not armed, so Run now has nothing to fire"
+        )
+    }
+
+    func testRecordedRunsSurviveReconcile() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        scheduler.reconcile(
+            [snapshot(id: "dev.test.a", schedules: [try every60()])],
+            now: t0
+        )
+        let firing = try XCTUnwrap(
+            scheduler.tick(now: t0.addingTimeInterval(60)).first
+        )
+        scheduler.recordRun(
+            firing,
+            firedAt: t0.addingTimeInterval(61),
+            delivered: true
+        )
+
+        // A hot reload that changes the spec reconciles the schedule table; the
+        // history describes the past and must not be rewritten by it.
+        scheduler.reconcile(
+            [
+                snapshot(
+                    id: "dev.test.a",
+                    schedules: [
+                        try AutomationScheduleSpec(id: "tick", cadence: .every(120)),
+                    ]
+                ),
+            ],
+            now: t0.addingTimeInterval(90)
+        )
+
+        XCTAssertEqual(
+            scheduler.runHistory.records,
+            [
+                AutomationRunRecord(
+                    pluginID: "dev.test.a",
+                    scheduleID: "tick",
+                    scheduledFor: t0.addingTimeInterval(60),
+                    firedAt: t0.addingTimeInterval(61),
+                    trigger: .scheduled,
+                    late: false,
+                    delivered: true
+                ),
+            ],
+            "reconcile realigns schedules; it must never touch the run history"
         )
     }
 

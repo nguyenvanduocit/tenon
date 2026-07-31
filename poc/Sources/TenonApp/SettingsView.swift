@@ -12,6 +12,8 @@ import TenonIntentCore
 struct SettingsView: View {
     var host: PluginHost
     @Bindable var prefs: AppPreferencesStore
+    var automation: AutomationScheduler
+    var runNow: (PluginID, String) async -> Void
 
     @State private var route: SettingsRoute = .general
 
@@ -39,6 +41,7 @@ struct SettingsView: View {
                 }
 
                 Section {
+                    sidebarRow(.automation, "Automation", "clock.arrow.circlepath", .mint)
                     sidebarRow(.cli, "CLI", "terminal.fill", .blue)
                     sidebarRow(.extensions, "Extensions", "puzzlepiece.extension.fill", .indigo)
                 }
@@ -71,6 +74,13 @@ struct SettingsView: View {
         switch route {
         case .general:
             GeneralSettingsDetail(prefs: prefs).navigationTitle("General")
+        case .automation:
+            AutomationSettingsDetail(
+                host: host,
+                automation: automation,
+                runNow: runNow
+            )
+            .navigationTitle("Automation")
         case .cli:
             CLISettingsDetail().navigationTitle("CLI")
         case .extensions:
@@ -100,6 +110,7 @@ struct SettingsView: View {
 
 private enum SettingsRoute: Hashable {
     case general
+    case automation
     case cli
     case extensions
     case plugin(PluginID)
@@ -116,6 +127,157 @@ private struct SettingsIconBadge: View {
             .foregroundStyle(.white)
             .frame(width: 20, height: 20)
             .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(tint))
+    }
+}
+
+// MARK: - Automation
+
+/// T-060: the automation surface. Every armed schedule with its next firing and a
+/// per-schedule Run Now, then the recent runs with the facts each firing delivered —
+/// the row's evidence is exactly the payload the plugin received plus the delivery
+/// outcome. Reads scheduler state DIRECT (same owner, invariant 6); Run Now composes
+/// the same delivery path the tick loop uses.
+private struct AutomationSettingsDetail: View {
+    var host: PluginHost
+    var automation: AutomationScheduler
+    var runNow: (PluginID, String) async -> Void
+
+    var body: some View {
+        Form {
+            let listings = automation.listings()
+            if listings.isEmpty {
+                Section {
+                    Text("No installed plugin declares an automation schedule.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                } footer: {
+                    Text("A plugin declares schedules in its manifest's "
+                        + "\"automation.schedules\" block; they appear here with "
+                        + "their next firing.")
+                        .font(.caption)
+                }
+            } else {
+                Section("Schedules") {
+                    ForEach(listings, id: \.rowID) { listing in
+                        scheduleRow(listing)
+                    }
+                }
+            }
+
+            let records = automation.runHistory.records
+            if !records.isEmpty {
+                Section("Recent runs") {
+                    ForEach(
+                        Array(records.prefix(30).enumerated()),
+                        id: \.offset
+                    ) { _, record in
+                        runRow(record)
+                    }
+                }
+            }
+        }
+        .formStyle(.grouped)
+    }
+
+    private func scheduleRow(
+        _ listing: AutomationScheduler.ScheduleListing
+    ) -> some View {
+        HStack(alignment: .center, spacing: 10) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(pluginTitle(listing.pluginID)) · \(listing.spec.id)")
+                Text(cadenceText(listing.spec))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 4) {
+                    Text("Next firing")
+                    Text(listing.nextDue, style: .relative)
+                    Text("(\(listing.nextDue.formatted(date: .abbreviated, time: .shortened)))")
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Run Now") {
+                Task {
+                    await runNow(listing.pluginID, listing.spec.id)
+                }
+            }
+        }
+        .padding(.vertical, 2)
+    }
+
+    private func runRow(_ record: AutomationRunRecord) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(
+                systemName: record.delivered
+                    ? "checkmark.circle.fill"
+                    : "exclamationmark.circle.fill"
+            )
+            .foregroundStyle(record.delivered ? Color.green : Color.orange)
+            VStack(alignment: .leading, spacing: 2) {
+                Text("\(pluginTitle(record.pluginID)) · \(record.scheduleID)")
+                Text(evidenceText(record))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Text(
+                record.firedAt.formatted(
+                    .relative(presentation: .named)
+                )
+            )
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 1)
+    }
+
+    private func pluginTitle(_ pluginID: PluginID) -> String {
+        host.plugins.first(where: { $0.id == pluginID })?.settingsTitle
+            ?? pluginID.rawValue
+    }
+
+    private func cadenceText(_ spec: AutomationScheduleSpec) -> String {
+        switch spec.cadence {
+        case .every(let interval):
+            return "Every \(durationText(interval))"
+        case .daily(let hour, let minute):
+            return String(format: "Daily at %02d:%02d", hour, minute)
+        }
+    }
+
+    private func durationText(_ interval: TimeInterval) -> String {
+        let seconds = Int(interval)
+        if seconds % 86400 == 0 { return "\(seconds / 86400)d" }
+        if seconds % 3600 == 0 { return "\(seconds / 3600)h" }
+        if seconds % 60 == 0 { return "\(seconds / 60)m" }
+        return "\(seconds)s"
+    }
+
+    private func evidenceText(_ record: AutomationRunRecord) -> String {
+        var parts = [
+            "trigger \(record.trigger.rawValue)",
+            "scheduled for "
+                + record.scheduledFor.formatted(
+                    date: .abbreviated,
+                    time: .standard
+                ),
+        ]
+        if record.late { parts.append("late") }
+        parts.append(
+            record.delivered
+                ? "delivered"
+                : "dropped — no live plugin took it"
+        )
+        return parts.joined(separator: " · ")
+    }
+}
+
+private extension AutomationScheduler.ScheduleListing {
+    /// View identity for the settings list: (plugin, schedule) is unique by the
+    /// manifest's own duplicate-id rule.
+    var rowID: String {
+        pluginID.rawValue + "/" + spec.id
     }
 }
 

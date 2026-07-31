@@ -75,10 +75,10 @@ precedent):
   when it is within `grace`; staler misses skip silently and the schedule re-arms from
   `now`. A double tick at one instant fires nothing twice (Orca's idempotent-run rule,
   kept without its persistence machinery).
-- Payload: `{ scheduleId, scheduledFor: ISO-8601, late: Bool, trigger: "scheduled" }`.
-  `late` is set when the firing ran more than 2 minutes behind its instant. `trigger`
-  is reserved for a future manual "Run now" (`"manual"`), which will reuse this exact
-  event rather than grow a second path.
+- Payload: `{ scheduleId, scheduledFor: ISO-8601, late: Bool, trigger }`. `late` is
+  set when the firing ran more than 2 minutes behind its instant. `trigger` is
+  `"scheduled"` from the tick loop and `"manual"` from the settings surface's Run Now
+  (T-060) — one event, one emit site, distinguishable only by this value.
 - Reconcile rides `PluginHost.onPluginLifecycleChanged` — load, hot reload,
   enable/disable, uninstall. An unchanged spec keeps its phase across reloads; a
   changed spec recomputes from reconcile time; only loaded, enabled plugins schedule.
@@ -192,15 +192,33 @@ rejected packaging (a broker plugin providing `agent.run` as a plugin-owned inte
 would have executed under the broker's grants — authority laundering — and is
 recorded in T-048.
 
-## Recorded non-goals of this slice (follow-ups)
+## The visibility surface (T-060)
+
+Settings ▸ Automation is where a human sees that automations exist at all — before
+it, a schedule lived only in a manifest and in its side effects.
+
+- **Schedules**: every armed schedule of every loaded, enabled plugin — owning
+  plugin, cadence, and the live next-due instant — read DIRECT from
+  `AutomationScheduler` state (same owner, invariant 6). Zero new `tenon` members;
+  the plugin boundary is not involved in display.
+- **Run Now**: mints a manual firing (`AutomationScheduler.manualFiring`) and
+  delivers it through `PluginHost.automationFired`, the same single emit site the
+  tick loop uses; the plugin sees the ordinary `automation.fired` with
+  `trigger: "manual"`. A manual run never shifts the schedule's phase — `nextDue`
+  is untouched.
+- **Run history**: a bounded, newest-first buffer (`AutomationRunHistory`, capacity
+  128, invariant 10) recorded at the one place firings are delivered, so history
+  cannot disagree with delivery. Each row carries exactly the facts the plugin
+  received — schedule, scheduled instant, trigger, lateness — plus the host-side
+  delivery outcome (a live, subscribed generation took the event, or it dropped).
+  Reconcile never touches it: history survives hot reloads of the plugin it
+  describes. A deep link from a row into a per-plugin log surface waits on such a
+  surface existing.
+
+## Recorded non-goals (follow-ups)
 
 - **Cross-restart catch-up**: `nextDue` is in-memory; a schedule missed while the app
   was not running does not fire on launch. Needs a small persisted last-fired map.
-- **Manual "Run now" / run history surface**: the `trigger` field and the run-shaped
-  payload are the hooks; a palette/UI affordance and an evidence-linked run log are
-  their own classified changes.
-- **Single-file scripts** (T-047): one `.js` with an embedded manifest header, same
-  decoder, same identity rules — packaging ergonomics only.
 - **Unattended terminal scope**: `terminal.run.v1` targets the invocation scope's
   visible terminal; a headless firing wants an explicit pane/tab designation story
   (adjacent: T-040).

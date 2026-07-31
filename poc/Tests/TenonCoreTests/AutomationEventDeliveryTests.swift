@@ -98,6 +98,77 @@ final class AutomationEventDeliveryTests: XCTestCase {
         )
     }
 
+    // MARK: - T-060: Run now rides the same event, delivery outcome is reported
+
+    func testManualFiringDeliversTheSameEventWithManualTrigger() async throws {
+        let fixture = try await makeFixture()
+        let host = fixture.host
+
+        let waiting = await eventually {
+            statusText(host, "dev.test.auto-a") == "a-waiting"
+        }
+        XCTAssertTrue(waiting, "fixture plugin never reached its idle state")
+
+        let scheduler = AutomationScheduler(calendar: .current)
+        scheduler.reconcile(host.plugins, now: t0)
+        let firing = try XCTUnwrap(
+            scheduler.manualFiring(
+                pluginID: "dev.test.auto-a",
+                scheduleID: "tick",
+                now: t0.addingTimeInterval(5)
+            ),
+            "an armed schedule must be manually firable"
+        )
+
+        await host.automationFired(firing)
+
+        let fired = await eventually {
+            statusText(host, "dev.test.auto-a")
+                == "a-fired tick late=false trigger=manual"
+        }
+        XCTAssertTrue(
+            fired,
+            "the plugin must see a Run now as the same automation.fired event, "
+                + "distinguished only by trigger=manual; status: "
+                + (statusText(host, "dev.test.auto-a") ?? "nil")
+        )
+    }
+
+    func testAutomationFiredReportsWhetherALiveGenerationTookTheEvent() async throws {
+        let fixture = try await makeFixture()
+        let host = fixture.host
+
+        let waiting = await eventually {
+            statusText(host, "dev.test.auto-a") == "a-waiting"
+        }
+        XCTAssertTrue(waiting, "fixture plugin never reached its idle state")
+
+        let delivered = await host.automationFired(
+            AutomationScheduler.Firing(
+                pluginID: "dev.test.auto-a",
+                scheduleID: "tick",
+                scheduledFor: t0,
+                late: false,
+                trigger: .scheduled
+            )
+        )
+        XCTAssertTrue(delivered, "a live, subscribed generation took the event")
+
+        let dropped = await host.automationFired(
+            AutomationScheduler.Firing(
+                pluginID: "dev.test.vanished",
+                scheduleID: "tick",
+                scheduledFor: t0,
+                late: false,
+                trigger: .scheduled
+            )
+        )
+        XCTAssertFalse(
+            dropped,
+            "a firing for a plugin with no live session drops, and the history must say so"
+        )
+    }
+
     // MARK: - Fixture
 
     private struct Fixture {

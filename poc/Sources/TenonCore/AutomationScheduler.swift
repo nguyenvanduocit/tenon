@@ -1,4 +1,5 @@
 import Foundation
+import Observation
 import TenonIntentCore
 
 /// Host-side wall-clock scheduler for manifest-declared automation schedules (T-046).
@@ -7,16 +8,38 @@ import TenonIntentCore
 /// lives only at the composition root's imperative tick edge, so every rule here is
 /// assertable without a window or a real clock. Firings are delivered by the caller as
 /// the owner-scoped EVENT `automation.fired` (`PluginHost.automationFired`).
+///
+/// T-060 adds the visibility half: `listings` for the settings surface, `manualFiring`
+/// for Run now, and a bounded `runHistory` recorded at the same edge that delivers.
 @MainActor
+@Observable
 public final class AutomationScheduler {
     /// One due occurrence for one plugin's schedule.
     public struct Firing: Sendable, Equatable {
+        /// What put this firing on the wire. `manual` is a user's Run now; the plugin
+        /// sees it only as the payload's reserved `trigger` value — same event, same
+        /// emit site (T-060).
+        public enum Trigger: String, Sendable {
+            case scheduled
+            case manual
+        }
+
         public let pluginID: PluginID
         public let scheduleID: String
         public let scheduledFor: Date
         /// The occurrence fired well past its instant (recovered from a sleep or a
         /// missed stretch) — more than `lateThreshold` behind the tick.
         public let late: Bool
+        public let trigger: Trigger
+    }
+
+    /// One row of the settings surface: a schedule that is currently armed, with the
+    /// instant it will next fire. Pure projection of scheduler state — the UI renders
+    /// this DIRECT, no plugin boundary is crossed.
+    public struct ScheduleListing: Sendable, Equatable {
+        public let pluginID: PluginID
+        public let spec: AutomationScheduleSpec
+        public let nextDue: Date
     }
 
     /// A firing further behind than the tick cadence explains is marked late.
@@ -94,7 +117,8 @@ public final class AutomationScheduler {
                         pluginID: key.pluginID,
                         scheduleID: key.scheduleID,
                         scheduledFor: latest,
-                        late: lateBy > Self.lateThreshold
+                        late: lateBy > Self.lateThreshold,
+                        trigger: .scheduled
                     )
                 )
             }
@@ -105,5 +129,62 @@ public final class AutomationScheduler {
             entries[key] = entry
         }
         return firings
+    }
+
+    /// Every armed schedule, deterministically ordered like `tick`'s firings.
+    public func listings() -> [ScheduleListing] {
+        entries
+            .map { key, entry in
+                ScheduleListing(
+                    pluginID: key.pluginID,
+                    spec: entry.spec,
+                    nextDue: entry.nextDue
+                )
+            }
+            .sorted {
+                ($0.pluginID.rawValue, $0.spec.id)
+                    < ($1.pluginID.rawValue, $1.spec.id)
+            }
+    }
+
+    /// Mints a user-directed firing for one armed schedule, or nil when no such
+    /// schedule is armed. Deliberately leaves `nextDue` untouched: Run now answers
+    /// "did my automation work", it does not shift the schedule's phase.
+    public func manualFiring(
+        pluginID: PluginID,
+        scheduleID: String,
+        now: Date
+    ) -> Firing? {
+        guard entries[Key(pluginID: pluginID, scheduleID: scheduleID)] != nil
+        else {
+            return nil
+        }
+        return Firing(
+            pluginID: pluginID,
+            scheduleID: scheduleID,
+            scheduledFor: now,
+            late: false,
+            trigger: .manual
+        )
+    }
+
+    /// Recent firings, newest first, bounded by `AutomationRunHistory.capacity`.
+    /// Reconcile never touches this — history outlives the hot reload of the plugin
+    /// it describes.
+    public private(set) var runHistory = AutomationRunHistory()
+
+    /// Records one delivered (or dropped) firing at the edge that delivered it.
+    public func recordRun(_ firing: Firing, firedAt: Date, delivered: Bool) {
+        runHistory.record(
+            AutomationRunRecord(
+                pluginID: firing.pluginID,
+                scheduleID: firing.scheduleID,
+                scheduledFor: firing.scheduledFor,
+                firedAt: firedAt,
+                trigger: firing.trigger,
+                late: firing.late,
+                delivered: delivered
+            )
+        )
     }
 }
