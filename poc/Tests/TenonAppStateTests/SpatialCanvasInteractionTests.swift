@@ -2,7 +2,9 @@ import XCTest
 import AppKit
 @testable import TenonApp
 import TenonCore
+import TenonIntentCore
 
+@MainActor
 final class SpatialCanvasInteractionTests: XCTestCase {
     func testHitTestingPrioritizesInvisibleCornersEdgesThenHeader() {
         let bounds = CGRect(x: 0, y: 0, width: 200, height: 120)
@@ -244,9 +246,13 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertEqual(closedSlotID, slotID)
     }
 
-    func testCanvasAndSlotRenderEdgeToEdgeWithoutDecorativeBorders() throws {
+    /// The canvas itself is undecorated — it is the background the gutters show through.
+    /// The card carries the chrome, inset by half a gutter on every side
+    /// (`SpatialCanvasView.applyFrames`). Expectations are derived from `TenonTheme` so
+    /// retuning the theme moves this test with it instead of freezing today's numbers.
+    func testCanvasIsUndecoratedAndTheCardCarriesTheChromeInsideAHalfGutter() throws {
         let slotID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12),
             ],
@@ -258,28 +264,84 @@ final class SpatialCanvasInteractionTests: XCTestCase {
                 .compactMap { $0 as? SpatialSlotCardView }
                 .first { $0.slotID == slotID }
         )
+        let bounds = fixture.canvas.bounds
+        let inset = TenonTheme.slotGutter / 2
 
         XCTAssertEqual(fixture.canvas.layer?.borderWidth, 0)
         XCTAssertEqual(fixture.canvas.layer?.cornerRadius, 0)
-        XCTAssertEqual(card.frame, fixture.canvas.bounds)
-        XCTAssertEqual(card.layer?.borderWidth, 0)
-        XCTAssertEqual(card.layer?.cornerRadius, 0)
+        // Stated independently of the theme, so retuning `slotGutter` to zero fails here
+        // instead of quietly moving the expectation along with the code.
+        XCTAssertGreaterThan(card.frame.minX, bounds.minX)
+        XCTAssertGreaterThan(card.frame.minY, bounds.minY)
+        XCTAssertLessThan(card.frame.maxX, bounds.maxX)
+        XCTAssertLessThan(card.frame.maxY, bounds.maxY)
+        XCTAssertGreaterThan(
+            card.layer?.cornerRadius ?? 0,
+            0,
+            "a pane reads as a card, not as a rectangle of background"
+        )
+        // And the exact geometry today, which is what makes a layout regression legible.
+        XCTAssertEqual(
+            card.frame,
+            bounds.insetBy(dx: inset, dy: inset),
+            "a single full-width slot still leaves a half-gutter margin"
+        )
+    }
+
+    /// The functional half of the gutter, and the reason it is not merely decorative:
+    /// two neighbours are separated by a full gutter, so their resize edges can never
+    /// land on the same pixel and a drag is always unambiguous about which pane it grabs.
+    func testNeighbouringCardsAreSeparatedByAFullGutterSoResizeEdgesNeverOverlap() throws {
+        let leftID = UUID()
+        let rightID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(leftID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(rightID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: leftID
+        )
+        defer { fixture.window.orderOut(nil) }
+        let cards = fixture.canvas.subviews
+            .compactMap { $0 as? SpatialSlotCardView }
+        let left = try XCTUnwrap(cards.first { $0.slotID == leftID })
+        let right = try XCTUnwrap(cards.first { $0.slotID == rightID })
+
+        // The rule, stated without reference to the theme: there is a gap at all. Remove
+        // the gutter and two resize edges land on the same pixel, which is the ambiguity
+        // the inset exists to prevent.
+        XCTAssertGreaterThan(
+            right.frame.minX - left.frame.maxX,
+            0,
+            "neighbours must not share an edge, or a resize drag cannot say which pane it grabbed"
+        )
+        // And its size today.
+        XCTAssertEqual(
+            right.frame.minX - left.frame.maxX,
+            TenonTheme.slotGutter
+        )
     }
 
     func testInvalidLayoutPreviewKeepsItsErrorBorder() {
         let card = SpatialSlotCardView(slotID: UUID())
 
         card.setState(isActive: true, previewIsValid: nil)
-        XCTAssertEqual(card.layer?.borderWidth, 0)
+        let resting = try? XCTUnwrap(card.layer?.borderWidth)
+        XCTAssertEqual(resting, 1)
 
         card.setState(isActive: true, previewIsValid: false)
         XCTAssertEqual(card.layer?.borderWidth, 1.5)
+        XCTAssertGreaterThan(
+            card.layer?.borderWidth ?? 0,
+            resting ?? 0,
+            "an invalid preview must read as heavier than a resting card, not merely different"
+        )
     }
 
     func testCloseInactiveSlotDoesNotFocusItBeforeTheCloseAction() throws {
         let activeID = UUID()
         let inactiveID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 6, height: 12),
                 workspaceSlot(inactiveID, x: 6, y: 0, width: 6, height: 12),
@@ -310,7 +372,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
     func testActiveDragKeepsCanvasFocusUntilMouseUpThenRestoresResponder() throws {
         let slotID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(slotID, x: 0, y: 0, width: 3, height: 3),
             ],
@@ -342,7 +404,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
     func testInactiveDragDoesNotChangeFocusBeforeEscapeAndRestoresResponder() throws {
         let activeID = UUID()
         let inactiveID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 3, height: 3),
                 workspaceSlot(inactiveID, x: 6, y: 0, width: 3, height: 3),
@@ -386,10 +448,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
     }
 
-    func testInactiveFileDragRestoresPreviousResponderAfterCommit() {
+    func testInactiveFileDragRestoresPreviousResponderAfterCommit() throws {
         let activeID = UUID()
         let inactiveFileID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 3, height: 3),
                 workspaceSlot(
@@ -423,10 +485,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertTrue(fixture.window.firstResponder === previousResponder)
     }
 
-    func testInactiveTerminalDragRestoresThenRequestsFocusForNewTerminal() {
+    func testInactiveTerminalDragRestoresThenRequestsFocusForNewTerminal() throws {
         let activeID = UUID()
         let inactiveTerminalID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 3, height: 3),
                 workspaceSlot(inactiveTerminalID, x: 6, y: 0, width: 3, height: 3),
@@ -462,7 +524,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
     func testRejectedStaleGestureRendersTheAuthoritativeStoreGeometry() throws {
         let slotID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(slotID, x: 0, y: 0, width: 3, height: 3),
             ],
@@ -495,12 +557,17 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             fixture.store.catalog.slot(id: slotID)?.rect,
             GridRect(x: 0, y: 3, width: 3, height: 3)
         )
-        XCTAssertEqual(card.frame.origin, CGPoint(x: 0, y: 300))
+        // Row 3 of a 12-row canvas, plus the half-gutter inset every card carries.
+        let inset = TenonTheme.slotGutter / 2
+        XCTAssertEqual(
+            card.frame.origin,
+            CGPoint(x: inset, y: 300 + inset)
+        )
     }
 
     func testHeaderContextMenuOffersSplitStackDuplicateAndClose() throws {
         let slotID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
             activeSlotID: slotID
         )
@@ -525,7 +592,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
     func testHeaderContextMenuSplitTargetsTheClickedSlotNotTheActiveOne() throws {
         let activeID = UUID()
         let clickedID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 6, height: 12),
                 workspaceSlot(clickedID, x: 6, y: 0, width: 6, height: 12),
@@ -547,7 +614,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
     func testHeaderContextMenuStackSplitsTheClickedSlotDownward() throws {
         let slotID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
             activeSlotID: slotID
         )
@@ -568,7 +635,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let narrowID = UUID()
         let shortID = UUID()
         let fillID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(narrowID, x: 0, y: 0, width: 3, height: 12),
                 workspaceSlot(shortID, x: 3, y: 0, width: 9, height: 3),
@@ -590,7 +657,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
     func testHeaderContextMenuCloseRemovesTheClickedSlot() throws {
         let activeID = UUID()
         let clickedID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 6, height: 12),
                 workspaceSlot(clickedID, x: 6, y: 0, width: 6, height: 12),
@@ -610,7 +677,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let activeID = UUID()
         let clickedID = UUID()
         let tree = SlotContent.pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree")
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(activeID, x: 0, y: 0, width: 6, height: 12),
                 workspaceSlot(clickedID, x: 6, y: 0, width: 6, height: 12, content: tree),
@@ -636,7 +703,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
     func testHeaderContextMenuDisablesDuplicateWhenThePaneCanNeitherFitNorSplit() throws {
         let crampedID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [
                 workspaceSlot(crampedID, x: 0, y: 0, width: 3, height: 3),
                 workspaceSlot(UUID(), x: 3, y: 0, width: 9, height: 12),
@@ -652,7 +719,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
     func testHeaderMenuAppearsForHeaderRegionAndNotTheBody() throws {
         let slotID = UUID()
-        let fixture = makeCanvasFixture(
+        let fixture = try makeCanvasFixture(
             slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
             activeSlotID: slotID
         )
@@ -736,7 +803,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
     private func makeCanvasFixture(
         slots: [WorkspaceSlot],
         activeSlotID: UUID
-    ) -> CanvasFixture {
+    ) throws -> CanvasFixture {
         let tab = TenonCore.Tab(
             slots: slots,
             activeSlotID: activeSlotID
@@ -757,9 +824,22 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let pool = SurfacePool(backendName: "Stub") { _, _ in
             StubTerminalSurface()
         }
-        let host = PluginHost(
-            pluginsRoot: workspacePath
-                .appendingPathComponent("tenon-empty-plugins-\(UUID())")
+        let pluginsRoot = workspacePath
+            .appendingPathComponent("tenon-empty-plugins-\(UUID())")
+        let stateRoot = workspacePath
+            .appendingPathComponent("tenon-empty-plugins-state-\(UUID())")
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: stateRoot)
+        }
+        // An empty plugin root on purpose: these tests are about pointer geometry on the
+        // canvas, so the host is present only to satisfy `configure` and must contribute
+        // no panes of its own.
+        let host = try PluginHost(
+            pluginsRoot: pluginsRoot,
+            stateRoot: stateRoot,
+            kernel: IntentKernelComponents(
+                persistence: IntentSQLiteIdempotencyPersistence.inMemory()
+            )
         )
         let router = DragRouter()
         let container = FlippedTestView(
@@ -782,7 +862,13 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             activeSlotID: activeSlotID,
             store: store,
             pool: pool,
+            webPool: PluginWebSurfacePool(),
             host: host,
+            editorStates: EditorPaneStateStore(),
+            pluginSnapshots: [],
+            pluginViewSections: [],
+            webSurfaceTitles: [:],
+            paneAttention: [:],
             router: router
         )
         canvas.layout()

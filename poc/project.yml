@@ -69,6 +69,13 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
+  # There is deliberately no `tenon-cli` target here, and adding one would break the
+  # feature it looks like it would help. `Settings ▸ CLI ▸ Install` copies the bundled
+  # binary out to ~/.local/bin, so it has to run with nothing but the OS around it. An
+  # Xcode tool target would link the dynamic `TenonCore.framework` this app embeds in
+  # Contents/Frameworks: fine inside the bundle, broken the moment it is copied out.
+  # SwiftPM links it statically, so `install.sh` builds it there and copies it into
+  # Contents/MacOS before signing, then verifies the shipped file is self-contained.
   Tenon:
     type: application
     platform: macOS
@@ -163,12 +170,16 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.intent-core-tests
         GENERATE_INFOPLIST_FILE: YES
 
-  TenonAppTests:
+  # The headless app-layer bundle. It carries the same name and directory as the
+  # SwiftPM test target in Package.swift, so `swift test` and `xcodebuild test` run
+  # the same files — the two used to disagree, and the files only Xcode named went
+  # years without compiling because nothing ran them.
+  TenonAppStateTests:
     type: bundle.unit-test
     platform: macOS
     deploymentTarget: "14.0"
     sources:
-      - path: Tests/TenonAppTests
+      - path: Tests/TenonAppStateTests
         excludes:
           - "**/.omc"
           - "**/.omc/**"
@@ -176,7 +187,7 @@ targets:
       - target: Tenon
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.app-tests
+        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.app-state-tests
         GENERATE_INFOPLIST_FILE: YES
 
   TenonIntegrationTests:
@@ -230,7 +241,7 @@ schemes:
       targets:
         - TenonIntentCoreTests
         - TenonCoreTests
-        - TenonAppTests
+        - TenonAppStateTests
         - TenonIntegrationTests
         - TenonUITests
     archive:

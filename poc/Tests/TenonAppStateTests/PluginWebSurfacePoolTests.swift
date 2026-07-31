@@ -65,19 +65,21 @@ final class PluginWebSurfacePoolTests: XCTestCase {
         var surface: WebSurface? = WebSurface(
             websiteDataStoreIdentifier: installationID
         )
-        let webView = try XCTUnwrap(surface?.webView)
+        // Read the two values out rather than binding the view or its configuration:
+        // either binding would keep the data store open past `surface = nil`, and the
+        // teardown below is precisely a test of the store being closable.
+        let storeIdentifier = try XCTUnwrap(
+            surface?.webView?.configuration.websiteDataStore.identifier
+        )
+        let isPersistent = try XCTUnwrap(
+            surface?.webView?.configuration.websiteDataStore.isPersistent
+        )
 
-        XCTAssertEqual(
-            webView.configuration.websiteDataStore.identifier,
-            installationID
-        )
-        XCTAssertEqual(
-            webView.configuration.websiteDataStore.isPersistent,
-            true
-        )
+        XCTAssertEqual(storeIdentifier, installationID)
+        XCTAssertTrue(isPersistent)
 
         surface = nil
-        try await WKWebsiteDataStore.remove(forIdentifier: installationID)
+        try await removeDataStore(installationID)
     }
 
     @MainActor
@@ -101,21 +103,21 @@ final class PluginWebSurfacePoolTests: XCTestCase {
         )
         let firstSurface = pool.surface(for: first)
         _ = pool.surface(for: second)
-        weak var releasedWebView = firstSurface.webView
+        weak let releasedWebView = firstSurface.webView
 
         pool.retainOnly([second])
 
         XCTAssertNil(pool.existingSurface(for: first))
-        XCTAssertNil(releasedWebView)
         XCTAssertNotNil(pool.existingSurface(for: second))
+        // The pool drops its reference synchronously; the `WKWebView` itself dies on a
+        // later turn, so a bounded wait is the honest assertion. If it never clears, the
+        // closed pane leaked its renderer — which is what this test exists to catch.
+        let released = await waitUntilReleased { releasedWebView }
+        XCTAssertTrue(released, "closing a pane must release its WKWebView")
 
         pool.disposeAll()
-        try await WKWebsiteDataStore.remove(
-            forIdentifier: firstInstallationID
-        )
-        try await WKWebsiteDataStore.remove(
-            forIdentifier: secondInstallationID
-        )
+        try await removeDataStore(firstInstallationID)
+        try await removeDataStore(secondInstallationID)
     }
 
     @MainActor
@@ -138,7 +140,8 @@ final class PluginWebSurfacePoolTests: XCTestCase {
           "id": "dev.test.web-lifecycle",
           "name": "web-lifecycle",
           "version": "1",
-          "permissions": ["web.view"]
+          "permissions": ["web.view"],
+          "intents": { "uses": [], "provides": [] }
         }
         """.write(
             to: pluginDirectory.appendingPathComponent("manifest.json"),
@@ -164,12 +167,26 @@ final class PluginWebSurfacePoolTests: XCTestCase {
                 viewID: "browser"
             )
         )
+        let stateRoot = root.deletingLastPathComponent()
+            .appendingPathComponent(
+                "\(root.lastPathComponent)-state",
+                isDirectory: true
+            )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: stateRoot)
+        }
         let kernel = try IntentKernelComponents(
             persistence: IntentSQLiteIdempotencyPersistence.inMemory()
         )
+        // `.bundledInventory` because this fixture asserts what the pool does with a
+        // plugin that HAS `web.view`. Consent is T-021's separate rule and has its own
+        // tests; leaving it to prompt here would make this test fail for a reason it is
+        // not about.
         let host = try PluginHost(
             pluginsRoot: root,
-            kernel: kernel
+            stateRoot: stateRoot,
+            kernel: kernel,
+            authorization: .bundledInventory
         )
         let pool = PluginWebSurfacePool()
         host.onPluginLifecycleChanged = {
@@ -190,7 +207,7 @@ final class PluginWebSurfacePoolTests: XCTestCase {
             )
         )
         let enabledSurface = pool.surface(for: key)
-        weak var disabledWebView = enabledSurface.webView
+        weak let disabledWebView = enabledSurface.webView
 
         try await host.setEnabled(false, pluginID: pluginID)
 
@@ -211,19 +228,21 @@ final class PluginWebSurfacePoolTests: XCTestCase {
         )
         XCTAssertEqual(reenabledKey.installation.installationID, installationID)
         let reenabledSurface = pool.surface(for: reenabledKey)
-        weak var uninstalledWebView = reenabledSurface.webView
+        weak let uninstalledWebView = reenabledSurface.webView
 
         try await host.uninstall(pluginID: pluginID)
 
         XCTAssertNil(pool.existingSurface(for: reenabledKey))
         XCTAssertNil(uninstalledWebView)
-        for _ in 0 ..< 1_000
-            where !pool.retiredDataStoreIdentifiers.contains(installationID)
-        {
-            await Task.yield()
+        // Retirement is real work on another task, so the wait has to pass wall-clock
+        // time. A `Task.yield()` loop only offers the scheduler a turn — a thousand of
+        // them can burn through in microseconds, which is why this passed alone and
+        // failed inside the full suite.
+        let retired = await waitUntil {
+            pool.retiredDataStoreIdentifiers.contains(installationID)
         }
         XCTAssertTrue(
-            pool.retiredDataStoreIdentifiers.contains(installationID),
+            retired,
             "uninstall retires the installation-scoped persistent data store"
         )
         await host.shutdown()
@@ -256,6 +275,56 @@ final class PluginWebSurfacePoolTests: XCTestCase {
                 URL(string: "https://user:secret@example.com/")
             )
         )
+    }
+
+    /// `WKWebsiteDataStore.remove(forIdentifier:)` throws `InvalidTransition` while a
+    /// `WKWebView` still holds the store open, and a view dies a turn or two after the
+    /// statement that dropped its last reference. Retrying is what separates "the store
+    /// is still in use" from "the store cannot be removed at all" — the last attempt is
+    /// left unguarded so a genuine failure still surfaces as one.
+    @MainActor
+    private func removeDataStore(
+        _ identifier: UUID,
+        attempts: Int = 200
+    ) async throws {
+        for _ in 0 ..< attempts {
+            do {
+                try await WKWebsiteDataStore.remove(forIdentifier: identifier)
+                return
+            } catch {
+                await Task.yield()
+            }
+        }
+        try await WKWebsiteDataStore.remove(forIdentifier: identifier)
+    }
+
+    /// Bounded wait on a condition that other tasks make true. Sleeps rather than yields,
+    /// so a loaded machine gets the same answer an idle one does, and returns false on
+    /// expiry so the caller asserts rather than hangs.
+    @MainActor
+    private func waitUntil(
+        attempts: Int = 200,
+        _ condition: () -> Bool
+    ) async -> Bool {
+        for _ in 0 ..< attempts {
+            if condition() { return true }
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return condition()
+    }
+
+    /// Bounded wait for a weak reference to clear. Returns false if it never does, so the
+    /// caller asserts a leak rather than hanging.
+    @MainActor
+    private func waitUntilReleased(
+        attempts: Int = 200,
+        _ reference: () -> AnyObject?
+    ) async -> Bool {
+        for _ in 0 ..< attempts {
+            if reference() == nil { return true }
+            await Task.yield()
+        }
+        return reference() == nil
     }
 
     private func pluginSnapshot(

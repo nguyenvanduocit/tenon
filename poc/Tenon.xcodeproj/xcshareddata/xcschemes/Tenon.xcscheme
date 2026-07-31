@@ -66,9 +66,9 @@
             parallelizable = "NO">
             <BuildableReference
                BuildableIdentifier = "primary"
-               BlueprintIdentifier = "D4F321BF094CA31ED288763A"
-               BuildableName = "TenonAppTests.xctest"
-               BlueprintName = "TenonAppTests"
+               BlueprintIdentifier = "D11F130A7E7FA06DB6F85C0C"
+               BuildableName = "TenonAppStateTests.xctest"
+               BlueprintName = "TenonAppStateTests"
                ReferencedContainer = "container:Tenon.xcodeproj">
             </BuildableReference>
          </TestableReference>

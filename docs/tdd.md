@@ -35,6 +35,25 @@ on first compile → `SurfacePool`/`ContentView`/`TenonApp` wired with zero new 
 | Terminal, rendering, input | `GhosttySurface` behind the `TerminalSurface` seam | **not unit-tested** — smoke launch only | — |
 | SwiftUI views | projections of core state | **not tested** — they contain no rules to test | — |
 
+## Which runner covers which directory
+
+`swift test` is the evidence bar, so every directory it cannot reach has to earn the
+exclusion out loud. `poc/Tests/` holds five directories:
+
+| Directory | `swift test` | `xcodebuild test` | Why |
+|---|---|---|---|
+| `TenonIntentCoreTests` | yes | yes | pure kernel |
+| `TenonCoreTests` | yes | yes | headless domain + plugin host |
+| `TenonAppStateTests` | yes | yes | headless app layer: intent providers, AppKit/SwiftUI state types |
+| `TenonIntegrationTests` | no | yes | launches a real Ghostty surface; needs a GPU and a PTY |
+| `TenonUITests` | no | yes | XCUITest drives the built `.app`; needs a logged-in GUI session |
+
+`Package.swift` and `project.yml` name the same three headless targets on purpose. When
+they disagreed, the directory only Xcode knew about (`TenonAppTests`) stopped compiling and
+nobody noticed, because no runner ever built it — its four files sat in the tree reading as
+coverage while asserting nothing. If you add a test directory, add it to **both** manifests,
+or add a row here saying which runner skips it and why.
+
 ## Design rules that keep this true
 
 1. **Mutations return events.** `ws.splitFocusedPane(.horizontal) -> [WorkspaceEvent]`
