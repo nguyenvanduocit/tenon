@@ -821,6 +821,326 @@ final class IntentPolicyTests: XCTestCase {
         }
     }
 
+    func testMissingAncestorChainBindsInsideGrantAndOutsideGrantStillDenies() async throws {
+        let engine = PolicyEngine()
+        let caller = pluginPrincipal("plugin:dev.tenon.kanban")
+        let intent = try IntentID("file.read.v1")
+        let capability = try CapabilityID("filesystem.read")
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        let workspace = base.appendingPathComponent("workspace")
+        let foreign = base.appendingPathComponent("foreign")
+        try FileManager.default.createDirectory(
+            at: workspace,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: foreign,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let root = try CanonicalFilesystemRoot(path: workspace.path)
+        try await engine.setExposure(pluginExposure, for: intent)
+        try await engine.replaceDeclaredUses([intent], for: caller)
+        try await engine.replaceGrants(
+            [
+                CapabilityGrant(
+                    capability: capability,
+                    scope: CapabilityGrantScope(
+                        workspaces: .any,
+                        panes: .any,
+                        filesystem: .roots([root])
+                    )
+                ),
+            ],
+            for: caller
+        )
+
+        // Both the parent and the grandparent are missing; the binding anchors at
+        // the workspace directory, so the grant can still judge the full path.
+        let inside = workspace
+            .appendingPathComponent(".kanban/tasks/board.md")
+            .path
+        let insideDecision = await engine.authorize(
+            invocation(
+                intent: intent,
+                caller: caller,
+                capability: capability,
+                filesystemPaths: [inside]
+            )
+        )
+        XCTAssertEqual(insideDecision.verdict, .allowed)
+
+        let outside = foreign
+            .appendingPathComponent(".kanban/tasks/board.md")
+            .path
+        let outsideDecision = await engine.authorize(
+            invocation(
+                intent: intent,
+                caller: caller,
+                capability: capability,
+                filesystemPaths: [outside]
+            )
+        )
+        XCTAssertEqual(
+            outsideDecision.verdict,
+            .denied(
+                .filesystemPathOutsideGrant(capability: capability, path: outside)
+            )
+        )
+
+        let nulPath = workspace.path + "/.kanban/\u{0}board.md"
+        let nulDecision = await engine.authorize(
+            invocation(
+                intent: intent,
+                caller: caller,
+                capability: capability,
+                filesystemPaths: [nulPath]
+            )
+        )
+        XCTAssertEqual(
+            nulDecision.verdict,
+            .denied(.invalidFilesystemPath(capability: capability, path: nulPath))
+        )
+    }
+
+    func testMissingAncestorBindingResolvesAgainstDeepestExistingAncestor() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        let real = base.appendingPathComponent("real")
+        let door = base.appendingPathComponent("door")
+        try FileManager.default.createDirectory(
+            at: real,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: door,
+            withDestinationURL: real
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        // Symlinks resolve on the existing part only; the missing suffix joins
+        // literally, so grant prefix matching sees the canonical spelling.
+        let binding = try AuthorizedFilesystemPath(
+            requestedPath: door.appendingPathComponent(".kanban/board.md").path
+        )
+        XCTAssertEqual(
+            binding.resolvedPath,
+            real.appendingPathComponent(".kanban/board.md").path
+        )
+        XCTAssertEqual(binding.missingAncestorComponents, [".kanban"])
+        XCTAssertEqual(binding.leafName, "board.md")
+        XCTAssertFalse(binding.existedAtAuthorization)
+    }
+
+    func testMissingSuffixComponentValidationRejectsTraversalSpellings() throws {
+        for invalid in ["..", ".", "", "a/b", "a\u{0}b"] {
+            XCTAssertThrowsError(
+                try AuthorizedFilesystemPath.validateMissingAncestorComponent(
+                    invalid,
+                    requestedPath: "/probe"
+                ),
+                "expected \(invalid.debugDescription) to fail closed"
+            )
+        }
+        XCTAssertNoThrow(
+            try AuthorizedFilesystemPath.validateMissingAncestorComponent(
+                ".kanban",
+                requestedPath: "/probe"
+            )
+        )
+    }
+
+    func testAncestorDirectoryOpenCrossChecksDescriptorAgainstPathIdentity() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        let real = base.appendingPathComponent("real")
+        let door = base.appendingPathComponent("door")
+        try FileManager.default.createDirectory(
+            at: real,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(
+            at: door,
+            withDestinationURL: real
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        // A spelling that is itself a symlink opens to a different inode than the
+        // one the spelling names without following links; the dev/ino cross-check
+        // is what refuses to pin it.
+        XCTAssertThrowsError(
+            try AuthorizedFilesystemPath.openCrossCheckedDirectory(
+                atResolvedPath: door.path,
+                requestedPath: door.path
+            )
+        )
+
+        let descriptor = try AuthorizedFilesystemPath.openCrossCheckedDirectory(
+            atResolvedPath: real.path,
+            requestedPath: real.path
+        )
+        XCTAssertGreaterThanOrEqual(descriptor, 0)
+        close(descriptor)
+    }
+
+    func testSymlinkLeafOnExistingParentStillFailsBinding() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+        let target = base.appendingPathComponent("target.txt")
+        try Data("target".utf8).write(to: target)
+        let link = base.appendingPathComponent("link.txt")
+        try FileManager.default.createSymbolicLink(
+            at: link,
+            withDestinationURL: target
+        )
+
+        XCTAssertThrowsError(
+            try AuthorizedFilesystemPath(requestedPath: link.path)
+        )
+    }
+
+    func testFileOccupyingAncestorPositionBindsAndJoinsMissingSuffix() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+        let note = base.appendingPathComponent(".kanban")
+        try Data("a user note".utf8).write(to: note)
+
+        // A regular file occupying an ancestor position means the leaf cannot
+        // exist; the binding anchors above it so the provider can answer
+        // not-found, and the use-time no-follow walk still refuses to
+        // traverse the file.
+        let binding = try AuthorizedFilesystemPath(
+            requestedPath: base.appendingPathComponent(".kanban/board.md").path
+        )
+        XCTAssertEqual(binding.missingAncestorComponents, [".kanban"])
+        XCTAssertFalse(binding.existedAtAuthorization)
+        XCTAssertEqual(
+            binding.resolvedPath,
+            base.appendingPathComponent(".kanban/board.md").path
+        )
+
+        let deep = try AuthorizedFilesystemPath(
+            requestedPath: base
+                .appendingPathComponent(".kanban/tasks/board.md")
+                .path
+        )
+        XCTAssertEqual(deep.missingAncestorComponents, [".kanban", "tasks"])
+        XCTAssertFalse(deep.existedAtAuthorization)
+    }
+
+    func testValidatedResolvedPathWalksMissingSuffixAndNeverValidatesASibling()
+        throws
+    {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        let workspace = base.appendingPathComponent("workspace")
+        let outside = base.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(
+            at: workspace,
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createDirectory(
+            at: outside,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+        // A sibling decoy at the anchor: a leaf-only revalidation would find
+        // it and vouch for the wrong entry.
+        try Data("decoy".utf8).write(
+            to: workspace.appendingPathComponent("board.md")
+        )
+        try Data("smuggled".utf8).write(
+            to: outside.appendingPathComponent("board.md")
+        )
+
+        let binding = try AuthorizedFilesystemPath(
+            requestedPath: workspace
+                .appendingPathComponent(".kanban/board.md")
+                .path
+        )
+
+        XCTAssertThrowsError(try binding.validatedResolvedPath()) { error in
+            XCTAssertEqual(
+                error as? AuthorizedFilesystemPathError,
+                .unavailable
+            )
+        }
+
+        try FileManager.default.createSymbolicLink(
+            at: workspace.appendingPathComponent(".kanban"),
+            withDestinationURL: outside
+        )
+        XCTAssertThrowsError(try binding.validatedResolvedPath()) { error in
+            XCTAssertEqual(
+                error as? AuthorizedFilesystemPathError,
+                .becameSymlink
+            )
+        }
+
+        try FileManager.default.removeItem(
+            at: workspace.appendingPathComponent(".kanban")
+        )
+        try FileManager.default.createDirectory(
+            at: workspace.appendingPathComponent(".kanban"),
+            withIntermediateDirectories: false
+        )
+        try Data("board".utf8).write(
+            to: workspace.appendingPathComponent(".kanban/board.md")
+        )
+        XCTAssertEqual(try binding.validatedResolvedPath(), binding.resolvedPath)
+    }
+
+    func testLeafParentDescriptorWalksMissingSuffixToTheLeafDirectory() throws {
+        let base = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-policy-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: base,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: base) }
+
+        let binding = try AuthorizedFilesystemPath(
+            requestedPath: base.appendingPathComponent(".kanban/board.md").path
+        )
+
+        // Still missing: the walk reports which component failed instead of
+        // handing out the anchor as if it were the leaf's parent.
+        XCTAssertThrowsError(
+            try binding.openLeafParentDirectoryDescriptor()
+        ) { error in
+            XCTAssertEqual(
+                error as? AuthorizedFilesystemPathError,
+                .suffixComponentUnavailable(errno: ENOENT)
+            )
+        }
+
+        let kanban = base.appendingPathComponent(".kanban")
+        try FileManager.default.createDirectory(
+            at: kanban,
+            withIntermediateDirectories: false
+        )
+        let descriptor = try binding.openLeafParentDirectoryDescriptor()
+        defer { close(descriptor) }
+        var opened = stat()
+        var expected = stat()
+        XCTAssertEqual(fstat(descriptor, &opened), 0)
+        XCTAssertEqual(lstat(kanban.path, &expected), 0)
+        XCTAssertEqual(opened.st_dev, expected.st_dev)
+        XCTAssertEqual(opened.st_ino, expected.st_ino)
+    }
+
     private var pluginExposure: IntentExposure {
         IntentExposure(discoverableBy: [.plugin], invocableBy: [.plugin])
     }

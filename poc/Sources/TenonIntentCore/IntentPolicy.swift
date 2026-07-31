@@ -74,19 +74,31 @@ public enum PolicyEngineError: Error, Sendable, Equatable {
 public enum AuthorizedFilesystemPathError: Error, Sendable, Equatable {
     case unavailable
     case becameSymlink
+    /// A previously-missing ancestor component could not be opened as a
+    /// directory at use time; carries the errno of the attempt.
+    case suffixComponentUnavailable(errno: Int32)
 }
 
 /// A filesystem location resolved and pinned while policy authorization is evaluated.
 ///
-/// The parent directory descriptor is immutable for the lifetime of this value. Providers
-/// duplicate it and perform descriptor-relative operations, so replacing an intermediate
-/// symlink after authorization cannot redirect the operation. Final-component symlinks are
-/// rejected when the binding is created.
+/// The deepest ancestor directory that existed at authorization is pinned as a
+/// descriptor for the lifetime of this value. Providers reach the directory the
+/// leaf resolves against only through `openLeafParentDirectoryDescriptor()`,
+/// which walks any still-missing components from that descriptor without
+/// following symlinks, so replacing an intermediate symlink after authorization
+/// cannot redirect the operation. Final-component symlinks are rejected when
+/// the binding is created.
 public struct AuthorizedFilesystemPath: @unchecked Sendable, Equatable, Hashable {
     public let requestedPath: String
     public let resolvedPath: String
     public let leafName: String
     public let existedAtAuthorization: Bool
+    /// Components between the pinned ancestor directory and the leaf that could
+    /// not anchor the binding — absent, or occupied by a non-directory — in
+    /// root-to-leaf order. Empty when the immediate parent existed as a
+    /// directory. `openLeafParentDirectoryDescriptor()` walks them without
+    /// following symlinks.
+    public let missingAncestorComponents: [String]
 
     private let parentDirectory: AuthorizedFilesystemDirectory
 
@@ -105,73 +117,188 @@ public struct AuthorizedFilesystemPath: @unchecked Sendable, Equatable, Hashable
             : path.deletingLastPathComponent
         let leafName = path.lastPathComponent.isEmpty ? "." : path.lastPathComponent
 
-        let resolvedParentPath = URL(fileURLWithPath: parentPath)
+        // The binding anchors at the deepest ancestor that is a directory, so a
+        // path whose directories have not been created yet — or whose spelling
+        // crosses a non-directory entry and therefore cannot exist — still
+        // binds and answers not-found instead of failing authorization. A
+        // symlink never joins the missing suffix: an existing one stays on the
+        // resolved prefix and is judged there, exactly as an existing parent
+        // is.
+        var ancestorPath = parentPath
+        var missingAncestorComponents: [String] = []
+        while true {
+            var ancestorMetadata = stat()
+            if Darwin.lstat(ancestorPath, &ancestorMetadata) == 0 {
+                let format = ancestorMetadata.st_mode & S_IFMT
+                if format == S_IFDIR || format == S_IFLNK {
+                    break
+                }
+            } else {
+                guard errno == ENOENT || errno == ENOTDIR else {
+                    throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+                }
+            }
+            let component = (ancestorPath as NSString).lastPathComponent
+            try Self.validateMissingAncestorComponent(
+                component,
+                requestedPath: requestedPath
+            )
+            missingAncestorComponents.insert(component, at: 0)
+            let next = (ancestorPath as NSString).deletingLastPathComponent
+            ancestorPath = next.isEmpty ? "/" : next
+        }
+
+        // Symlinks resolve on the existing part only; the missing suffix cannot
+        // hold any at binding time and joins the resolved spelling literally.
+        let resolvedParentPath = URL(fileURLWithPath: ancestorPath)
             .standardizedFileURL
             .resolvingSymlinksInPath()
             .path
-        let descriptor = Darwin.open(
-            resolvedParentPath,
-            O_RDONLY | O_DIRECTORY | O_CLOEXEC
+        let descriptor = try Self.openCrossCheckedDirectory(
+            atResolvedPath: resolvedParentPath,
+            requestedPath: requestedPath
         )
-        guard descriptor >= 0 else {
-            throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
-        }
         let parentDirectory = AuthorizedFilesystemDirectory(
             descriptor: descriptor,
             resolvedPath: resolvedParentPath
         )
 
-        var descriptorMetadata = stat()
-        var pathMetadata = stat()
-        guard fstat(descriptor, &descriptorMetadata) == 0,
-              Darwin.lstat(resolvedParentPath, &pathMetadata) == 0,
-              descriptorMetadata.st_dev == pathMetadata.st_dev,
-              descriptorMetadata.st_ino == pathMetadata.st_ino
-        else {
-            throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
-        }
-
-        var metadata = stat()
-        let status = leafName.withCString {
-            fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
-        }
         let existed: Bool
-        if status == 0 {
-            guard (metadata.st_mode & S_IFMT) != S_IFLNK else {
-                throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+        if missingAncestorComponents.isEmpty {
+            var metadata = stat()
+            let status = leafName.withCString {
+                fstatat(descriptor, $0, &metadata, AT_SYMLINK_NOFOLLOW)
             }
-            existed = true
+            if status == 0 {
+                guard (metadata.st_mode & S_IFMT) != S_IFLNK else {
+                    throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+                }
+                existed = true
+            } else {
+                guard errno == ENOENT else {
+                    throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+                }
+                existed = false
+            }
         } else {
-            guard errno == ENOENT else {
-                throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
-            }
+            // The leaf's own parent could not anchor the binding, so the leaf
+            // cannot exist; its spelling is held to the same lexical rules as
+            // every other missing component.
+            try Self.validateMissingAncestorComponent(
+                leafName,
+                requestedPath: requestedPath
+            )
             existed = false
         }
 
-        self.requestedPath = requestedPath
-        self.resolvedPath = URL(
+        var resolvedURL = URL(
             fileURLWithPath: resolvedParentPath,
             isDirectory: true
         )
-        .appendingPathComponent(leafName)
-        .standardizedFileURL
-        .path
+        for component in missingAncestorComponents {
+            resolvedURL.appendPathComponent(component)
+        }
+        self.requestedPath = requestedPath
+        self.resolvedPath = resolvedURL
+            .appendingPathComponent(leafName)
+            .standardizedFileURL
+            .path
         self.leafName = leafName
         self.existedAtAuthorization = existed
+        self.missingAncestorComponents = missingAncestorComponents
         self.parentDirectory = parentDirectory
     }
 
-    /// Returns an owned duplicate. The caller must close it.
-    public func duplicateParentDirectoryDescriptor() throws -> Int32 {
-        try parentDirectory.duplicateDescriptor()
+    /// A component of a previously-missing ancestor chain joins `resolvedPath`
+    /// literally and participates in grant prefix matching, so any spelling that
+    /// could re-route the path — empty, ".", "..", an embedded separator or NUL —
+    /// fails the binding closed.
+    static func validateMissingAncestorComponent(
+        _ component: String,
+        requestedPath: String
+    ) throws {
+        guard !component.isEmpty,
+              component != ".",
+              component != "..",
+              !component.contains("/"),
+              !component.utf8.contains(0)
+        else {
+            throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+        }
     }
 
-    /// Revalidates the final directory entry relative to the pinned parent descriptor.
+    /// Opens a directory and proves the descriptor and the path spelling still
+    /// name the same inode, so a symlink smuggled into the resolved spelling
+    /// between resolution and open cannot be followed silently.
+    static func openCrossCheckedDirectory(
+        atResolvedPath resolvedPath: String,
+        requestedPath: String
+    ) throws -> Int32 {
+        let descriptor = Darwin.open(
+            resolvedPath,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC
+        )
+        guard descriptor >= 0 else {
+            throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+        }
+        var descriptorMetadata = stat()
+        var pathMetadata = stat()
+        guard fstat(descriptor, &descriptorMetadata) == 0,
+              Darwin.lstat(resolvedPath, &pathMetadata) == 0,
+              descriptorMetadata.st_dev == pathMetadata.st_dev,
+              descriptorMetadata.st_ino == pathMetadata.st_ino
+        else {
+            Darwin.close(descriptor)
+            throw IntentPolicyValidationError.invalidFilesystemRoot(requestedPath)
+        }
+        return descriptor
+    }
+
+    /// Opens the directory the leaf resolves against and returns an owned
+    /// descriptor; the caller must close it.
+    ///
+    /// The walk starts at the pinned ancestor descriptor and opens each
+    /// component of the missing suffix without following symlinks, so a link
+    /// grown into the gap after authorization fails closed instead of
+    /// redirecting the operation.
+    public func openLeafParentDirectoryDescriptor() throws -> Int32 {
+        var parent = try parentDirectory.duplicateDescriptor()
+        for component in missingAncestorComponents {
+            let child = component.withCString {
+                openat(parent, $0, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW)
+            }
+            guard child >= 0 else {
+                let openErrno = errno
+                defer { Darwin.close(parent) }
+                var metadata = stat()
+                let status = component.withCString {
+                    fstatat(parent, $0, &metadata, AT_SYMLINK_NOFOLLOW)
+                }
+                if status == 0, (metadata.st_mode & S_IFMT) == S_IFLNK {
+                    throw AuthorizedFilesystemPathError.becameSymlink
+                }
+                throw AuthorizedFilesystemPathError.suffixComponentUnavailable(
+                    errno: openErrno
+                )
+            }
+            Darwin.close(parent)
+            parent = child
+        }
+        return parent
+    }
+
+    /// Revalidates the final directory entry relative to the directory the leaf
+    /// resolves against, reached through the no-follow suffix walk.
     ///
     /// The returned path is the authorization-time canonical spelling; callers must never
     /// reconstruct a URL from `requestedPath`.
     public func validatedResolvedPath() throws -> String {
-        let parent = try duplicateParentDirectoryDescriptor()
+        let parent: Int32
+        do {
+            parent = try openLeafParentDirectoryDescriptor()
+        } catch AuthorizedFilesystemPathError.suffixComponentUnavailable {
+            throw AuthorizedFilesystemPathError.unavailable
+        }
         defer { Darwin.close(parent) }
         var metadata = stat()
         let status = leafName.withCString {
@@ -194,6 +321,7 @@ public struct AuthorizedFilesystemPath: @unchecked Sendable, Equatable, Hashable
             && lhs.resolvedPath == rhs.resolvedPath
             && lhs.leafName == rhs.leafName
             && lhs.existedAtAuthorization == rhs.existedAtAuthorization
+            && lhs.missingAncestorComponents == rhs.missingAncestorComponents
     }
 
     public func hash(into hasher: inout Hasher) {
@@ -201,6 +329,7 @@ public struct AuthorizedFilesystemPath: @unchecked Sendable, Equatable, Hashable
         hasher.combine(resolvedPath)
         hasher.combine(leafName)
         hasher.combine(existedAtAuthorization)
+        hasher.combine(missingAncestorComponents)
     }
 }
 

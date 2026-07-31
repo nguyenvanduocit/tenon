@@ -485,8 +485,19 @@ final class FilesystemIntentProviderTests: XCTestCase {
             "destination"
         )
 
-        XCTAssertThrowsError(
-            try AuthorizedFilesystemPath(requestedPath: nested.path)
+        // The binding tolerates the missing ancestor so read/exists can answer
+        // not-found, but creation through it still refuses to invent directories.
+        let nestedBinding = try AuthorizedFilesystemPath(requestedPath: nested.path)
+        XCTAssertFalse(nestedBinding.existedAtAuthorization)
+        let nestedCreate = try await invoke(
+            .filesystemFileCreate,
+            input: .object(["path": .string(nested.path)]),
+            bindings: bindings
+        )
+        try assertFailure(
+            nestedCreate,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
         )
         XCTAssertFalse(
             FileManager.default.fileExists(
@@ -514,6 +525,192 @@ final class FilesystemIntentProviderTests: XCTestCase {
         XCTAssertEqual(
             try String(contentsOf: source, encoding: .utf8),
             "source"
+        )
+    }
+
+    func testReadListAndExistsOnMissingAncestorChainAnswerNotFound() async throws {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        // Both the parent and the grandparent of the board are missing.
+        let board = workspace.appendingPathComponent(".kanban/tasks/board.md")
+        let bindings = try FilesystemIntentProvider().bindings
+
+        let read = try await invoke(
+            .filesystemFileRead,
+            input: .object(["path": .string(board.path)]),
+            bindings: bindings
+        )
+        try assertFailure(
+            read,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
+        )
+
+        let list = try await invoke(
+            .filesystemDirectoryList,
+            input: .object([
+                "path": .string(
+                    workspace.appendingPathComponent(".kanban/tasks").path
+                ),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            list,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
+        )
+
+        let exists = try await invoke(
+            .filesystemPathExists,
+            input: .object(["path": .string(board.path)]),
+            bindings: bindings
+        )
+        let output = try object(try successValue(exists))
+        XCTAssertEqual(output["exists"], .bool(false))
+    }
+
+    func testCreateAndWriteTowardMissingAncestorReportNotFoundWithoutCreatingDirectories()
+        async throws
+    {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        let missingDirectory = workspace.appendingPathComponent(".kanban")
+        let board = missingDirectory.appendingPathComponent("tasks/board.md")
+        let bindings = try FilesystemIntentProvider().bindings
+
+        let create = try await invoke(
+            .filesystemFileCreate,
+            input: .object(["path": .string(board.path)]),
+            bindings: bindings
+        )
+        try assertFailure(
+            create,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
+        )
+
+        let write = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(board.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("must-not-appear"),
+                ]),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            write,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
+        )
+
+        let directoryCreate = try await invoke(
+            .filesystemDirectoryCreate,
+            input: .object([
+                "path": .string(
+                    missingDirectory.appendingPathComponent("tasks").path
+                ),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            directoryCreate,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
+        )
+
+        XCTAssertFalse(
+            FileManager.default.fileExists(atPath: missingDirectory.path)
+        )
+    }
+
+    func testSymlinkGrownIntoMissingSuffixAfterBindingFailsClosed() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let workspace = root.appendingPathComponent("workspace")
+        let outside = root.appendingPathComponent("outside")
+        try FileManager.default.createDirectory(
+            at: workspace,
+            withIntermediateDirectories: false
+        )
+        try FileManager.default.createDirectory(
+            at: outside,
+            withIntermediateDirectories: false
+        )
+        try Data("smuggled".utf8).write(
+            to: outside.appendingPathComponent("board.md")
+        )
+
+        // Bind while .kanban is missing, then grow it as a symlink pointing
+        // outside. The provider's suffix walk must refuse to follow it.
+        let requestedPath = workspace
+            .appendingPathComponent(".kanban/board.md")
+            .path
+        let binding = try AuthorizedFilesystemPath(requestedPath: requestedPath)
+        try FileManager.default.createSymbolicLink(
+            at: workspace.appendingPathComponent(".kanban"),
+            withDestinationURL: outside
+        )
+
+        let read = try await invoke(
+            .filesystemFileRead,
+            input: .object(["path": .string(requestedPath)]),
+            bindings: try FilesystemIntentProvider().bindings,
+            authorizedPaths: [binding]
+        )
+        try assertFailure(
+            read,
+            code: "dev.tenon.core.filesystem-failed",
+            reason: "authorized-path-became-symlink"
+        )
+    }
+
+    func testFileOccupyingAncestorPositionAnswersNotFoundWithoutTouchingIt()
+        async throws
+    {
+        let workspace = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: workspace) }
+        // A user note occupies the position the board's directory would take;
+        // the path cannot exist, and the note itself is never traversed.
+        let note = workspace.appendingPathComponent(".kanban")
+        try Data("a user note".utf8).write(to: note)
+        let bindings = try FilesystemIntentProvider().bindings
+
+        let read = try await invoke(
+            .filesystemFileRead,
+            input: .object([
+                "path": .string(
+                    workspace.appendingPathComponent(".kanban/board.md").path
+                ),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            read,
+            code: "dev.tenon.core.path-not-found",
+            reason: "path-not-found"
+        )
+
+        let exists = try await invoke(
+            .filesystemPathExists,
+            input: .object([
+                "path": .string(
+                    workspace
+                        .appendingPathComponent(".kanban/tasks/board.md")
+                        .path
+                ),
+            ]),
+            bindings: bindings
+        )
+        let output = try object(try successValue(exists))
+        XCTAssertEqual(output["exists"], .bool(false))
+
+        XCTAssertEqual(
+            try String(contentsOf: note, encoding: .utf8),
+            "a user note"
         )
     }
 

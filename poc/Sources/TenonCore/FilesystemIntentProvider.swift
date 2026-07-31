@@ -619,7 +619,7 @@ private extension FilesystemIntentProvider {
         path: AuthorizedFilesystemPath,
         data: Data
     ) throws {
-        let parent = try path.duplicateParentDirectoryDescriptor()
+        let parent = try openBoundParent(path)
         defer { Darwin.close(parent) }
         let metadata = try boundMetadata(path, parent: parent)
         guard (metadata.st_mode & S_IFMT) != S_IFDIR else {
@@ -664,7 +664,15 @@ private extension FilesystemIntentProvider {
     static func boundPathExists(
         _ path: AuthorizedFilesystemPath
     ) throws -> Bool {
-        let parent = try path.duplicateParentDirectoryDescriptor()
+        let parent: Int32
+        do {
+            parent = try openBoundParent(path)
+        } catch OperationError.pathNotFound {
+            // An ancestor that is still missing — or that a non-directory
+            // occupies — answers the question rather than failing it; anything
+            // else in the walk stays an error.
+            return false
+        }
         defer { Darwin.close(parent) }
         var metadata = stat()
         let status = path.leafName.withCString {
@@ -685,7 +693,7 @@ private extension FilesystemIntentProvider {
     static func createBoundDirectory(
         _ path: AuthorizedFilesystemPath
     ) throws {
-        let parent = try path.duplicateParentDirectoryDescriptor()
+        let parent = try openBoundParent(path)
         defer { Darwin.close(parent) }
         let status = path.leafName.withCString {
             mkdirat(parent, $0, mode_t(0o700))
@@ -706,10 +714,9 @@ private extension FilesystemIntentProvider {
         _ source: AuthorizedFilesystemPath,
         to destination: AuthorizedFilesystemPath
     ) throws {
-        let sourceParent = try source.duplicateParentDirectoryDescriptor()
+        let sourceParent = try openBoundParent(source)
         defer { Darwin.close(sourceParent) }
-        let destinationParent =
-            try destination.duplicateParentDirectoryDescriptor()
+        let destinationParent = try openBoundParent(destination)
         defer { Darwin.close(destinationParent) }
         _ = try boundMetadata(source, parent: sourceParent)
         let status = source.leafName.withCString { sourcePointer in
@@ -727,7 +734,7 @@ private extension FilesystemIntentProvider {
     }
 
     static func trashBoundPath(_ path: AuthorizedFilesystemPath) throws {
-        let sourceParent = try path.duplicateParentDirectoryDescriptor()
+        let sourceParent = try openBoundParent(path)
         defer { Darwin.close(sourceParent) }
         _ = try boundMetadata(path, parent: sourceParent)
 
@@ -763,12 +770,34 @@ private extension FilesystemIntentProvider {
         throw OperationError.filesystemFailed("trash-name-exhausted")
     }
 
+    /// Returns an owned descriptor for the directory the leaf resolves against.
+    ///
+    /// The binding's use-time walk refuses to follow a symlink grown into a
+    /// previously-missing component; a component that is still missing — or
+    /// that a non-directory now occupies — reports not-found through the
+    /// POSIX mapping.
+    static func openBoundParent(
+        _ path: AuthorizedFilesystemPath
+    ) throws -> Int32 {
+        do {
+            return try path.openLeafParentDirectoryDescriptor()
+        } catch AuthorizedFilesystemPathError.becameSymlink {
+            throw OperationError.filesystemFailed(
+                "authorized-path-became-symlink"
+            )
+        } catch AuthorizedFilesystemPathError.suffixComponentUnavailable(
+            let code
+        ) {
+            throw mapPOSIXError(code)
+        }
+    }
+
     static func openBound(
         _ path: AuthorizedFilesystemPath,
         flags: Int32,
         mode: mode_t = 0
     ) throws -> Int32 {
-        let parent = try path.duplicateParentDirectoryDescriptor()
+        let parent = try openBoundParent(path)
         defer { Darwin.close(parent) }
         let descriptor = path.leafName.withCString {
             openat(parent, $0, flags, mode)
