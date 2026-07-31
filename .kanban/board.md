@@ -4,6 +4,7 @@
 ## Backlog
 
 ## Todo
+- [T-051](tasks/T-051-stale-socket-file-blocks-the-control-socket.md) A leftover socket file permanently blocks the control socket — medium/S — filed 2026-07-31 by session 247281cf, **unclaimed**. Kill the app without a clean shutdown and `/tmp/tenon-<uid>/tenon.sock` survives as a file; every later launch fails to bind and runs with **no control socket, silently**, while `tenon-cli ping` reports "Tenon is not running" about an app that is on screen. `CLISocketServer.swift:143` returns on `bind` failure *before* reaching the `unlink(path)` on the next line — that cleanup sits behind the `listen` failure, which is not the one that happens. Fix must reclaim rather than blindly unlink: a path a **live** instance is listening on must still win, since that is T-009's single-instance guarantee. Also worth sweeping: `[ -S <path> ]` as a readiness check is satisfied by the stale file and passes against a dead app — `nc -zU` is the honest probe.
 ## Doing
 
 ## Done
