@@ -1,0 +1,27 @@
+{
+  "id": "dev.tenon.kanban",
+  "name": "kanban",
+  "displayName": "Kanban",
+  "icon": "checklist",
+  "version": "0.1.0",
+  "permissions": ["filesystem.read", "terminal.write", "workspace.control"],
+  "intents": {
+    "uses": [
+      "filesystem.file.read.v1",
+      "workspace.state.v1",
+      "workspace.content.open.v1",
+      "terminal.open.v1"
+    ],
+    "provides": [
+      {
+        "name": "dev.tenon.kanban.open.v1",
+        "title": "Kanban: Open Board",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Open", "icon": "checklist", "keywords": ["kanban", "board", "tasks", "todo"], "launcher": true }
+      }
+    ]
+  }
+}

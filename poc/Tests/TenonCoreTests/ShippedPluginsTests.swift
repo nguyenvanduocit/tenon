@@ -29,6 +29,7 @@ final class ShippedPluginsTests: XCTestCase {
                 "file-explorer",
                 "git",
                 "hello-palette",
+                "kanban",
                 "view-gallery",
                 "workspace-status",
             ]
