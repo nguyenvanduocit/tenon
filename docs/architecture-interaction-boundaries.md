@@ -395,6 +395,43 @@ Current EVENT inventory:
 An event MUST NOT be used to ask the host to mutate state. If the publisher needs a result,
 failure, deadline, or authorization decision, the interaction is not an event.
 
+### Two-way interaction, without a two-way channel
+
+Reviewed in full 2026-07-31 (T-042) against five shipped cases. The conclusion was that the
+existing rungs compose, and that **no CHANNEL rung is admitted**. This section exists so the
+question is answered rather than reopened.
+
+**The trap.** What people reach for when they say "channel" is almost always *an event with
+a reply*. That is a command wearing an event's clothes: a reply means somebody must answer,
+which means failure, deadline and authority semantics, which is an INTENT. Every real case
+below had exactly one answerer (intent) or none (event). None needed both at once.
+
+**The three composed patterns.** Use these; they are sufficient.
+
+| Shape | Mechanism | Worked example |
+|---|---|---|
+| Ask and be answered, either direction | INTENT out via `intents.send`; INTENT in via a contract in `intents.provides` + `intents.handle`. Two directions is two declared contracts, not one duplex pipe | plugin↔plugin request/reply |
+| Tell, with 0..n listeners | EVENT. No reply — if the publisher needs one, it is an intent | `automation.fired`, palette `onQuery` |
+| Long work with progress and cancellation | **A bounded value that names the work, re-presented on each call.** Not a live handle | `terminal.open.v1` → pane id; progress via `terminal.wait.v1`/`terminal.scrollback.read.v1` scoped to it; cancel via `workspace.pane.close.v1` |
+
+**Why the third row is a value and not a handle.** An agent's lifetime *is* its pane's
+lifetime — closing the pane releases the surface and frees the PTY with its child process —
+so the workspace already names the work, and a TASK handle would be a second name for it. A
+value survives hot reload, can be persisted, and leaks nothing when dropped. The same shape
+appears in `terminal.scrollback.read.v1`'s cursor, arrived at independently: **an opaque
+value, re-presented, is how this codebase expresses continuity.** Reach for it before
+reaching for a handle.
+
+**Where it genuinely does not compose.** A plugin can observe facts (`events.on`) and cannot
+publish one, so plugin→plugin facts are currently forced through an intent — wrong
+cardinality (a fact has 0..n observers, an intent exactly one provider) and an inverted
+dependency (the publisher ends up naming its consumers). That is EVENT missing a member, not
+a missing rung, and it is specified separately rather than folded in here.
+
+**Out of scope by construction.** Structured conversation with an agent running in a PTY is
+framing *inside the byte stream* — which is what OSC 133 already is. A Tenon-level duplex
+channel would have nothing on the other end, because the CLI speaks its own stdio.
+
 ### RESOURCE / STREAM / TASK
 
 The initial finite request MAY return a handle, but all subsequent multi-result or
