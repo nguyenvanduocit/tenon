@@ -512,6 +512,11 @@ private extension AppComposition {
             try Task.checkCancellation()
             try await host.loadAll()
             webSurfaces.reconcile(catalog: store.catalog, host: host)
+            // The restored catalog reaches the view-instance reconciler here or never:
+            // reconcile otherwise runs only from workspace mutations, and a launch that
+            // restores panes performs none — every restored plugin pane would sit on
+            // "Plugin view unavailable" until the first unrelated workspace change.
+            await host.reconcileViewInstances(from: store.catalog)
             try Task.checkCancellation()
             try host.startWatching()
 
