@@ -48,7 +48,7 @@ async function navigate(instanceID, input) {
 tenon.views.register(VIEW, { title: "Browser", instanced: true });
 
 tenon.intents.handle("dev.tenon.browser.open.v1", async function (_, call) {
-  var result = await call.send("workspace.tab.create.v1", {
+  var result = await call.send("workspace.content.open.v1", {
     content: {
       kind: "plugin",
       pluginID: PLUGIN_ID,

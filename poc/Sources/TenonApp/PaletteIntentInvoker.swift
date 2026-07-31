@@ -85,6 +85,48 @@ enum PaletteIntentInvoker {
         )
     }
 
+    /// Invoke a ranked command against a caller-named scope instead of the focused pane.
+    ///
+    /// The palette and the `+` launcher are keyboard surfaces: "wherever I am" is the right
+    /// answer for them, and the convenience overload builds that scope from the selected
+    /// workspace and pane. A menu opened by right-clicking one specific tab is not that —
+    /// it has to talk about *that* tab, including when it is not the selected one. This is
+    /// the entry point `AppIntentRuntime.send(_:input:as:scope:…)` documents: authority
+    /// visible at the call site rather than inherited from mutable UI state.
+    static func send(
+        commandID: String,
+        scope: InvocationScope,
+        host: PluginHost,
+        runtime: AppIntentRuntime
+    ) async -> IntentResult? {
+        guard let presentation = host.intentPresentations.first(
+            where: { $0.intentID.rawValue == commandID }
+        ) else {
+            return nil
+        }
+        guard let invocation = prepare(
+            target: KeyBindingTarget(
+                pluginID: presentation.pluginID,
+                intentID: presentation.intentID
+            ),
+            host: host
+        ) else {
+            return nil
+        }
+        return await runtime.send(
+            invocation.target.intentID,
+            as: AppIntentRuntime.palettePrincipal,
+            scope: InvocationScope(
+                workspaceID: scope.workspaceID,
+                paneID: scope.paneID,
+                // The gesture is minted here, at the moment the click is accepted, exactly
+                // as the unscoped path does — a caller cannot supply one.
+                userGestureID: invocation.userGestureID
+            ),
+            target: invocation.providerID
+        )
+    }
+
     static func send(
         target: KeyBindingTarget,
         expectedBinding: KeyBinding? = nil,

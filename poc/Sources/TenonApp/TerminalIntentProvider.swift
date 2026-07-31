@@ -10,6 +10,9 @@ private enum TerminalWaitCondition: String, Sendable {
 
 @MainActor
 final class TerminalIntentProvider {
+    /// Chosen so an unparameterised read answers with a screenful of history rather than
+    /// the whole buffer; a caller that wants more says so, up to the contract's bound.
+    static let defaultScrollbackPageLines = 500
     static let defaultWaitMilliseconds = 30_000
     static let maximumWaitMilliseconds = 55_000
 
@@ -44,10 +47,26 @@ final class TerminalIntentProvider {
                 return reply
             },
             IntentProviderBinding(
+                intentID: try CoreIntentName.terminalOpen.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                let reply = await self.open(envelope: envelope)
+                try context.checkCancellation()
+                return reply
+            },
+            IntentProviderBinding(
                 intentID: try CoreIntentName.terminalViewportRead.intentID
             ) { envelope, context in
                 try context.checkCancellation()
                 let reply = await self.readViewport(envelope: envelope)
+                try context.checkCancellation()
+                return reply
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.terminalScrollbackRead.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                let reply = await self.readScrollback(envelope: envelope)
                 try context.checkCancellation()
                 return reply
             },
@@ -143,6 +162,85 @@ private extension TerminalIntentProvider {
         }
     }
 
+    /// `terminal.open.v1` — always a fresh pane, and it says which one.
+    ///
+    /// `terminal.run.v1` reuses a terminal in scope and only creates a tab when there is
+    /// none, which is right for "run this somewhere" and wrong for "run this on its own".
+    /// The two share every other rule: the same capability, the same delivery through
+    /// `sendTextWhenReady`, and the same lane.
+    func open(envelope: IntentEnvelope) -> IntentProviderReply {
+        let command: String?
+        let workingDirectory: URL?
+        do {
+            let input = try AppIntentProviderSupport.object(envelope.input)
+            if let raw = try AppIntentProviderSupport.optionalString(
+                "command",
+                in: input
+            ) {
+                guard !raw
+                    .trimmingCharacters(in: .whitespacesAndNewlines)
+                    .isEmpty,
+                    !raw.contains("\0")
+                else {
+                    throw AppIntentInputError.missingOrInvalidField("command")
+                }
+                command = raw
+            } else {
+                command = nil
+            }
+
+            if let raw = try AppIntentProviderSupport.optionalString(
+                "workingDirectory",
+                in: input
+            ) {
+                // Refused rather than accepted-and-ignored: a shell that cannot enter the
+                // directory would start somewhere else, and the caller would never learn
+                // its command ran in the wrong place.
+                var isDirectory: ObjCBool = false
+                guard raw.hasPrefix("/"),
+                      FileManager.default.fileExists(
+                          atPath: raw,
+                          isDirectory: &isDirectory
+                      ),
+                      isDirectory.boolValue
+                else {
+                    throw AppIntentInputError.missingOrInvalidField(
+                        "workingDirectory"
+                    )
+                }
+                workingDirectory = URL(fileURLWithPath: raw, isDirectory: true)
+            } else {
+                workingDirectory = nil
+            }
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return AppIntentProviderSupport.invalidInput(.expectedObject)
+        }
+
+        guard selectWorkspace(for: envelope.scope) else {
+            return failure("workspace-scope-not-found")
+        }
+        store.newTab(content: .terminal)
+        guard let paneID = store.catalog.activeSlotID,
+              store.catalog.slot(id: paneID)?.content == .terminal
+        else {
+            return failure("terminal-create-failed")
+        }
+
+        // Before any text: the pane has no surface yet, so this decides where its shell
+        // starts rather than trying to move a shell that is already running.
+        if let workingDirectory {
+            surfaces.seedSpawnDirectory(workingDirectory, for: paneID)
+        }
+        if let command {
+            surfaces.sendTextWhenReady(command + "\n", to: paneID)
+        }
+        return .success(
+            .object(["paneID": .string(paneID.uuidString)])
+        )
+    }
+
     func readViewport(envelope: IntentEnvelope) -> IntentProviderReply {
         guard envelope.input == .object([:]) else {
             return AppIntentProviderSupport.invalidInput(.expectedObject)
@@ -170,6 +268,83 @@ private extension TerminalIntentProvider {
                     "rows": observation.rows.map {
                         .integer(Int64($0))
                     } ?? .null,
+                ])
+            )
+        }
+    }
+
+    /// One bounded page of retained scrollback. The decision of *which* rows is
+    /// `ScrollbackPaging`'s, so everything here is edge work: parse, resolve the pane, ask
+    /// the surface what it holds, and turn the pure verdict into a reply.
+    func readScrollback(envelope: IntentEnvelope) -> IntentProviderReply {
+        let maxLines: Int
+        let cursor: ScrollbackPaging.Cursor?
+        do {
+            let input = try AppIntentProviderSupport.object(envelope.input)
+            maxLines = try AppIntentProviderSupport.optionalInteger(
+                "maxLines",
+                in: input
+            ) ?? Self.defaultScrollbackPageLines
+            guard (1 ... CoreIntentPayloadPolicy.maximumScrollbackPageLines)
+                .contains(maxLines)
+            else {
+                throw AppIntentInputError.missingOrInvalidField("maxLines")
+            }
+            if let raw = try AppIntentProviderSupport.optionalString(
+                "cursor",
+                in: input
+            ) {
+                guard let decoded = ScrollbackPaging.Cursor.decode(raw) else {
+                    throw AppIntentInputError.missingOrInvalidField("cursor")
+                }
+                cursor = decoded
+            } else {
+                cursor = nil
+            }
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return AppIntentProviderSupport.invalidInput(.expectedObject)
+        }
+
+        let paneID: UUID
+        switch terminalTarget(for: envelope.scope) {
+        case let .unavailable(reason):
+            return failure(reason)
+        case let .resolved(resolved):
+            paneID = resolved
+        }
+        guard let lines = surfaces.scrollbackLines(for: paneID) else {
+            return failure("terminal-surface-not-ready")
+        }
+
+        switch ScrollbackPaging.page(
+            totalRows: lines.count,
+            maxLines: maxLines,
+            cursor: cursor
+        ) {
+        case .invalidated:
+            return .success(
+                .object([
+                    "paneID": .string(paneID.uuidString),
+                    "text": .string(""),
+                    "cursor": .null,
+                    "invalidated": .bool(true),
+                    "totalRows": .integer(Int64(lines.count)),
+                ])
+            )
+        case let .rows(range, next):
+            let text = lines[range].joined(separator: "\n")
+            guard isInline(text) else {
+                return failure("terminal-scrollback-inline-limit-exceeded")
+            }
+            return .success(
+                .object([
+                    "paneID": .string(paneID.uuidString),
+                    "text": .string(text),
+                    "cursor": next.map { .string($0.encoded) } ?? .null,
+                    "invalidated": .bool(false),
+                    "totalRows": .integer(Int64(lines.count)),
                 ])
             )
         }

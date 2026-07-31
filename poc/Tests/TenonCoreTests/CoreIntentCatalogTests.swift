@@ -31,10 +31,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 39, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 39)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 39)
-        XCTAssertEqual(compiled.dispatchRules.count, 39)
+        XCTAssertEqual(revisions, Array(repeating: 41, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 41)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 41)
+        XCTAssertEqual(compiled.dispatchRules.count, 41)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -58,8 +58,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 39)
-        XCTAssertEqual(actualNames.count, 39)
+        XCTAssertEqual(Set(actualNames).count, 41)
+        XCTAssertEqual(actualNames.count, 41)
 
         let forbiddenFragments = [
             "tenon.",
@@ -580,7 +580,7 @@ final class CoreIntentCatalogTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(CoreIntentName.allCases.count, 39)
+        XCTAssertEqual(CoreIntentName.allCases.count, 41)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -642,7 +642,9 @@ final class CoreIntentCatalogTests: XCTestCase {
             .terminalImmediate: [
                 .terminalWrite,
                 .terminalRun,
+                .terminalOpen,
                 .terminalViewportRead,
+                .terminalScrollbackRead,
             ],
             .terminalWait: [.terminalWait],
             .browser: [
@@ -805,6 +807,12 @@ private extension CoreIntentCatalogTests {
                 output: [],
                 requiredOutput: []
             ),
+            .terminalOpen: SchemaShape(
+                ["command", "workingDirectory"],
+                required: [],
+                output: ["paneID"],
+                requiredOutput: ["paneID"]
+            ),
             .terminalViewportRead: SchemaShape(
                 [],
                 required: [],
@@ -821,6 +829,24 @@ private extension CoreIntentCatalogTests {
                     "exited",
                     "columns",
                     "rows",
+                ]
+            ),
+            .terminalScrollbackRead: SchemaShape(
+                ["maxLines", "cursor"],
+                required: [],
+                output: [
+                    "paneID",
+                    "text",
+                    "cursor",
+                    "invalidated",
+                    "totalRows",
+                ],
+                requiredOutput: [
+                    "paneID",
+                    "text",
+                    "cursor",
+                    "invalidated",
+                    "totalRows",
                 ]
             ),
             .terminalWait: SchemaShape(
@@ -959,7 +985,9 @@ private extension CoreIntentCatalogTests {
             .processExec: ["process.exec"],
             .terminalWrite: ["terminal.write"],
             .terminalRun: ["terminal.write"],
+            .terminalOpen: ["terminal.write"],
             .terminalViewportRead: ["terminal.read"],
+            .terminalScrollbackRead: ["terminal.read"],
             .terminalWait: ["terminal.read"],
             .browserSurfaceLoad: ["web.view"],
             .browserSurfaceBack: ["web.view"],

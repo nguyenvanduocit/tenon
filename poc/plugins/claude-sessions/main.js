@@ -362,19 +362,19 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
   if (action === "refresh") {
     await scan(st);
   } else if (action === "new") {
-    await tenon.intents.send("terminal.run.v1", { command: "claude" });
+    await tenon.intents.send("terminal.open.v1", { command: "claude" });
   } else if (action.indexOf("resume:") === 0) {
-    // The host picks the terminal (this tab's, or a new terminal tab) — a panel click
-    // happens while the panel itself is the active pane, so "type into the active pane"
-    // would land nowhere.
-    await tenon.intents.send("terminal.run.v1", {
+    // Each session gets a pane of its own. `terminal.run.v1` would reuse whichever
+    // terminal is in this tab, so resuming would take over a shell the user is already
+    // working in — and two resumed sessions would fight over one pane.
+    await tenon.intents.send("terminal.open.v1", {
       command: "claude --resume " + action.slice("resume:".length)
     });
   }
 });
 
 tenon.intents.handle("dev.tenon.claude-sessions.open.v1", async function (_, call) {
-  var result = await call.send("workspace.tab.create.v1", {
+  var result = await call.send("workspace.content.open.v1", {
     content: {
       kind: "plugin",
       pluginID: "dev.tenon.claude-sessions",

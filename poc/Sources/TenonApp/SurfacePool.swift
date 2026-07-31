@@ -135,12 +135,15 @@ final class SurfacePool {
         surfaces[slotID] != nil
     }
 
-    /// T-031: seed a restored pane's recorded cwd as placeholder data, before — and
-    /// without — any surface. The pane renders its recorded directory immediately, and
-    /// first view spawns the fresh shell there. Seeding is not viewing: the latch stays
-    /// down and nothing materializes here. A pane that already holds a surface has live
-    /// state, which stale restore data must never overwrite.
-    func seedRestoredDirectory(_ cwd: URL, for slotID: UUID) {
+    /// Say where a pane's shell will start, before — and without — any surface. The pane
+    /// renders that directory immediately and first view spawns the fresh shell there.
+    /// Seeding is not viewing: the latch stays down and nothing materializes here, so
+    /// T-031's laziness survives. A pane that already holds a surface has live state, which
+    /// a seed must never overwrite.
+    ///
+    /// Two callers, one meaning: T-031/T-027 replay the cwd a restored pane recorded before
+    /// the quit, and `terminal.open.v1` states where a pane it just created should start.
+    func seedSpawnDirectory(_ cwd: URL, for slotID: UUID) {
         guard surfaces[slotID] == nil else { return }
         updateDirectory(cwd: cwd, for: slotID)
     }
@@ -271,6 +274,14 @@ final class SurfacePool {
     /// `terminal.viewport.read.v1`. Empty without a live PTY surface.
     func renderedText(for slotID: UUID) -> String {
         surfaces[slotID]?.renderedText ?? ""
+    }
+
+    /// Every row a slot's surface retains, oldest first, for
+    /// `terminal.scrollback.read.v1`. `nil` separates a pane with no surface — which can
+    /// answer nothing — from a live surface that truthfully retains no rows, because the
+    /// intent must fail for the first and succeed with an empty page for the second.
+    func scrollbackLines(for slotID: UUID) -> [String]? {
+        surfaces[slotID]?.scrollbackLines
     }
 
     /// Whether a slot's child process has exited, for `tenon-cli pane.wait --for exit`.

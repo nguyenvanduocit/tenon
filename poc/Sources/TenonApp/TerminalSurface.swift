@@ -35,6 +35,13 @@ protocol TerminalSurface: AnyObject {
     /// tui-idle heuristic. PTY-less backends have nothing to show and default to "".
     var renderedText: String { get }
 
+    /// Every row the pane retains, oldest first — scrollback *and* viewport. Feeds
+    /// `terminal.scrollback.read.v1`, which pages over it; the paging rule itself is pure
+    /// and lives in `TenonCore.ScrollbackPaging`, so this seam only has to say what the
+    /// emulator holds, never how much of it a caller may see. PTY-less backends retain
+    /// nothing and default to empty.
+    var scrollbackLines: [String] { get }
+
     /// Whether the pane's child process has exited — feeds `tenon-cli pane.wait --for exit`.
     var processExited: Bool { get }
 
@@ -53,6 +60,7 @@ extension TerminalSurface {
     func focus() {}
     func sendText(_ text: String) {}
     var renderedText: String { "" }
+    var scrollbackLines: [String] { [] }
     var processExited: Bool { false }
     var commandFinishedCount: Int { 0 }
 }

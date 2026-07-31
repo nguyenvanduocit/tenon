@@ -21,7 +21,9 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case processExec = "process.exec.v1"
     case terminalWrite = "terminal.write.v1"
     case terminalRun = "terminal.run.v1"
+    case terminalOpen = "terminal.open.v1"
     case terminalViewportRead = "terminal.viewport.read.v1"
+    case terminalScrollbackRead = "terminal.scrollback.read.v1"
     case terminalWait = "terminal.wait.v1"
     case browserSurfaceLoad = "browser.surface.load.v1"
     case browserSurfaceBack = "browser.surface.back.v1"
@@ -102,7 +104,9 @@ public extension CoreIntentName {
              .processExec,
              .terminalWrite,
              .terminalRun,
+             .terminalOpen,
              .terminalViewportRead,
+             .terminalScrollbackRead,
              .terminalWait,
              .workspaceState,
              .workspaceTabCreate,
@@ -138,6 +142,32 @@ public enum CoreIntentExecutionLane: String, CaseIterable, Sendable, Hashable {
     case userPrompt
     case userNotification
     case secrets
+
+    /// How many of this lane's intents may execute at once.
+    ///
+    /// Serial everywhere by default: a lane's mailbox is the unit of ordering and
+    /// backpressure, and for work that mutates the workspace, writes a file, or drives a
+    /// terminal, running one at a time is the property that makes the ordering mean
+    /// something.
+    ///
+    /// `terminalWait` is the exception, and it earns it. Its only intent is
+    /// `terminal.wait.v1`, whose whole job is to block until a pane-scoped condition holds:
+    /// waits are mutually independent, each scoped to its own pane, hold no resource, and
+    /// have no meaningful order between them. Serializing them made supervising two agents
+    /// impossible — the second wait queued behind the first, which by design does not
+    /// return until met — measured and recorded as an open counterexample in
+    /// `docs/architecture-interaction-boundaries.md`. The bound stays modest because
+    /// supervision is human-scale: a person watches a handful of panes, not a thousand.
+    public var maxConcurrentRequests: Int {
+        switch self {
+        case .terminalWait:
+            8
+        case .filesystem, .system, .process, .network, .workspace,
+             .terminalImmediate, .browser, .userPrompt, .userNotification,
+             .secrets:
+            1
+        }
+    }
 }
 
 public extension CoreIntentName {
@@ -179,7 +209,9 @@ public extension CoreIntentName {
 
         case .terminalWrite,
              .terminalRun,
-             .terminalViewportRead:
+             .terminalOpen,
+             .terminalViewportRead,
+             .terminalScrollbackRead:
             .terminalImmediate
 
         case .terminalWait:
@@ -217,6 +249,16 @@ public enum CoreIntentPayloadPolicy {
     public static let hardMaximumEncodedBytes =
         IntentValueLimits.hardMaximumEncodedBytes
     public static let maximumInlineTextCharacters = 48 * 1024
+
+    /// Rows a single `terminal.scrollback.read.v1` page may carry. A page also has to fit
+    /// `maximumInlineTextCharacters`, so this is the row-count half of a two-sided bound:
+    /// whichever runs out first ends the page, and the cursor carries the rest.
+    public static let maximumScrollbackPageLines = 2_000
+
+    /// The cursor is `"<nextRow>:<totalRows>"` — two decimal integers and a colon. The
+    /// bound exists so a caller cannot hand back an unbounded string and make the host
+    /// parse it.
+    public static let maximumScrollbackCursorCharacters = 64
 }
 
 /// One row in the canonical table. The declaration describes the public contract; the rule
@@ -897,6 +939,45 @@ private extension CoreIntentCatalog {
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
+                .terminalOpen,
+                title: "Open a terminal in a new tab",
+                description: """
+                Opens a new terminal tab in the scoped workspace and returns \
+                the id of the pane it created. Unlike terminal.run.v1, which \
+                reuses a terminal already in scope, this always creates one — \
+                for work that needs a pane of its own, such as running an \
+                agent against a prompt. An omitted command opens an empty \
+                shell. The pane belongs to the workspace once created; the id \
+                identifies it for later intents and confers no ownership.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "command": CoreIntentSchema.string(
+                            maxLength: CoreIntentPayloadPolicy
+                                .maximumInlineTextCharacters
+                        ),
+                        "workingDirectory": CoreIntentSchema.path,
+                    ],
+                    required: []
+                ),
+                output: CoreIntentSchema.root(
+                    properties: ["paneID": CoreIntentSchema.uuid],
+                    required: ["paneID"]
+                ),
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(
+                    .write,
+                    confirmation: .policy,
+                    external: true
+                ),
+                errors: ["dev.tenon.core.terminal-unavailable"],
+                bindings: [terminalWrite],
+                admission: .interactive,
+                timeout: .seconds(15),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
                 .terminalViewportRead,
                 title: "Read terminal viewport",
                 description: """
@@ -928,6 +1009,68 @@ private extension CoreIntentCatalog {
                         "exited",
                         "columns",
                         "rows",
+                    ]
+                ),
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.read),
+                errors: ["dev.tenon.core.terminal-unavailable"],
+                bindings: [terminalRead],
+                admission: .background,
+                timeout: .seconds(5),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .terminalScrollbackRead,
+                title: "Read terminal scrollback",
+                description: """
+                Returns one bounded page of the pane's retained scrollback, \
+                oldest row first. Omit the cursor to start at the oldest \
+                retained row; pass the cursor from the previous page to \
+                continue. A null cursor in the result means the page reached \
+                the newest row. The cursor addresses rows by position, and the \
+                emulator exposes no stable row identity, so a page whose \
+                scrollback has changed size since the cursor was issued \
+                returns invalidated instead of rows that may have shifted.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "maxLines": CoreIntentSchema.integer(
+                            minimum: 1,
+                            maximum: Int64(
+                                CoreIntentPayloadPolicy
+                                    .maximumScrollbackPageLines
+                            )
+                        ),
+                        "cursor": CoreIntentSchema.string(
+                            maxLength: CoreIntentPayloadPolicy
+                                .maximumScrollbackCursorCharacters
+                        ),
+                    ],
+                    required: []
+                ),
+                output: CoreIntentSchema.root(
+                    properties: [
+                        "paneID": CoreIntentSchema.uuid,
+                        "text": CoreIntentSchema.inlineText,
+                        "cursor": CoreIntentSchema.nullable(
+                            CoreIntentSchema.string(
+                                maxLength: CoreIntentPayloadPolicy
+                                    .maximumScrollbackCursorCharacters
+                            )
+                        ),
+                        "invalidated": CoreIntentSchema.boolean,
+                        "totalRows": CoreIntentSchema.integer(
+                            minimum: 0,
+                            maximum: 100_000
+                        ),
+                    ],
+                    required: [
+                        "paneID",
+                        "text",
+                        "cursor",
+                        "invalidated",
+                        "totalRows",
                     ]
                 ),
                 audiences: programmatic,

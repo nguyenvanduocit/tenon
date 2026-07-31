@@ -11,7 +11,7 @@
       "browser.surface.back.v1",
       "browser.surface.forward.v1",
       "browser.surface.reload.v1",
-      "workspace.tab.create.v1"
+      "workspace.content.open.v1"
     ],
     "provides": [
       {

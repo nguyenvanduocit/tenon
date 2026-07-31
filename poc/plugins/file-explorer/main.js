@@ -376,7 +376,7 @@ async function commandTarget(call) {
 }
 
 tenon.intents.handle("dev.tenon.file-explorer.open.v1", async function (_, call) {
-  var result = await call.send("workspace.tab.create.v1", {
+  var result = await call.send("workspace.content.open.v1", {
     content: { kind: "plugin", pluginID: PLUGIN_ID, viewID: VIEW }
   });
   if (!result.ok) throw new Error(result.error.code);

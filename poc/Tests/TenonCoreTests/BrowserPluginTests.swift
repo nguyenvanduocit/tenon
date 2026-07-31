@@ -45,8 +45,12 @@ final class BrowserPluginTests: XCTestCase {
 
         XCTAssertEqual(reply, .success(.object([:])))
         let requests = await bridge.nestedRequests()
+        // T-039: the opener asks for content, not for a tab. Placement is host policy —
+        // `workspace.content.open.v1` reuses a pane already showing this kind of content
+        // and otherwise splits, and never opens a tab. A plugin naming `tab.create` here
+        // would be deciding layout it has no business deciding.
         XCTAssertEqual(requests.map(\.intentID.rawValue), [
-            "workspace.tab.create.v1",
+            "workspace.content.open.v1",
         ])
         XCTAssertEqual(
             requests.first?.input,

@@ -1085,6 +1085,48 @@ final class GhosttyNSView: NSView {
         }
     }
 
+    /// The whole retained screen, oldest row first.
+    ///
+    /// `GHOSTTY_POINT_SCREEN` is the coordinate space that includes scrollback, and the
+    /// `TOP_LEFT`/`BOTTOM_RIGHT` coord modes name its ends without us having to know how
+    /// many rows there are — which is the only way to ask, since the emulator publishes no
+    /// scrollback size. That is also why this reads the whole buffer rather than the one
+    /// page a caller asked for: the page bound applies to what leaves the host, and the
+    /// row count the cursor is checked against has to come from somewhere.
+    var scrollbackLines: [String] {
+        guard let surface else { return [] }
+        var selection = ghostty_selection_s()
+        selection.top_left = ghostty_point_s(
+            tag: GHOSTTY_POINT_SCREEN,
+            coord: GHOSTTY_POINT_COORD_TOP_LEFT,
+            x: 0,
+            y: 0
+        )
+        selection.bottom_right = ghostty_point_s(
+            tag: GHOSTTY_POINT_SCREEN,
+            coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT,
+            x: 0,
+            y: 0
+        )
+        selection.rectangle = false
+
+        var output = ghostty_text_s()
+        guard ghostty_surface_read_text(surface, selection, &output) else {
+            return []
+        }
+        defer { ghostty_surface_free_text(surface, &output) }
+        guard let text = output.text, output.text_len > 0 else { return [] }
+        let buffer = UnsafeBufferPointer(
+            start: text,
+            count: Int(output.text_len)
+        )
+        let bytes = buffer.map { UInt8(bitPattern: $0) }
+        guard let string = String(bytes: bytes, encoding: .utf8) else {
+            return []
+        }
+        return string.components(separatedBy: "\n")
+    }
+
     var renderedText: String {
         guard let surface else { return "" }
         var output = ghostty_cells_s()
@@ -1261,6 +1303,7 @@ final class GhosttySurface: TerminalSurface {
 
     var renderedCells: [GhosttyRenderedCell] { view.renderedCells }
     var renderedText: String { view.renderedText }
+    var scrollbackLines: [String] { view.scrollbackLines }
     var commandFinishedCount: Int { view.commandFinishedCount }
     var surfaceSize: GhosttySurfaceSize? { view.surfaceSize }
     var foregroundPID: UInt64? { view.foregroundPID }

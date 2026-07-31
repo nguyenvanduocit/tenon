@@ -486,7 +486,7 @@ public enum WorkspaceCatalogSnapshot {
 /// What restore hands back: the validated catalog, the per-pane project-root pins the
 /// shell re-applies through `SurfacePool.pinProjectRoot`, and the T-031 placeholder data
 /// (last recorded title and cwd per pane) the shell seeds through
-/// `SurfacePool.setTitle`/`seedRestoredDirectory` — all without building a surface.
+/// `SurfacePool.setTitle`/`seedSpawnDirectory` — all without building a surface.
 public struct RestoredWorkspaceCatalog: Equatable, Sendable {
     public let catalog: WorkspaceCatalog
     public let pins: [UUID: URL]

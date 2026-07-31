@@ -1,6 +1,7 @@
 import AppKit
 import SwiftUI
 import TenonCore
+import TenonIntentCore
 
 /// The full-width top row shared with the traffic lights. Its left zone (app identity
 /// + sidebar toggle) sits above the sidebar column; its right zone (the tab strip,
@@ -18,6 +19,53 @@ struct ShellTitleBar: View {
     let onToggleSidebar: () -> Void
 
     @State private var launcherPresented = false
+
+    /// The `+` launcher's catalog, unranked by a query because a menu has no search field.
+    /// Frecency still orders it, so the entry a human reaches for most is nearest the top
+    /// in both surfaces.
+    private var launcherCommands: [TenonCore.Command] {
+        host.commandIndex.launcherOnly
+            .rank(query: "", frecency: palette.frecency, now: Date())
+            .map(\.command)
+    }
+
+    /// Run a launcher command as if it had been chosen *on this tab*.
+    ///
+    /// The scope is the whole point: the palette and `+` invoke against the focused pane,
+    /// which for a right-click on a background tab would put the result in the wrong place.
+    /// Placement itself stays host policy inside `workspace.content.open.v1` — this only
+    /// says which tab is being talked about.
+    private func run(_ commandID: String, onTab tabID: UUID) {
+        guard let paneID = TabContextPlacement.scopedPane(
+            in: store.catalog,
+            tabID: tabID
+        ) else {
+            return
+        }
+        let workspaceID = TabContextPlacement.owningWorkspace(
+            in: store.catalog,
+            tabID: tabID
+        )
+        if TabContextPlacement.requiresRevealing(
+            in: store.catalog,
+            tabID: tabID,
+            placesContent: true
+        ) {
+            store.selectTab(tabID)
+        }
+        Task { @MainActor in
+            _ = await PaletteIntentInvoker.send(
+                commandID: commandID,
+                scope: InvocationScope(
+                    workspaceID: workspaceID,
+                    paneID: paneID
+                ),
+                host: host,
+                runtime: intentRuntime
+            )
+            palette.record(commandID)
+        }
+    }
     /// Width the tab chips actually need, so the row can hand everything past them
     /// to the drag surface instead of letting the scroll view swallow the whole side.
     @State private var tabStripWidth: CGFloat = 0
@@ -124,7 +172,14 @@ struct ShellTitleBar: View {
                             canClose: activeTabs.count > 1,
                             isDropTarget: router.activeDropTarget == .existingTab(tab.id),
                             select: { store.selectTab(tab.id) },
-                            close: { store.closeTab(tab.id) }
+                            close: { store.closeTab(tab.id) },
+                            // Same catalog the `+` button offers, from the same index —
+                            // a second hand-maintained list would drift the first time a
+                            // plugin declared a new creation verb.
+                            menuCommands: launcherCommands,
+                            runMenuCommand: { commandID in
+                                run(commandID, onTab: tab.id)
+                            }
                         )
                         // Report the chip's window-space frame so a pane dragged up
                         // from the canvas can be hit-tested against it.
@@ -219,6 +274,8 @@ private struct TabChip: View {
     var isDropTarget: Bool = false
     let select: () -> Void
     let close: () -> Void
+    var menuCommands: [TenonCore.Command] = []
+    var runMenuCommand: (String) -> Void = { _ in }
 
     var body: some View {
         Button(action: select) {
@@ -277,6 +334,13 @@ private struct TabChip: View {
             if isDropTarget {
                 RoundedRectangle(cornerRadius: 6)
                     .stroke(TenonTheme.amber, lineWidth: 1.5)
+            }
+        }
+        // A native menu, which is what a right-click on a tab is expected to produce —
+        // no second overlay style beside the `+` popover.
+        .contextMenu {
+            ForEach(menuCommands) { command in
+                Button(command.title) { runMenuCommand(command.id) }
             }
         }
         .accessibilityElement(children: .contain)

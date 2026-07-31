@@ -23,7 +23,6 @@
       "clipboard.write.v1",
       "terminal.write.v1",
       "workspace.state.v1",
-      "workspace.tab.create.v1",
       "workspace.content.open.v1",
       "workspace.pane.split.v1",
       "workspace.pane.content.set.v1"

@@ -8,9 +8,9 @@
   "intents": {
     "uses": [
       "process.exec.v1",
-      "terminal.run.v1",
+      "terminal.open.v1",
       "workspace.state.v1",
-      "workspace.tab.create.v1"
+      "workspace.content.open.v1"
     ],
     "provides": [
       {
