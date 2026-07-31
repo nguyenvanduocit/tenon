@@ -136,10 +136,12 @@ real GUI session — not one I started. Two things surfaced while trying:
 
 - `[ -S /tmp/tenon-501/tenon.sock ]` is satisfied by a **stale socket file**, so a readiness check
   written that way passes against a dead app. `nc -zU` is the honest probe.
-- `CLISocketServer` does not unlink a stale socket path before binding (`CLISocketServer.swift:143`
-  returns nil on `bind` failure and only unlinks after a failed `listen`), so a leftover file from
-  a killed instance permanently blocks the control socket. Small, real, and separate — worth a
-  card if anyone else trips on it.
+- ~~`CLISocketServer` does not unlink a stale socket path before binding~~ — **wrong, corrected in
+  T-051 before any code was written.** I read `bindAndListen` and stopped; the reclamation is in
+  its caller (`CLISocketServer.swift:58-71`: probe for a live listener, `unlink` only when nobody
+  answers, then bind). Measured: `unlink`-then-bind succeeds over a stale file. The real defect
+  behind the confusion is that the app degrades to running **without** a control socket in
+  silence, which is what T-051 now covers.
 
 ## Mutation proofs
 

@@ -38,6 +38,31 @@ final class CLISocketServer: @unchecked Sendable {
 
     let role: Role
 
+    /// Why this process ended up without a control socket, when it did.
+    ///
+    /// The app deliberately keeps running in that case — a terminal workspace is still useful
+    /// without remote control — but it must not do so in silence. `tenon-cli` can only report
+    /// that nothing is listening at the well-known path, which reads as "Tenon is not running"
+    /// about an app that is on screen, and sent one session hunting a bug that did not exist.
+    enum Degradation: Equatable {
+        /// The `/tmp/tenon-<uid>` directory could not be created.
+        case socketDirectoryUnavailable
+        /// Nothing was listening on the path and binding it still failed.
+        case bindFailed(path: String)
+
+        var message: String {
+            switch self {
+            case .socketDirectoryUnavailable:
+                "could not create the socket directory"
+            case let .bindFailed(path):
+                "could not bind \(path)"
+            }
+        }
+    }
+
+    /// `nil` when this process holds a control socket, or is a secondary that is about to exit.
+    private(set) var degradation: Degradation?
+
     /// The bound socket path (primary only), available right after `init` so it can be exported as
     /// `TENON_SOCKET_PATH` into terminals.
     private(set) var socketPath: String?
@@ -47,12 +72,15 @@ final class CLISocketServer: @unchecked Sendable {
     /// `enabled: false` disables the socket + single-instance handshake entirely (role stays
     /// `.primary`, nothing binds). Used when hosting XCTest, where the app must not `exit(0)` on a
     /// live instance and must not touch the real control socket.
-    init(enabled: Bool = true) {
+    /// - Parameter overridingPath: test seam only. The shipped app always uses the well-known
+    ///   user-wide path; a test that used it would fight the developer's own running Tenon for
+    ///   the single-instance lock.
+    init(enabled: Bool = true, overridingPath: String? = nil) {
         guard enabled else {
             role = .primary
             return
         }
-        let path = Self.wellKnownPath()
+        let path = overridingPath ?? Self.wellKnownPath()
 
         // Someone already listening? Then we are a second launch: activate them and bow out.
         if let path, Self.probeLiveInstance(at: path) {
@@ -64,6 +92,7 @@ final class CLISocketServer: @unchecked Sendable {
         guard let path else {
             // Couldn't even make the socket dir; run without a control socket rather than not at all.
             role = .primary
+            reportDegradation(.socketDirectoryUnavailable)
             return
         }
 
@@ -85,6 +114,15 @@ final class CLISocketServer: @unchecked Sendable {
 
         // No live instance and we still can't bind: degrade to running without a control socket.
         role = .primary
+        reportDegradation(.bindFailed(path: path))
+    }
+
+    /// Records the reason and says it out loud exactly once. Both halves matter: the value is what
+    /// a test can assert, the log is what a human or an agent has to go on when `tenon-cli` says
+    /// nothing is listening.
+    private func reportDegradation(_ reason: Degradation) {
+        degradation = reason
+        NSLog("tenon: running without a control socket — \(reason.message)")
     }
 
     deinit {
