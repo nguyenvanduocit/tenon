@@ -282,3 +282,20 @@ Two rules worth knowing:
 - **A `.js` file with no header is not a plugin, and not an error either.** A scratch script
   left in the plugins folder is skipped; a file that *does* claim to be a plugin and gets the
   header wrong fails loudly, with a diagnostic naming the file and what to fix.
+
+## Creating one with an agent (T-061)
+
+Settings ▸ Automation ▸ **Create with AI…** opens a fresh terminal tab whose shell
+starts in the plugins root and types one command: `claude` with a host-authored guide
+as a single POSIX-quoted argument (`AutomationAuthoring`, pure and pinned headless).
+The guide teaches exactly what this document specifies — the `/* tenon-manifest`
+opener, cadence syntax and bounds, the `automation.fired` payload, the real
+plugins-root path, `tenon-cli intent list`/`describe` for discovery — and ends with
+the T-060 verification loop: save, watch the schedule appear, press Run Now, read the
+run's outcome, expect the consent prompt on the first privileged call.
+
+The host grants nothing here. The pane holds ordinary shell authority; the script the
+agent writes earns its authority the ordinary way (manifest declaration, one policy
+path, consent). The button is the same typed services `terminal.open.v1` adapts,
+called DIRECT as the host's own gesture — the flow adds no intent, no capability, and
+no `tenon` member.

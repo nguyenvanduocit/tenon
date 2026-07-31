@@ -14,6 +14,7 @@ struct SettingsView: View {
     @Bindable var prefs: AppPreferencesStore
     var automation: AutomationScheduler
     var runNow: (PluginID, String) async -> Void
+    var createWithAI: () -> Void
 
     @State private var route: SettingsRoute = .general
 
@@ -78,7 +79,8 @@ struct SettingsView: View {
             AutomationSettingsDetail(
                 host: host,
                 automation: automation,
-                runNow: runNow
+                runNow: runNow,
+                createWithAI: createWithAI
             )
             .navigationTitle("Automation")
         case .cli:
@@ -141,10 +143,23 @@ private struct AutomationSettingsDetail: View {
     var host: PluginHost
     var automation: AutomationScheduler
     var runNow: (PluginID, String) async -> Void
+    var createWithAI: () -> Void
 
     var body: some View {
         Form {
             let listings = automation.listings()
+            // T-061: present in both states — an empty page's first affordance and a
+            // populated page's way to add the next one.
+            Section {
+                Button("Create with AI…") {
+                    createWithAI()
+                }
+            } footer: {
+                Text("Opens a terminal running claude with a guide to pair-write an "
+                    + "automation script with you. The script lands in the plugins "
+                    + "folder and loads the moment it is saved.")
+                    .font(.caption)
+            }
             if listings.isEmpty {
                 Section {
                     Text("No installed plugin declares an automation schedule.")

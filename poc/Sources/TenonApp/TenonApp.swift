@@ -88,6 +88,9 @@ struct TenonApp: App {
                             pluginID: pluginID,
                             scheduleID: scheduleID
                         )
+                    },
+                    createWithAI: {
+                        composition.openAutomationAuthoringPane()
                     }
                 )
             } else {
@@ -510,6 +513,23 @@ private extension AppComposition {
                 }
             }
         }
+    }
+
+    /// T-061: Create with AI. Opens a fresh terminal tab whose shell starts in the
+    /// plugins root and types the `claude <guide>` command into it — the same typed
+    /// services `terminal.open.v1`'s provider adapts, called DIRECT because this is
+    /// the host's own gesture (invariant 6; the intent stays the public adapter).
+    func openAutomationAuthoringPane() {
+        store.newTab(content: .terminal)
+        guard let paneID = store.catalog.activeSlotID,
+              store.catalog.slot(id: paneID)?.content == .terminal
+        else { return }
+        let root = host.pluginsRoot
+        terminalSurfaces.seedSpawnDirectory(root, for: paneID)
+        terminalSurfaces.sendTextWhenReady(
+            AutomationAuthoring.command(pluginsRoot: root.path) + "\n",
+            to: paneID
+        )
     }
 
     /// T-060: Run now. Mints a manual firing for an armed schedule and sends it down
