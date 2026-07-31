@@ -530,26 +530,72 @@ public enum PluginLoadError: Error, Sendable, CustomStringConvertible, Equatable
 }
 
 public enum PluginLoader {
-    /// Reads `<directory>/manifest.json` and validates that `main.js` exists next to it.
-    public static func loadManifest(at directory: URL) throws -> PluginManifest {
-        let manifestURL = directory.appendingPathComponent("manifest.json")
-        guard let data = FileManager.default.contents(atPath: manifestURL.path) else {
-            throw PluginLoadError.manifestMissing(manifestURL.path)
+    /// A plugin is either a directory or one file, and this is the only place that knows
+    /// which (T-047). Everything downstream — identity, policy, activation, retirement —
+    /// works from the manifest and the entrypoint, and neither cares how they were packaged.
+    public static func isSingleFilePlugin(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "js"
+    }
+
+    /// The JavaScript to evaluate for a plugin located at `url`.
+    public static func entrypoint(for url: URL) -> URL {
+        isSingleFilePlugin(url) ? url : url.appendingPathComponent("main.js")
+    }
+
+    /// The manifest for a plugin at `url` — `<dir>/manifest.json`, or the leading
+    /// `/* tenon-manifest … */` header of a single file.
+    ///
+    /// **One decoder, deliberately.** Both shapes end at the same
+    /// `JSONDecoder().decode(PluginManifest.self)`, so a single-file plugin cannot be held
+    /// to looser rules than a directory one. A second, more forgiving path is how two
+    /// plugins with identical declarations end up with different authority.
+    public static func loadManifest(at url: URL) throws -> PluginManifest {
+        let data: Data
+        let describedPath: String
+        if isSingleFilePlugin(url) {
+            guard let source = try? String(contentsOf: url, encoding: .utf8) else {
+                throw PluginLoadError.entrypointMissing(url.path)
+            }
+            let json: String?
+            do {
+                json = try PluginManifestHeader.json(in: source)
+            } catch let error as PluginManifestHeaderError {
+                throw PluginLoadError.manifestInvalid(url.path, error.suggestion)
+            }
+            guard let json else {
+                throw PluginLoadError.manifestMissing(url.path)
+            }
+            data = Data(json.utf8)
+            describedPath = url.path
+        } else {
+            let manifestURL = url.appendingPathComponent("manifest.json")
+            guard let contents = FileManager.default.contents(atPath: manifestURL.path) else {
+                throw PluginLoadError.manifestMissing(manifestURL.path)
+            }
+            data = contents
+            describedPath = manifestURL.path
         }
+
         let manifest: PluginManifest
         do {
             manifest = try JSONDecoder().decode(PluginManifest.self, from: data)
         } catch {
-            throw PluginLoadError.manifestInvalid(manifestURL.path, "\(error)")
+            throw PluginLoadError.manifestInvalid(describedPath, "\(error)")
         }
-        let entrypoint = directory.appendingPathComponent("main.js")
+        let entrypoint = entrypoint(for: url)
         guard FileManager.default.fileExists(atPath: entrypoint.path) else {
             throw PluginLoadError.entrypointMissing(entrypoint.path)
         }
         return manifest
     }
 
-    /// Every immediate subdirectory of `root` that contains a manifest.json, sorted by name.
+    /// Every plugin in `root`, sorted by name: immediate subdirectories carrying a
+    /// manifest.json, and top-level `.js` files that open with a manifest header.
+    ///
+    /// A `.js` file **without** a header is skipped rather than reported. It never claimed
+    /// to be a plugin, and one stray script in the plugins folder must not fail a reload for
+    /// every real plugin beside it. A file that does claim to be one and gets it wrong
+    /// fails loudly — that distinction is what `PluginManifestHeader.hasHeader` is for.
     public static func discover(in root: URL) -> [URL] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(
@@ -560,8 +606,18 @@ public enum PluginLoader {
 
         return entries
             .filter { url in
-                (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-                    && fm.fileExists(atPath: url.appendingPathComponent("manifest.json").path)
+                let isDirectory = (try? url.resourceValues(
+                    forKeys: [.isDirectoryKey]
+                ).isDirectory) == true
+                if isDirectory {
+                    return fm.fileExists(
+                        atPath: url.appendingPathComponent("manifest.json").path
+                    )
+                }
+                guard isSingleFilePlugin(url),
+                      let source = try? String(contentsOf: url, encoding: .utf8)
+                else { return false }
+                return PluginManifestHeader.hasHeader(source)
             }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }
     }

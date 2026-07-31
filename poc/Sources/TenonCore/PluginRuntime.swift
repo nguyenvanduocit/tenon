@@ -210,7 +210,7 @@ public actor PluginRuntime {
         startCallbackPump()
 
         do {
-            let entrypoint = directory.appendingPathComponent("main.js")
+            let entrypoint = PluginLoader.entrypoint(for: directory)
             guard let source = try? String(contentsOf: entrypoint, encoding: .utf8) else {
                 throw PluginLoadError.entrypointMissing(entrypoint.path)
             }

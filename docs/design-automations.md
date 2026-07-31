@@ -227,3 +227,40 @@ Two things in it are worth copying into your own automation:
 
 `FleetReviewExampleTests` loads this exact directory through a real `PluginHost` and runs
 the command, so the example cannot rot unnoticed.
+
+## Single-file automations (shipped, T-047)
+
+An automation does not need a directory. A lone `.js` file in the plugins root, opening with
+a manifest header, is discovered, validated, activated, hot-reloaded and retired exactly like
+a directory plugin:
+
+```js
+/* tenon-manifest
+{
+  "id": "dev.example.nightly",
+  "name": "nightly",
+  "version": "1",
+  "permissions": [],
+  "intents": { "uses": [] },
+  "automation": { "schedules": [{ "id": "nightly", "daily": "02:00" }] }
+}
+*/
+tenon.events.on("automation.fired", async function () {
+  // ...
+});
+```
+
+The header is not a shortcut around declaring things. A manifest is load-bearing —
+permissions and `intents.uses` are read *before* any JavaScript is evaluated — so embedding
+it as a leading comment keeps declare-before-eval while collapsing the packaging to one
+file. Both shapes end at the same `PluginManifest` decoder, so a single-file plugin is held
+to exactly the same rules, and identity (duplicate id, reserved prefixes) applies across the
+mixed namespace.
+
+Two rules worth knowing:
+
+- **The header must open the file.** Code above it would run before the plugin had declared
+  what it may do, and a file with two headers has no answer to which one is the declaration.
+- **A `.js` file with no header is not a plugin, and not an error either.** A scratch script
+  left in the plugins folder is skipped; a file that *does* claim to be a plugin and gets the
+  header wrong fails loudly, with a diagnostic naming the file and what to fix.
