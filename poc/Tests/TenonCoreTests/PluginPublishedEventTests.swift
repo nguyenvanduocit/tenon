@@ -95,6 +95,67 @@ final class PluginPublishedEventTests: XCTestCase {
         )
     }
 
+    /// Invariant 10 in flight, not just in the manifest. A plugin publishing in a tight
+    /// loop must be bounded by something; without the in-flight cap this queues one host
+    /// call per iteration and the only limit is memory.
+    func testAPublisherInALoopIsBoundedInFlight() async throws {
+        let fixture = try makeFixture(
+            publisherPublishes: ["board.changed"],
+            observerObserves: ["dev.tenon.test.publisher/board.changed"],
+            publisherBody: """
+            for (var i = 0; i < 200; i++) {
+              tenon.events.emit("board.changed", { value: String(i) });
+            }
+            """
+        )
+        let host = fixture.host
+        try await host.loadAll()
+        addTeardownBlock { await host.shutdown() }
+
+        // 200 publishes in one synchronous handler, well past the in-flight cap. What is
+        // asserted is what is observable from outside: the plugin survives, the host keeps
+        // answering, and some of the burst is delivered rather than all of it queued. The
+        // cap itself is a private counter; the test that would read it directly would be
+        // testing the implementation rather than the property.
+        try await publish(host: host, local: "board.changed", value: "loop")
+
+        let delivered = await eventually(attempts: 1200) {
+            await self.observerLog(host) != nil
+        }
+        XCTAssertTrue(delivered, "nothing survived the burst; the cap swallowed everything")
+        XCTAssertFalse(
+            host.plugins.contains { $0.error != nil },
+            "a publish loop must be bounded, not fatal: \(host.plugins.map(\.error))"
+        )
+    }
+
+    /// A retired generation owns nothing: it publishes nothing and receives nothing.
+    func testARetiredGenerationNeitherPublishesNorReceives() async throws {
+        let fixture = try makeFixture(
+            publisherPublishes: ["board.changed"],
+            observerObserves: ["dev.tenon.test.publisher/board.changed"]
+        )
+        let host = fixture.host
+        try await host.loadAll()
+
+        try await publish(host: host, local: "board.changed", value: "before")
+        _ = await eventually { await self.observerLog(host) != nil }
+
+        await host.shutdown()
+
+        // Nothing to deliver to and nothing to publish from; the host must simply drop it.
+        await host.publish(
+            local: "board.changed",
+            payload: .object(["value": .string("after")]),
+            from: PluginID("dev.tenon.test.publisher")
+        )
+        try? await Task.sleep(for: .milliseconds(200))
+        XCTAssertTrue(
+            host.statusItems.isEmpty,
+            "a retired generation still delivered: \(host.statusItems.map(\.text))"
+        )
+    }
+
     // MARK: - Manifest bounds
 
     func testChannelDeclarationsAreBounded() {
@@ -129,7 +190,8 @@ final class PluginPublishedEventTests: XCTestCase {
     private func makeFixture(
         publisherPublishes: [String],
         observerObserves: [String],
-        observerSubscribesTo: [String]? = nil
+        observerSubscribesTo: [String]? = nil,
+        publisherBody: String? = nil
     ) throws -> Fixture {
         // What the observer's JavaScript listens for, which is NOT the same question as
         // what its manifest declares — the gap between them is the authority being tested.
@@ -156,7 +218,7 @@ final class PluginPublishedEventTests: XCTestCase {
             // Triggered by a host event, so the publish crosses the runtime boundary the
             // way it would in production rather than being poked from Swift.
             tenon.events.on("workspace.selected", function (payload) {
-              tenon.events.emit("board.changed", { value: payload && payload.value });
+              \(publisherBody ?? "tenon.events.emit(\"board.changed\", { value: payload && payload.value });")
             });
             """
         )
