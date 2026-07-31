@@ -520,7 +520,7 @@ private extension ProviderExecutionLaneTests {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(3))
         while clock.now < deadline {
-            if await mailbox.snapshot().runningRequestID == requestID {
+            if await mailbox.snapshot().runningRequestIDs.contains(requestID) {
                 return
             }
             try? await clock.sleep(for: .milliseconds(1))
@@ -536,7 +536,7 @@ private extension ProviderExecutionLaneTests {
         let clock = ContinuousClock()
         let deadline = clock.now.advanced(by: .seconds(3))
         while clock.now < deadline {
-            if await mailbox.snapshot().runningRequestID != nil {
+            if await mailbox.snapshot().runningRequestIDs.isEmpty == false {
                 return
             }
             try? await clock.sleep(for: .milliseconds(1))

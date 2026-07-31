@@ -1,0 +1,229 @@
+# Automations: manifest schedules firing plugin JavaScript
+
+**Status:** accepted, shipped (T-046) · **Date:** 2026-07-31
+**Classification authority:** `docs/architecture-interaction-boundaries.md` (the law
+selected every mechanism below; this document records the walk, not a new rule).
+
+## The unit of automation is plugin JavaScript
+
+The studied prior art (Orca's Automations, `refrerences/orca/`) fixes its unit of work
+as *one prompt string pasted into one TUI-agent PTY on a schedule*, guarded by at most
+one shell precheck whose output is discarded. Everything conditional, sequential, or
+data-dependent must be folded into the prompt text. Completion is inferred by
+heuristics; the stored timezone is never consulted; desktop and headless dispatch are
+two divergent implementations.
+
+Tenon inverts the unit. An automation **is a plugin**: ordinary JavaScript in the
+ordinary plugin runtime, with the exact public `tenon` surface, the plugin principal,
+manifest-declared permissions and intents, JavaScriptCore isolation, and hot reload.
+Conditionals, chaining, retries, and data flow are plain JavaScript; actions are the
+declared intents that already exist (`process.exec.v1`, `terminal.run.v1`,
+`workspace.*`, `network.fetch.v1`, `ui.toast.v1`, …). Orca's whole feature reduces to
+one expressible script; scripts Orca cannot express at all — pipe a command's output
+into a decision, fan out over workspaces, post different results to different surfaces
+— are the same few lines.
+
+The host adds only what resident JavaScript cannot own: **durable wall-clock
+scheduling** that survives hot reload and fires without a plugin keeping its own timer
+armed (`tenon.timers.every` exists, but dies with its generation, drifts across
+reloads, and cannot say "09:00 local").
+
+## Mechanism walk (ordered decision law)
+
+| Piece | Rung | Why |
+|---|---|---|
+| `automation.schedules` manifest block | **CONTRIBUTION** | declarative registration the plugin owns; host owns validation/reconciliation — the `settings` schema class |
+| schedule firing | **EVENT** `automation.fired` | a fact on a host-owned channel; no reply, no result, publisher never awaits observers; delivered owner-scoped through the existing targeted `PluginHost.emit(event:payload:to:)` |
+| the automation's actions | existing **INTENT**s | unchanged one-policy path: manifest `uses`, capability grants, consent (T-021/T-033) apply exactly as for any plugin |
+| due computation (`AutomationScheduler`) | same-owner **DIRECT** | host-native typed state; time is a parameter everywhere, `Date()` enters only at `AppComposition`'s tick edge (the T-029 pattern) |
+
+**Zero new `tenon` members.** The public runtime inventory, the surface pin, and the
+global-scope closure pin are untouched. A plugin observes firings with the
+`tenon.events.on` it already has.
+
+## Manifest grammar
+
+```json
+"automation": {
+  "schedules": [
+    { "id": "tick", "every": "1m" },
+    { "id": "morning", "daily": "09:00", "grace": "2h" }
+  ]
+}
+```
+
+Validation is fail-closed at manifest decode (`AutomationScheduleSpec` /
+`PluginAutomationManifest`, strict unknown-field rejection — the palette-block
+precedent):
+
+- exactly one of `every` | `daily` per schedule;
+- `every`: `"<positive integer><s|m|h|d>"`, minimum `1m`, maximum `7d`. Sub-minute
+  cadence is deliberately inexpressible — that is `tenon.timers.every` (RESOURCE);
+  a schedule is a wall-clock automation, not a tick source;
+- `daily`: zero-padded 24-hour `"HH:mm"`, resolved against the machine's calendar at
+  computation time. **Deliberately no stored timezone**: Orca stores one and then
+  evaluates everything in host-local time anyway; dead metadata that promises what the
+  code does not do is worse than honestly documented local time;
+- `grace`: optional duration (`1m`...`7d`), default one interval for `every`, `6h` for
+  `daily` — how stale a missed occurrence may be and still fire;
+- ≤ 8 schedules per plugin; ids unique per plugin, 1...64 bytes.
+
+## Firing semantics
+
+- The scheduler holds `nextDue` per (plugin, schedule). A tick at `now` fires every
+  schedule with `nextDue ≤ now` — **at most the latest missed occurrence**, and only
+  when it is within `grace`; staler misses skip silently and the schedule re-arms from
+  `now`. A double tick at one instant fires nothing twice (Orca's idempotent-run rule,
+  kept without its persistence machinery).
+- Payload: `{ scheduleId, scheduledFor: ISO-8601, late: Bool, trigger: "scheduled" }`.
+  `late` is set when the firing ran more than 2 minutes behind its instant. `trigger`
+  is reserved for a future manual "Run now" (`"manual"`), which will reuse this exact
+  event rather than grow a second path.
+- Reconcile rides `PluginHost.onPluginLifecycleChanged` — load, hot reload,
+  enable/disable, uninstall. An unchanged spec keeps its phase across reloads; a
+  changed spec recomputes from reconcile time; only loaded, enabled plugins schedule.
+  `PluginSnapshot.automationSchedules` participates in the snapshot's Equatable
+  exactly so schedule edits trip the lifecycle callback.
+- A firing addressed to a retired/disabled session drops silently in the targeted
+  emit — no callback can enter a destroyed context (invariant 10).
+- The tick edge (`AppComposition.startAutomationScheduling`) runs every 30 s with 5 s
+  tolerance; cadence bounds firing latency, never firing count.
+
+## What an automation does not get
+
+Naming a schedule grants nothing. The firing carries no authority; whatever the
+script then does passes the same manifest declaration, capability, policy, and consent
+checks as any plugin call (invariants 5, 9). A user-authored automation that wants
+`process.exec.v1` declares the permission and the use, and prompts under the same
+consent rules as any third-party plugin — standing consent stays host-owned (T-033).
+
+## Worked example — Orca's "daily repo audit", but inspectable
+
+```json
+{
+  "id": "dev.example.daily-audit",
+  "name": "daily-audit",
+  "version": "1",
+  "permissions": ["process.exec"],
+  "intents": { "uses": ["process.exec.v1", "ui.toast.v1"], "provides": [] },
+  "automation": { "schedules": [ { "id": "morning", "daily": "09:00" } ] }
+}
+```
+
+```js
+tenon.events.on("automation.fired", async function (e) {
+  var result = await tenon.intents.send("process.exec.v1", {
+    command: "/usr/bin/git",
+    arguments: ["status", "--short"],
+    workingDirectory: "/path/to/repo"
+  });
+  if (!result.ok) { return; }
+  var out = result.value.standardOutput;
+  var dirty = out.kind === "inline" && out.text.trim() !== "";
+  if (!dirty) { return; }                            // condition — plain JS
+  await tenon.intents.send("ui.toast.v1", {          // different action per result
+    message: "daily-audit: worktree dirty since " + e.scheduledFor,
+    kind: "warning"
+  });
+});
+```
+
+The precheck-output-into-prompt plumbing Orca lacks is the `out.text` variable.
+
+## Orchestration: the dynamic-workflow shape (added 2026-07-31, after T-040/T-044)
+
+Claude Code's *dynamic workflows* write an orchestration script — `agent()`,
+`parallel()`, `pipeline()`, loops — and drive a fleet of subagents. Tenon's automation
+reaches the same shape **by composition, with zero new machinery**, because the
+automation is already real async JavaScript over the intent catalog:
+
+| Workflow primitive | Tenon primitive | Since |
+|---|---|---|
+| orchestration script | the automation's plugin JS | T-046 |
+| trigger | `automation.fired` schedule / any EVENT / palette intent | T-046 |
+| `agent()` — spawn + await result | `terminal.open.v1` → `terminal.wait.v1` (`command-finished`, `{scope:{paneID}}`) → `terminal.scrollback.read.v1` pages | T-040 + T-009 + T-044 |
+| headless `agent()` with structured output | `process.exec.v1` (e.g. `claude -p … --output-format json`) → parse stdout | pre-existing |
+| `parallel()` | `Promise.all` — the runtime holds up to **256** in-flight outbound intents per generation (`PluginRuntime.swift:101,983`) | T-046 runtime |
+| `pipeline()` / loops / conditionals / retry | plain JavaScript | — |
+| supervision (the part Claude Code does not have) | every pane agent is a real PTY pane: attention signals (T-029), scrollback evidence, human can take over mid-run | VISION |
+
+`agent()` **ships as the platform function `tenon.agents.run`** (T-048, user-directed:
+automation scripts are AI-authored, the platform provides the functions). It is
+JavaScript composition inside the caller's own generation — caller principal, no new
+bridge, no new authority; the runtime-surface pin gained exactly one member:
+
+```js
+tenon.events.on("automation.fired", async function () {
+  // fleet: three reviewers in three visible, supervised panes
+  var results = await Promise.all([
+    tenon.agents.run({ command: "claude", arguments: ["-p", "review src/a for correctness"] }),
+    tenon.agents.run({ command: "claude", arguments: ["-p", "review src/a for security"] }),
+    tenon.agents.run({ command: "claude", arguments: ["-p", "review src/a for tests"] })
+  ]);
+  var findings = results
+    .filter(function (r) { return r.ok; })
+    .map(function (r) { return r.value.transcript; });
+  // aggregate, decide, act — plain JavaScript
+});
+```
+
+`tenon.agents.run({ command, arguments?, workingDirectory?, timeoutMs? })` →
+`{ ok: true, value: { paneID, transcript } }` or `{ ok: false, error, paneID? }`.
+Semantics, each mutation-proven in `AgentsRunTests`:
+
+- **arguments are POSIX-single-quoted per token** — a prompt containing `'`, `$()`,
+  or backticks can never become shell syntax in the user's PTY;
+- opens via `terminal.open.v1`, then arms `terminal.wait.v1` (`command-finished`,
+  `{scope:{paneID}}`) immediately — the wait snapshots its completion baseline when
+  issued (`TerminalIntentProvider.swift:405,428`: no latch), and in a real pane the
+  command starts strictly later (T-031 lazy materialization), so arming right after
+  open closes the race in practice; a contract-level client-held baseline remains a
+  recorded T-048 follow-up;
+- per-call wait caps at the contract's 55 s; the loop is bounded by `timeoutMs`
+  (default 10 min) and fails typed (`dev.tenon.agents.timeout`) without reading;
+- pages the transcript via `terminal.scrollback.read.v1` cursor-chained; a resize
+  mid-walk (`invalidated`) restarts the walk once clean, twice fails typed
+  (`dev.tenon.agents.scrollback-unstable`).
+
+Manifest for such an automation declares exactly what it uses — `terminal.write`
+permission plus `uses: ["terminal.open.v1","terminal.wait.v1","terminal.scrollback.read.v1"]`
+— and the one-policy path applies per underlying call, like every plugin. The
+rejected packaging (a broker plugin providing `agent.run` as a plugin-owned intent)
+would have executed under the broker's grants — authority laundering — and is
+recorded in T-048.
+
+## Recorded non-goals of this slice (follow-ups)
+
+- **Cross-restart catch-up**: `nextDue` is in-memory; a schedule missed while the app
+  was not running does not fire on launch. Needs a small persisted last-fired map.
+- **Manual "Run now" / run history surface**: the `trigger` field and the run-shaped
+  payload are the hooks; a palette/UI affordance and an evidence-linked run log are
+  their own classified changes.
+- **Single-file scripts** (T-047): one `.js` with an embedded manifest header, same
+  decoder, same identity rules — packaging ergonomics only.
+- **Unattended terminal scope**: `terminal.run.v1` targets the invocation scope's
+  visible terminal; a headless firing wants an explicit pane/tab designation story
+  (adjacent: T-040).
+
+## A worked example: `examples/fleet-review`
+
+`poc/examples/fleet-review/` is the supervised-fleet story in about eighty lines: one
+palette command puts three reviewers on the same change, each in its own visible pane,
+waits for all of them, reads each transcript back, and publishes a one-line verdict.
+
+It lives in `examples/` rather than `plugins/` deliberately — a demo that runs an agent CLI
+does not belong in every user's palette by default. Copy the directory into `poc/plugins/`
+to try it.
+
+Two things in it are worth copying into your own automation:
+
+- **`arguments` is an array, never a joined string.** `tenon.agents.run` POSIX-quotes each
+  token itself, so a prompt containing `'` or `$(...)` cannot become shell syntax in the
+  user's PTY.
+- **The command declares `confirmation: "never"`.** It performs nothing itself; every
+  external effect happens through `terminal.open.v1`, which is already `policy`-gated. A
+  confirmation here would ask the human four times for one click, which trains them to
+  click through the one that matters.
+
+`FleetReviewExampleTests` loads this exact directory through a real `PluginHost` and runs
+the command, so the example cannot rot unnoticed.

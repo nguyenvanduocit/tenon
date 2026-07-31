@@ -201,6 +201,15 @@ Current DIRECT inventory:
   and the host-native completion-notification adapter. No plugin EVENT exists for this
   state; if a plugin ever needs visibility into pane attention, that is a NEW classified
   EVENT admitted through this law's ordered decision — never a reuse of this host state;
+- tab context-menu sourcing and its placement resolution (T-039): the menu is host-native
+  SwiftUI reading `CommandIndex.launcherOnly` — the same index the `+` launcher reads, not a
+  second list — and `TabContextPlacement` is a pure rule naming which tab a chosen command
+  is talking about. Plugin-contributed entries remain CONTRIBUTIONs (palette declarations),
+  and invoking one is the existing INTENT path under the palette principal, differing only
+  in that the scope is named at the call site instead of inherited from which pane has
+  focus. **Placement itself is not decided here**: it stays inside
+  `workspace.content.open.v1`, whose contract already makes it host policy — reuse the pane
+  showing this kind of content, otherwise split, never open a tab;
 - plugin-host administration from the Settings UI;
 - pure parsers, ranking, schemas, and value transformations;
 - `tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the
@@ -278,7 +287,7 @@ requires the change protocol below.
 | File/OS | `file.reveal.v1`, `file.open.v1` | plugin, CLI, agent |
 | Clipboard | `clipboard.write.v1` | plugin |
 | Process | `process.exec.v1` | plugin, CLI, agent |
-| Terminal | `terminal.write.v1`, `terminal.run.v1`, `terminal.viewport.read.v1`, `terminal.wait.v1` | plugin, CLI, agent |
+| Terminal | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1`, `terminal.wait.v1` | plugin, CLI, agent |
 | Browser surface | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` | plugin |
 | User interaction | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1`, `ui.toast.v1` | plugin |
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
@@ -306,16 +315,28 @@ execution topology is the following closed map:
 | `process` | `process.exec.v1` |
 | `network` | `network.fetch.v1` |
 | `workspace` | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
-| `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.viewport.read.v1` |
+| `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1` |
 | `terminalWait` | `terminal.wait.v1` |
 | `browser` | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` |
 | `userPrompt` | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1` |
 | `userNotification` | `ui.toast.v1` |
 | `secrets` | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` |
 
-Every core intent belongs to exactly one lane. Every lane owns a distinct bounded serial
-mailbox. Global admission, authority, generation leasing, cancellation, health, and
-retirement apply across the complete generation.
+Every core intent belongs to exactly one lane. Every lane owns a distinct bounded mailbox,
+which bounds both what may be **queued** and how many of its requests may be **running**.
+Concurrency is **1 — serial — for every lane by default**, and a lane raises it only where
+serialization does no work: its requests must be mutually independent, hold no resource, and
+carry no meaningful order between them. Raising it is a change to this law and takes the
+change protocol below.
+
+| Lane | Concurrency | Why |
+|---|---|---|
+| `terminalWait` | 8 | `terminal.wait.v1` blocks until a pane-scoped condition holds. Waits are independent, each scoped to its own pane, hold nothing, and have no order between them. Serial, a second supervised agent could not be waited on at all — see the resolved counterexample under **Falsification**. Bounded at 8 because supervision is human-scale. |
+| every other lane | 1 | Filesystem, workspace, process, terminal writes: ordering is the property that makes the lane mean something. |
+
+Global admission, authority, generation leasing, cancellation, health, and retirement apply
+across the complete generation, and retirement settles **every** running request in a lane,
+not merely one.
 
 Browser v1 uses one fixed `browser` lane. Its handlers settle after enqueueing an operation
 on the caller-scoped surface. A future handler that awaits navigation completion must define
@@ -353,6 +374,12 @@ Current EVENT inventory:
 - palette query facts (`text`, host-owned monotonic `revision`) delivered owner-scoped
   to plugins that registered a palette provider (`tenon.palette.onQuery`); the palette
   publishes them without awaiting any observer;
+- `automation.fired` (T-046): a manifest-declared automation schedule came due.
+  Published by the host scheduler owner-scoped to exactly the declaring plugin, never
+  broadcast — a schedule is that plugin's own declaration, so its firing needs no
+  permission gate and must not be observable by anyone else. Payload: `scheduleId`,
+  `scheduledFor` (ISO 8601), `late`, `trigger`. After a missed stretch at most the
+  latest occurrence fires, and only within the schedule's declared grace;
 - settings-change and plugin lifecycle facts.
 
 An event MUST NOT be used to ask the host to mutate state. If the publisher needs a result,
@@ -364,6 +391,14 @@ The initial finite request MAY return a handle, but all subsequent multi-result 
 independently continuing lifetime semantics belong to a bounded resource protocol. A
 resource protocol MUST define owner, capacity, overflow, cancellation, teardown on hot
 reload, and terminal state.
+
+**A continuation token is not a handle.** An intent may hand back an opaque value that a
+later call passes in — a paging cursor is the standard case — and that does not move the
+interaction onto this rung. The test is ownership and lifetime, not repetition: a handle
+names host state that exists between calls, has to be torn down on hot reload, and leaks if
+the caller forgets it. A cursor is a value, it can be dropped with no consequence, and it
+expires by being refused. `terminal.scrollback.read.v1` pages this way and stays an INTENT;
+continuous terminal output, which the host would push without being asked, would not.
 
 Current RESOURCE inventory:
 
@@ -385,6 +420,9 @@ objects.
 Current CONTRIBUTION inventory:
 
 - manifest setting schemas and plugin presentation metadata;
+- manifest `automation.schedules` declarations (T-046): wall-clock cadence the plugin
+  owns and the host validates fail-closed, reconciles per generation, and fires as the
+  owner-scoped `automation.fired` event;
 - `tenon.statusBar.set`;
 - `tenon.views.register/set` and owner-scoped select/submit/open/close callbacks;
 - `tenon.palette.registerProvider/setResults`: dynamic palette provider registration and
@@ -428,6 +466,7 @@ fitness-test update in the same change.
 | Surface | Classification |
 |---|---|
 | `tenon.apiVersion` | reserved immutable runtime metadata |
+| `tenon.agents.run` | DIRECT JavaScript composition over the INTENT adapter (T-048): runs a command in a new pane to completion and returns its transcript by composing `terminal.open.v1` → `terminal.wait.v1` → `terminal.scrollback.read.v1` inside the caller's generation. Caller-principal: every underlying send is policy-checked against this plugin's own declared uses; the function grants nothing and crosses no new bridge |
 | `tenon.intents.send` | INTENT adapter |
 | `tenon.intents.handle` | reserved provider control plane |
 | `tenon.intents.list` | reserved discovery control plane |
@@ -551,7 +590,50 @@ This decision is wrong and MUST be revised if evidence proves any of these:
 - a resource cannot state a finite buffer, owner, cancellation, and teardown rule;
 - the adapter and built-in UI cannot share one typed domain implementation;
 - compiled intent validation/routing causes a measured user-visible regression that cannot
-  meet the budget without removing a safety invariant.
+  meet the budget without removing a safety invariant;
+- **a lane's serial mailbox makes a legitimate concurrent product use impossible.**
+  Recorded 2026-07-31 against `terminalWait`, with a measurement rather than an argument.
+
+### Resolved counterexample: `terminalWait`'s serial mailbox forbade supervising two agents
+
+**Raised and resolved 2026-07-31.** Kept because the law changed because of it, and because
+it is the worked example of what a falsification entry is for.
+
+`terminal.wait.v1` sat alone in the `terminalWait` lane, and every lane was serial. Two
+supervised agent runs (`tenon.agents.run`, T-048) therefore could not both be in flight: the
+second run's wait queued behind the first, which by design does not return until its
+condition is met, while the second run's `terminal.write.v1` proceeded on the unblocked
+`terminalImmediate` lane. Its command finished while its wait was still queued; the wait then
+snapshotted a baseline that already counted that finish and waited for a second one that
+never came. Measured — first agent succeeded, second returned `dev.tenon.agents.timeout`:
+
+```
+fleet: alpha=OK-ALPHA beta=ERR:dev.tenon.agents.timeout
+```
+
+The serialization was doing no work. Waits are mutually independent, each scoped to its own
+pane; ordering between them carries no meaning, and a wait holds no resource — it is a
+bounded poll with a deadline, which is precisely why it was split out of `terminalImmediate`
+so long waits would not block short operations. Serializing waits among themselves
+reintroduced that blocking one level down.
+
+**Resolution: lanes gained a concurrency bound, defaulting to 1.** `IntentMailboxLimits`
+carries `maxConcurrentRequests`; the mailbox holds its running requests in a bounded set
+rather than one slot, and `drain` starts up to the limit instead of awaiting each reply
+inline — the inline await was the whole mechanism. Every lane but `terminalWait` is
+constructed at 1, so nothing else changed behaviour. Retirement now settles every running
+request rather than one.
+
+The rejected alternative was latch semantics on `terminal.wait.v1` — cheaper, and worse: it
+changes what the contract means ("the next finish" becomes "a finish"), and T-044 chose
+baseline-relative deliberately so a caller could not be answered by a command that finished
+before it asked.
+
+Fitness tests: `IntentMailboxTests.testALaneRunsConcurrentlyWhenItsConcurrencyLimitAllows`
+(a start barrier no serial lane can fake) and `testALaneIsSerialByDefault` (the default is
+the property that must not drift). End to end,
+`AgentFleetIntegrationTests` fans out two agents through the real provider and both complete.
+Mutation-proven: returning `terminalWait` to 1, or restoring the drain gate, reddens them.
 
 Passing tests is necessary but not sufficient. The product-level proof is that one
 operation behaves identically through every authorized public adapter, same-owner UI stays

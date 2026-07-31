@@ -124,7 +124,7 @@ final class SurfaceLifecycleTests: XCTestCase {
         let recorded = try directory("repo/src")
         let pool = makePool()
 
-        pool.seedRestoredDirectory(recorded, for: slot)
+        pool.seedSpawnDirectory(recorded, for: slot)
 
         XCTAssertFalse(pool.hasEverBeenViewed(slot), "seeding placeholder data is not viewing")
         XCTAssertEqual(
@@ -174,7 +174,7 @@ final class SurfaceLifecycleTests: XCTestCase {
         first.store.newTab(content: .terminal)
         first.store.splitActiveSlot(.horizontal, content: .terminal)
         first.terminalSurfaces.setTitle("claude — building", for: watchedSlotID)
-        first.terminalSurfaces.seedRestoredDirectory(recordedCwd, for: watchedSlotID)
+        first.terminalSurfaces.seedSpawnDirectory(recordedCwd, for: watchedSlotID)
         let slotsAtQuit = Set(first.store.catalog.allSlotIDs)
         XCTAssertEqual(slotsAtQuit.count, 3)
         await first.stop()

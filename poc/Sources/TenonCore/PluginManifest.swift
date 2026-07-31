@@ -17,6 +17,10 @@ public struct PluginManifest: Sendable, Equatable, Codable {
     public let displayName: String?
     /// Optional host allowlist applied to `network.fetch.v1`.
     public let network: PluginNetworkPolicy?
+    /// Optional wall-clock schedules the host fires back at this plugin as the
+    /// owner-scoped `automation.fired` event (T-046). CONTRIBUTION-class declaration;
+    /// the block validates itself on decode, so a held value is always valid.
+    public let automation: PluginAutomationManifest?
 
     public init(
         id: PluginID,
@@ -27,7 +31,8 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         settings: [PluginSettingSpec] = [],
         icon: String? = nil,
         displayName: String? = nil,
-        network: PluginNetworkPolicy? = nil
+        network: PluginNetworkPolicy? = nil,
+        automation: PluginAutomationManifest? = nil
     ) throws {
         self.id = id
         self.name = name
@@ -38,6 +43,7 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         self.icon = icon
         self.displayName = displayName
         self.network = network
+        self.automation = automation
         try validate()
     }
 
@@ -55,6 +61,10 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
         network = try c.decodeIfPresent(PluginNetworkPolicy.self, forKey: .network)
+        automation = try c.decodeIfPresent(
+            PluginAutomationManifest.self,
+            forKey: .automation
+        )
         try validate()
     }
 

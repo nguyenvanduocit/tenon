@@ -534,7 +534,7 @@ final class ProviderRegistryTests: XCTestCase {
         line: UInt = #line
     ) async {
         for _ in 0 ..< 2_000 {
-            if await mailbox.snapshot().runningRequestID == requestID {
+            if await mailbox.snapshot().runningRequestIDs.contains(requestID) {
                 return
             }
             await Task.yield()

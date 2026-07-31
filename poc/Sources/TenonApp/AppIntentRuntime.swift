@@ -324,7 +324,9 @@ private extension AppIntentRuntime {
             return try ProviderExecutionLane(
                 intentIDs: intentIDs,
                 mailbox: IntentMailbox(
-                    limits: IntentMailboxLimits()
+                    limits: try IntentMailboxLimits(
+                        maxConcurrentRequests: lane.maxConcurrentRequests
+                    )
                 )
             )
         }

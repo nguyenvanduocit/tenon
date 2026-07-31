@@ -3,6 +3,76 @@ import XCTest
 @testable import TenonIntentCore
 
 final class IntentMailboxTests: XCTestCase {
+    /// A lane whose concurrency allows it runs more than one request at once.
+    ///
+    /// The counterexample this exists for is measured in
+    /// `docs/architecture-interaction-boundaries.md`: `terminal.wait.v1` sits alone in the
+    /// `terminalWait` lane, so two supervised agent runs could not both be waited on — the
+    /// second wait queued behind the first, which by design does not return until its
+    /// condition is met. The queue still bounds what may be *waiting*; this bounds what may
+    /// be *running*, and the two are different questions.
+    ///
+    /// The barrier is the assertion: each job blocks until every job has started, so the
+    /// test can only pass if they genuinely overlap. Serially, the first job waits for a
+    /// second that cannot start, and the bounded wait reports it instead of hanging.
+    func testALaneRunsConcurrentlyWhenItsConcurrencyLimitAllows() async throws {
+        let mailbox = IntentMailbox(limits: try Self.limits(maxConcurrentRequests: 2))
+        let barrier = StartBarrier(expected: 2)
+
+        let jobs = try (1 ... 2).map { index in
+            try Self.job(id: UInt8(index), principal: "a") {
+                await barrier.arriveAndWait()
+                return .success(.null)
+            }
+        }
+        let tasks = jobs.map { job in
+            Task { try await mailbox.submit(job) }
+        }
+
+        let overlapped = await barrier.reachedFullStrength()
+        let started = await barrier.arrived
+        XCTAssertTrue(
+            overlapped,
+            "only \(started) of 2 requests started — the lane is still serial"
+        )
+        for task in tasks {
+            _ = try await task.value
+        }
+    }
+
+    /// The default is unchanged, and that matters more than the new capability: every other
+    /// lane must keep the serial mailbox it has always had.
+    func testALaneIsSerialByDefault() async throws {
+        let mailbox = IntentMailbox(limits: try Self.limits())
+        let barrier = StartBarrier(expected: 2)
+
+        let jobs = try (1 ... 2).map { index in
+            try Self.job(id: UInt8(index), principal: "a") {
+                await barrier.arrive()
+                await barrier.waitForRelease()
+                return .success(.null)
+            }
+        }
+        let tasks = jobs.map { job in
+            Task { try await mailbox.submit(job) }
+        }
+
+        await waitForRunning(mailbox)
+        // Give a second request every chance to start, then require that none did.
+        for _ in 0 ..< 200 { await Task.yield() }
+        let arrived = await barrier.arrived
+        XCTAssertEqual(
+            arrived,
+            1,
+            "a default lane must run exactly one request at a time"
+        )
+
+        await barrier.release()
+        for task in tasks {
+            _ = try await task.value
+        }
+    }
+
     func testPerPrincipalFIFOWithRoundRobinFairness() async throws {
         let mailbox = IntentMailbox(limits: try Self.limits())
         let gate = Gate()
@@ -521,14 +591,17 @@ final class IntentMailboxTests: XCTestCase {
         _ = try await blockerSubmission.value
     }
 
-    private static func limits() throws -> IntentMailboxLimits {
+    private static func limits(
+        maxConcurrentRequests: Int = 1
+    ) throws -> IntentMailboxLimits {
         try IntentMailboxLimits(
             maxRequests: 16,
             maxEncodedBytes: 16 * 1024,
             maxRequestsPerPrincipal: 8,
             maxEncodedBytesPerPrincipal: 8 * 1024,
             reservedInteractiveRequests: 2,
-            reservedInteractiveBytes: 1024
+            reservedInteractiveBytes: 1024,
+            maxConcurrentRequests: maxConcurrentRequests
         )
     }
 
@@ -570,7 +643,7 @@ final class IntentMailboxTests: XCTestCase {
         line: UInt = #line
     ) async {
         for _ in 0 ..< 1_000 {
-            if await mailbox.snapshot().runningRequestID != nil {
+            if await mailbox.snapshot().runningRequestIDs.isEmpty == false {
                 return
             }
             await Task.yield()
@@ -635,6 +708,55 @@ final class IntentMailboxTests: XCTestCase {
             await Task.yield()
         }
         XCTFail("Boolean probe never became true", file: file, line: line)
+    }
+}
+
+/// Counts job starts and lets them block until an expected number have arrived. A test that
+/// merely counted starts could pass on a serial lane that ran them one after another; making
+/// each job wait for the others turns "did they overlap" into something a serial lane cannot
+/// fake.
+private actor StartBarrier {
+    private let expected: Int
+    private(set) var arrived = 0
+    private var isReleased = false
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(expected: Int) {
+        self.expected = expected
+    }
+
+    func arrive() {
+        arrived += 1
+        if arrived >= expected { release() }
+    }
+
+    func arriveAndWait() async {
+        arrive()
+        await waitForRelease()
+    }
+
+    func waitForRelease() async {
+        guard !isReleased else { return }
+        await withCheckedContinuation { continuation in
+            waiters.append(continuation)
+        }
+    }
+
+    func release() {
+        guard !isReleased else { return }
+        isReleased = true
+        let pending = waiters
+        waiters.removeAll()
+        for continuation in pending { continuation.resume() }
+    }
+
+    /// Bounded so a serial lane reports a failure instead of hanging the suite.
+    func reachedFullStrength() async -> Bool {
+        for _ in 0 ..< 2_000 {
+            if arrived >= expected { return true }
+            await Task.yield()
+        }
+        return arrived >= expected
     }
 }
 

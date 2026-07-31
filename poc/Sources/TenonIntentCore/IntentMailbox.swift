@@ -12,6 +12,14 @@ public struct IntentMailboxLimits: Sendable, Equatable {
     public let maxEncodedBytesPerPrincipal: Int
     public let reservedInteractiveRequests: Int
     public let reservedInteractiveBytes: Int
+    /// How many of this lane's admitted requests may execute at once.
+    ///
+    /// One by default, which is the serial mailbox every lane has always had: the queue
+    /// still bounds how much may be *waiting*, and this bounds how much may be *running*.
+    /// A lane raises it only when serialization is doing no work — waits that are mutually
+    /// independent, hold no resource, and whose ordering carries no meaning. See the
+    /// `terminalWait` entry in `docs/architecture-interaction-boundaries.md`.
+    public let maxConcurrentRequests: Int
 
     public init(
         maxRequests: Int = 64,
@@ -19,7 +27,8 @@ public struct IntentMailboxLimits: Sendable, Equatable {
         maxRequestsPerPrincipal: Int = 16,
         maxEncodedBytesPerPrincipal: Int = 1024 * 1024,
         reservedInteractiveRequests: Int = 8,
-        reservedInteractiveBytes: Int = 512 * 1024
+        reservedInteractiveBytes: Int = 512 * 1024,
+        maxConcurrentRequests: Int = 1
     ) throws {
         guard maxRequests > 0,
               maxEncodedBytes > 0,
@@ -28,10 +37,15 @@ public struct IntentMailboxLimits: Sendable, Equatable {
               reservedInteractiveRequests >= 0,
               reservedInteractiveRequests < maxRequests,
               reservedInteractiveBytes >= 0,
-              reservedInteractiveBytes < maxEncodedBytes
+              reservedInteractiveBytes < maxEncodedBytes,
+              // Concurrency is bounded by the queue itself: a lane can never run more than
+              // it is allowed to hold.
+              maxConcurrentRequests > 0,
+              maxConcurrentRequests <= maxRequests
         else {
             throw IntentMailboxLimitError.invalidLimits
         }
+        self.maxConcurrentRequests = maxConcurrentRequests
 
         self.maxRequests = maxRequests
         self.maxEncodedBytes = maxEncodedBytes
@@ -136,7 +150,7 @@ public struct IntentMailboxSnapshot: Sendable, Equatable {
     public let isPhysicallyIdle: Bool
     public let queuedRequests: Int
     public let physicalQueueNodes: Int
-    public let runningRequestID: UUID?
+    public let runningRequestIDs: Set<UUID>
     public let admittedRequests: Int
     public let admittedEncodedBytes: Int
     public let admittedByPrincipal: [IntentPrincipal: Int]
@@ -179,7 +193,10 @@ public actor IntentMailbox {
     private var physicalIdleWaiters: [
         CheckedContinuation<Void, Never>
     ] = []
-    private var running: Running?
+    /// Requests executing right now, keyed by request id. Bounded by
+    /// `limits.maxConcurrentRequests`, which is 1 for every lane that has not asked
+    /// otherwise — so a default lane still holds exactly one.
+    private var running: [UUID: Running] = [:]
     private var usage = Usage()
     private var backgroundUsage = Usage()
     private var usageByPrincipal: [IntentPrincipal: Usage] = [:]
@@ -231,14 +248,14 @@ public actor IntentMailbox {
             return
         }
 
-        guard var running, running.job.requestID == requestID else { return }
-        running.operationTask.cancel()
-        guard let continuation = running.continuation else { return }
+        guard var entry = running[requestID] else { return }
+        entry.operationTask.cancel()
+        guard let continuation = entry.continuation else { return }
 
         let terminal = IntentMailboxTerminal.cancelled(.unknown)
-        running.continuation = nil
-        running.terminal = terminal
-        self.running = running
+        entry.continuation = nil
+        entry.terminal = terminal
+        running[requestID] = entry
         continuation.resume(returning: terminal)
     }
 
@@ -263,16 +280,20 @@ public actor IntentMailbox {
             )
         }
 
-        guard var running, let continuation = running.continuation else {
-            self.running?.operationTask.cancel()
-            return
+        // Every running request, not just one: a concurrent lane can hold several, and
+        // retirement settles each exactly once.
+        for (requestID, entry) in running {
+            var entry = entry
+            entry.operationTask.cancel()
+            guard let continuation = entry.continuation else {
+                continue
+            }
+            let terminal = IntentMailboxTerminal.providerRetired(.unknown)
+            entry.continuation = nil
+            entry.terminal = terminal
+            running[requestID] = entry
+            continuation.resume(returning: terminal)
         }
-        running.operationTask.cancel()
-        let terminal = IntentMailboxTerminal.providerRetired(.unknown)
-        running.continuation = nil
-        running.terminal = terminal
-        self.running = running
-        continuation.resume(returning: terminal)
     }
 
     public func retireAndWaitUntilIdle() async {
@@ -293,7 +314,7 @@ public actor IntentMailbox {
             isPhysicallyIdle: isPhysicallyIdle,
             queuedRequests: pendingByID.count,
             physicalQueueNodes: pendingByID.count,
-            runningRequestID: running?.job.requestID,
+            runningRequestIDs: Set(running.keys),
             admittedRequests: usage.requests,
             admittedEncodedBytes: usage.bytes,
             admittedByPrincipal: usageByPrincipal.mapValues(\.requests)
@@ -305,7 +326,7 @@ public actor IntentMailbox {
             throw IntentMailboxAdmissionError.retired
         }
         guard pendingByID[job.requestID] == nil,
-              running?.job.requestID != job.requestID,
+              running[job.requestID] == nil,
               !completingRequestIDs.contains(job.requestID)
         else {
             throw IntentMailboxAdmissionError.duplicateRequestID(job.requestID)
@@ -389,15 +410,26 @@ public actor IntentMailbox {
     }
 
     private func startDrainingIfNeeded() {
-        guard !isDraining, running == nil, !pendingByID.isEmpty else { return }
+        guard !isDraining,
+              running.count < limits.maxConcurrentRequests,
+              !pendingByID.isEmpty
+        else { return }
         isDraining = true
         Task { [mailbox = self] in
             await mailbox.drain()
         }
     }
 
+    /// Starts work up to the lane's concurrency limit and returns; each request finishes
+    /// itself and re-enters the drain.
+    ///
+    /// This used to `await` each operation inline, which is what made a lane serial: the
+    /// loop could not reach the next request until the current one had replied. Awaiting
+    /// here would still serialize at any limit, so completion moved out to `complete`.
     private func drain() async {
-        while let pending = popNextPending() {
+        while running.count < limits.maxConcurrentRequests,
+              let pending = popNextPending()
+        {
             if ContinuousClock.now >= pending.job.deadline {
                 pending.deadlineTask.cancel()
                 let terminal = IntentMailboxTerminal.deadlineExceeded(.notStarted)
@@ -415,7 +447,7 @@ public actor IntentMailbox {
             let operationTask = Task {
                 await pending.job.invoke()
             }
-            running = Running(
+            running[pending.job.requestID] = Running(
                 job: pending.job,
                 continuation: pending.continuation,
                 terminal: nil,
@@ -423,18 +455,27 @@ public actor IntentMailbox {
                 operationTask: operationTask
             )
 
-            let reply = await operationTask.value
-            finishRunning(requestID: pending.job.requestID, reply: reply)
+            let requestID = pending.job.requestID
+            Task { [mailbox = self] in
+                let reply = await operationTask.value
+                await mailbox.complete(requestID: requestID, reply: reply)
+            }
         }
 
         isDraining = false
-        if running == nil, !pendingByID.isEmpty {
+        if running.count < limits.maxConcurrentRequests, !pendingByID.isEmpty {
             startDrainingIfNeeded()
         }
     }
 
+    /// One request replied. Settle it, then let the freed slot pull the next.
+    private func complete(requestID: UUID, reply: IntentProviderReply) {
+        finishRunning(requestID: requestID, reply: reply)
+        startDrainingIfNeeded()
+    }
+
     private func finishRunning(requestID: UUID, reply: IntentProviderReply) {
-        guard let running, running.job.requestID == requestID else { return }
+        guard let running = running[requestID] else { return }
         running.deadlineTask.cancel()
 
         let terminal: IntentMailboxTerminal
@@ -448,7 +489,7 @@ public actor IntentMailbox {
             isLateReply = true
         }
 
-        self.running = nil
+        self.running[requestID] = nil
         schedulePhysicalCompletion(
             job: running.job,
             terminal: terminal,
@@ -473,13 +514,13 @@ public actor IntentMailbox {
             return
         }
 
-        guard var running, running.job.requestID == requestID else { return }
-        running.operationTask.cancel()
-        guard let continuation = running.continuation else { return }
+        guard var entry = running[requestID] else { return }
+        entry.operationTask.cancel()
+        guard let continuation = entry.continuation else { return }
         let terminal = IntentMailboxTerminal.deadlineExceeded(.unknown)
-        running.continuation = nil
-        running.terminal = terminal
-        self.running = running
+        entry.continuation = nil
+        entry.terminal = terminal
+        running[requestID] = entry
         continuation.resume(returning: terminal)
     }
 
@@ -674,7 +715,7 @@ public actor IntentMailbox {
 
     private var isPhysicallyIdle: Bool {
         pendingByID.isEmpty
-            && running == nil
+            && running.isEmpty
             && completingRequestIDs.isEmpty
             && usage.requests == 0
             && usage.bytes == 0

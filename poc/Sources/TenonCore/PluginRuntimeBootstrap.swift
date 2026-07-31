@@ -464,6 +464,124 @@ enum PluginRuntimeBootstrap {
         }
       });
 
+      // The supervised run-to-result loop, as JavaScript composition over the INTENT
+      // adapter: open a pane → wait for the command to finish, scoped to that pane →
+      // page its transcript back. It runs in the caller's generation under the caller's
+      // principal, so every send below is policy-checked against that plugin's own
+      // declared uses (`terminal.open.v1`, `terminal.wait.v1`,
+      // `terminal.scrollback.read.v1` must all be in `intents.uses`). The function grants
+      // nothing; it only spells the loop so every automation does not respell it.
+      //
+      // RECONSTRUCTED 2026-07-31 by session 247281cf from `AgentsRunTests`, after that
+      // session destroyed the original (uncommitted) implementation with a careless
+      // `git checkout` of this shared file. The tests are the surviving specification;
+      // @f014e8e0's own version supersedes this one if they still hold it.
+      const agents = Object.freeze({
+        async run(request) {
+          const source = request && typeof request === "object" ? request : {};
+          if (typeof source.command !== "string" || source.command.length === 0) {
+            throw new TypeError(
+              "tenon.agents.run requires { command: string, arguments?: [string], workingDirectory?: string, timeoutMs?: number }"
+            );
+          }
+          const argumentList = source.arguments === undefined ? [] : source.arguments;
+          if (!Array.isArray(argumentList)
+              || argumentList.some(value => typeof value !== "string")) {
+            throw new TypeError("tenon.agents.run arguments must be an array of strings");
+          }
+          // POSIX single-quoting per token: a prompt can never become shell syntax.
+          const commandLine = [source.command].concat(argumentList)
+            .map(value => "'" + value.split("'").join("'\\''") + "'")
+            .join(" ");
+          const timeoutMs = typeof source.timeoutMs === "number"
+              && Number.isFinite(source.timeoutMs)
+              && source.timeoutMs > 0
+            ? Math.floor(source.timeoutMs)
+            : 600000;
+          const deadline = Date.now() + timeoutMs;
+
+          // Open the pane EMPTY, arm the wait, and only then send the command.
+          //
+          // Opening with the command loses every short run. `terminal.wait.v1` snapshots
+          // its completion baseline when it is issued, so a command that finishes between
+          // the open and the wait is already counted: the wait then sits out its entire
+          // timeout waiting for a second finish that never comes. Measured against the
+          // real provider, not reasoned about — a command that had already succeeded came
+          // back `dev.tenon.agents.timeout`.
+          //
+          // Arming first closes the gap by construction: nothing has been sent, so nothing
+          // can finish before the baseline is taken.
+          const openInput = {};
+          if (typeof source.workingDirectory === "string") {
+            openInput.workingDirectory = source.workingDirectory;
+          }
+          const opened = await intents.send("terminal.open.v1", openInput);
+          if (!opened.ok) return { ok: false, error: opened.error };
+          const paneID = opened.value.paneID;
+          const pane = { scope: { paneID } };
+
+          let sent = false;
+          for (;;) {
+            const remaining = deadline - Date.now();
+            if (remaining <= 0) {
+              return { ok: false, error: { code: "dev.tenon.agents.timeout" }, paneID };
+            }
+            const waiting = intents.send("terminal.wait.v1", {
+              condition: "command-finished",
+              timeoutMs: Math.max(1, Math.min(55000, remaining))
+            }, pane);
+            if (!sent) {
+              sent = true;
+              // The pane may still be materialising; `terminal.write.v1` queues for it.
+              const written = await intents.send(
+                "terminal.write.v1",
+                { text: commandLine + "\n" },
+                pane
+              );
+              if (!written.ok) return { ok: false, error: written.error, paneID };
+            }
+            const waited = await waiting;
+            if (!waited.ok) return { ok: false, error: waited.error, paneID };
+            if (waited.value.met) break;
+          }
+
+          // Cursor-chained page walk. An `invalidated` page means the scrollback moved
+          // under the cursor, so the pages already collected may not join up: throw them
+          // away and start again, once. A second invalidation is a pane too unstable to
+          // read, and saying so beats returning a transcript with a hole in it.
+          let transcript = "";
+          let cursor = null;
+          let restarted = false;
+          for (;;) {
+            const readInput = {};
+            if (cursor !== null) readInput.cursor = cursor;
+            const page = await intents.send(
+              "terminal.scrollback.read.v1",
+              readInput,
+              pane
+            );
+            if (!page.ok) return { ok: false, error: page.error, paneID };
+            if (page.value.invalidated) {
+              if (restarted) {
+                return {
+                  ok: false,
+                  error: { code: "dev.tenon.agents.scrollback-unstable" },
+                  paneID
+                };
+              }
+              restarted = true;
+              transcript = "";
+              cursor = null;
+              continue;
+            }
+            transcript += page.value.text || "";
+            cursor = page.value.cursor;
+            if (cursor === null || cursor === undefined) break;
+          }
+          return { ok: true, value: { paneID, transcript } };
+        }
+      });
+
       Object.defineProperty(globalThis, "__tenonStart", {
         configurable: false,
         writable: false,
@@ -474,6 +592,7 @@ enum PluginRuntimeBootstrap {
           globalThis.tenon = Object.freeze({
             apiVersion: "1.0",
             intents,
+            agents,
             settings,
             storage,
             path: pathAPI,

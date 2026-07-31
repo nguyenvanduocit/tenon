@@ -106,6 +106,10 @@ final class AppComposition {
     let palette = CommandPaletteState()
     let userInterface: PluginUIState
     let catalogStore: WorkspaceCatalogStore
+    /// T-046: wall-clock automation schedules. `Date()` enters only at this
+    /// composition root's edges (reconcile, tick); the scheduler itself always
+    /// takes time as a parameter.
+    let automationScheduler = AutomationScheduler()
 
     private(set) var startupError: String?
     private(set) var isStarted = false
@@ -125,6 +129,10 @@ final class AppComposition {
     /// feed would never see two identical samples and idle would be unreachable.
     @ObservationIgnored
     private var attentionPollTask: Task<Void, Never>?
+
+    /// T-046: the automation tick loop; firing resolution, not firing count.
+    @ObservationIgnored
+    private var automationTickTask: Task<Void, Never>?
 
     @ObservationIgnored
     private var appActivationObservers: [NSObjectProtocol] = []
@@ -235,7 +243,7 @@ final class AppComposition {
             terminalSurfaces.setTitle(title, for: slotID)
         }
         for (slotID, cwd) in launch.cwds {
-            terminalSurfaces.seedRestoredDirectory(cwd, for: slotID)
+            terminalSurfaces.seedSpawnDirectory(cwd, for: slotID)
         }
         // T-030 handoff: re-apply the persisted per-pane pins verbatim. No surface exists
         // yet, so each call just records its pin; it takes effect when the pane's surface
@@ -300,7 +308,8 @@ final class AppComposition {
             store: store,
             terminalSurfaces: terminalSurfaces,
             webSurfaces: webSurfaces,
-            catalogStore: catalogStore
+            catalogStore: catalogStore,
+            automation: automationScheduler
         )
         Self.wireDefaultContent(store: store, prefs: prefs)
 
@@ -389,6 +398,7 @@ final class AppComposition {
         lifecycleTask = nil
 
         attentionPollTask?.cancel()
+        automationTickTask?.cancel()
         attentionPollTask = nil
         for observer in appActivationObservers {
             NotificationCenter.default.removeObserver(observer)
@@ -470,6 +480,31 @@ private extension AppComposition {
         }
     }
 
+    /// T-046, the tick edge: a 30-second cadence is the firing resolution for
+    /// minute-grained wall-clock schedules. The scheduler advances state per tick,
+    /// so cadence affects latency only, never firing count.
+    func startAutomationScheduling() {
+        guard automationTickTask == nil else { return }
+        automationScheduler.reconcile(host.plugins, now: Date())
+        automationTickTask = Task { @MainActor [weak self] in
+            let clock = ContinuousClock()
+            while !Task.isCancelled {
+                do {
+                    try await clock.sleep(
+                        for: .seconds(30),
+                        tolerance: .seconds(5)
+                    )
+                } catch {
+                    return
+                }
+                guard let self else { return }
+                for firing in self.automationScheduler.tick(now: Date()) {
+                    await self.host.automationFired(firing)
+                }
+            }
+        }
+    }
+
     func performStart() async {
         do {
             try Task.checkCancellation()
@@ -489,6 +524,7 @@ private extension AppComposition {
             isStarted = true
             startupError = nil
             startAttentionPolling()
+            startAutomationScheduling()
             NSApp.activate(ignoringOtherApps: true)
             await Task.yield()
             if let slotID = store.catalog.activeSlotID {
@@ -506,12 +542,16 @@ private extension AppComposition {
         store: WorkspaceStore,
         terminalSurfaces: SurfacePool,
         webSurfaces: PluginWebSurfacePool,
-        catalogStore: WorkspaceCatalogStore
+        catalogStore: WorkspaceCatalogStore,
+        automation: AutomationScheduler
     ) {
         host.onPluginLifecycleChanged = {
-            [weak host, weak store, weak webSurfaces] _ in
+            [weak host, weak store, weak webSurfaces] plugins in
             guard let host, let store else { return }
             webSurfaces?.reconcile(catalog: store.catalog, host: host)
+            // T-046: the lifecycle channel is the scheduler's reconcile trigger —
+            // load, hot reload, enable/disable, and uninstall all pass through here.
+            automation.reconcile(plugins, now: Date())
         }
 
         store.onEvents = {

@@ -6,5 +6,10 @@
   "intents": {
     "uses": [],
     "provides": []
+  },
+  "automation": {
+    "schedules": [
+      { "id": "tick", "every": "1m" }
+    ]
   }
 }

@@ -1,0 +1,35 @@
+{
+  "id": "dev.tenon.examples.fleet-review",
+  "name": "fleet-review",
+  "displayName": "Fleet Review",
+  "icon": "person.3.sequence",
+  "version": "0.1.0",
+  "permissions": ["terminal.write", "terminal.read"],
+  "intents": {
+    "uses": [
+      "terminal.open.v1",
+      "terminal.write.v1",
+      "terminal.wait.v1",
+      "terminal.scrollback.read.v1"
+    ],
+    "provides": [
+      {
+        "name": "dev.tenon.examples.fleet-review.run.v1",
+        "title": "Fleet Review: review the current change",
+        "audiences": ["plugin", "palette"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Review", "icon": "person.3.sequence", "keywords": ["review", "fleet", "agents", "claude"] }
+      }
+    ]
+  },
+  "settings": [
+    {
+      "key": "command",
+      "label": "Agent command",
+      "type": "string",
+      "default": "claude"
+    }
+  ]
+}

@@ -17,6 +17,42 @@ public struct PluginSnapshot: Sendable, Equatable, Identifiable {
     public let isEnabled: Bool
     public let permissionViolations: [String]
     public let error: String?
+    /// Manifest-declared automation schedules (T-046). Part of the Equatable lifecycle
+    /// snapshot on purpose: a reload that changes a schedule fires
+    /// `onPluginLifecycleChanged`, which is the scheduler's reconcile trigger.
+    public let automationSchedules: [AutomationScheduleSpec]
+
+    public init(
+        id: PluginID,
+        installationID: UUID?,
+        name: String,
+        version: String,
+        permissions: [String],
+        unknownPermissions: [String],
+        settingSpecs: [PluginSettingSpec],
+        icon: String?,
+        displayName: String?,
+        isLoaded: Bool,
+        isEnabled: Bool,
+        permissionViolations: [String],
+        error: String?,
+        automationSchedules: [AutomationScheduleSpec] = []
+    ) {
+        self.id = id
+        self.installationID = installationID
+        self.name = name
+        self.version = version
+        self.permissions = permissions
+        self.unknownPermissions = unknownPermissions
+        self.settingSpecs = settingSpecs
+        self.icon = icon
+        self.displayName = displayName
+        self.isLoaded = isLoaded
+        self.isEnabled = isEnabled
+        self.permissionViolations = permissionViolations
+        self.error = error
+        self.automationSchedules = automationSchedules
+    }
 
     public var settingsTitle: String {
         displayName ?? name
@@ -1466,6 +1502,27 @@ public final class PluginHost {
         }
     }
 
+    /// A declared automation schedule came due (T-046).
+    ///
+    /// EVENT (boundary law step 2), delivered owner-scoped through the targeted
+    /// channel: a schedule is the owning plugin's own manifest declaration, so its
+    /// firing is never broadcast and needs no permission gate. A firing for a plugin
+    /// whose session is gone (mid-retirement, disabled) drops silently in `emit`.
+    public func automationFired(_ firing: AutomationScheduler.Firing) async {
+        await emit(
+            event: "automation.fired",
+            payload: .object([
+                "scheduleId": .string(firing.scheduleID),
+                "scheduledFor": .string(
+                    firing.scheduledFor.formatted(.iso8601)
+                ),
+                "late": .bool(firing.late),
+                "trigger": .string("scheduled"),
+            ]),
+            to: firing.pluginID
+        )
+    }
+
     public func terminalTitleChanged(
         _ title: String,
         slotID: UUID? = nil
@@ -2331,7 +2388,9 @@ private extension PluginHost {
                 isEnabled: record.isEnabled,
                 permissionViolations: session?.snapshot.permissionViolations
                     ?? [],
-                error: lastErrors[pluginID]
+                error: lastErrors[pluginID],
+                automationSchedules: record.manifest.automation?.schedules
+                    ?? []
             )
         }.sorted {
             $0.id.rawValue < $1.id.rawValue
@@ -2455,11 +2514,17 @@ extension PluginHost {
     nonisolated static func capabilityGrants(
         for manifest: PluginManifest
     ) throws -> Set<CapabilityGrant> {
+        // `terminal.read` used to be excluded here, and that was right when it existed
+        // only to gate delivery of `terminal.*` EVENTs — a permission with no capability
+        // behind it. It has since been bound as the capability for the three terminal read
+        // intents (`CoreIntentCatalog.swift`: viewport read, scrollback read, wait), and
+        // the exclusion was never revisited, so every one of them was ungrantable: a plugin
+        // could declare the permission and the use, pass every other check, and still be
+        // refused with `missing-capability`. Nothing is loosened by granting it — the event
+        // gate reads `manifest.permissions` directly and is untouched, and a caller still
+        // needs both the declared permission and the declared use.
         let capabilityPermissions = Set(
-            manifest.permissions.filter {
-                $0 != "terminal.read"
-                    && PluginManifest.knownPermissions.contains($0)
-            }
+            manifest.permissions.filter(PluginManifest.knownPermissions.contains)
         )
         let networkPatterns = try Set(
             manifest.networkAllowlist.map(NetworkHostPattern.init)

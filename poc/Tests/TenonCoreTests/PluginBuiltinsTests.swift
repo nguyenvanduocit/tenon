@@ -105,6 +105,7 @@ final class PluginBuiltinsTests: XCTestCase {
         XCTAssertEqual(
             snapshot.statusBarText,
             [
+                "tenon.agents.run",
                 "tenon.apiVersion",
                 "tenon.events.on",
                 "tenon.fs.watch",

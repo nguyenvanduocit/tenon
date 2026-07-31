@@ -75,6 +75,7 @@ only after the law selects INTENT.
 
 A plugin is a directory under `poc/plugins/` with a stable full `id`, `manifest.json`, and
 `main.js`. Its manifest declares permissions, `intents.uses`, `intents.provides`, settings,
+automation schedules (wall-clock cadence fired back as the owner-scoped `automation.fired` event),
 and presentation metadata before JavaScript evaluation. Hot reload stages a replacement
 generation, activates it atomically, drains the retired generation, and tears down its
 calls/resources/contributions. A failed staged generation leaves the last good generation
@@ -86,6 +87,8 @@ The exact public `tenon` vocabulary is:
 - INTENT/control: `intents.send`, `intents.handle`, `intents.list`;
 - closed SCOPED FACILITY: `settings.get`, `storage.get/set`, `log`;
 - pure DIRECT JavaScript: `path.join/normalize/basename/dirname/extname`;
+- intent-composing DIRECT JavaScript: `agents.run` — the supervised run-to-result loop
+  over the caller's own declared `terminal.open/wait/scrollback.read` intents;
 - EVENT: `events.on`;
 - RESOURCE: `timers.after/every/cancel`, `process.stream`, `fs.watch`;
 - CONTRIBUTION: `statusBar.set`,

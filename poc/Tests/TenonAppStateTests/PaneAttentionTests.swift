@@ -90,7 +90,7 @@ final class PaneAttentionTests: XCTestCase {
     func testANeverMaterialisedPaneReportsNoActivity() {
         let pool = makePool()
         let slot = UUID()
-        pool.seedRestoredDirectory(scratch, for: slot)
+        pool.seedSpawnDirectory(scratch, for: slot)
 
         pool.applyViewed([slot], at: tick(0))
         pool.pollActivity(at: tick(0))
