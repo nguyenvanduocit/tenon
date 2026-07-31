@@ -131,9 +131,9 @@ struct LauncherMenu: View {
                         if sectionIndex > 0 {
                             Rectangle()
                                 .fill(TenonTheme.line.opacity(0.6))
-                                .frame(height: 1)
+                                .frame(height: LauncherListHeight.separatorRule)
                                 .padding(.horizontal, 6)
-                                .padding(.vertical, 4)
+                                .padding(.vertical, LauncherListHeight.separatorPadding)
                         }
                         ForEach(Array(section.matches.enumerated()), id: \.element.id) {
                             rowIndex, match in
@@ -148,9 +148,15 @@ struct LauncherMenu: View {
                         }
                     }
                 }
-                .padding(.vertical, 5)
+                .padding(.vertical, LauncherListHeight.listPadding)
             }
-            .frame(maxHeight: ceiling)
+            // Stated, not offered: a ScrollView handed a maxHeight inside a popover
+            // greedily takes all of it, floating ten rows in a screen-tall sheet.
+            .frame(height: LauncherListHeight.height(
+                rows: order.displayed.count,
+                sections: order.sections.count,
+                ceiling: ceiling
+            ))
         }
     }
 
