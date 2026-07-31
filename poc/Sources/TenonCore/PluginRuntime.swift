@@ -132,6 +132,9 @@ public actor PluginRuntime {
     private var boundIntentIDs: Set<IntentID> = []
     private var pendingProviderCalls: [String: PendingProviderCall] = [:]
     private var pendingOutboundIntentTokens: Set<String> = []
+    /// T-049: published facts handed to the host and not yet settled. Bounds a plugin that
+    /// publishes in a loop.
+    private var pendingPublishedEvents = 0
     private var pendingIntentListTokens: Set<String> = []
     private var pendingNestedIntents: [String: PendingNestedIntent] = [:]
     private var pendingStorageTokens: Set<String> = []
@@ -848,6 +851,8 @@ private extension PluginRuntime {
                     _ = subscriptions.insert(name)
                 }
             }
+        case "event.emit":
+            try publishEvent(object)
         case "event.unbind":
             if let name = object["name"]?.stringValue {
                 eventSubscriptions.withLock { subscriptions in
@@ -943,6 +948,41 @@ private extension PluginRuntime {
         Task.detached {
             let result = await send(request)
             callback.enqueue(.intentResult(token: token, result: result))
+        }
+    }
+
+    /// A fact this plugin published (T-049).
+    ///
+    /// Fail-closed on the manifest: publishing a channel the plugin did not declare is
+    /// refused here, so naming a channel never grants the right to publish on it
+    /// (invariant 5). Only the LOCAL name crosses — the host owns qualification, which is
+    /// why a plugin cannot name `automation.fired` or another plugin's channel.
+    ///
+    /// Bounded (invariant 10): a plugin publishing in a loop is capped at the same
+    /// in-flight limit as its outbound intents, and the overflow is dropped with a log
+    /// rather than queued. A fact nobody can deliver is not worth unbounded memory.
+    func publishEvent(_ object: [String: IntentValue]) throws {
+        guard let name = object["name"]?.stringValue else {
+            throw PluginRuntimeError.bridgeProtocolViolation(
+                "event.emit missing name"
+            )
+        }
+        guard configuration.manifest.events?.publishes.contains(name) == true else {
+            throw PluginRuntimeError.undeclaredEventPublication(name)
+        }
+        guard pendingPublishedEvents < Self.maximumPendingOutboundIntents else {
+            emitLog(
+                "tenon.events.emit dropped \(name): too many events in flight"
+            )
+            return
+        }
+        let payload = object["payload"] ?? .null
+        pendingPublishedEvents += 1
+        let publish = configuration.publishEvent
+        let callback = callbackMailbox
+        Task.detached {
+            await publish(name, payload)
+            callback.enqueue(.publishedEventSettled)
         }
     }
 
@@ -1089,6 +1129,11 @@ private extension PluginRuntime {
                         PluginRuntimeValueParsing.foundationObject(from: value),
                     ]
                 )
+
+            case .publishedEventSettled:
+                // Nothing to hand back to JavaScript: a published fact has no reply, by
+                // definition. This only frees the in-flight slot.
+                pendingPublishedEvents = max(0, pendingPublishedEvents - 1)
 
             case let .nestedIntentResult(callToken, token, result):
                 guard let pending = pendingNestedIntents[token],

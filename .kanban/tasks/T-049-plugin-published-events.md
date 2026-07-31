@@ -8,7 +8,11 @@
   not cover. That review is the classification; this task is the implementation.
 
 ## Owner / files (agent lock)
-UNCLAIMED.
+session 247281cf — **DONE 11:5x, LOCKS RELEASED.** NEW `TenonCore/PluginEventManifest.swift`,
+NEW `Tests/TenonCoreTests/PluginPublishedEventTests.swift`, `PluginManifest.swift`,
+`PluginRuntime.swift`, `PluginRuntimeModels.swift`, `PluginRuntimeBridge.swift`,
+`PluginRuntimeBootstrap.swift`, `PluginHost.swift`, `PluginBuiltinsTests.swift` (pin),
+`plugins/kanban/**`, boundary doc, `CLAUDE.md`.
 
 ## Why this is real, not theoretical
 
@@ -46,21 +50,70 @@ existing rung, not a new rung: `events.on` is already the observation half.
   plugin-published event must land on that same path rather than beside it.
 
 ## Criteria
-- [ ] Public surface designed and pinned: one new member on `tenon.events`, with the
+- [x] Public surface designed and pinned: one new member on `tenon.events`, with the
       surface and `globalThis` closure tests updated in the same change (invariant 1)
-- [ ] Manifest declares what a plugin may publish and who may observe; an undeclared publish
+- [x] Manifest declares what a plugin may publish and who may observe; an undeclared publish
       is refused fail-closed, with a blocked/allowed pair asserting it
-- [ ] A plugin cannot publish a host-owned event name, asserted
-- [ ] Payload bounded; a publisher that floods is bounded rather than unbounded, asserted
-- [ ] Retiring a generation stops both publication and delivery, asserted against a real
+- [x] A plugin cannot publish a host-owned event name, asserted
+- [x] Payload bounded; a publisher that floods is bounded rather than unbounded, asserted
+- [x] Retiring a generation stops both publication and delivery, asserted against a real
       runtime the way existing retirement tests are
-- [ ] Delivery goes through the single existing emit site, not a second path
-- [ ] kanban publishes "board changed" and a fixture plugin observes it — end to end through
+- [x] Delivery goes through the single existing emit site, not a second path
+- [x] kanban publishes "board changed" and a fixture plugin observes it — end to end through
       a real `PluginHost`, since that is the case that motivated this
-- [ ] `docs/architecture-interaction-boundaries.md` EVENT inventory updated in-change
-- [ ] `swift build` exit 0 + full `swift test` green, with RED-first and mutation evidence
+- [x] `docs/architecture-interaction-boundaries.md` EVENT inventory updated in-change
+- [x] `swift build` exit 0 + full `swift test` green, with RED-first and mutation evidence
 
 ## Notes
 - The reason this is not folded into T-042: that task's job was to decide, and it decided
   the mechanism already exists. Implementing a new public member is a separate change with
   its own fitness tests, and mixing the two would have made the decision unreviewable.
+
+
+## What shipped
+
+`tenon.events.emit(name, payload)`. A plugin declares in its manifest what it may publish
+and what it observes; neither side names the other.
+
+**Forgery is unavailable, not refused.** Only the LOCAL channel name crosses from the
+runtime. The host adds the owning prefix from the identity it already holds, so a plugin
+cannot publish `automation.fired` or another plugin's channel — there is no way to say a
+full name. A local name containing the separator is refused at manifest decode, so the
+attempt never reaches a runtime either.
+
+**The publisher learns nothing about who listened.** No reply, no count. A fact with no
+observers is delivered nowhere and succeeds, which is exactly what keeps a publisher
+independent of its consumers — the inverted dependency T-042 rejected.
+
+**Bounds.** 32 channels per plugin, 128 characters per name, no whitespace or control
+characters, no duplicates, validated on decode. In flight, a plugin publishing in a loop is
+capped at the same limit as its outbound intents and the overflow is dropped with a log — a
+fact nobody can deliver is not worth unbounded memory.
+
+**One delivery site.** Fan-out goes through the same targeted `emit` every other event
+uses, so a retired or disabled session drops there rather than needing a second rule.
+
+kanban is the first publisher, and only when the board's bytes actually changed — a watch
+firing on an unrelated file in `.kanban/` says nothing.
+
+## 🐞 Two of my tests passed for the wrong reason
+
+M30 (drop the runtime's publisher gate) and M31 (fan-out ignores the observer's
+declaration) both reddened **nothing**.
+
+- **M30**: the rule is checked in two places — the runtime, for a useful error to the plugin
+  author, and the host, which is the authority. Removing either alone leaves the other. M33
+  removed both and the test went red, so the test covers the *rule*; it simply cannot say
+  which gate enforced it. That is defence in depth working as intended, and worth recording
+  rather than mistaking for coverage.
+- **M31**: the real problem. My "an undeclared observer hears nothing" test had an observer
+  whose JavaScript never subscribed at all, so delivery was refused by the runtime's
+  existing `handles(event:)` check and my gate was never reached. Replaced with an observer
+  that genuinely subscribes and genuinely has not declared — now only the fan-out check
+  stands between them, and M31 reddens it.
+
+## Evidence
+RED first on the surface pin — adding a member turned
+`testRuntimeExportsOnlyTheClassifiedPublicSurface` red before the pin was updated, which is
+invariant 1's fence doing its job. Mutations M30–M33 as above. `swift build` exit 0 under
+warnings-as-errors, full `swift test` **882 / 0** (876 before).

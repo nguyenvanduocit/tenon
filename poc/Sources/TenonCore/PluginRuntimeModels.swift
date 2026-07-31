@@ -184,6 +184,11 @@ public struct PluginRuntimeConfiguration: Sendable {
     public typealias Log = @Sendable (String) async -> Void
     public typealias PersistStorage = @Sendable (String, IntentValue) async throws -> Void
     public typealias StateChange = @Sendable (PluginRuntimeSnapshot) async -> Void
+    /// A fact this plugin published (T-049). The runtime hands the host the *local*
+    /// channel name; only the host knows who is publishing, so only the host can qualify
+    /// it — which is what makes forging another plugin's channel unavailable rather than
+    /// merely refused.
+    public typealias PublishEvent = @Sendable (String, IntentValue) async -> Void
 
     public let manifest: PluginManifest
     public let directory: URL
@@ -192,6 +197,7 @@ public struct PluginRuntimeConfiguration: Sendable {
     public let log: Log
     public let persistStorage: PersistStorage
     public let onStateChange: StateChange
+    public let publishEvent: PublishEvent
     public let startupTimeout: TimeInterval
 
     public init(
@@ -202,6 +208,7 @@ public struct PluginRuntimeConfiguration: Sendable {
         log: @escaping Log = { _ in },
         persistStorage: @escaping PersistStorage = { _, _ in },
         onStateChange: @escaping StateChange = { _ in },
+        publishEvent: @escaping PublishEvent = { _, _ in },
         startupTimeout: TimeInterval = 2
     ) {
         self.manifest = manifest
@@ -211,6 +218,7 @@ public struct PluginRuntimeConfiguration: Sendable {
         self.log = log
         self.persistStorage = persistStorage
         self.onStateChange = onStateChange
+        self.publishEvent = publishEvent
         self.startupTimeout = startupTimeout
     }
 }
@@ -313,6 +321,7 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
     case javascriptException(String)
     case bridgeProtocolViolation(String)
     case undeclaredIntentHandler(IntentID)
+    case undeclaredEventPublication(String)
     case missingIntentHandlers([IntentID])
     case duplicateIntentHandler(IntentID)
     case runtimeStopped
@@ -331,6 +340,8 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
             "JavaScript exception: \(message)"
         case let .bridgeProtocolViolation(message):
             "JavaScript bridge protocol violation: \(message)"
+        case let .undeclaredEventPublication(name):
+            "published undeclared event \(name)"
         case let .undeclaredIntentHandler(intentID):
             "handler for undeclared intent \(intentID.rawValue)"
         case let .missingIntentHandlers(intentIDs):

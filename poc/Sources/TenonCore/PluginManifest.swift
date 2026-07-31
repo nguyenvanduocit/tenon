@@ -21,6 +21,9 @@ public struct PluginManifest: Sendable, Equatable, Codable {
     /// owner-scoped `automation.fired` event (T-046). CONTRIBUTION-class declaration;
     /// the block validates itself on decode, so a held value is always valid.
     public let automation: PluginAutomationManifest?
+    /// Optional channels this plugin publishes and observes (T-049). Like `automation`,
+    /// the block validates itself on decode, so a held value is always valid.
+    public let events: PluginEventManifest?
 
     public init(
         id: PluginID,
@@ -32,7 +35,8 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         icon: String? = nil,
         displayName: String? = nil,
         network: PluginNetworkPolicy? = nil,
-        automation: PluginAutomationManifest? = nil
+        automation: PluginAutomationManifest? = nil,
+        events: PluginEventManifest? = nil
     ) throws {
         self.id = id
         self.name = name
@@ -44,6 +48,7 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         self.displayName = displayName
         self.network = network
         self.automation = automation
+        self.events = events
         try validate()
     }
 
@@ -61,6 +66,10 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         icon = try c.decodeIfPresent(String.self, forKey: .icon)
         displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
         network = try c.decodeIfPresent(PluginNetworkPolicy.self, forKey: .network)
+        events = try c.decodeIfPresent(
+            PluginEventManifest.self,
+            forKey: .events
+        )
         automation = try c.decodeIfPresent(
             PluginAutomationManifest.self,
             forKey: .automation

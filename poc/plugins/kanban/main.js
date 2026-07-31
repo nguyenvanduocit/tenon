@@ -34,6 +34,7 @@ function makePane(instanceID) {
     watch: null,
     debounceHandle: null,
     columns: [],
+    rawBoard: undefined,
     error: "",
     selectedTask: null,
     detail: null,
@@ -184,8 +185,16 @@ async function refresh(st, call) {
     st.columns = [];
     st.error = "No board at " + st.boardPath;
   } else {
+    var previous = st.rawBoard;
+    st.rawBoard = text;
     st.columns = parseBoard(text);
     st.error = "";
+    // A fact, not a request: anyone who declared this channel hears, nobody has to, and
+    // this plugin never learns who did. Only published when the board really changed, so
+    // a watch that fires on an unrelated file in .kanban/ says nothing.
+    if (previous !== undefined && previous !== text) {
+      tenon.events.emit("board.changed", { path: st.boardPath });
+    }
   }
 
   if (st.selectedTask) {

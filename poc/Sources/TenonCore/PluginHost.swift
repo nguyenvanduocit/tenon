@@ -1014,6 +1014,13 @@ public final class PluginHost {
                         snapshot,
                         identity: identity
                     )
+                },
+                publishEvent: { [weak self] local, payload in
+                    await self?.publish(
+                        local: local,
+                        payload: payload,
+                        from: manifest.id
+                    )
                 }
             )
 
@@ -1499,6 +1506,43 @@ public final class PluginHost {
                 "host: event \(event) failed for \(pluginID.rawValue): "
                     + Self.diagnostic(for: error)
             )
+        }
+    }
+
+    /// A plugin published a fact on one of its own channels (T-049).
+    ///
+    /// EVENT, fanned out to the plugins that declared the channel in `events.observes` and
+    /// to nobody else. Two properties are worth stating because they are what keep this an
+    /// event rather than a broadcast command:
+    ///
+    /// - **The publisher cannot name the channel.** Only the local half crosses from the
+    ///   runtime; the owning prefix is added here, from the identity the host already holds.
+    ///   So `automation.fired` and another plugin's channels are unreachable by
+    ///   construction, not by a check that could be forgotten.
+    /// - **The publisher never learns who listened.** There is no reply and no count. A
+    ///   fact with nobody observing it is delivered nowhere and succeeds, which is what
+    ///   makes a publisher independent of its consumers.
+    ///
+    /// Delivery goes through the same targeted `emit` every other event uses — one site,
+    /// so a retired or disabled session drops silently there rather than needing a second
+    /// rule here.
+    public func publish(
+        local: String,
+        payload: IntentValue,
+        from publisher: PluginID
+    ) async {
+        guard let session = sessions[publisher],
+              session.snapshot.manifest.events?.publishes.contains(local) == true
+        else {
+            return
+        }
+        let qualified = PluginEventManifest.qualified(
+            local: local,
+            owner: publisher
+        )
+        for (observerID, observer) in sessions
+        where observer.snapshot.manifest.events?.observes.contains(qualified) == true {
+            await emit(event: qualified, payload: payload, to: observerID)
         }
     }
 

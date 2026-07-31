@@ -107,6 +107,7 @@ final class PluginBuiltinsTests: XCTestCase {
             [
                 "tenon.agents.run",
                 "tenon.apiVersion",
+                "tenon.events.emit",
                 "tenon.events.on",
                 "tenon.fs.watch",
                 "tenon.intents.handle",

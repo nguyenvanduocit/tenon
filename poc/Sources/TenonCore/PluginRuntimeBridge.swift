@@ -164,6 +164,8 @@ enum PluginJavaScriptValueDecoder {
 enum PluginRuntimeCallbackEvent: Sendable {
     case intentResult(token: String, result: IntentResult)
     case intentList(token: String, value: IntentValue)
+    /// T-049: one published fact reached the host; the in-flight slot is free again.
+    case publishedEventSettled
     case nestedIntentResult(callToken: String, token: String, result: IntentResult)
     case cancelProvider(callToken: String)
     case timerFired(handle: Int)

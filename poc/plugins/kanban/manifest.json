@@ -5,6 +5,10 @@
   "icon": "checklist",
   "version": "0.1.0",
   "permissions": ["filesystem.read", "terminal.write", "workspace.control"],
+  "events": {
+    "publishes": ["board.changed"],
+    "observes": []
+  },
   "intents": {
     "uses": [
       "filesystem.file.read.v1",

@@ -268,6 +268,15 @@ enum PluginRuntimeBootstrap {
       });
 
       const events = Object.freeze({
+        // Publish a fact on a channel this plugin declared in manifest.events.publishes.
+        // The name is LOCAL: the host adds the owning prefix, so a plugin cannot name a
+        // host channel or another plugin's. There is no reply — a fact that needs one is
+        // an intent.
+        emit(name, payload = null) {
+          requireString(name, "tenon.events.emit");
+          post("event.emit", { name, payload: clone(payload) });
+        },
+
         on(name, handler) {
           requireString(name, "tenon.events.on");
           requireFunction(handler, "tenon.events.on");

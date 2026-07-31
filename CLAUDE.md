@@ -89,7 +89,8 @@ The exact public `tenon` vocabulary is:
 - pure DIRECT JavaScript: `path.join/normalize/basename/dirname/extname`;
 - intent-composing DIRECT JavaScript: `agents.run` — the supervised run-to-result loop
   over the caller's own declared `terminal.open/wait/scrollback.read` intents;
-- EVENT: `events.on`;
+- EVENT: `events.on`, `events.emit` (plugin-published facts on channels the manifest
+  declares; the host owns qualification, so a plugin can only publish under its own id);
 - RESOURCE: `timers.after/every/cancel`, `process.stream`, `fs.watch`;
 - CONTRIBUTION: `statusBar.set`,
   `views.register/set/onSelect/onSubmit/onOpen/onClose`,

@@ -422,11 +422,15 @@ appears in `terminal.scrollback.read.v1`'s cursor, arrived at independently: **a
 value, re-presented, is how this codebase expresses continuity.** Reach for it before
 reaching for a handle.
 
-**Where it genuinely does not compose.** A plugin can observe facts (`events.on`) and cannot
-publish one, so plugin→plugin facts are currently forced through an intent — wrong
-cardinality (a fact has 0..n observers, an intent exactly one provider) and an inverted
-dependency (the publisher ends up naming its consumers). That is EVENT missing a member, not
-a missing rung, and it is specified separately rather than folded in here.
+**The gap that was real, now closed (T-049).** A plugin could observe facts and not publish
+one. `tenon.events.emit` completes the rung. Two declarations, and neither side names the
+other: a publisher declares only the **local** name of a channel it owns, and the host adds
+the owning prefix from the identity it already holds — so `automation.fired` and other
+plugins' channels are unreachable by construction, not by a check. An observer declares the
+fully qualified name it wants, which is the second gate: publishing makes a fact available,
+observing is still declared authority. The publisher learns nothing about who listened, and
+a fact with no observers is delivered nowhere and succeeds. The moment either of those
+stopped holding, this would be a fan-out command rather than an event.
 
 **Out of scope by construction.** Structured conversation with an agent running in a PTY is
 framing *inside the byte stream* — which is what OSC 133 already is. A Tenon-level duplex
