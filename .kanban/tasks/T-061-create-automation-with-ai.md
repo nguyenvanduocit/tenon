@@ -46,9 +46,9 @@ overlap with T-055 and T-059 locks.) Claimed while active:
   different runtime, not a reusable implementation).
 - Working directory of the pane = the plugins root, so the agent's relative writes land
   where discovery watches.
-- The pane opens in the main window while Settings has focus; v1 accepts that and
-  the human-verify step checks the handoff feels right. Revealing/activating the main
-  window is UI polish recorded as a possible follow-up, not silently bolted on.
+- Choosing to create closes the Settings window (user-directed 02:12): the button's
+  whole outcome is the pane, and Settings sits exactly on top of it. The action
+  composes then calls `dismissWindow`, so focus lands on the pair-authoring pane.
 - Prompt is English (repo docs convention); it instructs the agent to interview the
   user FIRST, write the smallest correct script, and warn about the consent prompt on
   the first privileged firing.
@@ -86,9 +86,8 @@ overlap with T-055 and T-059 locks.) Claimed while active:
 - Launch smoke: debug binary alive 8 s, log empty (no live instance existed, checked
   first).
 - Docs in-change: `docs/design-automations.md` § "Creating one with an agent (T-061)".
-- Human-verify remaining: press the button — the tab opens in the main window while
-  Settings holds focus (accepted in Decisions), claude receives the guide as its
-  prompt, and a real pair-authoring session produces a working script. Follow-up
-  candidates recorded, not built: revealing the main window on click; a CLI verb for
-  "did my plugin load / what failed" so the agent can self-check without asking the
-  user to read Settings.
+- Human-verify remaining: press the button — Settings closes, the pair-authoring pane
+  has focus, claude receives the guide as its prompt, and a real pair-authoring
+  session produces a working script. Follow-up candidate recorded, not built: a CLI
+  verb for "did my plugin load / what failed" so the agent can self-check without
+  asking the user to read Settings.

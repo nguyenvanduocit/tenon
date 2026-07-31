@@ -145,6 +145,11 @@ private struct AutomationSettingsDetail: View {
     var runNow: (PluginID, String) async -> Void
     var createWithAI: () -> Void
 
+    /// T-061 amendment (user-directed 02:12): the button's whole point is the pane it
+    /// opens, and Settings sits exactly on top of it — so choosing to create closes
+    /// this window and hands focus to the pair-authoring pane.
+    @Environment(\.dismissWindow) private var dismissWindow
+
     var body: some View {
         Form {
             let listings = automation.listings()
@@ -153,6 +158,7 @@ private struct AutomationSettingsDetail: View {
             Section {
                 Button("Create with AI…") {
                     createWithAI()
+                    dismissWindow()
                 }
             } footer: {
                 Text("Opens a terminal running claude with a guide to pair-write an "
