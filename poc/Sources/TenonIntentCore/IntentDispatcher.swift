@@ -586,7 +586,8 @@ public actor IntentDispatcher {
                     envelope: envelope,
                     contract: contract,
                     providerID: selection.providerID
-                )
+                ),
+                deadline: deadline
             )
             if Task.isCancelled {
                 await telemetry.markConfirmation(
@@ -1030,9 +1031,29 @@ public actor IntentDispatcher {
 
     private func resolveCallerConsent(
         key: CallerConsentKey,
-        confirmationRequest: IntentConfirmationRequest
+        confirmationRequest: IntentConfirmationRequest,
+        deadline: ContinuousClock.Instant
     ) async -> CallerConsentWaveOutcome {
         let waiterID = UUID()
+        // A confirmation nobody answers must not hold the request open forever (invariant 10).
+        // The caller already stated a deadline and the dispatcher already refuses past it —
+        // but that check ran *after* this wait, so it could never fire on a wait that only
+        // ended when someone answered.
+        //
+        // Expiry leaves through the same door cancellation uses. That is deliberate: the
+        // waiter is removed by `removeValue`, so whichever of expiry, cancellation and the
+        // authorizer arrives first settles the continuation exactly once, and a flight that
+        // still has waiters keeps its prompt standing — one caller's deadline must not take
+        // the dialog away from another caller who is still waiting on it.
+        let expiry = Task { [weak self] in
+            try? await ContinuousClock().sleep(until: deadline)
+            guard !Task.isCancelled else { return }
+            await self?.cancelCallerConsentWaiter(
+                waiterID: waiterID,
+                key: key
+            )
+        }
+        defer { expiry.cancel() }
         return await withTaskCancellationHandler {
             await withCheckedContinuation { continuation in
                 registerCallerConsentWaiter(

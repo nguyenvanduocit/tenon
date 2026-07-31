@@ -205,6 +205,142 @@ final class CallerConsentTests: XCTestCase {
         XCTAssertFalse(hasConsentAfterStaleDecision)
     }
 
+    /// T-050. A confirmation nobody answers must not hold the request open forever.
+    ///
+    /// The caller states a deadline — the CLI's `--timeout`, an agent's own bound — and the
+    /// dispatcher already refuses past it. What was missing is that the consent wait itself
+    /// never returned, so the refusal was a post-hoc check on something that never came back.
+    ///
+    /// The assertion is deliberately *not* about elapsed time: it is that the request settles
+    /// while the prompt is still unanswered. That is the rule, and it cannot go flaky under
+    /// load the way a stopwatch can.
+    func testUnansweredConfirmationExpiresAtTheCallersDeadline() async throws {
+        let confirmation = ConsentConfirmationProbe(
+            decision: .approved,
+            suspendsRequests: true
+        )
+        let fixture = try await ConsentFixture.make(
+            confirmation: .policy,
+            authorizer: confirmation
+        )
+        let consentKey = CallerConsentKey(
+            caller: fixture.caller,
+            contract: fixture.intentID
+        )
+        let resultProbe = ConsentResultProbe()
+        let send = Task {
+            let result = await fixture.send(
+                value: 1,
+                timeout: .milliseconds(200)
+            )
+            await resultProbe.record(result)
+            return result
+        }
+
+        await waitForConfirmationRequests(confirmation, atLeast: 1)
+        await waitForConsentWaiters(
+            fixture.dispatcher,
+            key: consentKey,
+            count: 1
+        )
+
+        // Nobody answers. The waiter must leave on its own.
+        await waitForConsentWaitersOverTime(
+            fixture.dispatcher,
+            key: consentKey,
+            count: 0
+        )
+        let settledBeforePromptRelease = await waitForConsentResultOverTime(
+            resultProbe
+        )
+        XCTAssertTrue(
+            settledBeforePromptRelease,
+            "an unanswered confirmation must settle the request without an answer"
+        )
+        // Never await a task that may not be settled: this suite is shared, and a test that
+        // hangs takes every other agent's evidence with it instead of just failing.
+        guard settledBeforePromptRelease else {
+            send.cancel()
+            return
+        }
+        let failure = try unwrapFailure(await send.value)
+        XCTAssertEqual(failure.error.code, .kernel(.deadlineExceeded))
+
+        // Expiry is not consent, and it is not a decision either.
+        let hasConsent = await fixture.policy.hasStandingConsent(
+            contract: fixture.intentID,
+            caller: fixture.caller
+        )
+        XCTAssertFalse(hasConsent)
+        let providerInvocationCount = await fixture.provider.invocationCount()
+        XCTAssertEqual(providerInvocationCount, 0)
+    }
+
+    /// One caller's deadline is that caller's alone. A prompt shared by several waiters must
+    /// survive the first of them giving up — otherwise a short-deadline agent could snatch the
+    /// dialog out from under the human who was reading it.
+    func testExpiringWaiterKeepsThePromptForRemainingWaiter() async throws {
+        let confirmation = ConsentConfirmationProbe(
+            decision: .approved,
+            suspendsRequests: true
+        )
+        let fixture = try await ConsentFixture.make(
+            confirmation: .policy,
+            authorizer: confirmation
+        )
+        let consentKey = CallerConsentKey(
+            caller: fixture.caller,
+            contract: fixture.intentID
+        )
+        let impatientResult = ConsentResultProbe()
+        let impatient = Task {
+            let result = await fixture.send(
+                value: 1,
+                timeout: .milliseconds(200)
+            )
+            await impatientResult.record(result)
+            return result
+        }
+
+        await waitForConfirmationRequests(confirmation, atLeast: 1)
+        let remaining = Task { await fixture.send(value: 2) }
+        await waitForConsentWaiters(
+            fixture.dispatcher,
+            key: consentKey,
+            count: 2
+        )
+
+        await waitForConsentWaitersOverTime(
+            fixture.dispatcher,
+            key: consentKey,
+            count: 1
+        )
+        let impatientSettled = await waitForConsentResultOverTime(
+            impatientResult
+        )
+        XCTAssertTrue(impatientSettled)
+        let promptCount = await confirmation.requestCount()
+        XCTAssertEqual(promptCount, 1, "the prompt must still be standing")
+        guard impatientSettled else {
+            impatient.cancel()
+            remaining.cancel()
+            await confirmation.releasePendingRequests()
+            return
+        }
+
+        await confirmation.releasePendingRequests()
+        let impatientFailure = try unwrapFailure(await impatient.value)
+        XCTAssertEqual(impatientFailure.error.code, .kernel(.deadlineExceeded))
+        let remainingValue = try unwrapSuccess(await remaining.value)
+        XCTAssertEqual(remainingValue, .object(["echo": .integer(2)]))
+        let invokedValues = await fixture.provider.invokedValues()
+        XCTAssertEqual(
+            invokedValues,
+            [2],
+            "only the waiter that was still there may run"
+        )
+    }
+
     func testCancellingLastWaiterAfterApprovalCannotCommitStandingConsent() async throws {
         let confirmation = ConsentConfirmationProbe(decision: .approved)
         let persistenceGate = ConsentPersistenceGate()
@@ -628,6 +764,58 @@ final class CallerConsentTests: XCTestCase {
         for _ in 0 ..< 2_000 {
             await Task.yield()
         }
+    }
+
+    /// Like `waitForConsentWaiters`, but it lets the clock run.
+    ///
+    /// The yield-based waiters are right for cancellation, which is immediate — no wall-clock
+    /// time has to pass for a cancelled waiter to leave. An *expiring* waiter is the opposite:
+    /// it leaves only once its deadline is actually reached, and a spin of `Task.yield()` can
+    /// burn all its iterations inside a single millisecond and report a failure that never
+    /// happened. So this one sleeps.
+    private func waitForConsentWaitersOverTime(
+        _ dispatcher: IntentDispatcher,
+        key: CallerConsentKey,
+        count: Int,
+        within limit: Duration = .seconds(10),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async {
+        let step = Duration.milliseconds(10)
+        let attempts = max(1, Int(limit / step))
+        for _ in 0 ..< attempts {
+            if await dispatcher.callerConsentWaiterCount(for: key) == count {
+                return
+            }
+            try? await Task.sleep(for: step)
+        }
+        XCTFail(
+            "consent flight never reached \(count) waiter(s) within \(limit)",
+            file: file,
+            line: line
+        )
+    }
+
+    private func waitForConsentResultOverTime(
+        _ probe: ConsentResultProbe,
+        within limit: Duration = .seconds(10),
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) async -> Bool {
+        let step = Duration.milliseconds(10)
+        let attempts = max(1, Int(limit / step))
+        for _ in 0 ..< attempts {
+            if await probe.hasResult() {
+                return true
+            }
+            try? await Task.sleep(for: step)
+        }
+        XCTFail(
+            "consent dispatch did not settle within \(limit)",
+            file: file,
+            line: line
+        )
+        return false
     }
 
     private func waitForConsentWaiters(
@@ -1074,12 +1262,16 @@ private struct ConsentFixture: Sendable {
         )
     }
 
-    func send(value: Int64) async -> IntentResult {
+    func send(
+        value: Int64,
+        timeout: Duration? = nil
+    ) async -> IntentResult {
         await dispatcher.send(
             IntentDispatchRequest(
                 intentID: intentID,
                 input: .object(["value": .integer(value)]),
-                caller: caller
+                caller: caller,
+                requestedTimeout: timeout
             )
         )
     }

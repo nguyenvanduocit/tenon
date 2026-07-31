@@ -564,6 +564,20 @@ declarative view contribution.
 - EVENT delivery is bounded and cannot block the fact publisher on observer work.
 - RESOURCE queues and buffers are bounded; overflow behavior is explicit.
 - CONTRIBUTION updates are diffed/coalesced by key and rendered from immutable snapshots.
+- A `confirmation: policy` wait is bounded by the caller's deadline like every other phase of
+  a dispatch. An unanswered prompt expires into `tenon.deadline-exceeded`; it does not hold
+  the request. A prompt shared by several waiters survives the first of them expiring, so one
+  caller's deadline cannot take the dialog away from another who is still waiting on it.
+
+**Confirmation is interactive by design, and is not granted to non-interactive principals.**
+A plugin holds standing consent because it was *installed* — a human act of trust over a
+manifest that declares exactly which intents it uses. A CLI or agent principal has neither:
+anything able to open the control socket is that principal, so seeding it with standing
+consent would let any process on the machine run `.policy` verbs unprompted. That is not
+consent, it is an open door. The lawful route for unattended work is to be a plugin, which
+is what `tenon.agents.run` and the shipped fleet-review example do. The consequence is
+accepted and stated rather than worked around: a CLI caller with no human at the window can
+read state, and its `.policy` verbs expire at their deadline instead of hanging.
 
 The UI thread MUST perform only UI work. Filesystem, process, network, schema compilation,
 plugin execution, and unbounded resource work MUST NOT run on `MainActor`. Execution
