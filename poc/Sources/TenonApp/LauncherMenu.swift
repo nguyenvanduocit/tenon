@@ -1,17 +1,23 @@
 import AppKit
 import SwiftUI
 import TenonCore
+import TenonIntentCore
 
-/// The tab strip's `+` menu: a search-first launcher listing the creation verbs plugins
-/// declared with `palette.launcher`. It ranks through the same `CommandIndex` the palette
-/// does and shares its frecency, so the two surfaces learn one set of habits and the
-/// shell keeps no ordering of its own. Adding an entry here is a `manifest.json` change.
+/// The search-first launcher listing the creation verbs plugins declared with
+/// `palette.launcher`: the tab strip's `+` popover, and the same popover a tab chip
+/// opens on right-click. It ranks through the same `CommandIndex` the palette does and
+/// shares its frecency, so every surface learns one set of habits and the shell keeps
+/// no ordering of its own. Adding an entry here is a `manifest.json` change.
 struct LauncherMenu: View {
     var host: PluginHost
     var intentRuntime: AppIntentRuntime
     /// Shared with ⌘⇧P: same frecency store, so a habit formed in one surface shows in
     /// the other. Its `query`/`selection` belong to the overlay and stay untouched here.
     var palette: CommandPaletteState
+    /// How a chosen row is dispatched. `nil` is the keyboard-surface meaning — the
+    /// focused pane, through the shared invoker. A tab chip's popover injects a send
+    /// that names its own tab, so the menu can talk about a tab that is not selected.
+    var send: ((String) async -> IntentResult?)? = nil
     let dismiss: () -> Void
 
     @State private var query = ""
@@ -163,28 +169,33 @@ struct LauncherMenu: View {
     }
 
     /// Same path as the palette: the ranked presentation maps back to its plugin-owned
-    /// intent, which is invoked through the palette principal.
+    /// intent, which is invoked through the palette principal. The result settles
+    /// through `LauncherOutcome`, so frecency learns only from a command that ran and a
+    /// failure stays visible where the click happened.
     private func run(_ match: CommandMatch) {
         guard !isRunning else { return }
         isRunning = true
         errorMessage = nil
         Task { @MainActor in
-            guard let result = await PaletteIntentInvoker.send(
-                commandID: match.command.id,
-                host: host,
-                runtime: intentRuntime
-            ) else {
-                isRunning = false
-                errorMessage = "Intent is no longer available."
-                return
+            let result: IntentResult?
+            if let send {
+                result = await send(match.command.id)
+            } else {
+                result = await PaletteIntentInvoker.send(
+                    commandID: match.command.id,
+                    host: host,
+                    runtime: intentRuntime
+                )
             }
-            switch result {
-            case .success:
+            let outcome = LauncherOutcome(result)
+            if outcome.recordsFrecency {
                 palette.record(match.command.id)
+            }
+            if outcome.dismisses {
                 dismiss()
-            case .failure(let failure):
+            } else {
                 isRunning = false
-                errorMessage = failure.error.code.rawValue
+                errorMessage = outcome.errorMessage
             }
         }
     }

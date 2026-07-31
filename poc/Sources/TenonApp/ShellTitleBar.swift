@@ -19,28 +19,23 @@ struct ShellTitleBar: View {
     let onToggleSidebar: () -> Void
 
     @State private var launcherPresented = false
+    /// Which tab's right-click launcher popover is open, if any. One value for the whole
+    /// strip: opening a second tab's launcher closes the first.
+    @State private var contextLauncherTab: UUID?
 
-    /// The `+` launcher's catalog, unranked by a query because a menu has no search field.
-    /// Frecency still orders it, so the entry a human reaches for most is nearest the top
-    /// in both surfaces.
-    private var launcherCommands: [TenonCore.Command] {
-        host.commandIndex.launcherOnly
-            .rank(query: "", frecency: palette.frecency, now: Date())
-            .map(\.command)
-    }
-
-    /// Run a launcher command as if it had been chosen *on this tab*.
+    /// Dispatch a launcher command as if it had been chosen *on this tab*.
     ///
     /// The scope is the whole point: the palette and `+` invoke against the focused pane,
     /// which for a right-click on a background tab would put the result in the wrong place.
     /// Placement itself stays host policy inside `workspace.content.open.v1` — this only
-    /// says which tab is being talked about.
-    private func run(_ commandID: String, onTab tabID: UUID) {
+    /// says which tab is being talked about. The result flows back to the launcher, which
+    /// settles it exactly as the `+` popover does.
+    private func send(_ commandID: String, onTab tabID: UUID) async -> IntentResult? {
         guard let paneID = TabContextPlacement.scopedPane(
             in: store.catalog,
             tabID: tabID
         ) else {
-            return
+            return nil
         }
         let workspaceID = TabContextPlacement.owningWorkspace(
             in: store.catalog,
@@ -53,18 +48,15 @@ struct ShellTitleBar: View {
         ) {
             store.selectTab(tabID)
         }
-        Task { @MainActor in
-            _ = await PaletteIntentInvoker.send(
-                commandID: commandID,
-                scope: InvocationScope(
-                    workspaceID: workspaceID,
-                    paneID: paneID
-                ),
-                host: host,
-                runtime: intentRuntime
-            )
-            palette.record(commandID)
-        }
+        return await PaletteIntentInvoker.send(
+            commandID: commandID,
+            scope: InvocationScope(
+                workspaceID: workspaceID,
+                paneID: paneID
+            ),
+            host: host,
+            runtime: intentRuntime
+        )
     }
     /// Width the tab chips actually need, so the row can hand everything past them
     /// to the drag surface instead of letting the scroll view swallow the whole side.
@@ -173,17 +165,30 @@ struct ShellTitleBar: View {
                             isDropTarget: router.activeDropTarget == .existingTab(tab.id),
                             select: { store.selectTab(tab.id) },
                             close: { store.closeTab(tab.id) },
-                            // Same catalog the `+` button offers, from the same index —
-                            // a second hand-maintained list would drift the first time a
-                            // plugin declared a new creation verb.
-                            menuCommands: launcherCommands,
-                            runMenuCommand: { commandID in
-                                run(commandID, onTab: tab.id)
-                            }
+                            openLauncher: { contextLauncherTab = tab.id }
                         )
                         // Report the chip's window-space frame so a pane dragged up
                         // from the canvas can be hit-tested against it.
                         .background(WindowFrameReporter { router.tabChipFrames[tab.id] = $0 })
+                        // Right-click opens the same launcher the `+` button opens —
+                        // one catalog, one presentation — scoped to this chip's tab.
+                        .popover(
+                            isPresented: Binding(
+                                get: { contextLauncherTab == tab.id },
+                                set: { if !$0 { contextLauncherTab = nil } }
+                            ),
+                            arrowEdge: .bottom
+                        ) {
+                            LauncherMenu(
+                                host: host,
+                                intentRuntime: intentRuntime,
+                                palette: palette,
+                                send: { commandID in
+                                    await send(commandID, onTab: tab.id)
+                                },
+                                dismiss: { contextLauncherTab = nil }
+                            )
+                        }
                     }
 
                     ShellIconButton(symbol: "plus", help: "Open something new") {
@@ -274,8 +279,10 @@ private struct TabChip: View {
     var isDropTarget: Bool = false
     let select: () -> Void
     let close: () -> Void
-    var menuCommands: [TenonCore.Command] = []
-    var runMenuCommand: (String) -> Void = { _ in }
+    /// A right-click (or control-click) on the chip asks the owner to open the launcher
+    /// popover anchored here — the same `LauncherMenu` the `+` button opens, scoped by
+    /// the owner to this chip's tab.
+    let openLauncher: () -> Void
 
     var body: some View {
         Button(action: select) {
@@ -336,17 +343,61 @@ private struct TabChip: View {
                     .stroke(TenonTheme.amber, lineWidth: 1.5)
             }
         }
-        // A native menu, which is what a right-click on a tab is expected to produce —
-        // no second overlay style beside the `+` popover.
-        .contextMenu {
-            ForEach(menuCommands) { command in
-                Button(command.title) { runMenuCommand(command.id) }
-            }
-        }
+        .overlay(RightClickCatcher(action: openLauncher))
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("tenon.tab")
         .accessibilityLabel(title)
         .accessibilityValue(isActive ? "active" : "inactive")
+    }
+}
+
+/// An invisible AppKit layer that turns a right-click (or control-click) into an action
+/// while every other event falls through to the SwiftUI content beneath it. SwiftUI's
+/// only native right-click affordance is `.contextMenu`, which draws a system menu; the
+/// tab chip opens the launcher popover instead, so the click itself is caught here.
+private struct RightClickCatcher: NSViewRepresentable {
+    let action: () -> Void
+
+    func makeNSView(context: Context) -> CatcherView {
+        let view = CatcherView()
+        view.action = action
+        return view
+    }
+
+    func updateNSView(_ view: CatcherView, context: Context) {
+        view.action = action
+    }
+
+    final class CatcherView: NSView {
+        var action: (() -> Void)?
+
+        /// Participate in hit-testing only while the event being routed is a right-click
+        /// or a control-click; every other event never sees this view, so the chip's
+        /// select and close buttons keep their clicks and hovers.
+        override func hitTest(_ point: NSPoint) -> NSView? {
+            guard let event = NSApp.currentEvent else { return nil }
+            switch event.type {
+            case .rightMouseDown, .rightMouseUp:
+                return super.hitTest(point)
+            case .leftMouseDown where event.modifierFlags.contains(.control):
+                return super.hitTest(point)
+            default:
+                return nil
+            }
+        }
+
+        override func rightMouseDown(with event: NSEvent) {
+            action?()
+        }
+
+        /// Reachable only through the control-click branch of `hitTest`.
+        override func mouseDown(with event: NSEvent) {
+            guard event.modifierFlags.contains(.control) else {
+                super.mouseDown(with: event)
+                return
+            }
+            action?()
+        }
     }
 }
 
