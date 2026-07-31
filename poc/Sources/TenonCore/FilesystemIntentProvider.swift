@@ -213,11 +213,16 @@ private extension FilesystemIntentProvider {
             let input = try CoreIntentProviderSupport.object(envelope.input)
             let requestedPath = try CoreIntentProviderSupport.string("path", in: input)
             let path = try authorizedPath(requestedPath, context: context)
+            let rawCursor = try CoreIntentProviderSupport.optionalString(
+                "cursor",
+                in: input
+            )
+            let cursor = try fileReadCursor(from: rawCursor)
             let output = try await CoreIntentProviderSupport.runBlocking(
                 deadline: envelope.deadline,
                 context: context
             ) {
-                try readTextFile(path: path)
+                try readTextFile(path: path, cursor: cursor)
             }
             return .success(output)
         } catch let error as CoreIntentProviderInputError {
@@ -602,52 +607,12 @@ private extension FilesystemIntentProvider {
         ].joined(separator: "-")
     }
 
-    static func readTextFile(
-        path: AuthorizedFilesystemPath
-    ) throws -> IntentValue {
-        let descriptor = try openBound(
-            path,
-            flags: O_RDONLY | O_CLOEXEC | O_NOFOLLOW
-        )
-        let handle = FileHandle(
-            fileDescriptor: descriptor,
-            closeOnDealloc: true
-        )
-        defer { try? handle.close() }
-
-        var metadata = stat()
-        guard fstat(descriptor, &metadata) == 0 else {
-            throw mapPOSIXError(errno)
-        }
-        guard (metadata.st_mode & S_IFMT) != S_IFDIR else {
-            throw OperationError.filesystemFailed("path-is-directory")
-        }
-
-        let data: Data
-        do {
-            data = try handle.read(upToCount: maximumInlineBytes + 1) ?? Data()
-        } catch {
-            throw mapFoundationError(error)
-        }
-        guard data.count <= maximumInlineBytes else {
-            throw OperationError.contentTooLarge
-        }
-        guard let text = String(data: data, encoding: .utf8) else {
-            throw OperationError.contentNotText
-        }
-        guard text.count <= CoreIntentPayloadPolicy.maximumInlineTextCharacters else {
-            throw OperationError.contentTooLarge
-        }
-
-        let output = IntentValue.object([
-            "content": CoreIntentProviderSupport.textOutput(text)
-        ])
-        do {
-            try output.validate()
-        } catch {
-            throw OperationError.contentTooLarge
-        }
-        return output
+    static func fileFingerprint(_ metadata: stat) -> String {
+        [
+            String(metadata.st_size, radix: 16),
+            String(metadata.st_mtimespec.tv_sec, radix: 16),
+            String(metadata.st_mtimespec.tv_nsec, radix: 16),
+        ].joined(separator: "-")
     }
 
     static func atomicallyReplaceFile(
@@ -910,5 +875,151 @@ private extension FilesystemIntentProvider {
                 reason: reason
             )
         }
+    }
+}
+
+// Internal, not fileprivate: a write landing inside one page's identity-to-read
+// window cannot be staged through the public bindings, so the tests drive the
+// paging pair directly.
+extension FilesystemIntentProvider {
+    /// Where the next file page starts, and the file identity that made that byte
+    /// offset mean something. Purely a value: the host keeps nothing when a caller
+    /// drops one.
+    struct FileReadCursor: Sendable {
+        let offset: Int
+        let fingerprint: String
+    }
+
+    /// Rejects anything this provider did not write. A caller cannot widen its own
+    /// read by handing back a negative offset, a foreign version, or a fourth field;
+    /// a cursor that fails to decode is invalid input, not a filesystem condition.
+    static func fileReadCursor(from cursor: String?) throws -> FileReadCursor? {
+        guard let cursor, !cursor.isEmpty else { return nil }
+        let components = cursor.split(separator: ":", omittingEmptySubsequences: false)
+        guard components.count == 3,
+              components[0] == "v1",
+              let offset = Int(components[1]),
+              offset >= 0,
+              !components[2].isEmpty
+        else {
+            throw CoreIntentProviderInputError.missingOrInvalidField("cursor")
+        }
+        return FileReadCursor(
+            offset: offset,
+            fingerprint: String(components[2])
+        )
+    }
+
+    /// `interposedBeforePageRead` runs inside the identity-to-read window; tests use it
+    /// to land a concurrent write there and assert the page comes back invalidated
+    /// instead of carrying bytes from the new arrangement.
+    static func readTextFile(
+        path: AuthorizedFilesystemPath,
+        cursor: FileReadCursor?,
+        interposedBeforePageRead: (() throws -> Void)? = nil
+    ) throws -> IntentValue {
+        let descriptor = try openBound(
+            path,
+            flags: O_RDONLY | O_CLOEXEC | O_NOFOLLOW
+        )
+        let handle = FileHandle(
+            fileDescriptor: descriptor,
+            closeOnDealloc: true
+        )
+        defer { try? handle.close() }
+
+        var metadata = stat()
+        guard fstat(descriptor, &metadata) == 0 else {
+            throw mapPOSIXError(errno)
+        }
+        guard (metadata.st_mode & S_IFMT) != S_IFDIR else {
+            throw OperationError.filesystemFailed("path-is-directory")
+        }
+
+        let fingerprint = fileFingerprint(metadata)
+        if let expected = cursor?.fingerprint, expected != fingerprint {
+            // The offset was issued against bytes that no longer exist in that
+            // arrangement; shifted content would be silently wrong, so the caller
+            // starts again from the first byte.
+            return IntentValue.object([
+                "content": CoreIntentProviderSupport.textOutput(""),
+                "cursor": .null,
+                "invalidated": .bool(true),
+            ])
+        }
+
+        let size = Int(metadata.st_size)
+        let offset: Int
+        if let cursor {
+            // A cursor is only ever issued while bytes remain, so with a matching
+            // identity a past-the-end offset is nothing this host wrote.
+            guard cursor.offset < size else {
+                throw CoreIntentProviderInputError.missingOrInvalidField("cursor")
+            }
+            offset = cursor.offset
+        } else {
+            offset = 0
+        }
+
+        let requested = min(size - offset, maximumInlineBytes)
+        try interposedBeforePageRead?()
+        let chunk: Data
+        do {
+            if offset > 0 {
+                try handle.seek(toOffset: UInt64(offset))
+            }
+            chunk = try handle.read(upToCount: requested) ?? Data()
+        } catch {
+            throw mapFoundationError(error)
+        }
+
+        // The identity was captured before the bytes. A write landing between the
+        // two is caught on every earlier page by the next call's identity check,
+        // but the final page has no next call — so every page re-checks after the
+        // read, and bytes are served only when the identity held across it.
+        var verification = stat()
+        guard fstat(descriptor, &verification) == 0 else {
+            throw mapPOSIXError(errno)
+        }
+        guard fileFingerprint(verification) == fingerprint else {
+            return IntentValue.object([
+                "content": CoreIntentProviderSupport.textOutput(""),
+                "cursor": .null,
+                "invalidated": .bool(true),
+            ])
+        }
+
+        // The page limit cuts at a byte position; back off from any trailing bytes
+        // of a split multi-byte sequence so every page decodes on its own and no
+        // character is ever divided across pages.
+        var page = chunk
+        var text = String(data: page, encoding: .utf8)
+        if offset + chunk.count < size {
+            var backoff = 0
+            while text == nil, backoff < 3, !page.isEmpty {
+                page = page.dropLast()
+                backoff += 1
+                text = String(data: page, encoding: .utf8)
+            }
+        }
+        guard let text else { throw OperationError.contentNotText }
+
+        let nextOffset = offset + page.count
+        let hasMore = nextOffset < size
+        guard !hasMore || !page.isEmpty else {
+            // A page that accepts nothing while bytes remain would hand back a
+            // cursor that never advances.
+            throw OperationError.filesystemFailed("file-read-page-empty")
+        }
+
+        let output = IntentValue.object([
+            "content": CoreIntentProviderSupport.textOutput(text),
+            "cursor": hasMore
+                ? .string("v1:\(nextOffset):\(fingerprint)")
+                : .null,
+            "invalidated": .bool(false),
+        ])
+        try output.validate()
+        return output
     }
 }

@@ -259,6 +259,11 @@ public enum CoreIntentPayloadPolicy {
     /// bound exists so a caller cannot hand back an unbounded string and make the host
     /// parse it.
     public static let maximumScrollbackCursorCharacters = 64
+
+    /// The cursor is `"v1:<offset>:<size>-<mtime-sec>-<mtime-nsec>"` — a decimal byte
+    /// offset plus the hex file identity it was issued against. The bound exists so a
+    /// caller cannot hand back an unbounded string and make the host parse it.
+    public static let maximumFileReadCursorCharacters = 96
 }
 
 /// One row in the canonical table. The declaration describes the public contract; the rule
@@ -581,11 +586,39 @@ private extension CoreIntentCatalog {
             try CoreIntentRuleData.definition(
                 .filesystemFileRead,
                 title: "Read file",
-                description: "Returns bounded inline UTF-8 text.",
-                input: pathInput,
+                description: """
+                Returns one bounded inline UTF-8 page of the file, split only \
+                on character boundaries. Omit the cursor to start at the first \
+                byte; pass the cursor from the previous page to continue. A \
+                null cursor in the result means the page reached the end of \
+                the file. The cursor addresses bytes by offset and carries the \
+                file identity it was issued against, so a file whose size or \
+                modification time changed between pages, or while the page \
+                itself was being read, returns invalidated instead of bytes \
+                that may have shifted.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "path": CoreIntentSchema.path,
+                        "cursor": CoreIntentSchema.string(
+                            maxLength: CoreIntentPayloadPolicy
+                                .maximumFileReadCursorCharacters
+                        ),
+                    ],
+                    required: ["path"]
+                ),
                 output: CoreIntentSchema.root(
-                    properties: ["content": CoreIntentSchema.textOutput],
-                    required: ["content"]
+                    properties: [
+                        "content": CoreIntentSchema.textOutput,
+                        "cursor": CoreIntentSchema.nullable(
+                            CoreIntentSchema.string(
+                                maxLength: CoreIntentPayloadPolicy
+                                    .maximumFileReadCursorCharacters
+                            )
+                        ),
+                        "invalidated": CoreIntentSchema.boolean,
+                    ],
+                    required: ["content", "cursor", "invalidated"]
                 ),
                 audiences: programmatic,
                 exposure: programmaticExposure,

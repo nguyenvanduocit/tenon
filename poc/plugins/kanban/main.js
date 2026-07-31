@@ -142,15 +142,50 @@ function parseTask(text) {
 
 // --- Reading ------------------------------------------------------------------------
 
+// Bounds on one file read (invariant 10). The host serves at most one inline page
+// (48 KiB) per reply, so MAX_PAGES caps a read near 1 MB — past that the pane reports
+// the size instead of holding a cursor loop open forever. A page can also come back
+// invalidated when another agent rewrites the file mid-read; the whole read restarts,
+// at most MAX_READ_RESTARTS times, because concurrent writers are the normal case here.
+var MAX_PAGES = 24;
+var MAX_READ_RESTARTS = 3;
+
+// Resolves to { text } on success, { missing: true } when the path does not exist, and
+// { reason } for every other failure. The distinction keeps the pane honest: only a
+// missing file may render as "No board"; anything else names what actually went wrong.
 async function readFile(path, call) {
-  var input = { path: path };
-  var result = call
-    ? await call.send("filesystem.file.read.v1", input)
-    : await tenon.intents.send("filesystem.file.read.v1", input);
-  if (!result.ok) return null;
-  var content = result.value && result.value.content;
-  if (!content || content.kind !== "inline") return null;
-  return content.text || "";
+  for (var attempt = 0; attempt < MAX_READ_RESTARTS; attempt++) {
+    var text = "";
+    var input = { path: path };
+    var invalidated = false;
+    for (var page = 0; page < MAX_PAGES; page++) {
+      var result = call
+        ? await call.send("filesystem.file.read.v1", input)
+        : await tenon.intents.send("filesystem.file.read.v1", input);
+      if (!result.ok) return readFailure(result);
+      var value = result.value || {};
+      if (value.invalidated) {
+        invalidated = true;
+        break;
+      }
+      var content = value.content;
+      if (!content || content.kind !== "inline") {
+        return { reason: "unexpected-content-shape" };
+      }
+      text += content.text || "";
+      if (!value.cursor) return { text: text };
+      input = { path: path, cursor: value.cursor };
+    }
+    if (!invalidated) return { reason: "file-larger-than-" + MAX_PAGES + "-pages" };
+  }
+  return { reason: "file-kept-changing-mid-read" };
+}
+
+function readFailure(result) {
+  var error = result.error || {};
+  if (error.code === "dev.tenon.core.path-not-found") return { missing: true };
+  var reason = error.details && error.details.reason;
+  return { reason: String(reason || error.code || "unknown") };
 }
 
 async function owningWorkspace(instanceID, call) {
@@ -177,22 +212,24 @@ async function refresh(st, call) {
   if (!st.boardPath) return;
   st.generation += 1;
   var generation = st.generation;
-  var text = await readFile(st.boardPath, call);
+  var read = await readFile(st.boardPath, call);
   // A read that resolves after a newer one, or after this pane closed, must not publish.
   if (panes[st.id] !== st || generation !== st.generation) return;
 
-  if (text === null) {
+  if (read.text === undefined) {
     st.columns = [];
-    st.error = "No board at " + st.boardPath;
+    st.error = read.missing
+      ? "No board at " + st.boardPath
+      : "Board read failed: " + read.reason;
   } else {
     var previous = st.rawBoard;
-    st.rawBoard = text;
-    st.columns = parseBoard(text);
+    st.rawBoard = read.text;
+    st.columns = parseBoard(read.text);
     st.error = "";
     // A fact, not a request: anyone who declared this channel hears, nobody has to, and
     // this plugin never learns who did. Only published when the board really changed, so
     // a watch that fires on an unrelated file in .kanban/ says nothing.
-    if (previous !== undefined && previous !== text) {
+    if (previous !== undefined && previous !== read.text) {
       tenon.events.emit("board.changed", { path: st.boardPath });
     }
   }
@@ -203,12 +240,12 @@ async function refresh(st, call) {
       st.selectedTask = null;
       st.detail = null;
     } else {
-      var detailText = await readFile(
+      var detailRead = await readFile(
         tenon.path.join(st.workspacePath, KANBAN_DIR, still.path.replace(/^\.\//, "")),
         call
       );
       if (panes[st.id] !== st || generation !== st.generation) return;
-      st.detail = detailText === null ? null : parseTask(detailText);
+      st.detail = detailRead.text === undefined ? null : parseTask(detailRead.text);
     }
   }
   render(st);

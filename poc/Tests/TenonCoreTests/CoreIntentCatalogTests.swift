@@ -144,16 +144,30 @@ final class CoreIntentCatalogTests: XCTestCase {
         ])
 
         XCTAssertTrue(
-            try fileRead.validateOutput(.object(["content": inline])).isValid
-        )
-        XCTAssertFalse(
             try fileRead.validateOutput(
-                .object(["content": unsupportedHandle])
+                .object([
+                    "content": inline,
+                    "cursor": .null,
+                    "invalidated": .bool(false),
+                ])
             ).isValid
         )
         XCTAssertFalse(
             try fileRead.validateOutput(
-                .object(["content": .string("unbounded-shorthand")])
+                .object([
+                    "content": unsupportedHandle,
+                    "cursor": .null,
+                    "invalidated": .bool(false),
+                ])
+            ).isValid
+        )
+        XCTAssertFalse(
+            try fileRead.validateOutput(
+                .object([
+                    "content": .string("unbounded-shorthand"),
+                    "cursor": .null,
+                    "invalidated": .bool(false),
+                ])
             ).isValid
         )
 
@@ -169,7 +183,9 @@ final class CoreIntentCatalogTests: XCTestCase {
                 "byteCount": .integer(
                     Int64(CoreIntentPayloadPolicy.maximumInlineTextCharacters + 1)
                 ),
-            ])
+            ]),
+            "cursor": .null,
+            "invalidated": .bool(false),
         ])
         XCTAssertFalse(try fileRead.validateOutput(oversizedInline).isValid)
 
@@ -713,10 +729,10 @@ private extension CoreIntentCatalogTests {
                 requiredOutput: ["entries", "nextCursor"]
             ),
             .filesystemFileRead: SchemaShape(
-                ["path"],
+                ["path", "cursor"],
                 required: ["path"],
-                output: ["content"],
-                requiredOutput: ["content"]
+                output: ["content", "cursor", "invalidated"],
+                requiredOutput: ["content", "cursor", "invalidated"]
             ),
             .filesystemPathExists: SchemaShape(
                 ["path"],

@@ -1,5 +1,5 @@
 import Foundation
-import TenonCore
+@testable import TenonCore
 @testable import TenonIntentCore
 import XCTest
 
@@ -213,18 +213,15 @@ final class FilesystemIntentProviderTests: XCTestCase {
         )
     }
 
-    func testFileReadIsBoundedAndReportsNonText() async throws {
+    func testFileReadReturnsWholeSmallFileWithNullCursorAndReportsNonText()
+        async throws
+    {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
         let textURL = directory.appendingPathComponent("text.txt")
         let binaryURL = directory.appendingPathComponent("binary")
-        let oversizedURL = directory.appendingPathComponent("oversized.txt")
         try Data("hello".utf8).write(to: textURL)
         try Data([0xFF, 0xFE]).write(to: binaryURL)
-        try Data(
-            repeating: 0x61,
-            count: CoreIntentPayloadPolicy.maximumInlineTextCharacters + 1
-        ).write(to: oversizedURL)
 
         let bindings = try FilesystemIntentProvider().bindings
         let textReply = try await invoke(
@@ -232,12 +229,13 @@ final class FilesystemIntentProviderTests: XCTestCase {
             input: .object(["path": .string(textURL.path)]),
             bindings: bindings
         )
-        let content = try object(
-            try object(try successValue(textReply))["content"]
-        )
+        let output = try object(try successValue(textReply))
+        let content = try object(output["content"])
         XCTAssertEqual(try string(content["kind"]), "inline")
         XCTAssertEqual(try string(content["text"]), "hello")
         XCTAssertEqual(try integer(content["byteCount"]), 5)
+        XCTAssertEqual(output["cursor"], .null)
+        XCTAssertEqual(output["invalidated"], .bool(false))
 
         let binaryReply = try await invoke(
             .filesystemFileRead,
@@ -249,16 +247,173 @@ final class FilesystemIntentProviderTests: XCTestCase {
             code: "dev.tenon.core.content-not-text",
             reason: "content-is-not-utf8"
         )
+    }
 
-        let oversizedReply = try await invoke(
+    func testFileReadServesLargeFileAcrossBoundedUTF8Pages() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let limit = CoreIntentPayloadPolicy.maximumInlineTextCharacters
+        // Byte `limit - 1` starts the three-byte "ệ", so the first page must back
+        // off to the character boundary instead of splitting the sequence.
+        let content = String(repeating: "a", count: limit - 1) + "ệ"
+            + String(repeating: "b", count: limit) + "😀"
+            + String(repeating: "c", count: limit / 2)
+        let url = directory.appendingPathComponent("board.md")
+        try Data(content.utf8).write(to: url)
+
+        let bindings = try FilesystemIntentProvider().bindings
+        var pages: [String] = []
+        var cursor: String?
+        for _ in 0 ..< 8 {
+            var input: [String: IntentValue] = ["path": .string(url.path)]
+            if let cursor { input["cursor"] = .string(cursor) }
+            let reply = try await invoke(
+                .filesystemFileRead,
+                input: .object(input),
+                bindings: bindings
+            )
+            let output = try object(try successValue(reply))
+            XCTAssertEqual(output["invalidated"], .bool(false))
+            let page = try object(output["content"])
+            let text = try string(page["text"])
+            XCTAssertEqual(try integer(page["byteCount"]), Int64(text.utf8.count))
+            XCTAssertLessThanOrEqual(text.utf8.count, limit)
+            pages.append(text)
+            if case let .string(next)? = output["cursor"] {
+                cursor = next
+            } else {
+                XCTAssertEqual(output["cursor"], .null)
+                cursor = nil
+                break
+            }
+        }
+        XCTAssertNil(cursor)
+
+        XCTAssertEqual(pages.count, 3)
+        XCTAssertEqual(pages[0].utf8.count, limit - 1)
+        XCTAssertTrue(pages[1].hasPrefix("ệ"))
+        XCTAssertEqual(Data(pages.joined().utf8), Data(content.utf8))
+    }
+
+    func testFileReadCursorReportsInvalidatedWhenFileChangesBetweenPages()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let limit = CoreIntentPayloadPolicy.maximumInlineTextCharacters
+        let url = directory.appendingPathComponent("board.md")
+        try Data(repeating: 0x78, count: limit + 100).write(to: url)
+
+        let bindings = try FilesystemIntentProvider().bindings
+        let first = try await invoke(
             .filesystemFileRead,
-            input: .object(["path": .string(oversizedURL.path)]),
+            input: .object(["path": .string(url.path)]),
+            bindings: bindings
+        )
+        let cursor = try string(try object(try successValue(first))["cursor"])
+
+        // Same size, different bytes: only the modification time in the cursor's
+        // identity can catch this, so shifted content must never come back.
+        try Data(repeating: 0x79, count: limit + 100).write(to: url)
+
+        let stale = try await invoke(
+            .filesystemFileRead,
+            input: .object([
+                "path": .string(url.path),
+                "cursor": .string(cursor),
+            ]),
+            bindings: bindings
+        )
+        let output = try object(try successValue(stale))
+        XCTAssertEqual(output["invalidated"], .bool(true))
+        XCTAssertEqual(output["cursor"], .null)
+        XCTAssertEqual(try string(try object(output["content"])["text"]), "")
+    }
+
+    func testFileReadFinalPageInvalidatesWhenFileChangesInsideReadWindow()
+        throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let limit = CoreIntentPayloadPolicy.maximumInlineTextCharacters
+        let url = directory.appendingPathComponent("board.md")
+        try Data(repeating: 0x78, count: limit + 100).write(to: url)
+
+        let path = try AuthorizedFilesystemPath(requestedPath: url.path)
+        let first = try object(
+            try FilesystemIntentProvider.readTextFile(path: path, cursor: nil)
+        )
+        let cursor = try FilesystemIntentProvider.fileReadCursor(
+            from: try string(first["cursor"])
+        )
+
+        // The final page has no next call whose identity check could catch a
+        // mismatch, so a write landing after this page's identity check and before
+        // its bytes are read is the one place shifted bytes could slip through.
+        let output = try object(
+            try FilesystemIntentProvider.readTextFile(
+                path: path,
+                cursor: cursor,
+                interposedBeforePageRead: {
+                    try Data(repeating: 0x79, count: limit + 200).write(to: url)
+                }
+            )
+        )
+        XCTAssertEqual(output["invalidated"], .bool(true))
+        XCTAssertEqual(output["cursor"], .null)
+        XCTAssertEqual(try string(try object(output["content"])["text"]), "")
+    }
+
+    func testFileReadRejectsMalformedOrForgedCursor() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let limit = CoreIntentPayloadPolicy.maximumInlineTextCharacters
+        let url = directory.appendingPathComponent("board.md")
+        try Data(repeating: 0x61, count: limit + 10).write(to: url)
+        let bindings = try FilesystemIntentProvider().bindings
+
+        for malformed in ["not-a-cursor", "v1:-4:deadbeef", "v2:1:deadbeef"] {
+            let reply = try await invoke(
+                .filesystemFileRead,
+                input: .object([
+                    "path": .string(url.path),
+                    "cursor": .string(malformed),
+                ]),
+                bindings: bindings
+            )
+            try assertFailure(
+                reply,
+                code: "tenon.invalid-input",
+                field: "cursor"
+            )
+        }
+
+        // A past-the-end offset with the genuine identity is nothing this host
+        // ever issued; it fails closed instead of reading beyond the file.
+        let first = try await invoke(
+            .filesystemFileRead,
+            input: .object(["path": .string(url.path)]),
+            bindings: bindings
+        )
+        let cursor = try string(try object(try successValue(first))["cursor"])
+        let components = cursor.split(
+            separator: ":",
+            omittingEmptySubsequences: false
+        )
+        XCTAssertEqual(components.count, 3)
+        let forged = "\(components[0]):\(2 * limit):\(components[2])"
+        let forgedReply = try await invoke(
+            .filesystemFileRead,
+            input: .object([
+                "path": .string(url.path),
+                "cursor": .string(forged),
+            ]),
             bindings: bindings
         )
         try assertFailure(
-            oversizedReply,
-            code: "dev.tenon.core.filesystem-failed",
-            reason: "inline-content-limit-exceeded"
+            forgedReply,
+            code: "tenon.invalid-input",
+            field: "cursor"
         )
     }
 
@@ -492,6 +647,7 @@ private extension FilesystemIntentProviderTests {
         _ reply: IntentProviderReply,
         code: String,
         reason: String? = nil,
+        field: String? = nil,
         file: StaticString = #filePath,
         line: UInt = #line
     ) throws {
@@ -505,6 +661,15 @@ private extension FilesystemIntentProviderTests {
             XCTAssertEqual(
                 try string(details["reason"]),
                 reason,
+                file: file,
+                line: line
+            )
+        }
+        if let field {
+            let details = try object(failure.details)
+            XCTAssertEqual(
+                try string(details["field"]),
+                field,
                 file: file,
                 line: line
             )

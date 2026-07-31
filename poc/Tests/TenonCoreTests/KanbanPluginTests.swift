@@ -51,6 +51,28 @@ final class KanbanPluginTests: XCTestCase {
         - [x] Something already done
         - [ ] Something still open
         """
+
+        /// A board with the shape the T-052 bug reported: larger than one inline page, so
+        /// the host serves it as several cursor-linked pages. The Done column sits on the
+        /// last page — it renders only when every cursor is followed to the end.
+        static func largeBoard() -> (text: String, todoCount: Int) {
+            var lines = ["# Kanban Board", "", "## Todo"]
+            var todoCount = 0
+            var size = 0
+            let target = CoreIntentPayloadPolicy.maximumInlineTextCharacters * 2 + 4096
+            while size < target {
+                todoCount += 1
+                let id = 10_000 + todoCount
+                let line =
+                    "- [T-\(id)](tasks/T-\(id)-filler.md) Filler task number \(todoCount) — low/S"
+                lines.append(line)
+                size += line.utf8.count + 1
+            }
+            lines.append("")
+            lines.append("## Done")
+            lines.append("- [T-999](tasks/T-999-last.md) Landed on the last page — high/S")
+            return (lines.joined(separator: "\n"), todoCount)
+        }
     }
 
     // MARK: - The format
@@ -128,6 +150,106 @@ final class KanbanPluginTests: XCTestCase {
         XCTAssertTrue(labels.contains { $0.hasPrefix("Todo") && $0.contains("(2)") })
         XCTAssertTrue(labels.contains { $0.hasPrefix("Doing") && $0.contains("(1)") })
         XCTAssertTrue(labels.contains { $0.contains("First thing") && $0.contains("high/M") })
+        _ = await runtime.shutdown()
+    }
+
+    // MARK: - The read
+
+    /// T-052 regression: this repo's real board is 113 KB, and the pane showed
+    /// "No board" although the file was right there. The read arrives one bounded page
+    /// at a time; only a reader that follows every cursor sees the whole board.
+    func testABoardLargerThanOneInlinePageRendersItsColumnsWithoutAnErrorRow() async throws {
+        let board = Fixture.largeBoard()
+        let bridge = makeBridge(
+            files: [Self.rootA + "/.kanban/board.md": board.text]
+        )
+        let runtime = try makeRuntime(bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+
+        let rendered = await eventually {
+            await self.labels(of: runtime, instance: Fixture.paneA)
+                .contains { $0.hasPrefix("T-999") }
+        }
+        XCTAssertTrue(rendered, "the Done column lives on the last page; it must render")
+
+        let labels = await labels(of: runtime, instance: Fixture.paneA)
+        XCTAssertTrue(
+            labels.contains { $0.hasPrefix("Todo") && $0.contains("(\(board.todoCount))") },
+            "every Todo row on every page must be counted"
+        )
+        XCTAssertFalse(
+            labels.contains {
+                $0.hasPrefix("No board at") || $0.hasPrefix("Board read failed")
+            },
+            "a large board is not an error"
+        )
+        _ = await runtime.shutdown()
+    }
+
+    /// The one failure that really means "No board": the file does not exist.
+    func testAMissingBoardFileStillRendersNoBoard() async throws {
+        let bridge = makeBridge(files: [:])
+        let runtime = try makeRuntime(bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+
+        let rendered = await eventually {
+            await self.labels(of: runtime, instance: Fixture.paneA)
+                .contains("No board at " + Self.rootA + "/.kanban/board.md")
+        }
+        XCTAssertTrue(rendered, "path-not-found is the one failure that means no board")
+        _ = await runtime.shutdown()
+    }
+
+    /// Honest errors: any other failure names its reason. "No board" for a read that
+    /// failed some other way sends a human hunting for a file that was there all along.
+    func testAFailedBoardReadNamesTheReasonInsteadOfClaimingNoBoard() async throws {
+        let boardPath = Self.rootA + "/.kanban/board.md"
+        let bridge = makeBridge(
+            readFailureReasons: [boardPath: "path-is-directory"]
+        )
+        let runtime = try makeRuntime(bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+
+        let rendered = await eventually {
+            await self.labels(of: runtime, instance: Fixture.paneA)
+                .contains("Board read failed: path-is-directory")
+        }
+        XCTAssertTrue(rendered, "a failed read must say why")
+        let labels = await labels(of: runtime, instance: Fixture.paneA)
+        XCTAssertFalse(
+            labels.contains { $0.hasPrefix("No board at") },
+            "the board exists; the pane must not claim it does not"
+        )
+        _ = await runtime.shutdown()
+    }
+
+    /// Another agent rewriting the board mid-read invalidates the cursor. The pane
+    /// restarts the read from the first byte instead of rendering shifted bytes or an
+    /// error — on this board, concurrent writers are the normal case.
+    func testAReadInvalidatedMidPageRestartsAndStillRendersTheBoard() async throws {
+        let board = Fixture.largeBoard()
+        let bridge = makeBridge(
+            files: [Self.rootA + "/.kanban/board.md": board.text],
+            invalidatedCursorReads: 1
+        )
+        let runtime = try makeRuntime(bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+
+        let rendered = await eventually {
+            await self.labels(of: runtime, instance: Fixture.paneA)
+                .contains { $0.hasPrefix("T-999") }
+        }
+        XCTAssertTrue(rendered, "an invalidated page restarts the read; it does not fail it")
+        let labels = await labels(of: runtime, instance: Fixture.paneA)
+        XCTAssertFalse(
+            labels.contains {
+                $0.hasPrefix("No board at") || $0.hasPrefix("Board read failed")
+            }
+        )
         _ = await runtime.shutdown()
     }
 
@@ -372,21 +494,27 @@ final class KanbanPluginTests: XCTestCase {
     private static let rootA = "/tmp/tenon-t041-ws-a"
     private static let rootB = "/tmp/tenon-t041-ws-b"
 
-    private func makeBridge() -> KanbanBridge {
+    private func makeBridge(
+        files: [String: String]? = nil,
+        readFailureReasons: [String: String] = [:],
+        invalidatedCursorReads: Int = 0
+    ) -> KanbanBridge {
         KanbanBridge(
             workspaces: [
                 .init(id: Fixture.workspaceA, path: Self.rootA, tabID: Fixture.tabA, paneID: Fixture.paneA),
                 .init(id: Fixture.workspaceB, path: Self.rootB, tabID: Fixture.tabB, paneID: Fixture.paneB),
             ],
             selectedID: Fixture.workspaceA,
-            files: [
+            files: files ?? [
                 Self.rootA + "/.kanban/board.md": Fixture.board,
                 Self.rootA + "/.kanban/tasks/T-101-first.md": Fixture.taskFile,
                 Self.rootB + "/.kanban/board.md": """
                 ## Todo
                 - [T-900](tasks/T-900-other.md) Other workspace — high/M
                 """,
-            ]
+            ],
+            readFailureReasons: readFailureReasons,
+            invalidatedCursorReads: invalidatedCursorReads
         )
     }
 
@@ -473,7 +601,9 @@ private protocol KanbanIntentBridge: Sendable {
 }
 
 /// Answers `workspace.state.v1` for a fixed two-workspace catalog and serves board/task
-/// files from memory. Used where the test is about parsing and rendering rather than about
+/// files from memory, speaking `filesystem.file.read.v1`'s real contract: one bounded
+/// page per reply, a cursor while bytes remain, a typed path-not-found failure for a
+/// missing file. Used where the test is about parsing and rendering rather than about
 /// the filesystem.
 private actor KanbanBridge: KanbanIntentBridge {
     struct Workspace {
@@ -486,16 +616,22 @@ private actor KanbanBridge: KanbanIntentBridge {
     private let workspaces: [Workspace]
     private var selectedID: String
     private let files: [String: String]
+    private let readFailureReasons: [String: String]
+    private var invalidatedCursorReads: Int
     private var recorded: [PluginIntentSendRequest] = []
 
     init(
         workspaces: [Workspace],
         selectedID: String,
-        files: [String: String]
+        files: [String: String],
+        readFailureReasons: [String: String] = [:],
+        invalidatedCursorReads: Int = 0
     ) {
         self.workspaces = workspaces
         self.selectedID = selectedID
         self.files = files
+        self.readFailureReasons = readFailureReasons
+        self.invalidatedCursorReads = invalidatedCursorReads
     }
 
     func requests() -> [PluginIntentSendRequest] { recorded }
@@ -512,24 +648,26 @@ private actor KanbanBridge: KanbanIntentBridge {
                 selectedID: selectedID
             )
         case "filesystem.file.read.v1":
-            guard let path = request.input.objectValue?["path"]?.stringValue,
-                  let text = files[path]
-            else {
-                // The plugin reads `ok` and then the content shape, so an empty success is
-                // exactly how a missing file looks to it — no need to mint a typed error.
-                return .success(
-                    value: .object([:]),
-                    requestID: UUID(),
-                    providerID: try! ProviderID("dev.tenon.tests")
+            let input = request.input.objectValue
+            guard let path = input?["path"]?.stringValue else {
+                return KanbanFileRead.pathNotFound()
+            }
+            if let reason = readFailureReasons[path] {
+                return KanbanFileRead.failure(
+                    code: "dev.tenon.core.filesystem-failed",
+                    reason: reason
                 )
             }
-            value = .object([
-                "content": .object([
-                    "kind": .string("inline"),
-                    "text": .string(text),
-                    "byteCount": .integer(Int64(text.utf8.count)),
-                ])
-            ])
+            guard let text = files[path] else {
+                return KanbanFileRead.pathNotFound()
+            }
+            let cursor = input?["cursor"]?.stringValue
+            if cursor != nil, invalidatedCursorReads > 0 {
+                invalidatedCursorReads -= 1
+                value = KanbanFileRead.invalidatedPage()
+            } else {
+                value = KanbanFileRead.page(of: text, cursor: cursor)
+            }
         default:
             value = .object([:])
         }
@@ -568,25 +706,17 @@ private actor OnDiskBridge: KanbanIntentBridge {
                 selectedID: "AAAAAAAA-0000-0000-0000-000000000041"
             )
         case "filesystem.file.read.v1":
-            guard let path = request.input.objectValue?["path"]?.stringValue,
+            let input = request.input.objectValue
+            guard let path = input?["path"]?.stringValue,
                   let text = try? String(contentsOfFile: path, encoding: .utf8)
             else {
-                // The plugin reads `ok` and then the content shape, so an empty success is
-                // exactly how a missing file looks to it — no need to mint a typed error.
-                return .success(
-                    value: .object([:]),
-                    requestID: UUID(),
-                    providerID: try! ProviderID("dev.tenon.tests")
-                )
+                return KanbanFileRead.pathNotFound()
             }
-            if path.hasSuffix("board.md") { reads += 1 }
-            value = .object([
-                "content": .object([
-                    "kind": .string("inline"),
-                    "text": .string(text),
-                    "byteCount": .integer(Int64(text.utf8.count)),
-                ])
-            ])
+            let cursor = input?["cursor"]?.stringValue
+            // One refresh starts exactly one cursor-less read, so counting those keeps
+            // the coalescing metric meaning "board refreshes", not "pages served".
+            if path.hasSuffix("board.md"), cursor == nil { reads += 1 }
+            value = KanbanFileRead.page(of: text, cursor: cursor)
         default:
             value = .object([:])
         }
@@ -595,6 +725,74 @@ private actor OnDiskBridge: KanbanIntentBridge {
             requestID: UUID(),
             providerID: try! ProviderID("dev.tenon.tests")
         )
+    }
+}
+
+/// `filesystem.file.read.v1` replies with the shape the shipped provider gives, over an
+/// in-memory string: at most `maximumInlineTextCharacters` bytes per page, a
+/// `"v1:<offset>:<identity>"` cursor while bytes remain, `invalidated` when the cursor's
+/// identity no longer matches the text. Fixtures are ASCII, so pages split on byte
+/// offsets without the provider's UTF-8 boundary back-off.
+private enum KanbanFileRead {
+    static func page(of text: String, cursor: String?) -> IntentValue {
+        let bytes = Array(text.utf8)
+        let identity = String(bytes.count)
+        var offset = 0
+        if let cursor {
+            let parts = cursor.split(separator: ":", omittingEmptySubsequences: false)
+            guard parts.count == 3,
+                  parts[0] == "v1",
+                  let parsed = Int(parts[1]),
+                  parts[2] == identity
+            else {
+                return invalidatedPage()
+            }
+            offset = parsed
+        }
+        let end = min(
+            offset + CoreIntentPayloadPolicy.maximumInlineTextCharacters,
+            bytes.count
+        )
+        let page = Array(bytes[offset ..< end])
+        return .object([
+            "content": inline(String(decoding: page, as: UTF8.self)),
+            "cursor": end < bytes.count ? .string("v1:\(end):\(identity)") : .null,
+            "invalidated": .bool(false),
+        ])
+    }
+
+    static func invalidatedPage() -> IntentValue {
+        .object([
+            "content": inline(""),
+            "cursor": .null,
+            "invalidated": .bool(true),
+        ])
+    }
+
+    static func pathNotFound() -> IntentResult {
+        failure(code: "dev.tenon.core.path-not-found", reason: "path-not-found")
+    }
+
+    static func failure(code: String, reason: String) -> IntentResult {
+        .failure(
+            error: IntentError(
+                code: .domain(try! IntentDomainErrorCode(code)),
+                details: .object(["reason": .string(reason)]),
+                retryable: false,
+                retryAfterMilliseconds: nil,
+                outcome: .notStarted
+            ),
+            requestID: UUID(),
+            providerID: try! ProviderID("dev.tenon.tests")
+        )
+    }
+
+    private static func inline(_ text: String) -> IntentValue {
+        .object([
+            "kind": .string("inline"),
+            "text": .string(text),
+            "byteCount": .integer(Int64(text.utf8.count)),
+        ])
     }
 }
 
