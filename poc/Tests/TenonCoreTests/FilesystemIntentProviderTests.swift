@@ -438,7 +438,9 @@ final class FilesystemIntentProviderTests: XCTestCase {
             ]),
             bindings: bindings
         )
-        _ = try successValue(replacement)
+        // The single-page reply is exactly the pre-paging empty object; staged
+        // pages are the only replies that carry a cursor.
+        XCTAssertEqual(try successValue(replacement), .object([:]))
         XCTAssertEqual(try String(contentsOf: existing, encoding: .utf8), "new")
 
         let missingReply = try await invoke(
@@ -714,6 +716,419 @@ final class FilesystemIntentProviderTests: XCTestCase {
         )
     }
 
+    func testFileWriteStagedPagesCommitAtomicallyWithoutIntermediateTargetContent()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("board.md")
+        try Data("old".utf8).write(to: target)
+        let limit = CoreIntentPayloadPolicy.maximumInlineTextCharacters
+        // Three pages, each within the per-page byte bound, whose sum is well
+        // past it — the whole reason staged writes exist.
+        let pages = [
+            String(repeating: "a", count: limit),
+            "ệ" + String(repeating: "b", count: limit - 3),
+            "😀" + String(repeating: "c", count: 100),
+        ]
+        let bindings = try FilesystemIntentProvider().bindings
+
+        var cursor: String?
+        var stagedBytes = 0
+        for (index, page) in pages.enumerated() {
+            let isLast = index == pages.count - 1
+            var input: [String: IntentValue] = [
+                "path": .string(target.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string(page),
+                ]),
+                "commit": .bool(isLast),
+            ]
+            if let cursor { input["cursor"] = .string(cursor) }
+            let reply = try await invoke(
+                .filesystemFileWrite,
+                input: .object(input),
+                bindings: bindings
+            )
+            let output = try object(try successValue(reply))
+            stagedBytes += page.utf8.count
+            if isLast {
+                XCTAssertEqual(output, [:])
+            } else {
+                // While the staging is open the target never holds intermediate
+                // content, and the staging collects pages beside it.
+                XCTAssertEqual(
+                    try String(contentsOf: target, encoding: .utf8),
+                    "old"
+                )
+                XCTAssertEqual(Array(output.keys), ["cursor"])
+                let next = try string(output["cursor"])
+                XCTAssertTrue(next.hasPrefix("v1:\(stagedBytes):"))
+                cursor = next
+                let entries = try FileManager.default.contentsOfDirectory(
+                    atPath: directory.path
+                )
+                XCTAssertEqual(entries.count, 2)
+                XCTAssertTrue(
+                    entries.contains { $0.hasPrefix(".tenon-staging-") }
+                )
+            }
+        }
+
+        XCTAssertEqual(
+            try Data(contentsOf: target),
+            Data(pages.joined().utf8)
+        )
+        // The commit consumed the staging: only the target remains.
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path),
+            ["board.md"]
+        )
+    }
+
+    /// The commit is the rename, pinned by identity: after the commit the target holds
+    /// the staging dot-file's own inode. A commit that instead rewrote the target in
+    /// place would pass every byte and directory-listing assertion above while exposing
+    /// intermediate content to concurrent readers and watchers — exactly the corruption
+    /// class the staged write exists to prevent.
+    func testFileWriteCommitRenamesTheStagingInodeOverTheTarget() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("board.md")
+        try Data("old".utf8).write(to: target)
+        let bindings = try FilesystemIntentProvider().bindings
+
+        let originalInode = try inode(atPath: target.path)
+        let cursor = try await stagePage(
+            target, text: "one", cursor: nil, bindings: bindings
+        )
+        let stagingName = try XCTUnwrap(
+            FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .first { $0.hasPrefix(".tenon-staging-") }
+        )
+        let stagingInode = try inode(
+            atPath: directory.appendingPathComponent(stagingName).path
+        )
+
+        let reply = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(target.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("two"),
+                ]),
+                "cursor": .string(cursor),
+                "commit": .bool(true),
+            ]),
+            bindings: bindings
+        )
+        XCTAssertEqual(try object(try successValue(reply)), [:])
+
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "onetwo")
+        let committed = try inode(atPath: target.path)
+        XCTAssertEqual(
+            committed,
+            stagingInode,
+            "the committed bytes live in the staging's own inode — the commit was a rename"
+        )
+        XCTAssertNotEqual(
+            committed,
+            originalInode,
+            "a commit that kept the target's old inode rewrote it in place"
+        )
+    }
+
+    func testFileWriteRejectsMalformedForgedReplayedOrCrossTargetCursors()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("a.md")
+        let other = directory.appendingPathComponent("b.md")
+        try Data("old-a".utf8).write(to: target)
+        try Data("old-b".utf8).write(to: other)
+        let bindings = try FilesystemIntentProvider().bindings
+
+        for malformed in [
+            "not-a-cursor",
+            "v1:-4:\(UUID().uuidString)",
+            "v2:1:\(UUID().uuidString)",
+            "v1:0:",
+            "v1:0:\(UUID().uuidString)",
+        ] {
+            let reply = try await invoke(
+                .filesystemFileWrite,
+                input: .object([
+                    "path": .string(target.path),
+                    "content": .object([
+                        "kind": .string("inline"),
+                        "text": .string("page"),
+                    ]),
+                    "cursor": .string(malformed),
+                    "commit": .bool(false),
+                ]),
+                bindings: bindings
+            )
+            try assertFailure(reply, code: "tenon.invalid-input", field: "cursor")
+        }
+
+        // A stale cursor replayed after its staging advanced is out of sequence;
+        // the staging cannot be trusted to hold what any cursor promises, so it
+        // is reclaimed and both cursors die.
+        let first = try await stagePage(
+            target, text: "one", cursor: nil, bindings: bindings
+        )
+        let second = try await stagePage(
+            target, text: "two", cursor: first, bindings: bindings
+        )
+        let replayed = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(target.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("three"),
+                ]),
+                "cursor": .string(first),
+                "commit": .bool(true),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(replayed, code: "tenon.invalid-input", field: "cursor")
+        let afterReclaim = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(target.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("three"),
+                ]),
+                "cursor": .string(second),
+                "commit": .bool(false),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(afterReclaim, code: "tenon.invalid-input", field: "cursor")
+
+        // A cursor presented against a different target than the one its
+        // staging opened on fails closed the same way.
+        let crossSource = try await stagePage(
+            target, text: "one", cursor: nil, bindings: bindings
+        )
+        let crossed = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(other.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("two"),
+                ]),
+                "cursor": .string(crossSource),
+                "commit": .bool(false),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(crossed, code: "tenon.invalid-input", field: "cursor")
+
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "old-a")
+        XCTAssertEqual(try String(contentsOf: other, encoding: .utf8), "old-b")
+        // Every broken staging was reclaimed from disk.
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .sorted(),
+            ["a.md", "b.md"]
+        )
+    }
+
+    func testFileWriteStagedBytesBoundOverflowFailsAndReclaimsStaging()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("board.md")
+        try Data("old".utf8).write(to: target)
+        let limit = CoreIntentPayloadPolicy.maximumInlineTextCharacters
+        let bound = CoreIntentPayloadPolicy.maximumStagedFileWriteBytes
+        let page = String(repeating: "x", count: limit)
+        let bindings = try FilesystemIntentProvider().bindings
+
+        var cursor: String?
+        for _ in 0 ..< (bound / limit) {
+            cursor = try await stagePage(
+                target, text: page, cursor: cursor, bindings: bindings
+            )
+        }
+
+        let overflowing = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(target.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string(page),
+                ]),
+                "cursor": .string(try XCTUnwrap(cursor)),
+                "commit": .bool(false),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            overflowing,
+            code: "dev.tenon.core.filesystem-failed",
+            reason: "staged-write-limit-exceeded"
+        )
+
+        // The overflow reclaimed the staging: its cursor is dead, its dot-file
+        // is gone, and the target never changed.
+        let afterReclaim = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(target.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("page"),
+                ]),
+                "cursor": .string(try XCTUnwrap(cursor)),
+                "commit": .bool(true),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(afterReclaim, code: "tenon.invalid-input", field: "cursor")
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "old")
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path),
+            ["board.md"]
+        )
+    }
+
+    func testFileWriteConcurrentStagingsAreBoundedPerProvider() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let capacity = FilesystemIntentProvider.maximumConcurrentFileWriteStagings
+        let targets = try (0 ... capacity).map { index -> URL in
+            let url = directory.appendingPathComponent("target-\(index).md")
+            try Data("old".utf8).write(to: url)
+            return url
+        }
+        let bindings = try FilesystemIntentProvider().bindings
+
+        var cursors: [String] = []
+        for target in targets.prefix(capacity) {
+            cursors.append(
+                try await stagePage(
+                    target, text: "page", cursor: nil, bindings: bindings
+                )
+            )
+        }
+
+        let exhausted = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(targets[capacity].path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("page"),
+                ]),
+                "commit": .bool(false),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            exhausted,
+            code: "dev.tenon.core.filesystem-failed",
+            reason: "staging-capacity-exhausted"
+        )
+
+        // Committing one staging frees its slot.
+        let committed = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(targets[0].path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("!"),
+                ]),
+                "cursor": .string(cursors[0]),
+                "commit": .bool(true),
+            ]),
+            bindings: bindings
+        )
+        XCTAssertEqual(try successValue(committed), .object([:]))
+        XCTAssertEqual(
+            try String(contentsOf: targets[0], encoding: .utf8),
+            "page!"
+        )
+        _ = try await stagePage(
+            targets[capacity], text: "page", cursor: nil, bindings: bindings
+        )
+    }
+
+    func testAbandonedFileWriteStagingExpiresAtNextUseAndFreesCapacity() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let target = directory.appendingPathComponent("board.md")
+        try Data("old".utf8).write(to: target)
+        let path = try AuthorizedFilesystemPath(requestedPath: target.path)
+        let registry = FilesystemIntentProvider.FileWriteStagingRegistry()
+        let opened = ContinuousClock.now
+
+        let issued = try FilesystemIntentProvider.stagedWrite(
+            path: path,
+            data: Data("page".utf8),
+            cursor: nil,
+            commit: false,
+            registry: registry,
+            now: opened
+        )
+        let cursor = try FilesystemIntentProvider.fileWriteCursor(from: issued)
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path)
+                .count,
+            2
+        )
+
+        // The lifetime is fixed at open — the sweep at next use reclaims the
+        // ledger entry and the dot-file together, and the dead cursor is
+        // indistinguishable from a forged one.
+        let afterLifetime = opened.advanced(
+            by: FilesystemIntentProvider.fileWriteStagingLifetime + .seconds(1)
+        )
+        XCTAssertThrowsError(
+            try FilesystemIntentProvider.stagedWrite(
+                path: path,
+                data: Data("more".utf8),
+                cursor: cursor,
+                commit: false,
+                registry: registry,
+                now: afterLifetime
+            )
+        ) { error in
+            XCTAssertEqual(
+                error as? CoreIntentProviderInputError,
+                .missingOrInvalidField("cursor")
+            )
+        }
+        XCTAssertEqual(
+            try FileManager.default.contentsOfDirectory(atPath: directory.path),
+            ["board.md"]
+        )
+        XCTAssertEqual(try String(contentsOf: target, encoding: .utf8), "old")
+
+        // The reclaimed slot is usable again at the same instant.
+        XCTAssertNotNil(
+            try FilesystemIntentProvider.stagedWrite(
+                path: path,
+                data: Data("fresh".utf8),
+                cursor: nil,
+                commit: false,
+                registry: registry,
+                now: afterLifetime
+            )
+        )
+    }
+
     func testUnsupportedWriteShapeIsInvalidAndPastDeadlineDoesNoIO() async throws {
         let directory = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: directory) }
@@ -840,6 +1255,31 @@ private extension FilesystemIntentProviderTests {
         return value
     }
 
+    /// Sends one staged (`commit: false`) write page and returns the cursor the
+    /// host issued for the next page.
+    func stagePage(
+        _ target: URL,
+        text: String,
+        cursor: String?,
+        bindings: [IntentProviderBinding]
+    ) async throws -> String {
+        var input: [String: IntentValue] = [
+            "path": .string(target.path),
+            "content": .object([
+                "kind": .string("inline"),
+                "text": .string(text),
+            ]),
+            "commit": .bool(false),
+        ]
+        if let cursor { input["cursor"] = .string(cursor) }
+        let reply = try await invoke(
+            .filesystemFileWrite,
+            input: .object(input),
+            bindings: bindings
+        )
+        return try string(try object(try successValue(reply))["cursor"])
+    }
+
     func assertFailure(
         _ reply: IntentProviderReply,
         code: String,
@@ -892,6 +1332,13 @@ private extension FilesystemIntentProviderTests {
             throw TestError.unexpectedValue
         }
         return string
+    }
+
+    func inode(atPath path: String) throws -> UInt64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        return try XCTUnwrap(
+            (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+        )
     }
 
     func integer(_ value: IntentValue?) throws -> Int64 {

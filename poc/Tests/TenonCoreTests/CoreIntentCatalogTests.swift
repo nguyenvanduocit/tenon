@@ -212,6 +212,62 @@ final class CoreIntentCatalogTests: XCTestCase {
             ).isValid
         )
 
+        let stagedWriteCursor = "v1:49152:0B54AD07-1E51-45A2-9E27-2C4E4E2B9C60"
+        XCTAssertTrue(
+            try fileWrite.validateInput(
+                .object([
+                    "path": .string("/repo/board.md"),
+                    "content": .object([
+                        "kind": .string("inline"),
+                        "text": .string("staged page"),
+                    ]),
+                    "cursor": .string(stagedWriteCursor),
+                    "commit": .bool(false),
+                ])
+            ).isValid
+        )
+        XCTAssertFalse(
+            try fileWrite.validateInput(
+                .object([
+                    "path": .string("/repo/board.md"),
+                    "content": .object([
+                        "kind": .string("inline"),
+                        "text": .string("staged page"),
+                    ]),
+                    "cursor": .string(
+                        String(
+                            repeating: "x",
+                            count: CoreIntentPayloadPolicy
+                                .maximumFileWriteCursorCharacters + 1
+                        )
+                    ),
+                ])
+            ).isValid
+        )
+        XCTAssertFalse(
+            try fileWrite.validateInput(
+                .object([
+                    "path": .string("/repo/board.md"),
+                    "content": .object([
+                        "kind": .string("inline"),
+                        "text": .string("staged page"),
+                    ]),
+                    "commit": .string("false"),
+                ])
+            ).isValid
+        )
+        XCTAssertTrue(try fileWrite.validateOutput(.object([:])).isValid)
+        XCTAssertTrue(
+            try fileWrite.validateOutput(
+                .object(["cursor": .string(stagedWriteCursor)])
+            ).isValid
+        )
+        // Absence, not null, is how a completed write reports "no staging open":
+        // the single-page reply stays exactly the pre-paging empty object.
+        XCTAssertFalse(
+            try fileWrite.validateOutput(.object(["cursor": .null])).isValid
+        )
+
         XCTAssertFalse(
             try processExec.validateOutput(
                 .object([
@@ -741,9 +797,9 @@ private extension CoreIntentCatalogTests {
                 requiredOutput: ["exists"]
             ),
             .filesystemFileWrite: SchemaShape(
-                ["path", "content"],
+                ["path", "content", "cursor", "commit"],
                 required: ["path", "content"],
-                output: [],
+                output: ["cursor"],
                 requiredOutput: []
             ),
             .filesystemDirectoryCreate: SchemaShape(

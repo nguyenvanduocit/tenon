@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import os
 import TenonIntentCore
 
 /// Foundation-backed filesystem primitives for the canonical v1 core contracts.
@@ -11,6 +12,9 @@ public struct FilesystemIntentProvider: Sendable {
 
     public init() throws {
         let codes = try ErrorCodes()
+        // One ledger per provider: the staged-write bounds — capacity, bytes,
+        // lifetime — are all enforced against this instance.
+        let stagings = FileWriteStagingRegistry()
         bindings = [
             IntentProviderBinding(
                 intentID: try CoreIntentName.filesystemDirectoryList.intentID
@@ -45,7 +49,8 @@ public struct FilesystemIntentProvider: Sendable {
                 await Self.writeFile(
                     envelope: envelope,
                     context: context,
-                    codes: codes
+                    codes: codes,
+                    stagings: stagings
                 )
             },
             IntentProviderBinding(
@@ -278,7 +283,8 @@ private extension FilesystemIntentProvider {
     static func writeFile(
         envelope: IntentEnvelope,
         context: IntentProviderContext,
-        codes: ErrorCodes
+        codes: ErrorCodes,
+        stagings: FileWriteStagingRegistry
     ) async -> IntentProviderReply {
         do {
             let input = try CoreIntentProviderSupport.object(envelope.input)
@@ -294,14 +300,41 @@ private extension FilesystemIntentProvider {
             guard data.count <= maximumInlineBytes else {
                 throw OperationError.contentTooLarge
             }
+            let rawCursor = try CoreIntentProviderSupport.optionalString(
+                "cursor",
+                in: input
+            )
+            let cursor = try fileWriteCursor(from: rawCursor)
+            let commit: Bool
+            if let field = input["commit"] {
+                guard case let .bool(value) = field else {
+                    throw CoreIntentProviderInputError.missingOrInvalidField("commit")
+                }
+                commit = value
+            } else {
+                commit = true
+            }
 
-            try await CoreIntentProviderSupport.runBlocking(
+            let nextCursor = try await CoreIntentProviderSupport.runBlocking(
                 deadline: envelope.deadline,
                 context: context
-            ) {
-                try atomicallyReplaceFile(path: path, data: data)
+            ) { () -> String? in
+                if cursor == nil, commit {
+                    try atomicallyReplaceFile(path: path, data: data)
+                    return nil
+                }
+                return try stagedWrite(
+                    path: path,
+                    data: data,
+                    cursor: cursor,
+                    commit: commit,
+                    registry: stagings
+                )
             }
-            return .success(.object([:]))
+            guard let nextCursor else { return .success(.object([:])) }
+            let output = IntentValue.object(["cursor": .string(nextCursor)])
+            try output.validate()
+            return .success(output)
         } catch let error as CoreIntentProviderInputError {
             return CoreIntentProviderSupport.invalidInputFailure(error)
         } catch CoreIntentProviderExecutionError.deadlineExceeded {
@@ -1050,5 +1083,293 @@ extension FilesystemIntentProvider {
         ])
         try output.validate()
         return output
+    }
+}
+
+// Internal, not fileprivate: a staging's lifetime is a fabricated instant in tests —
+// neither expiry nor the capacity it frees can be exercised through the public
+// bindings without waiting out real wall-clock time — so the tests drive the staged
+// write machinery directly, exactly as they drive the read-paging pair above.
+extension FilesystemIntentProvider {
+    /// Where the next staged page must land, and the staging identity that byte
+    /// count was issued against. Purely a value: the registry entry it names is
+    /// the only host-owned state.
+    struct FileWriteCursor: Sendable {
+        let offset: Int
+        let token: String
+    }
+
+    /// Rejects anything this provider did not write. A caller cannot continue a
+    /// staging it never opened by handing back a negative count, a foreign
+    /// version, or a fourth field; a cursor that fails to decode is invalid
+    /// input, not a filesystem condition.
+    static func fileWriteCursor(from cursor: String?) throws -> FileWriteCursor? {
+        guard let cursor, !cursor.isEmpty else { return nil }
+        let components = cursor.split(separator: ":", omittingEmptySubsequences: false)
+        guard components.count == 3,
+              components[0] == "v1",
+              let offset = Int(components[1]),
+              offset >= 0,
+              !components[2].isEmpty
+        else {
+            throw CoreIntentProviderInputError.missingOrInvalidField("cursor")
+        }
+        return FileWriteCursor(
+            offset: offset,
+            token: String(components[2])
+        )
+    }
+
+    /// Open stagings one provider tracks at once. Each live entry pins one parent
+    /// directory descriptor, so the ledger and the descriptors it holds are both
+    /// bounded by this number.
+    static let maximumConcurrentFileWriteStagings = 4
+
+    /// A staging's whole life, fixed when it opens and never extended: within it a
+    /// caller pages `maximumStagedFileWriteBytes` with generous slack, and a
+    /// staging nobody commits cannot outlive it (invariant 10).
+    static let fileWriteStagingLifetime: Duration = .seconds(300)
+
+    /// One open staging: the target it will publish over, the dot-file collecting
+    /// its pages, the file identity that dot-file had when this provider last
+    /// touched it, and the instant the staging dies.
+    struct FileWriteStaging: Sendable {
+        let token: String
+        let target: AuthorizedFilesystemPath
+        let stagingLeafName: String
+        let device: dev_t
+        let inode: ino_t
+        var stagedBytes: Int
+        let expiresAt: ContinuousClock.Instant
+    }
+
+    /// Host-owned ledger of open stagings. Claim removes the entry while a page
+    /// works on it, so exactly one in-flight call can continue a staging and a
+    /// concurrent page presenting the same cursor fails closed.
+    final class FileWriteStagingRegistry: Sendable {
+        private let state = OSAllocatedUnfairLock(
+            initialState: [String: FileWriteStaging]()
+        )
+
+        /// Removes and returns every staging past its lifetime; the caller owns
+        /// unlinking their dot-files.
+        func takeExpired(now: ContinuousClock.Instant) -> [FileWriteStaging] {
+            state.withLock { entries in
+                let expired = entries.values.filter { $0.expiresAt <= now }
+                for staging in expired {
+                    entries.removeValue(forKey: staging.token)
+                }
+                return expired
+            }
+        }
+
+        /// Capacity check and insert are one step, so concurrent begins cannot
+        /// overshoot the bound between checking and registering.
+        func insert(_ staging: FileWriteStaging, capacity: Int) -> Bool {
+            state.withLock { entries in
+                guard entries.count < capacity else { return false }
+                entries[staging.token] = staging
+                return true
+            }
+        }
+
+        func claim(token: String) -> FileWriteStaging? {
+            state.withLock { $0.removeValue(forKey: token) }
+        }
+
+        func restore(_ staging: FileWriteStaging) {
+            state.withLock { $0[staging.token] = staging }
+        }
+    }
+
+    /// One staged page: begins a staging (nil cursor), appends to it, or commits
+    /// it by atomically renaming the staging over the target. Returns the cursor
+    /// naming the next page, or nil once the write is complete. Abandoned
+    /// stagings are reclaimed here, at next use, rather than by a background
+    /// task: the ledger is bounded, so the sweep is O(capacity) and a provider
+    /// nobody writes through holds at most `maximumConcurrentFileWriteStagings`
+    /// orphaned dot-files until its next write.
+    static func stagedWrite(
+        path: AuthorizedFilesystemPath,
+        data: Data,
+        cursor: FileWriteCursor?,
+        commit: Bool,
+        registry: FileWriteStagingRegistry,
+        now: ContinuousClock.Instant = .now
+    ) throws -> String? {
+        for expired in registry.takeExpired(now: now) {
+            discardStagingFile(of: expired)
+        }
+        guard let cursor else {
+            // A no-cursor commit is the single-page atomic write and never
+            // reaches this path, so no cursor always means "open a staging".
+            return try beginStaging(
+                path: path,
+                data: data,
+                registry: registry,
+                now: now
+            )
+        }
+        return try continueStaging(
+            path: path,
+            data: data,
+            cursor: cursor,
+            commit: commit,
+            registry: registry
+        )
+    }
+
+    private static func beginStaging(
+        path: AuthorizedFilesystemPath,
+        data: Data,
+        registry: FileWriteStagingRegistry,
+        now: ContinuousClock.Instant
+    ) throws -> String {
+        let parent = try openBoundParent(path)
+        defer { Darwin.close(parent) }
+        // A staged write publishes over an existing file only, exactly as the
+        // single-page write does.
+        let metadata = try boundMetadata(path, parent: parent)
+        guard (metadata.st_mode & S_IFMT) != S_IFDIR else {
+            throw OperationError.filesystemFailed("path-is-directory")
+        }
+
+        let token = UUID().uuidString
+        let stagingLeafName = ".tenon-staging-\(token)"
+        let descriptor = stagingLeafName.withCString {
+            openat(
+                parent,
+                $0,
+                O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
+                mode_t(0o600)
+            )
+        }
+        guard descriptor >= 0 else { throw mapPOSIXError(errno) }
+        var keepStagingFile = false
+        defer {
+            Darwin.close(descriptor)
+            if !keepStagingFile {
+                _ = stagingLeafName.withCString {
+                    unlinkat(parent, $0, 0)
+                }
+            }
+        }
+        try writeAll(data, to: descriptor)
+        var identity = stat()
+        guard fstat(descriptor, &identity) == 0 else {
+            throw mapPOSIXError(errno)
+        }
+        let staging = FileWriteStaging(
+            token: token,
+            target: path,
+            stagingLeafName: stagingLeafName,
+            device: identity.st_dev,
+            inode: identity.st_ino,
+            stagedBytes: data.count,
+            expiresAt: now.advanced(by: fileWriteStagingLifetime)
+        )
+        guard registry.insert(
+            staging,
+            capacity: maximumConcurrentFileWriteStagings
+        ) else {
+            throw OperationError.filesystemFailed("staging-capacity-exhausted")
+        }
+        keepStagingFile = true
+        return "v1:\(staging.stagedBytes):\(token)"
+    }
+
+    private static func continueStaging(
+        path: AuthorizedFilesystemPath,
+        data: Data,
+        cursor: FileWriteCursor,
+        commit: Bool,
+        registry: FileWriteStagingRegistry
+    ) throws -> String? {
+        guard var staging = registry.claim(token: cursor.token) else {
+            // Forged, expired, or concurrently in flight — nothing this
+            // provider will continue.
+            throw CoreIntentProviderInputError.missingOrInvalidField("cursor")
+        }
+        // Past the claim, every failure reclaims the staging: a cursor
+        // presented against the wrong target or out of sequence means the
+        // caller's view of the staging is broken, and a broken sequence is
+        // never resumed.
+        do {
+            guard staging.target.resolvedPath == path.resolvedPath,
+                  cursor.offset == staging.stagedBytes
+            else {
+                throw CoreIntentProviderInputError.missingOrInvalidField("cursor")
+            }
+            guard staging.stagedBytes + data.count
+                <= CoreIntentPayloadPolicy.maximumStagedFileWriteBytes
+            else {
+                throw OperationError.filesystemFailed(
+                    "staged-write-limit-exceeded"
+                )
+            }
+
+            let parent = try openBoundParent(path)
+            defer { Darwin.close(parent) }
+            let descriptor = staging.stagingLeafName.withCString {
+                openat(parent, $0, O_WRONLY | O_APPEND | O_CLOEXEC | O_NOFOLLOW)
+            }
+            guard descriptor >= 0 else {
+                throw OperationError.filesystemFailed("staging-lost")
+            }
+            defer { Darwin.close(descriptor) }
+            // The dot-file must still be the one this provider wrote, holding
+            // exactly the bytes the ledger accounted for; anything else means
+            // something outside the staging touched it.
+            var identity = stat()
+            guard fstat(descriptor, &identity) == 0,
+                  identity.st_dev == staging.device,
+                  identity.st_ino == staging.inode,
+                  Int(identity.st_size) == staging.stagedBytes
+            else {
+                throw OperationError.filesystemFailed("staging-lost")
+            }
+            try writeAll(data, to: descriptor)
+            staging.stagedBytes += data.count
+
+            guard commit else {
+                registry.restore(staging)
+                return "v1:\(staging.stagedBytes):\(staging.token)"
+            }
+
+            guard fsync(descriptor) == 0 else { throw mapPOSIXError(errno) }
+            var settled = stat()
+            guard fstat(descriptor, &settled) == 0,
+                  Int(settled.st_size) == staging.stagedBytes
+            else {
+                throw OperationError.filesystemFailed("staging-lost")
+            }
+            // The commit publishes over an existing file only, exactly as the
+            // single-page write does.
+            let metadata = try boundMetadata(path, parent: parent)
+            guard (metadata.st_mode & S_IFMT) != S_IFDIR else {
+                throw OperationError.filesystemFailed("path-is-directory")
+            }
+            let status = staging.stagingLeafName.withCString { stagingPointer in
+                path.leafName.withCString { targetPointer in
+                    renameat(parent, stagingPointer, parent, targetPointer)
+                }
+            }
+            guard status == 0 else { throw mapPOSIXError(errno) }
+            return nil
+        } catch {
+            discardStagingFile(of: staging)
+            throw error
+        }
+    }
+
+    /// Best-effort: the ledger entry is already gone, so a failure here leaves
+    /// only an orphaned dot-file beside the target — the same residue an
+    /// interrupted single-page write can leave — never a live staging.
+    private static func discardStagingFile(of staging: FileWriteStaging) {
+        guard let parent = try? openBoundParent(staging.target) else { return }
+        defer { Darwin.close(parent) }
+        _ = staging.stagingLeafName.withCString {
+            unlinkat(parent, $0, 0)
+        }
     }
 }

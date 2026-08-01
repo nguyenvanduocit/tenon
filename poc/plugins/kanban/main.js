@@ -1,11 +1,13 @@
-// Kanban — the .kanban/ board as a pane, and a button that hands a task to an agent.
+// Kanban — the .kanban/ board as native columns and cards, buttons that move a card to
+// the adjacent column, and a button that hands a task to an agent.
 //
 // The board is already how agents in this repo tell each other what they are doing. This
-// makes it an attention surface: which column is full, which task is claimed, and one
-// click to put an agent on a task in a real PTY.
+// makes it an attention surface: which column is full, which task is claimed, one click
+// to put an agent on a task in a real PTY, and one click to move a card — a rewrite of
+// the shared board file that every watcher sees as exactly one change.
 //
 // Plugin-only on purpose. Nothing here reaches a host type: files arrive through the
-// filesystem intent, the tree is a CONTRIBUTION, the watch is a RESOURCE this pane owns,
+// filesystem intents, the tree is a CONTRIBUTION, the watch is a RESOURCE this pane owns,
 // and Start is `terminal.open.v1`. If that is not enough to build a real feature, the
 // boundary is too narrow — that is the claim this plugin exists to test.
 
@@ -19,6 +21,13 @@ var MAX_ROWS_PER_COLUMN = 12;
 var MAX_LABEL = 160;
 var MAX_CRITERIA = 12;
 var DEBOUNCE_MS = 250;
+
+// A card is a column wide, not a pane wide: what reads as a title on one line of the
+// file becomes six wrapped lines in a card, and agents append status prose after the
+// second " — " that would render as a badge the size of a paragraph. Text nodes do not
+// truncate, so the card states its own limits.
+var MAX_CARD_TITLE = 96;
+var MAX_CARD_META = 24;
 
 var panes = {};
 
@@ -36,11 +45,15 @@ function makePane(instanceID) {
     columns: [],
     rawBoard: undefined,
     error: "",
+    writeError: "",
     selectedTask: null,
     detail: null,
     // Bumped on every refresh so a slow read that lands after a newer one is dropped
     // instead of overwriting it.
-    generation: 0
+    generation: 0,
+    // Moves on this pane, serialized: the tail of the chain and how many sit in it.
+    movesInFlight: null,
+    queuedMoves: 0
   };
 }
 
@@ -65,13 +78,19 @@ function clip(text, limit) {
 // normal case here, not the exception, so a strict parser would blank the pane exactly
 // when the human most wants to look at it.
 
+// The one heading predicate, shared by parseBoard and relocateTaskLine: both must
+// enumerate exactly the same columns, or a move computes its target against columns the
+// pane never drew. A bare "## " stub — a board half-written by another agent — is not a
+// column for either.
+var COLUMN_HEADING = /^##\s+(.+?)\s*$/;
+
 function parseBoard(text) {
   var columns = [];
   var current = null;
   var lines = String(text).split("\n");
   for (var i = 0; i < lines.length; i++) {
     var line = lines[i];
-    var heading = /^##\s+(.+?)\s*$/.exec(line);
+    var heading = COLUMN_HEADING.exec(line);
     if (heading) {
       current = { name: heading[1], tasks: [] };
       columns.push(current);
@@ -261,84 +280,295 @@ function findTask(st, id) {
   return null;
 }
 
-// --- Rendering ----------------------------------------------------------------------
+// --- Writing ------------------------------------------------------------------------
 
-var TASK_MENU = [{ id: "start", label: "Start an agent on this task" }];
+// Bounds on one file write (invariant 10), the mirror of the read bounds above. A page
+// carries at most WRITE_PAGE_BYTES of UTF-8 — the host's inline bound — and the page
+// count stays inside the host's 1 MiB staged-write budget (21 × 48 KiB < 1 MiB), so a
+// board too big to stage is refused here with its size named instead of half-staged.
+var WRITE_PAGE_BYTES = 48 * 1024;
+var MAX_WRITE_PAGES = 21;
+
+// Splits on code-point boundaries: a page that cut a character in half would not survive
+// the string round-trip to the host, and the rewrite must be byte-exact.
+function splitWritePages(text) {
+  var pages = [];
+  var page = "";
+  var pageBytes = 0;
+  for (var i = 0; i < text.length; i++) {
+    var code = text.codePointAt(i);
+    var unit = text[i];
+    if (code > 0xffff) {
+      unit += text[i + 1];
+      i += 1;
+    }
+    var bytes = code <= 0x7f ? 1 : code <= 0x7ff ? 2 : code <= 0xffff ? 3 : 4;
+    if (pageBytes + bytes > WRITE_PAGE_BYTES) {
+      pages.push(page);
+      page = "";
+      pageBytes = 0;
+    }
+    page += unit;
+    pageBytes += bytes;
+  }
+  pages.push(page);
+  return pages;
+}
+
+// Resolves to null on success and { reason } on failure. One page publishes in a single
+// atomic call — byte-identical to the pre-paging contract. More pages stream through the
+// host staging: the first opens it, each later page carries the returned cursor, and the
+// last page commits (the default), so the file on disk changes exactly once, at the
+// rename. Any failed page ends the whole write; the host reclaims the staging.
+async function writeFile(path, text) {
+  var pages = splitWritePages(text);
+  if (pages.length > MAX_WRITE_PAGES) {
+    return { reason: "board-larger-than-" + MAX_WRITE_PAGES + "-pages" };
+  }
+  if (pages.length === 1) {
+    var single = await tenon.intents.send("filesystem.file.write.v1", {
+      path: path,
+      content: { kind: "inline", text: pages[0] }
+    });
+    return single.ok ? null : writeFailure(single);
+  }
+  var cursor = null;
+  for (var i = 0; i < pages.length; i++) {
+    var input = { path: path, content: { kind: "inline", text: pages[i] } };
+    if (cursor) input.cursor = cursor;
+    var last = i === pages.length - 1;
+    if (!last) input.commit = false;
+    var result = await tenon.intents.send("filesystem.file.write.v1", input);
+    if (!result.ok) return writeFailure(result);
+    if (last) return null;
+    cursor = (result.value || {}).cursor;
+    if (!cursor) return { reason: "staged-write-lost-its-cursor" };
+  }
+  return null;
+}
+
+function writeFailure(result) {
+  var error = result.error || {};
+  var reason = error.details && error.details.reason;
+  return { reason: String(reason || error.code || "unknown") };
+}
+
+// Relocates one verbatim board line to the adjacent column, preserving every other byte:
+// the moved line lands after the target column's last task line, or directly under its
+// heading when it has none. The line moved is the id's FIRST occurrence — the same one
+// findTask resolves and the pane rendered the button on — so a stale duplicate later in
+// the file (the workflow doc's "stale copy reads as free work") is never the one that
+// moves. Returns { text } or { reason }.
+function relocateTaskLine(text, id, direction) {
+  var lines = String(text).split("\n");
+  var headings = [];
+  var lastTaskLine = [];
+  var taskLine = -1;
+  var taskColumn = -1;
+  for (var i = 0; i < lines.length; i++) {
+    if (COLUMN_HEADING.test(lines[i])) {
+      headings.push(i);
+      lastTaskLine.push(-1);
+      continue;
+    }
+    if (headings.length === 0) continue;
+    var row = /^-\s+\[(T-\d+)\]\(([^)]+)\)/.exec(lines[i]);
+    if (!row) continue;
+    lastTaskLine[lastTaskLine.length - 1] = i;
+    if (taskLine < 0 && row[1] === id) {
+      taskLine = i;
+      taskColumn = headings.length - 1;
+    }
+  }
+  if (taskLine < 0) return { reason: "task-not-found" };
+  var target = taskColumn + direction;
+  if (target < 0 || target >= headings.length) {
+    return { reason: "no-adjacent-column" };
+  }
+  var moved = lines[taskLine];
+  var insertAfter = lastTaskLine[target] >= 0 ? lastTaskLine[target] : headings[target];
+  lines.splice(taskLine, 1);
+  if (insertAfter > taskLine) insertAfter -= 1;
+  lines.splice(insertAfter + 1, 0, moved);
+  return { text: lines.join("\n") };
+}
+
+// Bounds one pane's move queue (invariant 10): a click past the bound is refused with
+// its reason named — four queued rewrites of a 113 KB board is already more than a
+// human meant.
+var MAX_QUEUED_MOVES = 4;
+
+// Moves on one pane run strictly one after another: a second click computes against the
+// board the first one committed instead of racing it read-for-write, so ▶▶ is two
+// columns over, always, never a coin flip on whose write lands last.
+function moveTask(st, id, direction) {
+  if (st.queuedMoves >= MAX_QUEUED_MOVES) {
+    st.writeError = "Move refused: too-many-queued-moves";
+    render(st);
+    return;
+  }
+  st.queuedMoves += 1;
+  var run = function () { return performMove(st, id, direction); };
+  var chained = (st.movesInFlight ? st.movesInFlight.then(run, run) : run())
+    .finally(function () { st.queuedMoves -= 1; });
+  st.movesInFlight = chained;
+  return chained;
+}
+
+// A move is read → relocate → write, all against the file as it is now, not as this pane
+// last rendered it: another agent's edit in between must survive the rewrite untouched.
+// Any failure is total — the target never holds a partial move — so the honest ending is
+// the same either way: name what happened and re-read the board the disk actually holds.
+async function performMove(st, id, direction) {
+  st.writeError = "";
+  // Captured once: `workspace.changed` can rebind st.boardPath while this move is
+  // paging the board (T-036 moves the pane between workspaces). The move belongs to
+  // the board that rendered the click — read and written at the same path — never
+  // workspace A's board renamed over workspace B's.
+  var path = st.boardPath;
+  var read = await readFile(path);
+  if (panes[st.id] !== st) return;
+  if (read.text === undefined) {
+    st.writeError = "Move failed: " + (read.missing ? "board-missing" : read.reason);
+    await refresh(st);
+    return;
+  }
+  var moved = relocateTaskLine(read.text, id, direction);
+  if (moved.text === undefined) {
+    st.writeError = "Move failed: " + moved.reason;
+    await refresh(st);
+    return;
+  }
+  var failure = await writeFile(path, moved.text);
+  if (panes[st.id] !== st) return;
+  if (failure) st.writeError = "Board write failed: " + failure.reason;
+  await refresh(st);
+}
+
+// --- Rendering ----------------------------------------------------------------------
 
 function render(st) {
   if (panes[st.id] !== st) return;
-  var rows = [];
-
+  var children = [];
+  if (st.writeError) {
+    children.push({ type: "text", value: clip(st.writeError, MAX_LABEL), color: "red" });
+  }
   if (st.error) {
-    rows.push({ id: "error", label: st.error, depth: 0, icon: "exclamationmark.triangle" });
+    children.push({ type: "text", value: clip(st.error, MAX_LABEL), color: "red" });
   }
-
-  for (var i = 0; i < st.columns.length; i++) {
-    var column = st.columns[i];
-    var shown = column.tasks.slice(0, MAX_ROWS_PER_COLUMN);
-    rows.push({
-      id: "column:" + column.name,
-      label: column.name + "  (" + column.tasks.length + ")",
-      depth: 0,
-      icon: "square.stack"
-    });
-    for (var j = 0; j < shown.length; j++) {
-      var task = shown[j];
-      var label = task.id + "  " + task.title;
-      if (task.meta) label += "  ·  " + task.meta;
-      rows.push({
-        id: "task:" + task.id,
-        label: clip(label, MAX_LABEL),
-        depth: 1,
-        icon: "circle",
-        selected: st.selectedTask === task.id,
-        menu: TASK_MENU
-      });
-      if (st.selectedTask === task.id) appendDetail(st, rows);
+  if (st.columns.length > 0) {
+    var columns = [];
+    for (var i = 0; i < st.columns.length; i++) {
+      columns.push(columnNode(st, st.columns[i], i));
     }
-    if (column.tasks.length > shown.length) {
-      rows.push({
-        id: "more:" + column.name,
-        label: "… " + (column.tasks.length - shown.length) + " more",
-        depth: 1,
-        icon: "ellipsis"
-      });
-    }
+    children.push({ type: "hstack", spacing: 12, children: columns });
   }
-
   tenon.views.set(VIEW, {
     title: "Kanban",
     subtitle: st.boardPath,
-    items: rows
+    body: { type: "vstack", spacing: 10, children: children }
   }, st.id);
 }
 
-function appendDetail(st, rows) {
-  var detail = st.detail;
-  if (!detail) return;
-  if (detail.description) {
-    rows.push({
-      id: "detail:description",
-      label: detail.description,
-      depth: 2,
-      icon: "text.alignleft"
+// A column is a `box`: it is the one node that claims the full width offered to it, so
+// every column takes an equal share of the pane — including an empty one, which as a
+// bare vstack would collapse to the width of its own heading. The trailing `spacer`
+// makes the column fill the row's height, which is what pins its cards to the top; row
+// children are centred against each other otherwise, and a short column would float in
+// the middle of the board beside a tall one.
+function columnNode(st, column, index) {
+  var children = [{
+    type: "hstack",
+    spacing: 6,
+    children: [
+      { type: "text", value: clip(column.name, MAX_LABEL), weight: "semibold" },
+      { type: "spacer" },
+      { type: "badge", value: String(column.tasks.length), tint: "muted" }
+    ]
+  }];
+  var shown = column.tasks.slice(0, MAX_ROWS_PER_COLUMN);
+  for (var i = 0; i < shown.length; i++) {
+    children.push(cardNode(st, shown[i], index));
+  }
+  if (column.tasks.length > shown.length) {
+    children.push({
+      type: "text",
+      value: "… " + (column.tasks.length - shown.length) + " more",
+      style: "caption",
+      color: "muted"
     });
   }
+  children.push({ type: "spacer" });
+  return {
+    type: "box",
+    padding: 10,
+    background: true,
+    cornerRadius: 10,
+    children: children
+  };
+}
+
+// Id and badge share the top line and the title owns the one below it: side by side,
+// the title is squeezed between them into a column of single words.
+function cardNode(st, task, columnIndex) {
+  var top = [
+    { type: "text", value: task.id, style: "code" },
+    { type: "spacer" }
+  ];
+  if (task.meta) {
+    top.push({ type: "badge", value: clip(task.meta, MAX_CARD_META), tint: "amber" });
+  }
+  var header = [
+    { type: "hstack", spacing: 6, children: top },
+    { type: "text", value: clip(task.title, MAX_CARD_TITLE) }
+  ];
+  var expanded = st.selectedTask === task.id;
+  var controls = [];
+  if (columnIndex > 0) {
+    controls.push({ type: "button", label: "◀", action: "move-left:" + task.id });
+  }
+  if (columnIndex < st.columns.length - 1) {
+    controls.push({ type: "button", label: "▶", action: "move-right:" + task.id });
+  }
+  // Packed, not spread: a column is a fifth of the pane, and a spacer between these
+  // pushes the last button past the edge, where the label truncates to "Det…".
+  controls.push({ type: "button", label: "Start", action: "start:" + task.id });
+  controls.push({
+    type: "button",
+    label: expanded ? "Hide" : "More",
+    action: "toggle:" + task.id
+  });
+  var children = header.concat([
+    { type: "hstack", spacing: 6, children: controls }
+  ]);
+  if (expanded) appendDetail(st, children);
+  return { type: "card", children: children };
+}
+
+function appendDetail(st, children) {
+  var detail = st.detail;
+  if (!detail) return;
+  children.push({ type: "divider" });
+  if (detail.description) {
+    children.push({ type: "text", value: detail.description, color: "muted" });
+  }
   if (detail.priority || detail.effort) {
-    rows.push({
-      id: "detail:fields",
-      label: "priority " + (detail.priority || "—") + "  ·  effort " + (detail.effort || "—"),
-      depth: 2,
-      icon: "tag"
+    children.push({
+      type: "text",
+      value: "priority " + (detail.priority || "—") + "  ·  effort " + (detail.effort || "—"),
+      style: "caption",
+      color: "muted"
     });
   }
   for (var i = 0; i < detail.criteria.length; i++) {
     var criterion = detail.criteria[i];
-    rows.push({
-      id: "detail:criterion:" + i,
-      label: criterion.text,
-      depth: 2,
-      icon: criterion.done ? "checkmark.circle.fill" : "circle"
+    children.push({
+      type: "hstack",
+      spacing: 6,
+      children: [
+        { type: "image", systemName: criterion.done ? "checkmark.circle.fill" : "circle" },
+        { type: "text", value: criterion.text }
+      ]
     });
   }
 }
@@ -397,17 +627,25 @@ async function startAgent(st, task) {
 
 tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
   var st = panes[instanceID];
-  if (!st) return;
-  if (action === "start" && value && value.indexOf("task:") === 0) {
-    var task = findTask(st, value.slice("task:".length));
+  if (!st || typeof action !== "string") return;
+  if (action.indexOf("start:") === 0) {
+    var task = findTask(st, action.slice("start:".length));
     if (task) await startAgent(st, task);
     return;
   }
-  if (action.indexOf("task:") === 0) {
-    var id = action.slice("task:".length);
+  if (action.indexOf("toggle:") === 0) {
+    var id = action.slice("toggle:".length);
     st.selectedTask = st.selectedTask === id ? null : id;
     st.detail = null;
     await refresh(st);
+    return;
+  }
+  if (action.indexOf("move-left:") === 0) {
+    await moveTask(st, action.slice("move-left:".length), -1);
+    return;
+  }
+  if (action.indexOf("move-right:") === 0) {
+    await moveTask(st, action.slice("move-right:".length), 1);
   }
 });
 

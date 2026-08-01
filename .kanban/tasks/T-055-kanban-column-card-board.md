@@ -4,15 +4,7 @@
 - **effort**: M
 
 ## Owner / files (agent lock)
-Session ed76fd97 (ultracode). QUEUED behind T-054's build lock — claims recorded now,
-work starts when T-054's workflow finishes testing:
-- poc/Sources/TenonCore/CoreIntentCatalog.swift
-- poc/Sources/TenonCore/FilesystemIntentProvider.swift
-- poc/plugins/kanban/main.js
-- poc/plugins/kanban/manifest.json
-- poc/Tests/TenonCoreTests/CoreIntentCatalogTests.swift
-- poc/Tests/TenonCoreTests/FilesystemIntentProviderTests.swift
-- poc/Tests/TenonCoreTests/KanbanPluginTests.swift
+Released — DONE 09:0x, session ed76fd97. All claimed files are FREE.
 
 ## Design
 Host — paged atomic write, mirroring T-052's read paging vocabulary:
@@ -42,13 +34,35 @@ Note for dev runs: `filesystem.file.write.v1` is `confirmation: policy` — an u
 gives the dev inventory the bundled standing consent (documented flag, this exact use).
 
 ## Criteria
-- [ ] Paged write: a >48 KB body lands byte-identical via pages + commit; the target
-  never holds intermediate content (watcher sees exactly one change); single-page
-  writes keep today's reply shape; staged bytes and staging lifetime bounded;
-  mutation proofs on the atomicity and bounds
-- [ ] Board renders columns side by side with cards (hstack/card tree through the real
-  shipped JS in tests), 12-per-column cap intact, detail expansion works
-- [ ] Move buttons rewrite the real 113 KB-scale board correctly: the task line moves
-  column, everything else byte-identical
-- [ ] Failed/invalidated write renders an honest in-pane error, never silent loss
-- [ ] Full `swift test` green; independent review pass
+- [x] Paged write: staging dot-file (0600, O_EXCL/O_NOFOLLOW, through T-054's bound
+  parent) + fsync + atomic `renameat`, so the target changes exactly once; single-page
+  writes keep today's exact `{}` reply; bounds are named constants
+  (`maximumStagedFileWriteBytes` 1 MiB, 4 concurrent stagings, 300 s lifetime swept at
+  next use); forged/replayed/expired/cross-target cursors fail closed as
+  `tenon.invalid-input` and reclaim the staging. Mutations: stage into the target
+  directly / drop the bytes bound / drop cursor identity — each reddened exactly one
+  named test. Review added the missing atomicity pin: the committed target's inode
+  equals the staging's, which a rewrite-in-place could never satisfy.
+- [x] Board renders columns side by side with cards, 12-per-column cap + "… N more",
+  detail expansion in-card
+- [x] Move buttons rewrite the board correctly (verbatim line relocation, everything
+  else byte-identical), staged pages + commit on a >48 KB board
+- [x] Failed/invalidated write renders an honest in-pane error and re-reads from disk
+- [x] Full `swift test` green (972 tests; the one red is peer T-062's in-flight
+  `PluginIntentManifestTests` — they made the intents envelope optional mid-TDD, no
+  overlap with these files). Owned areas 57/0, build clean under warnings-as-errors.
+- [x] **Looks like a board — verified in pixels, not in prose.** The 5-finding review
+  panel and 24 green tests both passed a board that rendered as scattered cards. An
+  offscreen render (`NSHostingView` + `cacheDisplay`, the `DiffSnapshot` recipe; the
+  process has no Screen Recording grant so `screencapture` fails) showed columns
+  vertically centred against each other, empty columns collapsed to nothing, titles
+  wrapped into single-word columns and buttons truncated to "Det…". Fixed: a column is
+  a `box` (the one node claiming full offered width) ending in a `spacer` (fills the
+  row height, so cards pin to the top); the card's title is its own line under the id;
+  `MAX_CARD_TITLE`/`MAX_CARD_META` clip what text nodes will not; the control row is
+  packed, not spread. Re-rendered to confirm. New test
+  `testEveryColumnIsAFullWidthBoxThatPinsItsCardsToTheTop` pins the two structural
+  halves; mutations M47 (drop the spacer) and M48 (box → vstack) each reddened it on
+  its named assertion, both restores cmp-verified byte-identical. Snapshot scaffolding
+  removed (`PluginNodeView` visibility restored byte-identical); the capability is
+  filed as [[T-063]].

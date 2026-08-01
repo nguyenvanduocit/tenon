@@ -264,6 +264,18 @@ public enum CoreIntentPayloadPolicy {
     /// offset plus the hex file identity it was issued against. The bound exists so a
     /// caller cannot hand back an unbounded string and make the host parse it.
     public static let maximumFileReadCursorCharacters = 96
+
+    /// The cursor is `"v1:<stagedByteCount>:<staging token>"` — a decimal byte count
+    /// plus the random identity of the staging it continues. The bound exists so a
+    /// caller cannot hand back an unbounded string and make the host parse it.
+    public static let maximumFileWriteCursorCharacters = 96
+
+    /// Total bytes one staged `filesystem.file.write.v1` sequence may accumulate
+    /// before it commits. Each page is separately bounded by
+    /// `maximumInlineTextCharacters`; this is the whole-file half of that two-sided
+    /// bound, sized for supervision artifacts like the kanban board rather than for
+    /// bulk transfer.
+    public static let maximumStagedFileWriteBytes = 1_024 * 1_024
 }
 
 /// One row in the canonical table. The declaration describes the public contract; the rule
@@ -654,15 +666,40 @@ private extension CoreIntentCatalog {
             try CoreIntentRuleData.definition(
                 .filesystemFileWrite,
                 title: "Write file",
-                description: "Atomically writes bounded inline UTF-8 content.",
+                description: """
+                Atomically replaces the file with bounded inline UTF-8 \
+                content. One call with no cursor publishes in a single atomic \
+                step. A body larger than one page is staged: pass commit \
+                false to open a host-owned staging beside the target and \
+                receive a cursor, send each following page with the previous \
+                cursor, and let the final page commit (the default) to \
+                atomically publish the staged bytes over the target. The \
+                target never holds intermediate content; only the committing \
+                rename is observable. Staged bytes, concurrent stagings, and \
+                staging lifetime are bounded; an abandoned staging is \
+                reclaimed and its cursor — like any forged or out-of-sequence \
+                cursor — fails closed as invalid input.
+                """,
                 input: CoreIntentSchema.root(
                     properties: [
                         "path": CoreIntentSchema.path,
                         "content": CoreIntentSchema.textInput,
+                        "cursor": CoreIntentSchema.string(
+                            maxLength: CoreIntentPayloadPolicy
+                                .maximumFileWriteCursorCharacters
+                        ),
+                        "commit": CoreIntentSchema.boolean,
                     ],
                     required: ["path", "content"]
                 ),
-                output: emptyOutput,
+                output: CoreIntentSchema.root(
+                    properties: [
+                        "cursor": CoreIntentSchema.string(
+                            maxLength: CoreIntentPayloadPolicy
+                                .maximumFileWriteCursorCharacters
+                        ),
+                    ]
+                ),
                 audiences: programmatic,
                 exposure: programmaticExposure,
                 effects: try CoreIntentRuleData.effects(
