@@ -273,70 +273,148 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
     }
 
-    func testEveryLauncherSurfaceReusesSharedMenuAndOnlyItProjectsCommands() throws {
+    func testAgentLensStaysHostInternalDirectAndUsesBoundedResourceStreams() throws {
+        let view = try source("TenonApp/AgentLensView.swift")
+        let session = try source("TenonApp/AgentLensSession.swift")
+        let sources = try source("TenonApp/AgentLensSources.swift")
+        let surfacePool = try source("TenonApp/SurfacePool.swift")
+
+        assertContains(
+            view,
+            [
+                "AgentLensSlotView",
+                "model.sendDraft()",
+                "model.mode",
+            ],
+            file: "AgentLensView.swift"
+        )
+        assertContains(
+            session,
+            [
+                "actor AgentLensInputQueue",
+                "actor AgentLensSessionCoordinator",
+                "AgentLensReducer",
+                "func retainOnly(_ slotIDs: Set<UUID>)",
+            ],
+            file: "AgentLensSession.swift"
+        )
+        assertContains(
+            sources,
+            [
+                "AsyncThrowingStream(bufferingPolicy: .bufferingOldest(",
+                "continuation.onTermination = { @Sendable _ in task.cancel() }",
+                "continuation.finish(throwing: AgentLensSourceError.overflow)",
+                "actor AgentTranscriptTailer",
+                "struct CodexProtocolIngress",
+            ],
+            file: "AgentLensSources.swift"
+        )
+        assertContains(
+            surfacePool,
+            [
+                "func agentTerminalIdentity(for slotID: UUID)",
+                "func sendAgentInputFrame(",
+                "surface.foregroundPID == expectedForegroundPID",
+            ],
+            file: "SurfacePool.swift"
+        )
+
+        for (name, implementation) in [
+            ("AgentLensView.swift", view),
+            ("AgentLensSession.swift", session),
+            ("AgentLensSources.swift", sources),
+            ("SurfacePool.swift", surfacePool),
+        ] {
+            XCTAssertFalse(implementation.contains("tenon.intents"), "\(name) opened a public intent path")
+            XCTAssertFalse(implementation.contains("intentRuntime.send("), "\(name) bypassed DIRECT ownership")
+            XCTAssertFalse(implementation.contains("dispatcher.send("), "\(name) bypassed DIRECT ownership")
+        }
+    }
+
+    func testEveryLauncherSurfaceReusesOnePresentationAndCommandProjection() throws {
         let launcher = try source("TenonApp/LauncherMenu.swift")
         let titleBar = try source("TenonApp/ShellTitleBar.swift")
         let canvas = try source("TenonApp/SpatialCanvasView.swift")
-        let emptyGridPresentation = try sourceSlice(
-            canvas,
-            from: "private func presentEmptyGridLauncher(",
-            before: "func popoverDidClose("
-        )
+        let workspaceProvider = try source("TenonApp/WorkspaceIntentProvider.swift")
 
         assertContains(
             launcher,
             ["host.commandIndex.launcherOnly.rank("],
             file: "LauncherMenu.swift"
         )
-        assertContains(
+        let tabChipLauncher = try sourceSlice(
             titleBar,
-            ["LauncherMenu("],
-            file: "ShellTitleBar.swift"
+            from: "openLauncher: { contextLauncherTab = tab.id }",
+            before: "ShellIconButton(symbol: \"plus\", help: \"Open something new\")"
         )
         assertContains(
-            emptyGridPresentation,
+            tabChipLauncher,
+            ["LauncherMenu(", "await send(commandID, onTab: tab.id)"],
+            file: "ShellTitleBar.swift tab-chip launcher"
+        )
+        XCTAssertFalse(
+            tabChipLauncher.contains("sendInNewTab"),
+            "the tab-chip anchor must keep targeting the clicked tab"
+        )
+        let plusLauncher = try sourceSlice(
+            titleBar,
+            from: "ShellIconButton(symbol: \"plus\", help: \"Open something new\")",
+            before: ".background(\n                    GeometryReader"
+        )
+        assertContains(
+            plusLauncher,
+            ["LauncherMenu(", "await sendInNewTab(commandID)"],
+            file: "ShellTitleBar.swift plus launcher"
+        )
+        XCTAssertFalse(
+            plusLauncher.contains("send(commandID, onTab:"),
+            "the plus anchor must never inherit an existing tab"
+        )
+        let newTabDispatch = try sourceSlice(
+            titleBar,
+            from: "private func sendInNewTab(_ commandID: String)",
+            before: "/// Width the tab chips actually need"
+        )
+        assertContains(
+            newTabDispatch,
             [
-                "NSHostingController(rootView: LauncherMenu(",
+                "PaletteIntentInvoker.prepare(",
+                "userGestureID: invocation.userGestureID",
+                "PaletteIntentInvoker.send(",
             ],
-            file: "SpatialCanvasView.swift empty-grid launcher"
+            file: "ShellTitleBar.swift plus dispatch"
+        )
+        assertContains(
+            workspaceProvider,
+            ["NewTabLauncherPlacement.consumeReservedTabCreation("],
+            file: "WorkspaceIntentProvider.swift tab-create reservation"
+        )
+        assertContains(
+            canvas,
+            [
+                "emptyGridLauncherAnchor(",
+                "LauncherMenu(",
+            ],
+            file: "SpatialCanvasView.swift"
+        )
+        let emptyGridLauncher = try sourceSlice(
+            canvas,
+            from: "NSHostingController(rootView: LauncherMenu(",
+            before: "))\n        launcherPopover"
         )
         XCTAssertFalse(
-            emptyGridPresentation.contains("send:"),
-            "the grid launcher must use focused scope, never the tab-context send adapter"
-        )
-        XCTAssertFalse(
-            emptyGridPresentation.contains("TabContextPlacement"),
-            "the grid launcher must not acquire tab-context placement semantics"
-        )
-        let forbiddenParallelUI = [
-            "Button(", "Menu(", "List(", "ScrollView(", "VStack(", "HStack(", "ForEach(",
-        ]
-        let buildsParallelUI = emptyGridPresentation.split(separator: "\n").contains { line in
-            let sourceLine = line.trimmingCharacters(in: .whitespaces)
-            return forbiddenParallelUI.contains { sourceLine.hasPrefix($0) }
-        }
-        XCTAssertFalse(
-            buildsParallelUI,
-            "the hosting slice must not wrap LauncherMenu with parallel launcher UI"
+            emptyGridLauncher.contains("send:"),
+            "the empty-grid anchor must keep inheriting focused scope"
         )
         let appRoot = packageRoot
             .appendingPathComponent("Sources")
             .appendingPathComponent("TenonApp")
-        let appSources = try swiftFiles(under: appRoot).map { file in
+        let projectionOwners = try swiftFiles(under: appRoot).compactMap { file in
             let contents = try String(contentsOf: file, encoding: .utf8)
-            return (name: file.lastPathComponent, contents: contents)
+            return contents.contains("commandIndex.launcherOnly")
+                ? file.lastPathComponent
+                : nil
         }
-        let commandIndexOwners = appSources.compactMap { source in
-            source.contents.contains("commandIndex") ? source.name : nil
-        }.sorted()
-        XCTAssertEqual(
-            commandIndexOwners,
-            ["LauncherMenu.swift", "PaletteOverlay.swift"],
-            "only the two shared command presentations may inspect the command index"
-        )
-        let projectionOwners = appSources.compactMap { source in
-            source.contents.contains("commandIndex.launcherOnly") ? source.name : nil
-        }.sorted()
         XCTAssertEqual(
             projectionOwners,
             ["LauncherMenu.swift"],

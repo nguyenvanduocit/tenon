@@ -3,9 +3,8 @@ import XCTest
 
 /// T-039: which tab a command chosen from a tab's context menu is talking about.
 ///
-/// The launcher answers "the focused pane", which is right for a keyboard surface and
-/// wrong for a menu attached to one specific tab — most obviously when that tab is not
-/// the selected one.
+/// An unanchored launcher answers "the focused pane", which is wrong for a menu attached
+/// to one specific tab — most obviously when that tab is not selected.
 final class TabContextPlacementTests: XCTestCase {
     /// The distinguishing case, and the reason this rule exists: the focused pane is in
     /// another tab entirely, so anything reading focus would place the result there.

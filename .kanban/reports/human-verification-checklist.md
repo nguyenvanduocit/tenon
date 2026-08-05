@@ -25,8 +25,7 @@ check exit silently.
    the categories, which is when the old bug appeared. *(T-022)*
 3. **Pane header menu** — right-click a pane header: `Split · Stack · Duplicate · Close`,
    with no type submenu anywhere. Duplicate should place the copy in free space rather than
-   refusing. The menu also shows Current Directory and Project Directory with an
-   AUTO/PINNED marker. *(T-026, T-030)*
+   refusing. *(T-026)*
 4. **Double-click a pane header** — the pane grows to the panes sharing its rows, or to the
    canvas edge. Nothing else shrinks. *(T-025)*
 5. **Terminal keys** — press Backspace, the arrows, Return and Escape in a focused terminal.

@@ -29,6 +29,19 @@ var DEBOUNCE_MS = 250;
 var MAX_CARD_TITLE = 96;
 var MAX_CARD_META = 24;
 
+// A column is a fixed width and the board scrolls sideways past the pane edge. Sharing
+// the pane equally made five columns on a narrow pane five unreadable slivers, and every
+// card inside them wrapped to single words; a board is columns you scroll to instead.
+var COLUMN_WIDTH = 260;
+
+// Following a started agent (T-066). One bounded viewport read per tick answers "what is
+// it doing now" however long the run gets — the alternative, paging the whole scrollback,
+// costs more every minute the agent stays alive. Both bounds are the pane's, not the
+// agent's: a run outlives the modal, the polling does not.
+var TRACK_INTERVAL_MS = 1200;
+var MAX_TAIL_LINES = 15;
+var MAX_TAIL_LINE = 160;
+
 var panes = {};
 
 tenon.views.register(VIEW, { title: "Kanban", instanced: true });
@@ -46,8 +59,13 @@ function makePane(instanceID) {
     rawBoard: undefined,
     error: "",
     writeError: "",
-    selectedTask: null,
+    // The task whose detail sheet is open, and that task's parsed file.
+    openTask: null,
     detail: null,
+    // Agent runs this pane started, keyed by task id: { paneID, exited, tail, error }.
+    // A run survives closing the sheet — reopening a task shows the agent still going.
+    runs: {},
+    trackHandle: null,
     // Bumped on every refresh so a slow read that lands after a newer one is dropped
     // instead of overwriting it.
     generation: 0,
@@ -253,10 +271,10 @@ async function refresh(st, call) {
     }
   }
 
-  if (st.selectedTask) {
-    var still = findTask(st, st.selectedTask);
+  if (st.openTask) {
+    var still = findTask(st, st.openTask);
     if (!still) {
-      st.selectedTask = null;
+      st.openTask = null;
       st.detail = null;
     } else {
       var detailRead = await readFile(
@@ -461,13 +479,23 @@ function render(st) {
     for (var i = 0; i < st.columns.length; i++) {
       columns.push(columnNode(st, st.columns[i], i));
     }
-    children.push({ type: "hstack", spacing: 12, children: columns });
+    // Fixed columns overflow the pane by construction, and the pane itself only scrolls
+    // down — so the row of them says where its own overflow goes.
+    children.push({
+      type: "scroll",
+      axis: "horizontal",
+      children: [{ type: "hstack", spacing: 12, children: columns }]
+    });
   }
-  tenon.views.set(VIEW, {
+  var specification = {
     title: "Kanban",
     subtitle: st.boardPath,
     body: { type: "vstack", spacing: 10, children: children }
-  }, st.id);
+  };
+  // The sheet is part of this view's published state: set it to open, omit it to close.
+  var modal = modalNode(st);
+  if (modal) specification.modal = modal;
+  tenon.views.set(VIEW, specification, st.id);
 }
 
 // A column is a `box`: it is the one node that claims the full width offered to it, so
@@ -504,6 +532,7 @@ function columnNode(st, column, index) {
     padding: 10,
     background: true,
     cornerRadius: 10,
+    width: COLUMN_WIDTH,
     children: children
   };
 }
@@ -522,7 +551,6 @@ function cardNode(st, task, columnIndex) {
     { type: "hstack", spacing: 6, children: top },
     { type: "text", value: clip(task.title, MAX_CARD_TITLE) }
   ];
-  var expanded = st.selectedTask === task.id;
   var controls = [];
   if (columnIndex > 0) {
     controls.push({ type: "button", label: "◀", action: "move-left:" + task.id });
@@ -530,29 +558,33 @@ function cardNode(st, task, columnIndex) {
   if (columnIndex < st.columns.length - 1) {
     controls.push({ type: "button", label: "▶", action: "move-right:" + task.id });
   }
-  // Packed, not spread: a column is a fifth of the pane, and a spacer between these
-  // pushes the last button past the edge, where the label truncates to "Det…".
+  // Packed, not spread: a column is 260 points wide, and a spacer between these pushes
+  // the last button past the edge, where the label truncates to "Det…".
   controls.push({ type: "button", label: "Start", action: "start:" + task.id });
-  controls.push({
-    type: "button",
-    label: expanded ? "Hide" : "More",
-    action: "toggle:" + task.id
-  });
-  var children = header.concat([
-    { type: "hstack", spacing: 6, children: controls }
-  ]);
-  if (expanded) appendDetail(st, children);
-  return { type: "card", children: children };
+  controls.push({ type: "button", label: "More", action: "more:" + task.id });
+  // The card is the same height whichever task is open: the detail goes to the sheet,
+  // where it has the width of the window instead of a fifth of a pane.
+  return {
+    type: "card",
+    children: header.concat([{ type: "hstack", spacing: 6, children: controls }])
+  };
 }
 
-function appendDetail(st, children) {
+// --- The detail sheet ------------------------------------------------------------------
+
+// The modal the host presents over the whole shell while a task is open, or null. It
+// carries the task's own file — description, priority/effort, criteria — and, once an
+// agent has been started for that task, what that agent is doing right now.
+function modalNode(st) {
+  if (!st.openTask) return null;
+  var task = findTask(st, st.openTask);
+  if (!task) return null;
+  var children = [];
   var detail = st.detail;
-  if (!detail) return;
-  children.push({ type: "divider" });
-  if (detail.description) {
+  if (detail && detail.description) {
     children.push({ type: "text", value: detail.description, color: "muted" });
   }
-  if (detail.priority || detail.effort) {
+  if (detail && (detail.priority || detail.effort)) {
     children.push({
       type: "text",
       value: "priority " + (detail.priority || "—") + "  ·  effort " + (detail.effort || "—"),
@@ -560,17 +592,75 @@ function appendDetail(st, children) {
       color: "muted"
     });
   }
-  for (var i = 0; i < detail.criteria.length; i++) {
-    var criterion = detail.criteria[i];
+  if (detail) {
+    for (var i = 0; i < detail.criteria.length; i++) {
+      var criterion = detail.criteria[i];
+      children.push({
+        type: "hstack",
+        spacing: 6,
+        children: [
+          { type: "image", systemName: criterion.done ? "checkmark.circle.fill" : "circle" },
+          { type: "text", value: criterion.text }
+        ]
+      });
+    }
+  }
+  appendRun(st, task, children);
+  return {
+    type: "modal",
+    title: task.id + " · " + clip(task.title, MAX_CARD_TITLE),
+    dismissAction: "close-detail",
+    body: { type: "vstack", spacing: 8, children: children }
+  };
+}
+
+// The run block: what the agent this task started is doing, or the button that starts one.
+// Every claim here is the pane's own current output, read this tick — the supervision the
+// board exists for is worth nothing if the sheet shows a transcript from a minute ago.
+function appendRun(st, task, children) {
+  children.push({ type: "divider" });
+  var run = st.runs[task.id];
+  if (!run) {
+    children.push({
+      type: "text",
+      value: "No agent started for this task yet.",
+      style: "caption",
+      color: "muted"
+    });
     children.push({
       type: "hstack",
       spacing: 6,
-      children: [
-        { type: "image", systemName: criterion.done ? "checkmark.circle.fill" : "circle" },
-        { type: "text", value: criterion.text }
-      ]
+      children: [{ type: "button", label: "Start agent", action: "start:" + task.id }]
     });
+    return;
   }
+  children.push({
+    type: "hstack",
+    spacing: 6,
+    children: [
+      {
+        type: "badge",
+        value: run.exited ? "exited" : "running",
+        tint: run.exited ? "muted" : "green"
+      },
+      { type: "text", value: "pane " + run.paneID.slice(0, 8), style: "code", color: "muted" }
+    ]
+  });
+  if (run.error) {
+    children.push({ type: "text", value: "Tracking stopped: " + run.error, color: "red" });
+  }
+  if (run.tail) {
+    children.push({ type: "text", value: run.tail, style: "code", color: "muted" });
+  }
+  children.push({
+    type: "hstack",
+    spacing: 6,
+    children: [
+      { type: "button", label: "Focus pane", action: "focus:" + task.id },
+      { type: "spacer" },
+      { type: "button", label: "Start again", action: "start:" + task.id }
+    ]
+  });
 }
 
 // --- Watching -----------------------------------------------------------------------
@@ -604,7 +694,69 @@ function releasePane(st) {
     tenon.timers.cancel(st.debounceHandle);
     st.debounceHandle = null;
   }
+  stopTracking(st);
   st.watchDir = "";
+}
+
+// --- Following a started agent -----------------------------------------------------
+
+// Polling lives with the open sheet, never with the run: an agent nobody is watching
+// costs nothing, and a pane that closes takes its timer with it (invariant 10).
+function startTracking(st) {
+  stopTracking(st);
+  st.trackHandle = tenon.timers.every(TRACK_INTERVAL_MS, function () {
+    trackOnce(st);
+  });
+  trackOnce(st);
+}
+
+function stopTracking(st) {
+  if (st.trackHandle === null || st.trackHandle === undefined) return;
+  tenon.timers.cancel(st.trackHandle);
+  st.trackHandle = null;
+}
+
+async function trackOnce(st) {
+  var run = st.openTask ? st.runs[st.openTask] : null;
+  if (!run || run.exited) {
+    stopTracking(st);
+    return;
+  }
+  var taskID = st.openTask;
+  var result = await tenon.intents.send(
+    "terminal.viewport.read.v1",
+    {},
+    { scope: { paneID: run.paneID } }
+  );
+  // The sheet may have closed, or moved to another task, while the read was in flight.
+  if (panes[st.id] !== st || st.openTask !== taskID || st.runs[taskID] !== run) return;
+  if (!result.ok) {
+    // A pane the user closed answers `terminal-unavailable`: the run is over, and saying
+    // so beats leaving a green "running" badge on a terminal that no longer exists.
+    run.exited = true;
+    run.error = String((result.error && result.error.code) || "unknown");
+    stopTracking(st);
+    render(st);
+    return;
+  }
+  var value = result.value || {};
+  run.tail = tailOf(value.text);
+  run.exited = value.exited === true;
+  if (run.exited) stopTracking(st);
+  render(st);
+}
+
+// The last few non-empty rows, which is what a viewport of a TUI agent is mostly not:
+// claude paints a full screen of blanks around what it is saying.
+function tailOf(text) {
+  var lines = String(text || "").split("\n");
+  var kept = [];
+  for (var i = lines.length - 1; i >= 0 && kept.length < MAX_TAIL_LINES; i--) {
+    var line = lines[i].replace(/\s+$/, "");
+    if (line.length === 0) continue;
+    kept.unshift(clip(line, MAX_TAIL_LINE));
+  }
+  return kept.join("\n");
 }
 
 // --- Actions ------------------------------------------------------------------------
@@ -613,16 +765,38 @@ function shellQuote(text) {
   return "'" + String(text).replace(/'/g, "'\\''") + "'";
 }
 
+// Opens the agent's pane and, on success, records the run so the sheet can follow it.
+// The sheet opens either way: a start that failed is exactly when a human wants to look.
 async function startAgent(st, task) {
   var relative = tenon.path.join(KANBAN_DIR, task.path.replace(/^\.\//, ""));
   var prompt =
     "Do task " + task.id + " described in " + relative +
     ". Follow the workflow protocol in CLAUDE.md: claim it on the board before " +
     "touching a file, and release the claim when you finish.";
-  return await tenon.intents.send("terminal.open.v1", {
+  var result = await tenon.intents.send("terminal.open.v1", {
     command: "claude " + shellQuote(prompt),
     workingDirectory: st.workspacePath
   });
+  if (panes[st.id] !== st) return result;
+  var paneID = result.ok ? (result.value || {}).paneID : null;
+  if (paneID) {
+    st.runs[task.id] = { paneID: String(paneID), exited: false, tail: "", error: "" };
+  } else {
+    st.writeError = "Start failed: " +
+      String((result.error && result.error.code) || "no-pane-returned");
+  }
+  await openDetail(st, task.id);
+  return result;
+}
+
+// Opening the sheet re-reads the task file through `refresh`, so the criteria shown are
+// the ones on disk right now — another agent may have ticked one since the board loaded.
+async function openDetail(st, id) {
+  st.openTask = id;
+  st.detail = null;
+  await refresh(st);
+  if (panes[st.id] !== st || st.openTask !== id) return;
+  if (st.runs[id] && !st.runs[id].exited) startTracking(st);
 }
 
 tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
@@ -633,11 +807,26 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
     if (task) await startAgent(st, task);
     return;
   }
-  if (action.indexOf("toggle:") === 0) {
-    var id = action.slice("toggle:".length);
-    st.selectedTask = st.selectedTask === id ? null : id;
+  if (action.indexOf("more:") === 0) {
+    await openDetail(st, action.slice("more:".length));
+    return;
+  }
+  if (action === "close-detail") {
+    stopTracking(st);
+    st.openTask = null;
     st.detail = null;
-    await refresh(st);
+    render(st);
+    return;
+  }
+  if (action.indexOf("focus:") === 0) {
+    var run = st.runs[action.slice("focus:".length)];
+    if (run) {
+      await tenon.intents.send(
+        "workspace.pane.focus.v1",
+        {},
+        { scope: { paneID: run.paneID } }
+      );
+    }
     return;
   }
   if (action.indexOf("move-left:") === 0) {
@@ -680,8 +869,12 @@ tenon.events.on("workspace.changed", async function () {
     st.workspaceId = owner.id;
     st.workspacePath = owner.path;
     st.boardPath = tenon.path.join(owner.path, KANBAN_DIR, BOARD_FILE);
-    st.selectedTask = null;
+    // The open task belonged to the board this pane just left, and so did any agent it
+    // was following: both go with it rather than sitting over another workspace's board.
+    stopTracking(st);
+    st.openTask = null;
     st.detail = null;
+    st.runs = {};
     watchBoard(st);
     await refresh(st);
   }

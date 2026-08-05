@@ -4,7 +4,13 @@
   "displayName": "Kanban",
   "icon": "checklist",
   "version": "0.2.0",
-  "permissions": ["filesystem.read", "filesystem.write", "terminal.write", "workspace.control"],
+  "permissions": [
+    "filesystem.read",
+    "filesystem.write",
+    "terminal.read",
+    "terminal.write",
+    "workspace.control"
+  ],
   "events": {
     "publishes": ["board.changed"],
     "observes": []
@@ -15,7 +21,9 @@
       "filesystem.file.write.v1",
       "workspace.state.v1",
       "workspace.content.open.v1",
-      "terminal.open.v1"
+      "workspace.pane.focus.v1",
+      "terminal.open.v1",
+      "terminal.viewport.read.v1"
     ],
     "provides": [
       {

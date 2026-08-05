@@ -6,6 +6,7 @@ struct PluginParsedViewBody: Sendable {
     let body: PluginViewNode?
     let subtitle: String?
     let actions: [ViewAction]
+    let modal: PluginViewModal?
 }
 
 enum PluginRuntimeValueParsing {
@@ -40,7 +41,20 @@ enum PluginRuntimeValueParsing {
             items: rows(from: object["items"]),
             body: object["body"]?.objectValue.flatMap(node(from:)),
             subtitle: object["subtitle"]?.stringValue,
-            actions: actions(from: object["actions"])
+            actions: actions(from: object["actions"]),
+            modal: object["modal"]?.objectValue.flatMap(modal(from:))
+        )
+    }
+
+    /// A modal is present or it is not: a `modal` that is null, or any other shape,
+    /// clears it. That is how a plugin closes one — `views.set` without the key.
+    static func modal(from object: [String: IntentValue]) -> PluginViewModal? {
+        let dismiss = object["dismissAction"].map(actionIdentifier(from:))
+        return PluginViewModal(
+            title: object["title"]?.stringValue ?? "",
+            body: object["body"]?.objectValue.flatMap(node(from:)),
+            dismissAction: dismiss.flatMap { $0.isEmpty ? nil : $0 }
+                ?? PluginViewModal.defaultDismissAction
         )
     }
 
@@ -60,6 +74,7 @@ enum PluginRuntimeValueParsing {
                 padding: object["padding"]?.doubleValue ?? 12,
                 background: object["background"]?.boolValue ?? false,
                 cornerRadius: object["cornerRadius"]?.doubleValue ?? 8,
+                width: object["width"]?.doubleValue.map(boxWidth(_:)),
                 children: children
             )
         case "card":
@@ -105,6 +120,11 @@ enum PluginRuntimeValueParsing {
             return .spacer
         case "divider":
             return .divider
+        case "scroll":
+            return .scroll(
+                axis: ScrollAxis(token: object["axis"]?.stringValue),
+                children: children
+            )
         case "grid":
             return .grid(
                 columns: max(1, object["columns"]?.intValue ?? 2),
@@ -136,6 +156,13 @@ enum PluginRuntimeValueParsing {
         default:
             return nil
         }
+    }
+
+    /// Bounds a declared `box` width at the parsing boundary, like `progress`'s clamp:
+    /// a pane is a few hundred points wide, and a column narrower than 60 or wider than
+    /// 1200 is a bug in the plugin rather than a layout anyone asked for.
+    static func boxWidth(_ value: Double) -> Double {
+        min(1200, max(60, value))
     }
 
     static func foundationObject(from value: IntentValue) -> Any {

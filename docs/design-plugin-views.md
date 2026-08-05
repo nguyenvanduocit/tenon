@@ -25,9 +25,9 @@ typed nodes that the host renders recursively as native SwiftUI, themed from
 **two tiers**:
 
 - **Tier 1 — layout primitives** (a plugin is never blocked): `vstack`, `hstack`,
-  `grid`, `box`, `text`, `image`, `spacer`, `divider`. A "card" the host has not
-  shipped is just a `box` with a background + corner radius. Composition, not a
-  feature request.
+  `grid`, `box`, `scroll`, `text`, `image`, `spacer`, `divider`. A "card" the host
+  has not shipped is just a `box` with a background + corner radius. Composition,
+  not a feature request.
 - **Tier 2 — opinionated components** (pretty + consistent by default, composed
   from tier 1): `card`, `badge`, `button`, plus the status/dashboard set `stat`,
   `keyValue`, `progress`, `field`, and `browserBar` (a native browser toolbar).
@@ -37,6 +37,8 @@ Field/token reference for the current set:
 
 | node | fields |
 | --- | --- |
+| `box` | `padding?`, `background?`, `cornerRadius?`, `width?` (clamped 60…1200; omitted means fill), `children[]` |
+| `scroll` | `axis` ∈ `{horizontal,vertical,both}` (unknown → `vertical`), `children[]` |
 | `grid` | `columns` (≥1), `spacing`, `children[]` |
 | `stat` | `label`, `value` |
 | `keyValue` | `label`, `value`, `tint?` |
@@ -75,6 +77,22 @@ tenon.views.set("ci", {
 })
 tenon.views.onSelect("ci", (id) => { if (id === "rerun") runCI() })
 ```
+
+A view may also publish a **modal** beside its `body` — the same node vocabulary,
+presented by the host as a sheet over the whole shell:
+
+```js
+tenon.views.set("board", {
+  body: boardTree,
+  modal: { title: "T-101 · First thing", dismissAction: "close-detail", body: detailTree },
+})
+```
+
+The plugin owns whether a modal exists: setting `modal` opens it, the next `views.set`
+without it closes it. The host owns presentation and dismissal — Escape, a click on the
+backdrop, and the close control all deliver `dismissAction` (default `modal.dismiss`) to
+the view's `onSelect`, exactly like a `button`. At most one modal is presented at a time;
+with several published, the first in publish order wins.
 
 ## Contracts
 

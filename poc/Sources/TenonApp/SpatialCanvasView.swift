@@ -17,16 +17,25 @@ enum SpatialCanvasHitRegion: Equatable {
 enum SpatialCanvasPress: Equatable {
     case begin(SpatialCanvasHitRegion)
     case fillWidth
+    case cycleExtent(ResizeDirection)
+}
+
+/// What a right-click on a pane offers, by region. A border already carries the resize
+/// cursor and the resize semantics, so it offers sizes; the header offers the pane's own
+/// actions; the body belongs to what it renders, and a terminal keeps its own menu there.
+enum SpatialCanvasMenu: Equatable {
+    case pane
+    case resize(ResizeDirection)
+    case surface
 }
 
 enum SpatialCanvasCommit: Equatable {
     case move(SpatialLayoutTransaction)
-    case swap(SpatialLayoutTransaction)
     case resize(ResizeLayoutTransaction)
 
     var proposal: [SpatialSlot] {
         switch self {
-        case .move(let transaction), .swap(let transaction):
+        case .move(let transaction):
             return transaction.proposal
         case .resize(let transaction):
             return transaction.proposal
@@ -35,12 +44,17 @@ enum SpatialCanvasCommit: Equatable {
 
     var isValid: Bool {
         switch self {
-        case .move(let transaction), .swap(let transaction):
+        case .move(let transaction):
             return transaction.isValid
         case .resize(let transaction):
             return transaction.isValid
         }
     }
+}
+
+struct SpatialCanvasMoveTarget: Equatable {
+    let slotID: UUID
+    let edge: SpatialDropEdge
 }
 
 enum SpatialCanvasEnd: Equatable {
@@ -57,10 +71,14 @@ final class SpatialCanvasInteractionCoordinator {
     }
 
     private(set) var preview: SpatialCanvasCommit?
+    private(set) var moveTarget: SpatialCanvasMoveTarget?
+    private(set) var isCarryingPane = false
     private var canvasSize: CGSize
     private var gesture: Gesture?
     private var pointerOrigin = CGPoint.zero
     private var snapshot: [SpatialSlot] = []
+
+    var isActive: Bool { gesture != nil }
 
     init(canvasSize: CGSize) {
         self.canvasSize = canvasSize
@@ -117,22 +135,53 @@ final class SpatialCanvasInteractionCoordinator {
         return isOccupied ? nil : point
     }
 
-    /// A pane header answers a second click the way a window title bar does — it grows
-    /// the pane into the space beside it. Every other region keeps its drag, whatever
-    /// the click count, so a rapid pair on a resize edge still resizes.
+    /// The target is divided by its diagonals, matching the directional pane-drop
+    /// affordance used by Kero, Ghostty, and VS Code.
+    static func dropEdge(at point: CGPoint, in frame: CGRect) -> SpatialDropEdge {
+        let dx = (point.x - frame.midX) / max(frame.width, 1)
+        let dy = (point.y - frame.midY) / max(frame.height, 1)
+        if abs(dx) > abs(dy) {
+            return dx < 0 ? .left : .right
+        }
+        return dy < 0 ? .top : .bottom
+    }
+
+    /// A second click means a size, from every region that owns one. The header answers
+    /// the way a window title bar does — it grows the pane into the space beside it — and
+    /// a border steps through the same sizes its contextual menu lists. The body owns no
+    /// size, so it keeps its drag whatever the click count.
     static func press(
         region: SpatialCanvasHitRegion,
         clickCount: Int
     ) -> SpatialCanvasPress {
-        if region == .header, clickCount >= 2 {
-            return .fillWidth
+        guard clickCount >= 2 else { return .begin(region) }
+        switch region {
+        case .header: return .fillWidth
+        case .resize(let direction): return .cycleExtent(direction)
+        case .body: return .begin(region)
         }
-        return .begin(region)
+    }
+
+    /// A right-click resolves to the menu the region it landed on owns. The edge is
+    /// carried through so the border's menu resizes the same edge a drag there would.
+    static func menu(for region: SpatialCanvasHitRegion) -> SpatialCanvasMenu {
+        switch region {
+        case .header: return .pane
+        case .resize(let direction): return .resize(direction)
+        case .body: return .surface
+        }
     }
 
     func setCanvasSize(_ size: CGSize) {
         guard gesture == nil else { return }
         canvasSize = size
+    }
+
+    /// A representable may be refreshed for unrelated shell state while a gesture is
+    /// live. Its preview remains authoritative only while the layout it started from
+    /// is still the model's current layout.
+    func isBased(on slots: [SpatialSlot]) -> Bool {
+        gesture != nil && snapshot == slots
     }
 
     func snappedDelta(from start: CGPoint, to end: CGPoint) -> GridDelta {
@@ -156,6 +205,8 @@ final class SpatialCanvasInteractionCoordinator {
         pointerOrigin = pointer
         gesture = .move(slotID: slotID)
         preview = nil
+        moveTarget = nil
+        isCarryingPane = false
     }
 
     func beginResize(
@@ -174,33 +225,47 @@ final class SpatialCanvasInteractionCoordinator {
     }
 
     @discardableResult
-    func update(pointer: CGPoint) -> SpatialCanvasCommit? {
+    func update(
+        pointer: CGPoint,
+        slotFrames: [UUID: CGRect] = [:]
+    ) -> SpatialCanvasCommit? {
         guard let gesture else { return nil }
         let delta = snappedDelta(from: pointerOrigin, to: pointer)
 
+        let candidate: SpatialCanvasCommit?
         switch gesture {
         case .move(let slotID):
-            if let target = swapTarget(at: pointer, excluding: slotID) {
-                preview = .swap(
-                    SpatialLayout.swap(
-                        snapshot,
-                        firstSlotID: slotID,
-                        secondSlotID: target
-                    )
-                )
-            } else if let origin = snapshot.first(where: { $0.id == slotID }) {
-                preview = .move(
-                    SpatialLayout.move(
-                        snapshot,
-                        slotID: slotID,
-                        toColumn: origin.rect.x + delta.columns,
-                        row: origin.rect.y + delta.rows
-                    )
-                )
+            let distance = hypot(pointer.x - pointerOrigin.x, pointer.y - pointerOrigin.y)
+            guard distance >= 4 else {
+                preview = nil
+                moveTarget = nil
+                return nil
             }
+            isCarryingPane = true
+            guard let hit = slotFrames.first(where: {
+                $0.key != slotID && $0.value.contains(pointer)
+            }) else {
+                preview = nil
+                moveTarget = nil
+                return nil
+            }
+            let edge = Self.dropEdge(at: pointer, in: hit.value)
+            let transaction = SpatialLayout.moveBeside(
+                snapshot,
+                slotID: slotID,
+                targetID: hit.key,
+                edge: edge
+            )
+            guard transaction.isValid else {
+                preview = nil
+                moveTarget = nil
+                return nil
+            }
+            moveTarget = SpatialCanvasMoveTarget(slotID: hit.key, edge: edge)
+            candidate = .move(transaction)
 
         case .resize(let slotID, let direction):
-            preview = .resize(
+            candidate = .resize(
                 SpatialLayout.resize(
                     snapshot,
                     slotID: slotID,
@@ -209,6 +274,12 @@ final class SpatialCanvasInteractionCoordinator {
                     deltaRows: delta.rows
                 )
             )
+        }
+        // A resize never previews a position it cannot commit: an invalid candidate
+        // keeps the last valid edge. Pane moves clear their target above because the
+        // floating thumbnail may cross gaps and its own source without a destination.
+        if let candidate, candidate.isValid {
+            preview = candidate
         }
         return preview
     }
@@ -239,24 +310,8 @@ final class SpatialCanvasInteractionCoordinator {
         gesture = nil
         snapshot = []
         preview = nil
-    }
-
-    private func swapTarget(at point: CGPoint, excluding slotID: UUID) -> UUID? {
-        guard canvasSize.width > 0, canvasSize.height > 0 else { return nil }
-        let column = Int(point.x / canvasSize.width * CGFloat(SpatialLayout.columns))
-        let row = Int(point.y / canvasSize.height * CGFloat(SpatialLayout.rows))
-        guard column >= 0,
-              column < SpatialLayout.columns,
-              row >= 0,
-              row < SpatialLayout.rows
-        else { return nil }
-        return snapshot.first { slot in
-            slot.id != slotID &&
-                column >= slot.rect.x &&
-                column < slot.rect.x + slot.rect.width &&
-                row >= slot.rect.y &&
-                row < slot.rect.y + slot.rect.height
-        }?.id
+        moveTarget = nil
+        isCarryingPane = false
     }
 }
 
@@ -267,6 +322,7 @@ struct SpatialCanvasView: NSViewRepresentable {
     let activeSlotID: UUID?
     let store: WorkspaceStore
     let pool: SurfacePool
+    let agentLens: AgentLensPool
     let webPool: PluginWebSurfacePool
     let host: PluginHost
     let intentRuntime: AppIntentRuntime
@@ -291,6 +347,7 @@ struct SpatialCanvasView: NSViewRepresentable {
             activeSlotID: activeSlotID,
             store: store,
             pool: pool,
+            agentLens: agentLens,
             webPool: webPool,
             host: host,
             intentRuntime: intentRuntime,
@@ -308,7 +365,7 @@ struct SpatialCanvasView: NSViewRepresentable {
         _ view: SpatialCanvasNSView,
         coordinator: Coordinator
     ) {
-        view.stopMouseMonitoring()
+        view.prepareForRemoval()
     }
 }
 
@@ -328,6 +385,8 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     private var responderBeforeGesture: NSResponder?
     private var mouseMonitor: Any?
     private var launcherPopover: NSPopover?
+    private(set) var dragThumbnailView: SpatialDragThumbnailView?
+    private(set) var dropHighlightView: SpatialDropHighlightView?
 
     /// Test seam for the AppKit presentation edge. Production leaves it nil and hosts
     /// `LauncherMenu` below; tests replace only the final popover side effect while the
@@ -362,7 +421,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         if window != nil {
             installMouseMonitorIfNeeded()
         } else {
-            stopMouseMonitoring()
+            prepareForRemoval()
         }
     }
 
@@ -425,6 +484,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         activeSlotID: UUID?,
         store: WorkspaceStore,
         pool: SurfacePool,
+        agentLens: AgentLensPool,
         webPool: PluginWebSurfacePool,
         host: PluginHost,
         intentRuntime: AppIntentRuntime,
@@ -436,6 +496,15 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         paneAttention: [UUID: PaneActivity],
         router: DragRouter
     ) {
+        let authoritativeSlots = tab.spatialSlots
+        let preservesGesturePreview = self.tabID == tab.id &&
+            interaction.isBased(on: authoritativeSlots)
+        if interaction.isActive && !preservesGesturePreview {
+            // A real tab/layout change makes the pointer snapshot stale. Cancel it once
+            // here so later drag events cannot reintroduce the old geometry.
+            _ = cancelGesture()
+        }
+
         self.store = store
         self.pool = pool
         self.host = host
@@ -493,8 +562,10 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
                     webSurfaceTitles: webSurfaceTitles
                 ),
                 isActive: slot.id == activeSlotID,
+                showsFocusRing: tab.slots.count > 1,
                 store: store,
                 pool: pool,
+                agentLens: agentLens,
                 webPool: webPool,
                 editorStates: editorStates,
                 pluginSnapshots: pluginSnapshots,
@@ -509,9 +580,11 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         }
         webPool.reconcile(catalog: store.catalog, host: host)
 
-        displayedSlots = tab.spatialSlots
+        if !preservesGesturePreview {
+            displayedSlots = authoritativeSlots
+        }
         applyFrames(displayedSlots)
-        setPreviewValidity(nil)
+        refreshCardActivity()
     }
 
     /// Opens the shared launcher at a right-/control-click that belongs to no pane.
@@ -585,6 +658,12 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         card.onRequestMenu = { [weak self] id in
             self?.slotContextMenu(for: id)
         }
+        card.onCycleExtent = { [weak self] id, direction in
+            self?.store?.cycleSlotExtent(id, direction: direction)
+        }
+        card.onRequestResizeMenu = { [weak self] id, direction in
+            self?.resizeContextMenu(for: id, direction: direction)
+        }
         cards[slotID] = card
         return card
     }
@@ -627,8 +706,6 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             store?.duplicateSlot(slotID)
         })
 
-        addDirectorySection(to: menu, slotID: slotID)
-
         menu.addItem(.separator())
 
         menu.addItem(SlotMenuItem(title: "Close", isEnabled: true) { [weak store] in
@@ -638,39 +715,46 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         return menu
     }
 
-    /// Where this pane is, and what it is anchored to — the two directories shown as one
-    /// pair so the difference between them is legible, plus the pin that overrides the
-    /// automatic answer. A pane with no directory (a browser, a diff) shows nothing here.
-    private func addDirectorySection(to menu: NSMenu, slotID: UUID) {
-        guard let pool, let directory = pool.paneDirectory(for: slotID) else { return }
+    /// The border's contextual menu: the drag that border performs, offered as three
+    /// destinations. The clicked edge decides what changes and stays fixed at the
+    /// opposite side, so the menu is the drag without the pixel accuracy. A destination
+    /// the layout would refuse — a size that would swallow a neighbour, or the size the
+    /// pane already has — is shown disabled rather than hidden, so the border's
+    /// vocabulary reads the same everywhere it appears.
+    func resizeContextMenu(for slotID: UUID, direction: ResizeDirection) -> NSMenu? {
+        guard let store, store.catalog.slot(id: slotID) != nil else { return nil }
 
-        menu.addItem(.separator())
-        menu.addItem(disabledInfoItem(
-            "Current Directory: " + abbreviate(directory.cwd)
-        ))
-        let rootLabel: String = directory.projectRoot.map(abbreviate) ?? "None"
-        let marker = directory.source == .pinned ? "PINNED" : "AUTO"
-        menu.addItem(disabledInfoItem(
-            "Project Directory (\(marker)): \(rootLabel)"
-        ))
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        menu.addItem(disabledInfoItem(SpatialCanvasNSView.resizeMenuHeading(direction)))
 
-        menu.addItem(SlotMenuItem(title: "Set Project Directory…", isEnabled: true) {
-            [weak pool] in
-            guard let pool else { return }
-            let panel = NSOpenPanel()
-            panel.canChooseDirectories = true
-            panel.canChooseFiles = false
-            panel.allowsMultipleSelection = false
-            panel.directoryURL = directory.projectRoot ?? directory.cwd
-            guard panel.runModal() == .OK, let chosen = panel.url else { return }
-            pool.pinProjectRoot(chosen, for: slotID)
-        })
-        menu.addItem(SlotMenuItem(
-            title: "Use Automatic Directory",
-            isEnabled: directory.source == .pinned
-        ) { [weak pool] in
-            pool?.pinProjectRoot(nil, for: slotID)
-        })
+        for (title, fraction) in [
+            ("1/3", SpatialExtentFraction.oneThird),
+            ("1/2", .oneHalf),
+            ("Full", .full),
+        ] {
+            menu.addItem(SlotMenuItem(
+                title: title,
+                isEnabled: SpatialLayout.resize(
+                    displayedSlots,
+                    slotID: slotID,
+                    direction: direction,
+                    fraction: fraction
+                ).isValid
+            ) { [weak store] in
+                store?.resizeSlot(slotID, direction: direction, fraction: fraction)
+            })
+        }
+
+        return menu
+    }
+
+    /// Names the axes the clicked edge moves, so the fractions below it are unambiguous.
+    private static func resizeMenuHeading(_ direction: ResizeDirection) -> String {
+        let width = direction.includesEast || direction.includesWest
+        let height = direction.includesNorth || direction.includesSouth
+        if width && height { return "Set Width & Height" }
+        return width ? "Set Width" : "Set Height"
     }
 
     /// A non-actionable label. `menu.autoenablesItems` is already false, so a plain
@@ -679,13 +763,6 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
         item.isEnabled = false
         return item
-    }
-
-    private func abbreviate(_ url: URL) -> String {
-        let path = url.path
-        let home = NSHomeDirectory()
-        guard path == home || path.hasPrefix(home + "/") else { return path }
-        return "~" + path.dropFirst(home.count)
     }
 
     func begin(
@@ -718,6 +795,16 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     }
 
     func drag(to point: CGPoint, window windowPoint: CGPoint? = nil) {
+        // Cards from other tabs remain cached to keep their live surfaces mounted,
+        // but only the active tab's attached cards may participate in drop routing.
+        let slotFrames: [UUID: CGRect] = Dictionary(
+            uniqueKeysWithValues: displayedSlots.compactMap { slot -> (UUID, CGRect)? in
+                guard let card = cards[slot.id], card.superview === self else { return nil }
+                return (slot.id, card.frame)
+            }
+        )
+        let preview = interaction.update(pointer: point, slotFrames: slotFrames)
+
         // A header drag that reaches the tab bar switches to reparent mode: the
         // in-canvas layout freezes and the tab bar highlights the target. Any
         // other region (resize) or a nil window point keeps the in-canvas path.
@@ -729,7 +816,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             if target != .none {
                 pendingReparent = target
                 router.activeDropTarget = target
-                setPreviewValidity(nil)
+                updateMovePresentation(at: point, acceptsExternalDrop: true)
                 return
             }
         }
@@ -738,10 +825,15 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             router?.activeDropTarget = .none
         }
 
-        guard let preview = interaction.update(pointer: point) else { return }
+        // Pane moves carry a bitmap and highlight a destination while the live
+        // surfaces stay mounted. Only resize previews alter card frames in flight.
+        if gestureIsMove {
+            updateMovePresentation(at: point)
+            return
+        }
+        guard let preview else { return }
         displayedSlots = preview.proposal
         applyFrames(displayedSlots)
-        setPreviewValidity(preview.isValid)
     }
 
     func end() {
@@ -751,6 +843,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         if pendingReparent != .none {
             let slotID = gestureSlotID
             _ = interaction.cancel()
+            clearMovePresentation()
             switch pendingReparent {
             case .newTab:
                 if let slotID { store?.moveSlotToNewTab(slotID) }
@@ -762,12 +855,13 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             pendingReparent = .none
             router?.activeDropTarget = .none
             synchronizeWithStore(fallback: displayedSlots)
-            setPreviewValidity(nil)
+            refreshCardActivity()
             finishGestureFocus(cancelled: false)
             return
         }
 
         guard let result = interaction.finish() else { return }
+        clearMovePresentation()
         switch result {
         case .rollback(let snapshot):
             synchronizeWithStore(fallback: snapshot)
@@ -775,8 +869,6 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             switch commit {
             case .move(let transaction):
                 store?.applyMove(transaction)
-            case .swap(let transaction):
-                store?.applySwap(transaction)
             case .resize(let transaction):
                 store?.applyResize(transaction)
             }
@@ -787,19 +879,122 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             store?.focusSlot(gestureSlotID)
         }
         synchronizeWithStore(fallback: displayedSlots)
-        setPreviewValidity(nil)
+        refreshCardActivity()
         finishGestureFocus(cancelled: false)
     }
 
     @discardableResult
     func cancelGesture() -> Bool {
         guard let snapshot = interaction.cancel() else { return false }
+        clearMovePresentation()
         pendingReparent = .none
         router?.activeDropTarget = .none
         synchronizeWithStore(fallback: snapshot)
-        setPreviewValidity(nil)
+        refreshCardActivity()
         finishGestureFocus(cancelled: true)
         return true
+    }
+
+    /// Kero-style pickup: the source remains mounted and dimmed, while one bitmap
+    /// snapshot follows the pointer and a separate overlay describes the drop.
+    private func updateMovePresentation(
+        at point: CGPoint,
+        acceptsExternalDrop: Bool = false
+    ) {
+        guard interaction.isCarryingPane,
+              let sourceID = gestureSlotID,
+              let sourceCard = cards[sourceID]
+        else { return }
+
+        let thumbnail: SpatialDragThumbnailView
+        if let dragThumbnailView {
+            thumbnail = dragThumbnailView
+        } else {
+            let size = Self.thumbnailSize(for: sourceCard.frame.size)
+            thumbnail = SpatialDragThumbnailView(image: sourceCard.paneSnapshot())
+            thumbnail.frame.size = size
+            addSubview(thumbnail, positioned: .above, relativeTo: nil)
+            dragThumbnailView = thumbnail
+        }
+        sourceCard.alphaValue = 0.55
+        thumbnail.frame.origin = CGPoint(
+            x: point.x - thumbnail.frame.width / 2,
+            y: point.y - thumbnail.frame.height / 2
+        )
+
+        if !acceptsExternalDrop,
+           let target = interaction.moveTarget,
+           let targetCard = cards[target.slotID] {
+            let highlight = dropHighlightView ?? SpatialDropHighlightView()
+            highlight.frame = Self.highlightFrame(
+                for: target.edge,
+                in: targetCard.frame
+            )
+            if highlight.superview == nil {
+                addSubview(highlight, positioned: .above, relativeTo: nil)
+                addSubview(thumbnail, positioned: .above, relativeTo: highlight)
+            }
+            dropHighlightView = highlight
+            NSCursor.closedHand.set()
+        } else {
+            dropHighlightView?.removeFromSuperview()
+            dropHighlightView = nil
+            (acceptsExternalDrop ? NSCursor.closedHand : NSCursor.operationNotAllowed).set()
+        }
+    }
+
+    private func clearMovePresentation() {
+        if let gestureSlotID {
+            cards[gestureSlotID]?.alphaValue = 1
+        }
+        dragThumbnailView?.removeFromSuperview()
+        dragThumbnailView = nil
+        dropHighlightView?.removeFromSuperview()
+        dropHighlightView = nil
+        NSCursor.arrow.set()
+    }
+
+    private static func thumbnailSize(for source: CGSize) -> CGSize {
+        let maximum = CGSize(width: 220, height: 160)
+        guard source.width > 0, source.height > 0 else { return maximum }
+        let scale = min(maximum.width / source.width, maximum.height / source.height)
+        return CGSize(width: source.width * scale, height: source.height * scale)
+    }
+
+    private static func highlightFrame(
+        for edge: SpatialDropEdge,
+        in target: CGRect
+    ) -> CGRect {
+        switch edge {
+        case .left:
+            return CGRect(
+                x: target.minX,
+                y: target.minY,
+                width: target.width / 2,
+                height: target.height
+            )
+        case .right:
+            return CGRect(
+                x: target.midX,
+                y: target.minY,
+                width: target.width / 2,
+                height: target.height
+            )
+        case .top:
+            return CGRect(
+                x: target.minX,
+                y: target.minY,
+                width: target.width,
+                height: target.height / 2
+            )
+        case .bottom:
+            return CGRect(
+                x: target.minX,
+                y: target.midY,
+                width: target.width,
+                height: target.height / 2
+            )
+        }
     }
 
     private func applyFrames(_ slots: [SpatialSlot]) {
@@ -829,12 +1024,11 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         }
     }
 
-    private func setPreviewValidity(_ isValid: Bool?) {
+    /// Re-applies each card's active border after the authoritative geometry (and
+    /// with it `activeSlotID`) may have changed without a full reconfigure.
+    private func refreshCardActivity() {
         for (id, card) in cards {
-            card.setState(
-                isActive: id == activeSlotID,
-                previewIsValid: isValid
-            )
+            card.setState(isActive: id == activeSlotID)
         }
     }
 
@@ -859,6 +1053,25 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         }
         launcherPopover?.performClose(nil)
         launcherPopover = nil
+    }
+
+    /// Ends all gesture-owned state before the canvas leaves its window. AppKit can
+    /// dismantle or detach the representable without delivering mouse-up/Escape.
+    func prepareForRemoval() {
+        stopMouseMonitoring()
+        let ownedGestureState = interaction.isActive ||
+            gestureSlotID != nil ||
+            dragThumbnailView != nil ||
+            dropHighlightView != nil ||
+            pendingReparent != .none
+        guard ownedGestureState else { return }
+        if let snapshot = interaction.cancel() {
+            synchronizeWithStore(fallback: snapshot)
+        }
+        clearMovePresentation()
+        pendingReparent = .none
+        router?.activeDropTarget = .none
+        finishGestureFocus(cancelled: true)
     }
 
     /// The local monitor only bridges body clicks that the hosted terminal or
@@ -920,6 +1133,73 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     }
 }
 
+final class SpatialDragThumbnailView: NSView {
+    private let imageView = NSImageView()
+
+    init(image: NSImage?) {
+        super.init(frame: .zero)
+        wantsLayer = true
+        alphaValue = 0.9
+        layer?.backgroundColor = TenonTheme.inkNS.cgColor
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 1.5
+        layer?.borderColor = TenonTheme.amberNS.cgColor
+        layer?.shadowColor = NSColor.black.cgColor
+        layer?.shadowOpacity = 0.35
+        layer?.shadowRadius = 14
+        layer?.shadowOffset = CGSize(width: 0, height: -6)
+
+        imageView.image = image
+        imageView.imageScaling = .scaleAxesIndependently
+        imageView.wantsLayer = true
+        imageView.layer?.cornerRadius = 6
+        imageView.layer?.masksToBounds = true
+        addSubview(imageView)
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override var isFlipped: Bool { true }
+
+    override func layout() {
+        super.layout()
+        imageView.frame = bounds
+        layer?.shadowPath = CGPath(
+            roundedRect: bounds,
+            cornerWidth: 6,
+            cornerHeight: 6,
+            transform: nil
+        )
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
+final class SpatialDropHighlightView: NSView {
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        layer?.backgroundColor = TenonTheme.amberNS.withAlphaComponent(0.18).cgColor
+        layer?.cornerRadius = 6
+        layer?.borderWidth = 2
+        layer?.borderColor = TenonTheme.amberNS.cgColor
+        setAccessibilityElement(false)
+    }
+
+    required init?(coder: NSCoder) {
+        nil
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+}
+
 private struct PluginRenderIdentity: Hashable {
     let installation: PluginInstallationKey
     let allowsWebView: Bool
@@ -932,7 +1212,9 @@ final class SpatialSlotCardView: NSView {
     var onDrag: ((_ canvasPoint: CGPoint, _ windowPoint: CGPoint) -> Void)?
     var onEnd: (() -> Void)?
     var onFillWidth: ((UUID) -> Void)?
+    var onCycleExtent: ((UUID, ResizeDirection) -> Void)?
     var onRequestMenu: ((UUID) -> NSMenu?)?
+    var onRequestResizeMenu: ((UUID, ResizeDirection) -> NSMenu?)?
 
     private let glyph = NSTextField(labelWithString: "")
     private let title = NSTextField(labelWithString: "")
@@ -943,6 +1225,9 @@ final class SpatialSlotCardView: NSView {
     private var contentHost: NSHostingView<AnyView>?
     private var contentKey = ""
     private var pluginRenderIdentity: PluginRenderIdentity?
+    /// Kero keeps a single pane full-bleed and only introduces focus chrome once
+    /// multiple panes make the focused owner ambiguous.
+    private var showsFocusRing = false
 
     private static let northwestSoutheastCursor = diagonalResizeCursor(
         symbol: "arrow.up.left.and.arrow.down.right"
@@ -992,7 +1277,7 @@ final class SpatialSlotCardView: NSView {
         addSubview(stateDot)
         addSubview(title)
         addSubview(closeButton)
-        setState(isActive: false, previewIsValid: nil)
+        setState(isActive: false)
     }
 
     required init?(coder: NSCoder) {
@@ -1080,15 +1365,21 @@ final class SpatialSlotCardView: NSView {
     }
 
     /// Right-click / control-click routes here through AppKit's contextual-menu
-    /// machinery. The menu is a title-bar affordance only, so a click that lands
-    /// on the body or a resize edge yields no menu and the terminal keeps its own.
+    /// machinery. Which menu appears is the region's answer: the header offers the
+    /// pane's actions, a border offers the sizes that border can be dragged to, and
+    /// the body yields nothing so the terminal keeps its own.
     override func menu(for event: NSEvent) -> NSMenu? {
         let local = convert(event.locationInWindow, from: nil)
-        guard SpatialCanvasInteractionCoordinator.hitRegion(
-            at: local,
-            in: bounds
-        ) == .header else { return nil }
-        return onRequestMenu?(slotID)
+        switch SpatialCanvasInteractionCoordinator.menu(
+            for: SpatialCanvasInteractionCoordinator.hitRegion(at: local, in: bounds)
+        ) {
+        case .pane:
+            return onRequestMenu?(slotID)
+        case .resize(let direction):
+            return onRequestResizeMenu?(slotID, direction)
+        case .surface:
+            return nil
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -1106,6 +1397,8 @@ final class SpatialSlotCardView: NSView {
             onBegin?(slotID, region, canvasPoint)
         case .fillWidth:
             onFillWidth?(slotID)
+        case .cycleExtent(let direction):
+            onCycleExtent?(slotID, direction)
         }
     }
 
@@ -1208,8 +1501,10 @@ final class SpatialSlotCardView: NSView {
         workspacePath: URL,
         title newTitle: String,
         isActive: Bool,
+        showsFocusRing: Bool,
         store: WorkspaceStore?,
         pool: SurfacePool,
+        agentLens: AgentLensPool,
         webPool: PluginWebSurfacePool,
         editorStates: EditorPaneStateStore,
         pluginSnapshots: [PluginSnapshot],
@@ -1217,7 +1512,8 @@ final class SpatialSlotCardView: NSView {
     ) {
         glyph.stringValue = SlotPresentation.glyph(for: slot.content)
         title.stringValue = newTitle
-        setState(isActive: isActive, previewIsValid: nil)
+        self.showsFocusRing = showsFocusRing
+        setState(isActive: isActive)
 
         // An empty slot rebinds the return key when it becomes the active pane,
         // so fold active state into the cache key for empties only — other
@@ -1261,6 +1557,7 @@ final class SpatialSlotCardView: NSView {
                 workspacePath: workspacePath,
                 host: host,
                 pool: pool,
+                agentLens: agentLens,
                 webPool: webPool,
                 editorStates: editorStates,
                 store: store,
@@ -1307,15 +1604,12 @@ final class SpatialSlotCardView: NSView {
         needsLayout = true
     }
 
-    func setState(isActive: Bool, previewIsValid: Bool?) {
+    func setState(isActive: Bool) {
         glyph.textColor = isActive ? TenonTheme.amberNS : TenonTheme.mutedNS
         title.textColor = isActive ? TenonTheme.textNS : TenonTheme.mutedNS
-        if previewIsValid == false {
-            layer?.borderColor = NSColor.systemRed.cgColor
+        if isActive && showsFocusRing {
+            layer?.borderColor = TenonTheme.amberNS.withAlphaComponent(0.85).cgColor
             layer?.borderWidth = 1.5
-        } else if isActive {
-            layer?.borderColor = TenonTheme.amberNS.withAlphaComponent(0.45).cgColor
-            layer?.borderWidth = 1
         } else {
             layer?.borderColor = TenonTheme.lineNS.cgColor
             layer?.borderWidth = 1
@@ -1326,6 +1620,20 @@ final class SpatialSlotCardView: NSView {
         setAccessibilityValue(
             "slot=\(slot.id.uuidString);rect=\(slot.rect.x),\(slot.rect.y),\(slot.rect.width),\(slot.rect.height)"
         )
+    }
+
+    /// Captures the mounted pane once at pickup. The live AppKit/SwiftUI surface stays
+    /// in place for the rest of the drag, avoiding terminal/WebView reparent churn.
+    func paneSnapshot() -> NSImage? {
+        let source = contentHost ?? self
+        guard source.bounds.width > 0,
+              source.bounds.height > 0,
+              let representation = source.bitmapImageRepForCachingDisplay(in: source.bounds)
+        else { return nil }
+        source.cacheDisplay(in: source.bounds, to: representation)
+        let image = NSImage(size: source.bounds.size)
+        image.addRepresentation(representation)
+        return image
     }
 
     private static func diagonalResizeCursor(symbol: String) -> NSCursor {

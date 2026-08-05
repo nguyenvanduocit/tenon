@@ -9,6 +9,122 @@ import XCTest
 /// split beside it when there is none, and never open a tab.
 @MainActor
 final class WorkspaceIntentProviderTests: XCTestCase {
+    func testTabCreationConsumesTheTitleBarPlusReservation() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+        let originalTabCount = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.count)
+
+        let result = await NewTabLauncherPlacement.invoke(in: store) { scope in
+            guard let reply = try? await self.invoke(
+                .workspaceTabCreate,
+                input: .object([
+                    "content": .object(["kind": .string("docs")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            ), case .success = reply else { return nil }
+            return self.intentSuccess()
+        }
+
+        guard case .success = result else {
+            return XCTFail("the tab-create intent should succeed")
+        }
+        XCTAssertEqual(store.catalog.activeWorkspace?.tabs.count, originalTabCount + 1)
+        XCTAssertEqual(store.catalog.activeTab?.slots.map(\.content), [.docs])
+    }
+
+    func testDifferentGestureCannotConsumeTheTitleBarPlusReservation() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+        let originalTabCount = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.count)
+
+        _ = await NewTabLauncherPlacement.invoke(in: store) { scope in
+            let unrelatedScope = InvocationScope(
+                workspaceID: scope.workspaceID,
+                paneID: scope.paneID,
+                userGestureID: UUID()
+            )
+            guard let reply = try? await self.invoke(
+                .workspaceTabCreate,
+                input: .object([
+                    "content": .object(["kind": .string("terminal")])
+                ]),
+                scope: unrelatedScope,
+                bindings: bindings
+            ), case .success = reply else { return nil }
+            return self.intentSuccess()
+        }
+
+        let tabs = try XCTUnwrap(store.catalog.activeWorkspace?.tabs)
+        XCTAssertEqual(tabs.count, originalTabCount + 2)
+        XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .empty })
+        XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .terminal })
+    }
+
+    func testReservationCanBeConsumedOnlyOnce() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+        let originalTabCount = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.count)
+
+        _ = await NewTabLauncherPlacement.invoke(in: store) { scope in
+            guard let firstReply = try? await self.invoke(
+                .workspaceTabCreate,
+                input: .object([
+                    "content": .object(["kind": .string("empty")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            ), case .success = firstReply,
+            let secondReply = try? await self.invoke(
+                .workspaceTabCreate,
+                input: .object([
+                    "content": .object(["kind": .string("docs")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            ), case .success = secondReply else { return nil }
+            return self.intentSuccess()
+        }
+
+        let tabs = try XCTUnwrap(store.catalog.activeWorkspace?.tabs)
+        XCTAssertEqual(tabs.count, originalTabCount + 2)
+        XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .empty })
+        XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .docs })
+    }
+
+    func testReservationConsumptionPreservesNewerWorkspaceNavigation() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+        let sourceWorkspaceID = store.catalog.activeWorkspaceID
+        store.addWorkspace(
+            name: "Other",
+            path: FileManager.default.temporaryDirectory,
+            content: .terminal
+        )
+        let newerWorkspaceID = store.catalog.activeWorkspaceID
+        store.selectWorkspace(sourceWorkspaceID)
+
+        _ = await NewTabLauncherPlacement.invoke(in: store) { scope in
+            store.selectWorkspace(newerWorkspaceID)
+            guard let reply = try? await self.invoke(
+                .workspaceTabCreate,
+                input: .object([
+                    "content": .object(["kind": .string("docs")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            ), case .success = reply else { return nil }
+            return self.intentSuccess()
+        }
+
+        XCTAssertEqual(store.catalog.activeWorkspaceID, newerWorkspaceID)
+        let sourceTabs = try XCTUnwrap(
+            store.catalog.workspaces.first { $0.id == sourceWorkspaceID }?.tabs
+        )
+        XCTAssertEqual(sourceTabs.count, 2)
+        XCTAssertTrue(sourceTabs.flatMap(\.slots).contains { $0.content == .docs })
+    }
+
     func testOpeningAFileReusesThePaneAndNeverOpensATab() async throws {
         let store = WorkspaceStore()
         let bindings = try WorkspaceIntentProvider(store: store).bindings()
@@ -72,6 +188,39 @@ final class WorkspaceIntentProviderTests: XCTestCase {
         )
     }
 
+    func testOpeningIntoAnEmptyTabAddsItsFirstPaneAndNeverOpensATab() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+        let tabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        let workspaceID = store.catalog.activeWorkspaceID
+        let tabs = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.count)
+        store.closeActiveSlot()
+        XCTAssertEqual(store.catalog.activeTab?.slots, [])
+
+        _ = try successReply(
+            await invoke(
+                .workspaceContentOpen,
+                input: .object([
+                    "content": .object([
+                        "kind": .string("file"),
+                        "path": .string("empty-tab.swift"),
+                    ])
+                ]),
+                scope: InvocationScope(workspaceID: workspaceID),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(store.catalog.activeTab?.id, tabID)
+        XCTAssertEqual(filePaths(store), ["empty-tab.swift"])
+        XCTAssertEqual(store.catalog.activeTab?.slots.count, 1)
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.count,
+            tabs,
+            "opening content into an empty tab must add a pane, never another tab"
+        )
+    }
+
     func testOpeningRejectsAMissingContentField() async throws {
         let store = WorkspaceStore()
         let bindings = try WorkspaceIntentProvider(store: store).bindings()
@@ -111,6 +260,14 @@ final class WorkspaceIntentProviderTests: XCTestCase {
 }
 
 private extension WorkspaceIntentProviderTests {
+    func intentSuccess() -> IntentResult {
+        .success(
+            value: .object([:]),
+            requestID: UUID(),
+            providerID: try! ProviderID("dev.tenon.test")
+        )
+    }
+
     func filePaths(_ store: WorkspaceStore) -> [String] {
         (store.catalog.activeTab?.slots ?? []).compactMap {
             if case let .file(path) = $0.content { return path }
@@ -143,6 +300,20 @@ private extension WorkspaceIntentProviderTests {
         paneID: UUID,
         bindings: [IntentProviderBinding]
     ) async throws -> IntentProviderReply {
+        try await invoke(
+            name,
+            input: input,
+            scope: InvocationScope(paneID: paneID),
+            bindings: bindings
+        )
+    }
+
+    func invoke(
+        _ name: CoreIntentName,
+        input: IntentValue,
+        scope: InvocationScope,
+        bindings: [IntentProviderBinding]
+    ) async throws -> IntentProviderReply {
         let intentID = try name.intentID
         let binding = try XCTUnwrap(bindings.first { $0.intentID == intentID })
         let envelope = IntentEnvelope(
@@ -156,7 +327,7 @@ private extension WorkspaceIntentProviderTests {
                 kind: .cli,
                 sessionRevision: 1
             ),
-            scope: InvocationScope(paneID: paneID),
+            scope: scope,
             deadline: .now.advanced(by: .seconds(5)),
             target: nil,
             idempotencyKey: nil

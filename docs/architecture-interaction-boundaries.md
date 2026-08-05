@@ -209,11 +209,17 @@ Current DIRECT inventory:
   result, no independent lifetime, no authority, and no backpressure. Plugin-contributed
   entries remain CONTRIBUTIONs (palette declarations), and choosing one takes the existing
   finite INTENT path under the palette principal with its existing authority, failure, and
-  admission semantics. The `+` and empty-grid anchors inherit the focused scope; only a tab
-  anchor names scope at the call site through the pure `TabContextPlacement` rule so a
-  background tab receives its own result. **Placement itself is not decided here**: it
-  stays inside `workspace.content.open.v1`, whose contract already makes it host policy —
-  reuse the pane showing this kind of content, otherwise split, never open a tab;
+  admission semantics. The title-bar `+` creates a blank tab through the typed workspace
+  service and invokes the chosen intent against that tab's pane scope. While that scoped
+  reservation is live, `workspace.tab.create.v1` fills and claims it instead of opening a
+  second tab; correlation is by pane scope plus the host-minted user-gesture identity,
+  never by guessing from concurrently opened tabs. Claiming fills the reserved pane by ID
+  without overriding workspace/tab navigation that happened while the intent was awaiting.
+  The empty-grid anchor inherits the focused scope, while a tab anchor names scope at the
+  call site through the pure `TabContextPlacement` rule so a background tab receives its
+  own result. Content placement inside the named tab stays in
+  `workspace.content.open.v1`: reuse the pane showing this kind of content, otherwise
+  split, never open another tab;
 - file-pane renderer selection (T-038): `SlotContent.file(path:)` and its native editor
   were already host-owned, so rendering a PNG as a picture or an HTML file as a page
   crosses no ownership boundary — same-owner DIRECT, no new intent, no new plugin, no new

@@ -187,6 +187,14 @@ private extension WorkspaceIntentProvider {
         do {
             let object = try AppIntentProviderSupport.object(envelope.input)
             let content = try object["content"].map(Self.content(from:))
+            if NewTabLauncherPlacement.consumeReservedTabCreation(
+                scope: envelope.scope,
+                content: content,
+                store: store
+            ) {
+                return AppIntentProviderSupport.emptySuccess
+            }
+
             guard selectScopedWorkspace(envelope.scope) else {
                 return failure(
                     codes.workspaceNotFound,

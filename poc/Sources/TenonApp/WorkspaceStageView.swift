@@ -6,6 +6,7 @@ import TenonCore
 struct WorkspaceStageView: View {
     var store: WorkspaceStore
     var pool: SurfacePool
+    var agentLens: AgentLensPool
     var webPool: PluginWebSurfacePool
     var host: PluginHost
     var intentRuntime: AppIntentRuntime
@@ -28,6 +29,7 @@ struct WorkspaceStageView: View {
                     activeSlotID: tab.activeSlotID,
                     store: store,
                     pool: pool,
+                    agentLens: agentLens,
                     webPool: webPool,
                     host: host,
                     intentRuntime: intentRuntime,

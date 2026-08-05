@@ -15,7 +15,17 @@ import Foundation
 public indirect enum PluginViewNode: Sendable, Equatable {
     case vstack(spacing: Double, children: [PluginViewNode])
     case hstack(spacing: Double, children: [PluginViewNode])
-    case box(padding: Double, background: Bool, cornerRadius: Double, children: [PluginViewNode])
+    /// A container. `width` is the one escape from "fill whatever is offered": a board
+    /// column has to stay the same size whether the pane is wide or narrow, and whether
+    /// it holds one card or twelve. `nil` keeps the fill behaviour every other caller
+    /// relies on.
+    case box(
+        padding: Double,
+        background: Bool,
+        cornerRadius: Double,
+        width: Double?,
+        children: [PluginViewNode]
+    )
     case card(children: [PluginViewNode])
     case text(String, style: TextStyle, weight: FontWeight, color: ColorToken)
     case badge(String, tint: ColorToken)
@@ -36,6 +46,10 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     case image(systemName: String)
     case spacer
     case divider
+    /// Scrolls its children along one or both axes. The pane's own wrapper scrolls
+    /// vertically, so content wider than the pane — fixed-width columns, a wide table —
+    /// is only reachable when the plugin says where the overflow goes.
+    case scroll(axis: ScrollAxis, children: [PluginViewNode])
 
     // Status/dashboard set (T-007). `grid` is a layout primitive; the rest are
     // components composed from tier-1 — see docs/design-plugin-views.md.
@@ -44,6 +58,14 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     case keyValue(label: String, value: String, tint: ColorToken)
     case progress(value: Double, tint: ColorToken)
     case field(label: String, children: [PluginViewNode])
+}
+
+/// Which way a `scroll` node lets its content overflow. An unknown or omitted token
+/// falls back to `.vertical` — the axis a pane already scrolls — so a typo degrades to
+/// today's behaviour instead of dropping the node and its whole subtree.
+public enum ScrollAxis: String, Sendable, Equatable {
+    case horizontal, vertical, both
+    public init(token: String?) { self = token.flatMap(ScrollAxis.init(rawValue:)) ?? .vertical }
 }
 
 /// Text role — maps to a font size/family in the shell, never a raw point value,

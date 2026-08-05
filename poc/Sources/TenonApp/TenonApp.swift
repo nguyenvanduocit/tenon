@@ -35,6 +35,7 @@ struct TenonApp: App {
                     host: composition.host,
                     store: composition.store,
                     pool: composition.terminalSurfaces,
+                    agentLens: composition.agentLens,
                     webPool: composition.webSurfaces,
                     intentRuntime: composition.intentRuntime,
                     router: composition.router,
@@ -109,6 +110,7 @@ final class AppComposition {
     let host: PluginHost
     let store: WorkspaceStore
     let terminalSurfaces: SurfacePool
+    let agentLens: AgentLensPool
     let webSurfaces: PluginWebSurfacePool
     let intentRuntime: AppIntentRuntime
     let cliServer: CLISocketServer
@@ -174,18 +176,17 @@ final class AppComposition {
         // This is what init can know before `host.loadAll()` runs: a restored plugin-view
         // pane whose plugin left the inventory degrades now, and a view id unknown within
         // a live plugin is the host's instance reconciliation's business once it loads.
+        //
+        // Asked through the loader rather than by reading directories here, because
+        // "where plugins live and what counts as one" has exactly one owner. Hand-rolling
+        // it meant this probe knew only the primary root and only the directory
+        // packaging, so a restored pane belonging to a user-written plugin (T-062) or to
+        // a single-file automation (T-047) was dropped at launch as if uninstalled.
         let installedPluginIDs: Set<String> = Set(
-            ((try? fileManager.contentsOfDirectory(
-                at: pluginsRoot,
-                includingPropertiesForKeys: nil
-            )) ?? []).compactMap { entry in
-                guard let data = try? Data(
-                    contentsOf: entry.appendingPathComponent("manifest.json")
-                ),
-                    let object = try? JSONSerialization.jsonObject(with: data)
-                        as? [String: Any]
-                else { return nil }
-                return object["id"] as? String
+            PluginLoader.discover(
+                in: [pluginsRoot, paths.userPluginInventoryRoot]
+            ).compactMap {
+                (try? PluginLoader.loadManifest(at: $0))?.id.rawValue
             }
         )
         let restored = WorkspaceCatalogStore
@@ -247,23 +248,15 @@ final class AppComposition {
         }
         // T-031: seed each restored pane's recorded title and cwd as placeholder data —
         // the pane renders something useful immediately, and not one surface (so not one
-        // shell) is built for it until the human actually opens it. Cwd lands before the
-        // pins below so a pinned pane re-resolves against its recorded directory.
+        // shell) is built for it until the human actually opens it.
         for (slotID, title) in launch.titles {
             terminalSurfaces.setTitle(title, for: slotID)
         }
         for (slotID, cwd) in launch.cwds {
             terminalSurfaces.seedSpawnDirectory(cwd, for: slotID)
         }
-        // T-030 handoff: re-apply the persisted per-pane pins verbatim. No surface exists
-        // yet, so each call just records its pin; it takes effect when the pane's surface
-        // seeds its first directory. `onPinChange` is not wired yet, so restoring pins
-        // schedules no write.
-        for (slotID, root) in launch.pins {
-            terminalSurfaces.pinProjectRoot(root, for: slotID)
-        }
-
         let webSurfaces = PluginWebSurfacePool()
+        let agentLens = AgentLensPool()
         let userInterface = PluginUIState()
         let intentRuntime = try AppIntentRuntime(
             stateRoot: paths.runtimeStateRoot,
@@ -272,21 +265,37 @@ final class AppComposition {
             webSurfaces: webSurfaces,
             userInterface: userInterface
         )
+        // Two inventories, ordered (T-062). The primary one ships with the app and is
+        // sealed — writing into a signed bundle breaks its signature and the next
+        // install erases the write. The user inventory is where an authored plugin
+        // lives: writable, outside any bundle, and untrusted, because standing consent
+        // is earned by installing Tenon and never by a file's location.
         let host = try PluginHost(
-            pluginsRoot: pluginsRoot,
+            inventories: [
+                PluginInventory(
+                    root: pluginsRoot,
+                    // Bundled authorization is for an inventory the host controls. An
+                    // inventory named by `TENON_PLUGINS_DIR` is an arbitrary user
+                    // directory, so it loads untrusted and its plugins ask — unless the
+                    // developer stands that directory in for the bundle with
+                    // `TENON_TRUST_PLUGIN_INVENTORY=1`.
+                    authorization: paths.trustsPluginInventory
+                        ? .bundledInventory
+                        : PluginHostAuthorization(
+                            approvedOpenIntentIDs: { _, _ in [] }
+                        ),
+                    isWritable: paths.pluginInventoryIsWritable
+                ),
+                PluginInventory(
+                    root: paths.userPluginInventoryRoot,
+                    authorization: PluginHostAuthorization(
+                        approvedOpenIntentIDs: { _, _ in [] }
+                    ),
+                    isWritable: true
+                ),
+            ],
             stateRoot: paths.pluginStateRoot,
             kernel: intentRuntime.kernel,
-            // Bundled authorization is for an inventory the host controls: everything in
-            // the app bundle shipped with it and carries the consent the user gave by
-            // installing Tenon. An inventory named by `TENON_PLUGINS_DIR` is an arbitrary
-            // user directory, so it loads untrusted and its plugins ask — unless the
-            // developer stands that directory in for the bundle with
-            // `TENON_TRUST_PLUGIN_INVENTORY=1`.
-            authorization: paths.trustsPluginInventory
-                ? .bundledInventory
-                : PluginHostAuthorization(
-                    approvedOpenIntentIDs: { _, _ in [] }
-                ),
             invocationScopeProvider: { @MainActor [weak store] in
                 guard let store else {
                     return InvocationScope()
@@ -306,6 +315,7 @@ final class AppComposition {
         self.host = host
         self.store = store
         self.terminalSurfaces = terminalSurfaces
+        self.agentLens = agentLens
         self.webSurfaces = webSurfaces
         self.intentRuntime = intentRuntime
         self.cliServer = cliServer
@@ -317,6 +327,7 @@ final class AppComposition {
             host: host,
             store: store,
             terminalSurfaces: terminalSurfaces,
+            agentLens: agentLens,
             webSurfaces: webSurfaces,
             catalogStore: catalogStore,
             automation: automationScheduler
@@ -421,7 +432,6 @@ final class AppComposition {
         await catalogStore.noteChange(
             WorkspaceCatalogSnapshot.document(
                 capturing: store.catalog,
-                pins: terminalSurfaces.pinnedProjectRoots,
                 titles: terminalSurfaces.titles,
                 cwds: terminalSurfaces.directories.mapValues(\.cwd)
             )
@@ -429,6 +439,7 @@ final class AppComposition {
         await catalogStore.flush()
 
         await host.shutdown()
+        agentLens.retainOnly([])
         webSurfaces.disposeAll()
         do {
             try await intentRuntime.stop()
@@ -464,6 +475,32 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
             self?.terminationTask = nil
         }
         return .terminateLater
+    }
+}
+
+extension AppComposition {
+    /// T-061: Create with AI. Opens a fresh terminal tab whose shell starts in the
+    /// writable inventory and types the `claude <guide>` command into it — the same typed
+    /// services `terminal.open.v1`'s provider adapts, called DIRECT because this is
+    /// the host's own gesture (invariant 6; the intent stays the public adapter).
+    ///
+    /// Reachable from the test target rather than fileprivate like its neighbours below,
+    /// because the directory this hands over is the whole of T-062: an agent started in
+    /// the app bundle writes into a signed bundle and breaks it, which is not a hazard a
+    /// comment can be trusted with alone.
+    func openAutomationAuthoringPane() {
+        store.newTab(content: .terminal)
+        guard let paneID = store.catalog.activeSlotID,
+              store.catalog.slot(id: paneID)?.content == .terminal
+        else { return }
+        // The writable inventory, never the sealed bundle: an agent writing into
+        // `Tenon.app` breaks its code signature and the file dies at the next install.
+        guard let root = host.writableInventoryRoot else { return }
+        terminalSurfaces.seedSpawnDirectory(root, for: paneID)
+        terminalSurfaces.sendTextWhenReady(
+            AutomationAuthoring.command(pluginsRoot: root.path) + "\n",
+            to: paneID
+        )
     }
 }
 
@@ -513,23 +550,6 @@ private extension AppComposition {
                 }
             }
         }
-    }
-
-    /// T-061: Create with AI. Opens a fresh terminal tab whose shell starts in the
-    /// plugins root and types the `claude <guide>` command into it — the same typed
-    /// services `terminal.open.v1`'s provider adapts, called DIRECT because this is
-    /// the host's own gesture (invariant 6; the intent stays the public adapter).
-    func openAutomationAuthoringPane() {
-        store.newTab(content: .terminal)
-        guard let paneID = store.catalog.activeSlotID,
-              store.catalog.slot(id: paneID)?.content == .terminal
-        else { return }
-        let root = host.pluginsRoot
-        terminalSurfaces.seedSpawnDirectory(root, for: paneID)
-        terminalSurfaces.sendTextWhenReady(
-            AutomationAuthoring.command(pluginsRoot: root.path) + "\n",
-            to: paneID
-        )
     }
 
     /// T-060: Run now. Mints a manual firing for an armed schedule and sends it down
@@ -598,6 +618,7 @@ private extension AppComposition {
         host: PluginHost,
         store: WorkspaceStore,
         terminalSurfaces: SurfacePool,
+        agentLens: AgentLensPool,
         webSurfaces: PluginWebSurfacePool,
         catalogStore: WorkspaceCatalogStore,
         automation: AutomationScheduler
@@ -612,10 +633,11 @@ private extension AppComposition {
         }
 
         store.onEvents = {
-            [weak host, weak store, weak terminalSurfaces, weak webSurfaces]
+            [weak host, weak store, weak terminalSurfaces, weak agentLens, weak webSurfaces]
                 events,
                 snapshot in
             terminalSurfaces?.retainOnly(Set(snapshot.allSlotIDs))
+            agentLens?.retainOnly(Set(snapshot.allSlotIDs))
             // T-029: catalog changes (workspace/tab selection, pane moves) change
             // which panes are displayed, so the viewed projection recomputes here.
             terminalSurfaces?.applyViewed(
@@ -651,20 +673,6 @@ private extension AppComposition {
                 guard let store, let terminalSurfaces else { return }
                 await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
                     capturing: store.catalog,
-                    pins: terminalSurfaces.pinnedProjectRoots,
-                    titles: terminalSurfaces.titles,
-                    cwds: terminalSurfaces.directories.mapValues(\.cwd)
-                ))
-            }
-        }
-
-        terminalSurfaces.onPinChange = {
-            [weak store, weak terminalSurfaces] in
-            Task { @MainActor [weak store, weak terminalSurfaces] in
-                guard let store, let terminalSurfaces else { return }
-                await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
-                    capturing: store.catalog,
-                    pins: terminalSurfaces.pinnedProjectRoots,
                     titles: terminalSurfaces.titles,
                     cwds: terminalSurfaces.directories.mapValues(\.cwd)
                 ))

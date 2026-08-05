@@ -36,9 +36,26 @@ enum PaletteIntentInvoker {
         )
     }
 
-    /// Invoke a ranked command by its ID — the path both command surfaces take: the
-    /// palette (⌘⇧P) and the tab strip's `+` launcher. `nil` means the intent went away
-    /// between ranking and clicking (a plugin unloaded mid-session).
+    static func prepare(
+        commandID: String,
+        host: PluginHost
+    ) -> PaletteIntentInvocation? {
+        guard let presentation = host.intentPresentations.first(
+            where: { $0.intentID.rawValue == commandID }
+        ) else {
+            return nil
+        }
+        return prepare(
+            target: KeyBindingTarget(
+                pluginID: presentation.pluginID,
+                intentID: presentation.intentID
+            ),
+            host: host
+        )
+    }
+
+    /// Invoke a ranked command by its ID against the focused pane. `nil` means the intent
+    /// went away between ranking and clicking (a plugin unloaded mid-session).
     static func send(
         commandID: String,
         host: PluginHost,
@@ -87,40 +104,38 @@ enum PaletteIntentInvoker {
 
     /// Invoke a ranked command against a caller-named scope instead of the focused pane.
     ///
-    /// The palette and the `+` launcher are keyboard surfaces: "wherever I am" is the right
-    /// answer for them, and the convenience overload builds that scope from the selected
-    /// workspace and pane. A menu opened by right-clicking one specific tab is not that —
-    /// it has to talk about *that* tab, including when it is not the selected one. This is
-    /// the entry point `AppIntentRuntime.send(_:input:as:scope:…)` documents: authority
-    /// visible at the call site rather than inherited from mutable UI state.
+    /// The palette's convenience overload inherits the selected workspace and pane. An
+    /// anchored launcher has stronger placement meaning: the title-bar `+` names its
+    /// freshly created tab, while a tab right-click names that tab even when it is not
+    /// selected. This is the entry point
+    /// `AppIntentRuntime.send(_:input:as:scope:…)` documents: authority visible at the
+    /// call site rather than inherited from mutable UI state.
     static func send(
         commandID: String,
         scope: InvocationScope,
         host: PluginHost,
         runtime: AppIntentRuntime
     ) async -> IntentResult? {
-        guard let presentation = host.intentPresentations.first(
-            where: { $0.intentID.rawValue == commandID }
-        ) else {
-            return nil
-        }
-        guard let invocation = prepare(
-            target: KeyBindingTarget(
-                pluginID: presentation.pluginID,
-                intentID: presentation.intentID
-            ),
-            host: host
-        ) else {
-            return nil
-        }
+        guard let invocation = prepare(commandID: commandID, host: host) else { return nil }
+        return await send(invocation, scope: scope, runtime: runtime)
+    }
+
+    /// Sends a command that was prepared at the click boundary. Placement helpers use
+    /// the same host-minted gesture both to reserve a destination and to dispatch the
+    /// intent, so another invocation sharing the pane cannot claim that reservation.
+    static func send(
+        _ invocation: PaletteIntentInvocation,
+        scope: InvocationScope,
+        runtime: AppIntentRuntime
+    ) async -> IntentResult {
         return await runtime.send(
             invocation.target.intentID,
             as: AppIntentRuntime.palettePrincipal,
             scope: InvocationScope(
                 workspaceID: scope.workspaceID,
                 paneID: scope.paneID,
-                // The gesture is minted here, at the moment the click is accepted, exactly
-                // as the unscoped path does — a caller cannot supply one.
+                // `prepare` minted this proof at the accepted click boundary, exactly as
+                // the unscoped path does — a caller cannot supply one.
                 userGestureID: invocation.userGestureID
             ),
             target: invocation.providerID

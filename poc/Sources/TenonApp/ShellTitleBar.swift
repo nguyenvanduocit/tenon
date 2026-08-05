@@ -25,8 +25,9 @@ struct ShellTitleBar: View {
 
     /// Dispatch a launcher command as if it had been chosen *on this tab*.
     ///
-    /// The scope is the whole point: the palette and `+` invoke against the focused pane,
-    /// which for a right-click on a background tab would put the result in the wrong place.
+    /// The scope is the whole point: the palette and unanchored launcher surfaces invoke
+    /// against the focused pane, which for a right-click on a background tab would put the
+    /// result in the wrong place.
     /// Placement itself stays host policy inside `workspace.content.open.v1` — this only
     /// says which tab is being talked about. The result flows back to the launcher, which
     /// settles it exactly as the `+` popover does.
@@ -58,6 +59,27 @@ struct ShellTitleBar: View {
             runtime: intentRuntime
         )
     }
+
+    /// Dispatch a title-bar `+` choice inside a fresh tab. The temporary tab provides
+    /// ordinary pane scope to plugin openers; commands whose own meaning is "new tab"
+    /// replace that placeholder instead of leaving two tabs behind.
+    private func sendInNewTab(_ commandID: String) async -> IntentResult? {
+        guard let invocation = PaletteIntentInvoker.prepare(
+            commandID: commandID,
+            host: host
+        ) else { return nil }
+        return await NewTabLauncherPlacement.invoke(
+            in: store,
+            userGestureID: invocation.userGestureID
+        ) { scope in
+            await PaletteIntentInvoker.send(
+                invocation,
+                scope: scope,
+                runtime: intentRuntime
+            )
+        }
+    }
+
     /// Width the tab chips actually need, so the row can hand everything past them
     /// to the drag surface instead of letting the scroll view swallow the whole side.
     @State private var tabStripWidth: CGFloat = 0
@@ -206,6 +228,9 @@ struct ShellTitleBar: View {
                             host: host,
                             intentRuntime: intentRuntime,
                             palette: palette,
+                            send: { commandID in
+                                await sendInNewTab(commandID)
+                            },
                             dismiss: { launcherPresented = false }
                         )
                     }
@@ -284,6 +309,8 @@ private struct TabChip: View {
     /// the owner to this chip's tab.
     let openLauncher: () -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
         Button(action: select) {
             HStack(spacing: 6) {
@@ -315,16 +342,18 @@ private struct TabChip: View {
             // one-word title still yields a chip you can read and aim at.
             .frame(minWidth: TenonTheme.tabMinWidth, alignment: .leading)
             .frame(height: 26)
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
-        .background(isActive ? TenonTheme.chromeRaised : Color.clear)
-        .overlay(alignment: .bottom) {
-            Rectangle()
-                .fill(isActive ? TenonTheme.amber : Color.clear)
-                .frame(height: 2)
+        .background {
+            RoundedRectangle(cornerRadius: 6)
+                .fill(
+                    isActive
+                        ? Color.primary.opacity(0.09)
+                        : (isHovering ? Color.primary.opacity(0.04) : .clear)
+                )
         }
-        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .onHover { isHovering = $0 }
         .overlay(alignment: .trailing) {
             if canClose {
                 Button(action: close) {
@@ -348,6 +377,7 @@ private struct TabChip: View {
         .accessibilityIdentifier("tenon.tab")
         .accessibilityLabel(title)
         .accessibilityValue(isActive ? "active" : "inactive")
+        .accessibilityAddTraits(isActive ? .isSelected : [])
     }
 }
 

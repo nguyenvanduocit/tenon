@@ -242,9 +242,10 @@ private extension PluginWebSurfacePool {
             return [surfaceID]
         case let .vstack(_, children),
              let .hstack(_, children),
-             let .box(_, _, _, children),
+             let .box(_, _, _, _, children),
              let .card(children),
              let .grid(_, _, children),
+             let .scroll(_, children),
              let .field(_, children):
             return children.reduce(into: []) { result, child in
                 result.formUnion(webSurfaceIDs(in: child))

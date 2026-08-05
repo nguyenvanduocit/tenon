@@ -1,4 +1,144 @@
+import Foundation
+import TenonCore
 import TenonIntentCore
+
+/// Runs a title-bar `+` choice against a fresh tab while keeping the chosen intent as
+/// the only public operation.
+///
+/// The blank tab supplies an ordinary workspace/pane scope, so plugin-owned openers keep
+/// using their canonical intents and `workspace.content.open.v1` keeps owning content
+/// placement inside that tab. Some launcher commands already create a tab themselves;
+/// their `workspace.tab.create.v1` call claims this reserved tab instead of opening a
+/// second one.
+@MainActor
+enum NewTabLauncherPlacement {
+    private struct ReservationKey: Hashable {
+        let paneID: UUID
+        let userGestureID: UUID
+    }
+
+    private struct Reservation {
+        let workspaceID: UUID
+        let tab: TenonCore.Tab
+        var wasConsumed = false
+    }
+
+    private static var reservations: [ReservationKey: Reservation] = [:]
+
+    static func invoke(
+        in store: WorkspaceStore,
+        userGestureID: UUID = UUID(),
+        send: (InvocationScope) async -> IntentResult?
+    ) async -> IntentResult? {
+        let workspaceID = store.catalog.activeWorkspaceID
+        guard let originalTabID = store.catalog.activeTab?.id,
+              let originalTabs = store.catalog.activeWorkspace?.tabs
+        else { return nil }
+
+        let originalTabIDs = Set(originalTabs.map(\.id))
+        store.newTab(content: .empty)
+        guard let scopedTab = store.catalog.activeTab,
+              !originalTabIDs.contains(scopedTab.id),
+              let paneID = scopedTab.activeSlotID ?? scopedTab.slots.first?.id
+        else { return nil }
+
+        let reservationKey = ReservationKey(
+            paneID: paneID,
+            userGestureID: userGestureID
+        )
+        reservations[reservationKey] = Reservation(
+            workspaceID: workspaceID,
+            tab: scopedTab
+        )
+        defer { reservations[reservationKey] = nil }
+        let result = await send(InvocationScope(
+            workspaceID: workspaceID,
+            paneID: paneID,
+            userGestureID: userGestureID
+        ))
+
+        let scopedTabIsUntouched = reservations[reservationKey]?.wasConsumed == false
+            && tab(
+                scopedTab.id,
+                workspaceID: workspaceID,
+                store: store
+            ) == scopedTab
+        guard case .success = result else {
+            let scopedTabWasSelected = store.catalog.activeWorkspaceID == workspaceID
+                && store.catalog.activeTab?.id == scopedTab.id
+            if scopedTabIsUntouched,
+               closeScopedTab(
+                   scopedTab.id,
+                   workspaceID: workspaceID,
+                   store: store
+               ),
+               scopedTabWasSelected
+            {
+                store.selectTab(originalTabID)
+            }
+            return result
+        }
+        return result
+    }
+
+    /// `workspace.tab.create.v1` consumes the title-bar reservation instead of opening a
+    /// second tab. Because the claim is keyed by the invocation's pane and host-minted
+    /// gesture, an unrelated tab created while the intent awaits can never be mistaken for
+    /// the intent's result.
+    static func consumeReservedTabCreation(
+        scope: InvocationScope,
+        content: SlotContent?,
+        store: WorkspaceStore
+    ) -> Bool {
+        guard let paneID = scope.paneID,
+              let userGestureID = scope.userGestureID
+        else { return false }
+        let reservationKey = ReservationKey(
+            paneID: paneID,
+            userGestureID: userGestureID
+        )
+        guard var reservation = reservations[reservationKey],
+              reservation.wasConsumed == false,
+              scope.workspaceID.map({ $0 == reservation.workspaceID }) ?? true,
+              tab(
+                  reservation.tab.id,
+                  workspaceID: reservation.workspaceID,
+                  store: store
+              ) == reservation.tab
+        else { return false }
+
+        let resolvedContent = content ?? store.newTabContentProvider()
+        store.setSlotContent(paneID, resolvedContent)
+        guard store.catalog.slot(id: paneID)?.content == resolvedContent else { return false }
+        reservation.wasConsumed = true
+        reservations[reservationKey] = reservation
+        return true
+    }
+
+    private static func tab(
+        _ tabID: UUID,
+        workspaceID: UUID,
+        store: WorkspaceStore
+    ) -> TenonCore.Tab? {
+        store.catalog.workspaces
+            .first(where: { $0.id == workspaceID })?
+            .tabs.first(where: { $0.id == tabID })
+    }
+
+    /// Closing by workspace identity preserves whatever workspace/tab the human selected
+    /// while the intent was awaiting its reply.
+    @discardableResult
+    private static func closeScopedTab(
+        _ tabID: UUID,
+        workspaceID: UUID,
+        store: WorkspaceStore
+    ) -> Bool {
+        guard tab(tabID, workspaceID: workspaceID, store: store) != nil
+        else { return false }
+        store.closeTab(tabID, in: workspaceID)
+        return tab(tabID, workspaceID: workspaceID, store: store) == nil
+    }
+}
 
 /// What one launcher choice leaves behind, decided from the dispatch result alone.
 ///

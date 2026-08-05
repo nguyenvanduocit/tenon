@@ -47,6 +47,11 @@ protocol TerminalSurface: AnyObject {
 
     /// How many shell commands have finished (OSC 133) — feeds `pane.wait --for command-finished`.
     var commandFinishedCount: Int { get }
+
+    /// Foreground process-group leader when the backend can identify it. Host-internal
+    /// agent presentation uses this to prove a composer still targets the same TUI before
+    /// writing; it is not projected onto the public terminal intent surface.
+    var foregroundPID: UInt64? { get }
 }
 
 extension TerminalSurface {
@@ -63,6 +68,7 @@ extension TerminalSurface {
     var scrollbackLines: [String] { [] }
     var processExited: Bool { false }
     var commandFinishedCount: Int { 0 }
+    var foregroundPID: UInt64? { nil }
 }
 
 // MARK: - Stub backend

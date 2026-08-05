@@ -33,10 +33,6 @@ final class SurfacePool {
     @ObservationIgnored var onFocusNextSlot: (() -> Void)?
     @ObservationIgnored var onSlotFocusGained: ((UUID) -> Void)?
     @ObservationIgnored var onShellExited: ((UUID) -> Void)?
-    /// Fires on every pin/unpin so the catalog persistence can note the change — a pin
-    /// set right before quitting, with no workspace mutation after it, must still land.
-    @ObservationIgnored var onPinChange: (() -> Void)?
-
     /// T-029: the per-slot attention projection the shell surfaces read (tab chips,
     /// pane headers, sidebar rollups, title-bar count). Rewritten only when a machine
     /// reports events or is born, so the 200 ms poll never thrashes SwiftUI.
@@ -61,10 +57,6 @@ final class SurfacePool {
     /// builds its surface on the next SwiftUI render, so `terminal.run.v1` would otherwise
     /// write into nothing; the text waits here and flushes the moment the surface is built.
     @ObservationIgnored private var pendingText: [UUID: String] = [:]
-    /// "Set Project Directory…" per pane. A pin outranks whatever the shell reports, and
-    /// clearing it ("Use Automatic") re-resolves from the pane's current cwd.
-    @ObservationIgnored private var pinnedRoots: [UUID: URL] = [:]
-
     init(
         backendName: String,
         makeSurface: @escaping (UUID, URL) -> TerminalSurface
@@ -148,31 +140,11 @@ final class SurfacePool {
         updateDirectory(cwd: cwd, for: slotID)
     }
 
-    /// "Set Project Directory…" (`root`) and "Use Automatic" (`nil`). Re-resolves the pane
-    /// against its current cwd and publishes only if the anchor actually moved. Restoring
-    /// a persisted pin lands here too, before the pane has a surface: the pin is recorded
-    /// and applies when the surface's first directory seed reads `pinnedRoots`.
-    func pinProjectRoot(_ root: URL?, for slotID: UUID) {
-        pinnedRoots[slotID] = root
-        onPinChange?()
-        guard let cwd = directories[slotID]?.cwd else { return }
-        updateDirectory(cwd: cwd, for: slotID)
-    }
-
-    /// The pins, verbatim, for catalog persistence (T-027). `SurfacePool` stays the one
-    /// runtime owner; the catalog document is just where they sleep between launches.
-    var pinnedProjectRoots: [UUID: URL] { pinnedRoots }
-
-    /// Whether a pane's root is a human's pin rather than the resolved one.
-    func hasPinnedProjectRoot(for slotID: UUID) -> Bool {
-        pinnedRoots[slotID] != nil
-    }
-
     /// The single place a pane's directories change. Records the new cwd unconditionally —
     /// the status bar shows it, and it churns on every `cd` — but calls back only when the
     /// *project root* moved, which is what Files and Git re-root on.
     private func updateDirectory(cwd: URL, for slotID: UUID) {
-        let next = ProjectRoot.PaneDirectory(cwd: cwd, pinned: pinnedRoots[slotID])
+        let next = ProjectRoot.PaneDirectory(cwd: cwd)
         let previous = directories[slotID]
         guard previous != next else { return }
         directories[slotID] = next
@@ -294,6 +266,41 @@ final class SurfacePool {
         surfaces[slotID]?.commandFinishedCount ?? 0
     }
 
+    /// A coherent identity for the host-owned Agent Lens. Returning nil for a shell,
+    /// a closed process, or a surface that has not materialised prevents discovery from
+    /// inventing an agent session from a title or stale transcript alone.
+    func agentTerminalIdentity(for slotID: UUID) -> AgentTerminalIdentity? {
+        guard let surface = surfaces[slotID],
+              !surface.processExited,
+              let foregroundPID = surface.foregroundPID,
+              foregroundPID > 0,
+              let cwd = directories[slotID]?.cwd
+        else { return nil }
+        return AgentTerminalIdentity(
+            slotID: slotID,
+            foregroundPID: foregroundPID,
+            cwd: cwd,
+            title: titles[slotID] ?? ""
+        )
+    }
+
+    /// DIRECT same-owner input with a process-identity guard. A mode switch, shell exit,
+    /// or foreground-process change between composing and sending refuses the write rather
+    /// than pasting text into an unrelated shell command.
+    @discardableResult
+    func sendAgentInputFrame(
+        _ text: String,
+        to slotID: UUID,
+        expectedForegroundPID: UInt64
+    ) -> Bool {
+        guard let surface = surfaces[slotID],
+              !surface.processExited,
+              surface.foregroundPID == expectedForegroundPID
+        else { return false }
+        surface.sendText(text)
+        return true
+    }
+
     /// The terminal grid size of a slot, when its backend is a live ghostty surface.
     func terminalSize(for slotID: UUID) -> (cols: Int, rows: Int)? {
         guard let size = (surfaces[slotID] as? GhosttySurface)?.surfaceSize else { return nil }
@@ -324,7 +331,6 @@ final class SurfacePool {
             surfaces.removeValue(forKey: key)
             titles.removeValue(forKey: key)
             directories.removeValue(forKey: key)
-            pinnedRoots.removeValue(forKey: key)
         }
         // T-029: attention state is bounded by the slot's lifetime, exactly like the
         // surface itself (invariant 10).

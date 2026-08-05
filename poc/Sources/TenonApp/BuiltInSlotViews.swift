@@ -9,6 +9,7 @@ struct BuiltInSlotContentView: View {
     let workspacePath: URL
     var host: PluginHost
     var pool: SurfacePool
+    var agentLens: AgentLensPool
     var webPool: PluginWebSurfacePool
     /// Per-slot editor state (scroll/selection/unsaved buffer), so a file pane
     /// survives its view being destroyed on a pane switch (T-016).
@@ -23,10 +24,13 @@ struct BuiltInSlotContentView: View {
     var body: some View {
         switch slot.content {
         case .terminal:
-            pool.surface(
-                for: slot.id,
-                workspacePath: workspacePath
-            ).makeView()
+            AgentLensSlotView(
+                terminal: pool.surface(
+                    for: slot.id,
+                    workspacePath: workspacePath
+                ).makeView(),
+                model: agentLens.model(for: slot.id, terminalPool: pool)
+            )
 
         case .file(let path):
             // One file-pane content kind, three renderers. The choice is a pure rule so it
@@ -499,8 +503,9 @@ private struct PluginSlotView: View {
     private static func children(of node: PluginViewNode) -> [PluginViewNode] {
         switch node {
         case let .vstack(_, c), let .hstack(_, c): return c
-        case let .box(_, _, _, c): return c
+        case let .box(_, _, _, _, c): return c
         case let .card(c): return c
+        case let .scroll(_, c): return c
         case let .grid(_, _, c): return c
         case let .field(_, c): return c
         default: return []
@@ -615,7 +620,7 @@ private struct BrowserBarView: View {
     }
 }
 
-private struct PluginNodeView: View {
+struct PluginNodeView: View {
     let node: PluginViewNode
     /// (action id, submitted text). Text is nil for a plain button, the typed value
     /// for a `textfield` submit — one route the JS `onSelect(id, value?)` handles.
@@ -630,12 +635,8 @@ private struct PluginNodeView: View {
             VStack(alignment: .leading, spacing: spacing) { childViews(children) }
         case let .hstack(spacing, children):
             HStack(spacing: spacing) { childViews(children) }
-        case let .box(padding, background, cornerRadius, children):
-            VStack(alignment: .leading, spacing: 6) { childViews(children) }
-                .padding(padding)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(background ? TenonTheme.chromeRaised : Color.clear)
-                .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+        case let .box(padding, background, cornerRadius, width, children):
+            boxView(padding, background, cornerRadius, width, children)
         case let .card(children):
             VStack(alignment: .leading, spacing: 6) { childViews(children) }
                 .padding(12)
@@ -680,6 +681,8 @@ private struct PluginNodeView: View {
             Spacer(minLength: 0)
         case .divider:
             Divider().overlay(TenonTheme.line)
+        case let .scroll(axis, children):
+            scrollView(axis, children)
         case let .grid(columns, spacing, children):
             LazyVGrid(
                 columns: Array(repeating: GridItem(.flexible(), spacing: spacing, alignment: .topLeading), count: columns),
@@ -738,10 +741,52 @@ private struct PluginNodeView: View {
         }
     }
 
+    /// A declared width is exact — `width:` alone, not a max — so the box holds it whether
+    /// the pane is wide or narrow, and whether it holds one child or twelve. Without one,
+    /// fill the offered width as every box did before.
+    private func boxView(
+        _ padding: Double,
+        _ background: Bool,
+        _ cornerRadius: Double,
+        _ width: Double?,
+        _ children: [PluginViewNode]
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 6) { childViews(children) }
+            .padding(padding)
+            .frame(width: width.map { CGFloat($0) }, alignment: .leading)
+            .frame(maxWidth: width == nil ? .infinity : nil, alignment: .leading)
+            .background(background ? TenonTheme.chromeRaised : Color.clear)
+            .clipShape(RoundedRectangle(cornerRadius: cornerRadius))
+    }
+
+    /// A horizontal scroller must not stretch its content to the viewport, or fixed-width
+    /// children would be squeezed back to fit and nothing would ever overflow — which is
+    /// the whole point of asking to scroll.
+    private func scrollView(
+        _ axis: ScrollAxis,
+        _ children: [PluginViewNode]
+    ) -> some View {
+        ScrollView(Self.axisSet(axis)) {
+            VStack(alignment: .leading, spacing: 6) { childViews(children) }
+                .frame(
+                    maxWidth: axis == .vertical ? .infinity : nil,
+                    alignment: .topLeading
+                )
+        }
+    }
+
     @ViewBuilder
     private func childViews(_ children: [PluginViewNode]) -> some View {
         ForEach(Array(children.enumerated()), id: \.offset) { _, child in
             PluginNodeView(node: child, onAction: onAction, webSurface: webSurface)
+        }
+    }
+
+    private static func axisSet(_ axis: ScrollAxis) -> Axis.Set {
+        switch axis {
+        case .horizontal: [.horizontal]
+        case .vertical: [.vertical]
+        case .both: [.horizontal, .vertical]
         }
     }
 

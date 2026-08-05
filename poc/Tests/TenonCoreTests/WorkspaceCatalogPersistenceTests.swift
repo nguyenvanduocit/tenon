@@ -2,8 +2,8 @@ import XCTest
 @testable import TenonCore
 
 /// T-027: the workspace catalog survives a relaunch. The persisted document, the fail-soft
-/// restore rules, the T-030 project-root pin round-trip, launch precedence, and the
-/// coalescing durable store are all pure rules, asserted here without a window.
+/// restore rules, launch precedence, and the coalescing durable store are all pure rules,
+/// asserted here without a window.
 final class WorkspaceCatalogPersistenceTests: XCTestCase {
     // MARK: - Fixtures
 
@@ -15,10 +15,9 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
     private let anyPluginView: (String, String) -> Bool = { _, _ in true }
 
     /// Two workspaces, three tabs, one split — the shape the task's launch smoke uses —
-    /// with every persistable content kind and one T-030 pin.
+    /// with every persistable content kind.
     private func makeRichCatalog() -> (
         catalog: WorkspaceCatalog,
-        pins: [UUID: URL],
         fileSlotID: UUID
     ) {
         let terminalSlot = WorkspaceSlot(
@@ -73,10 +72,7 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             workspaces: [alpha, beta],
             activeWorkspaceID: beta.id
         )
-        let pins = [
-            fileSlot.id: URL(fileURLWithPath: "/tmp/tenon-catalog-pin", isDirectory: true),
-        ]
-        return (catalog, pins, fileSlot.id)
+        return (catalog, fileSlot.id)
     }
 
     private func makeTempDir() throws -> URL {
@@ -142,12 +138,9 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
     // MARK: - Round trip
 
     func testCatalogTreeRoundTripsThroughTheDocumentWithAnExplicitSchemaVersion() throws {
-        let (catalog, pins, _) = makeRichCatalog()
+        let (catalog, _) = makeRichCatalog()
 
-        let document = WorkspaceCatalogSnapshot.document(
-            capturing: catalog,
-            pins: pins
-        )
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
         let encoded = try JSONEncoder().encode(document)
 
         // The explicit schema version is on the wire, not just in the type.
@@ -168,7 +161,6 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         ))
 
         XCTAssertEqual(restored.catalog, catalog)
-        XCTAssertEqual(restored.pins, pins)
     }
 
     func testAnInlineDiffPaneIsCapturedAsEmptyBecauseItsTextsAreLivePluginState() throws {
@@ -192,7 +184,7 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             activeWorkspaceID: workspace.id
         )
 
-        let document = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: [:])
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
         let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
             document,
             isDirectory: anyDirectory,
@@ -209,8 +201,8 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
     // MARK: - Fail-soft restore, case by case
 
     func testAWorkspaceWhoseFolderIsGoneIsDroppedWithoutLosingTheOthers() throws {
-        let (catalog, pins, fileSlotID) = makeRichCatalog()
-        let document = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
         let betaFolder = betaPath.path
 
         // Beta — the saved *active* workspace — is gone; Alpha survives untouched.
@@ -227,16 +219,11 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             restored.catalog.workspaces[0].id,
             "the active selection falls back to a surviving workspace"
         )
-        XCTAssertEqual(
-            restored.pins.keys.sorted(by: { $0.uuidString < $1.uuidString }),
-            [fileSlotID],
-            "pins of surviving panes stay; nothing lingers for dropped ones"
-        )
     }
 
     func testRestoreReturnsNothingWhenEveryWorkspaceFolderIsGone() {
-        let (catalog, pins, _) = makeRichCatalog()
-        let document = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
 
         XCTAssertNil(WorkspaceCatalogSnapshot.restore(
             document,
@@ -247,8 +234,8 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
     }
 
     func testADeletedFileDegradesThatPaneToEmptyAndKeepsTheCatalog() throws {
-        let (catalog, pins, fileSlotID) = makeRichCatalog()
-        let document = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: pins)
+        let (catalog, fileSlotID) = makeRichCatalog()
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
 
         let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
             document,
@@ -270,8 +257,8 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
     }
 
     func testAnUnknownPluginViewDegradesThatPaneToEmpty() throws {
-        let (catalog, pins, _) = makeRichCatalog()
-        let document = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
 
         let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
             document,
@@ -362,8 +349,7 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
 
     func testAStructurallyInvalidTabIsDroppedWithoutDiscardingTheCatalog() throws {
         var document = WorkspaceCatalogSnapshot.document(
-            capturing: makeRichCatalog().catalog,
-            pins: [:]
+            capturing: makeRichCatalog().catalog
         )
         // Corrupt the first tab of Alpha: two slots claiming the same full-grid rect is
         // not a valid spatial layout, and must never reach a domain precondition.
@@ -385,53 +371,11 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         XCTAssertEqual(restored.catalog.workspaces.count, 2)
     }
 
-    // MARK: - T-030 handoff: the project-root pin
-
-    func testTheProjectRootPinRoundTripsVerbatimEvenWhenItsTargetIsGone() throws {
-        let (catalog, _, fileSlotID) = makeRichCatalog()
-        let vanishedWorktree = URL(
-            fileURLWithPath: "/tmp/tenon-worktree-that-was-deleted",
-            isDirectory: true
-        )
-
-        let document = WorkspaceCatalogSnapshot.document(
-            capturing: catalog,
-            pins: [fileSlotID: vanishedWorktree]
-        )
-        // Every existence probe fails except workspace folders: the pin's target is gone
-        // AND the pinned pane's file is gone. The pin must still come back verbatim —
-        // it is a human override the user can see and clear, so the pane's content
-        // degrades but its pin does not.
-        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
-            document,
-            isDirectory: anyDirectory,
-            isFileReadable: { _ in false },
-            isKnownPluginView: anyPluginView
-        ))
-
-        XCTAssertEqual(restored.pins[fileSlotID], vanishedWorktree)
-        XCTAssertEqual(restored.catalog.slot(id: fileSlotID)?.content, .empty)
-    }
-
-    func testAPinForAPaneOutsideTheCatalogIsNotCaptured() {
-        let (catalog, _, _) = makeRichCatalog()
-        let document = WorkspaceCatalogSnapshot.document(
-            capturing: catalog,
-            pins: [UUID(): URL(fileURLWithPath: "/tmp/tenon-stale-pin", isDirectory: true)]
-        )
-        let allPins = document.workspaces.flatMap { workspace in
-            workspace.tabs.flatMap { tab in
-                tab.slots.compactMap(\.projectRootPin)
-            }
-        }
-        XCTAssertTrue(allPins.isEmpty)
-    }
-
     // MARK: - Launch precedence
 
     func testABareLaunchRestoresTheSavedCatalogAsSaved() {
-        let (catalog, pins, _) = makeRichCatalog()
-        let restored = RestoredWorkspaceCatalog(catalog: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let restored = RestoredWorkspaceCatalog(catalog: catalog)
 
         let launched = WorkspaceCatalogSnapshot.launchCatalog(
             restored: restored,
@@ -441,12 +385,11 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         )
 
         XCTAssertEqual(launched.catalog, catalog)
-        XCTAssertEqual(launched.pins, pins)
     }
 
     func testAnExplicitLaunchDirectoryMatchingAnOpenWorkspaceSelectsItInsteadOfDuplicatingIt() {
-        let (catalog, pins, _) = makeRichCatalog()
-        let restored = RestoredWorkspaceCatalog(catalog: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let restored = RestoredWorkspaceCatalog(catalog: catalog)
         let alphaID = catalog.workspaces[0].id
 
         let launched = WorkspaceCatalogSnapshot.launchCatalog(
@@ -461,8 +404,8 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
     }
 
     func testAnExplicitLaunchDirectoryNotInTheCatalogAddsAWorkspaceInsteadOfReplacingTheTree() {
-        let (catalog, pins, _) = makeRichCatalog()
-        let restored = RestoredWorkspaceCatalog(catalog: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let restored = RestoredWorkspaceCatalog(catalog: catalog)
         let newDirectory = URL(fileURLWithPath: "/tmp/tenon-catalog-c", isDirectory: true)
 
         let launched = WorkspaceCatalogSnapshot.launchCatalog(
@@ -481,7 +424,6 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             [.docs],
             "the added workspace opens with the configured launch content"
         )
-        XCTAssertEqual(launched.pins, pins)
     }
 
     func testWithNothingRestoredTheLaunchDirectorySeedsAFreshCatalog() {
@@ -496,7 +438,6 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
 
         XCTAssertEqual(launched.catalog.workspaces.count, 1)
         XCTAssertEqual(launched.catalog.workspaces[0].path, launchDirectory)
-        XCTAssertTrue(launched.pins.isEmpty)
 
         let bare = WorkspaceCatalogSnapshot.launchCatalog(
             restored: nil,
@@ -519,14 +460,17 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             fileURL: fileURL,
             debounce: .milliseconds(100)
         )
-        let (catalog, pins, _) = makeRichCatalog()
+        let (catalog, fileSlotID) = makeRichCatalog()
 
         for _ in 0..<9 {
             await store.noteChange(
-                WorkspaceCatalogSnapshot.document(capturing: catalog, pins: [:])
+                WorkspaceCatalogSnapshot.document(capturing: catalog)
             )
         }
-        let last = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: pins)
+        let last = WorkspaceCatalogSnapshot.document(
+            capturing: catalog,
+            titles: [fileSlotID: "latest"]
+        )
         await store.noteChange(last)
 
         let wrote = await waitUntil { await store.writeCount == 1 }
@@ -545,8 +489,8 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         let fileURL = dir.appendingPathComponent(".workspace-catalog.json")
         // A debounce far longer than the test: only flush can explain the write.
         let store = WorkspaceCatalogStore(fileURL: fileURL, debounce: .seconds(60))
-        let (catalog, pins, _) = makeRichCatalog()
-        let document = WorkspaceCatalogSnapshot.document(capturing: catalog, pins: pins)
+        let (catalog, _) = makeRichCatalog()
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
 
         await store.noteChange(document)
         await store.flush()
@@ -560,10 +504,10 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         let dir = try makeTempDir()
         let fileURL = dir.appendingPathComponent(".workspace-catalog.json")
         let store = WorkspaceCatalogStore(fileURL: fileURL, debounce: .seconds(60))
-        let (catalog, _, _) = makeRichCatalog()
+        let (catalog, _) = makeRichCatalog()
 
         await store.noteChange(
-            WorkspaceCatalogSnapshot.document(capturing: catalog, pins: [:])
+            WorkspaceCatalogSnapshot.document(capturing: catalog)
         )
         await store.flush()
 

@@ -4,12 +4,12 @@ import XCTest
 @testable import TenonApp
 
 /// T-027 end to end through the real composition root: build two workspaces / three tabs /
-/// one split, pin a pane, quit, relaunch, same tree. This is the assertable half of the
-/// launch smoke — pixels stay human-verified, but the restored catalog and the re-applied
-/// T-030 pin are proven headlessly against the same init and stop paths the app runs.
+/// one split, quit, relaunch, same tree. This is the assertable half of the launch smoke —
+/// pixels stay human-verified, but the restored catalog is proven headlessly against the
+/// same init and stop paths the app runs.
 @MainActor
 final class WorkspaceCatalogRelaunchTests: XCTestCase {
-    func testQuitAndRelaunchRestoresTheSameTreeAndReAppliesThePin() async throws {
+    func testQuitAndRelaunchRestoresTheSameTree() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "tenon-catalog-relaunch-\(UUID().uuidString)",
@@ -52,8 +52,6 @@ final class WorkspaceCatalogRelaunchTests: XCTestCase {
             path: betaDirectory,
             content: .terminal
         )
-        let pinnedSlotID = try XCTUnwrap(first.store.catalog.activeSlotID)
-        first.terminalSurfaces.pinProjectRoot(betaDirectory, for: pinnedSlotID)
         // End back on the first workspace: the relaunch's launch directory (the test
         // runner's cwd) folder-matches it, so launch precedence selects it again and
         // the whole catalog — selection included — must come back identical.
@@ -69,10 +67,5 @@ final class WorkspaceCatalogRelaunchTests: XCTestCase {
         addTeardownBlock { await second.stop() }
 
         XCTAssertEqual(second.store.catalog, treeAtQuit)
-        XCTAssertEqual(
-            second.terminalSurfaces.pinnedProjectRoots[pinnedSlotID],
-            betaDirectory,
-            "the T-030 project-root pin survives the relaunch verbatim"
-        )
     }
 }

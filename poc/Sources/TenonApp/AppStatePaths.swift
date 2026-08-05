@@ -23,6 +23,23 @@ struct AppStatePaths: Sendable, Equatable {
     /// directory in for the bundle says so with `TENON_TRUST_PLUGIN_INVENTORY=1`.
     let trustsPluginInventory: Bool
 
+    /// Whether the resolved primary inventory may be written to (T-062).
+    ///
+    /// False for the app bundle's own plugins folder, and that is not a preference:
+    /// writing there breaks the bundle's code signature, and the next install replaces
+    /// the bundle and deletes whatever was added. A developer's `TENON_PLUGINS_DIR` is
+    /// an ordinary directory and stays writable.
+    let pluginInventoryIsWritable: Bool
+
+    /// Where a plugin the user (or an agent working with them) authors is kept —
+    /// outside any bundle, surviving reinstalls. Always writable, never trusted:
+    /// standing consent is earned by installing Tenon, not by a file's location.
+    var userPluginInventoryRoot: URL {
+        stateRoot
+            .deletingLastPathComponent()
+            .appendingPathComponent("user-plugins", isDirectory: true)
+    }
+
     var pluginStateRoot: URL {
         stateRoot.appendingPathComponent("plugins", isDirectory: true)
     }
@@ -55,6 +72,7 @@ struct AppStatePaths: Sendable, Equatable {
     ) throws -> AppStatePaths {
         let inventoryRoot: URL
         let trustsInventory: Bool
+        let inventoryIsWritable: Bool
         if let override = environment["TENON_PLUGINS_DIR"]?
             .trimmingCharacters(in: .whitespacesAndNewlines),
            !override.isEmpty
@@ -68,9 +86,13 @@ struct AppStatePaths: Sendable, Equatable {
             // untrusted, so a flag set by accident cannot grant standing consent.
             trustsInventory =
                 environment["TENON_TRUST_PLUGIN_INVENTORY"] == "1"
+            inventoryIsWritable = true
         } else if let bundledPluginsRoot {
             inventoryRoot = bundledPluginsRoot.standardizedFileURL
             trustsInventory = true
+            // The bundle is sealed: a write here invalidates the code signature and
+            // the next install deletes it. Authoring goes to the user inventory.
+            inventoryIsWritable = false
         } else {
             throw AppStatePathError.pluginInventoryMissing(
                 "<bundle>/plugins"
@@ -94,12 +116,14 @@ struct AppStatePaths: Sendable, Equatable {
         let paths = AppStatePaths(
             pluginInventoryRoot: inventoryRoot,
             stateRoot: stateRoot,
-            trustsPluginInventory: trustsInventory
+            trustsPluginInventory: trustsInventory,
+            pluginInventoryIsWritable: inventoryIsWritable
         )
         for directory in [
             paths.pluginStateRoot,
             paths.workspaceStateRoot,
             paths.runtimeStateRoot,
+            paths.userPluginInventoryRoot,
         ] {
             try fileManager.createDirectory(
                 at: directory,

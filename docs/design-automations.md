@@ -283,14 +283,55 @@ Two rules worth knowing:
   left in the plugins folder is skipped; a file that *does* claim to be a plugin and gets the
   header wrong fails loudly, with a diagnostic naming the file and what to fix.
 
+## Where an authored plugin lives (T-062)
+
+Tenon reads plugins from **two inventories, ordered**:
+
+1. the app bundle's own `Contents/Resources/plugins` — sealed and replaceable;
+2. `~/Library/Application Support/Tenon/user-plugins` — writable and durable.
+
+The split is not organisational, it is forced by what the two directories are. The
+bundle is code-signed: a file added to it invalidates the signature, and installing a
+new build replaces the bundle and deletes the addition. So **authoring is always sent
+to the user inventory** (`PluginHost.writableInventoryRoot`), and the bundle is
+reported as not writable rather than merely discouraged.
+
+Trust follows the inventory, not the file's location on its own: a bundled plugin was
+accepted when the user installed Tenon and keeps its standing consent; a plugin the
+user or an agent wrote is untrusted and is asked, exactly like any third-party plugin
+(T-033, T-050). That is what stops "put the file in the right folder" from being a way
+to grant authority. The consequence is deliberate: an authored automation that uses a
+`.policy` intent prompts on its first firing, and an unattended firing with nobody at
+the window expires on T-050's bound instead of running.
+
+Both inventories are watched, so a user plugin hot-reloads exactly like a bundled one,
+and the earlier inventory wins any identity clash — a user plugin cannot displace a
+bundled one by reusing its id.
+
+**A clash costs the plugin that arrived late, never the host.** Reusing a bundled id,
+reusing a bundled *directory name*, overlapping a bundled namespace, claiming the
+reserved `dev.tenon.core` prefix, naming a contract that does not exist — each of these
+refuses that one plugin, records a diagnostic against its directory, and leaves every
+other plugin loading normally. Only a clash *inside the app's own inventory* still stops
+the load, because that one ships with the build and a clash there is a build error.
+
+The asymmetry is the whole point. Everything in the user inventory is writable by a
+person or an agent who is mid-experiment, and Tenon's ability to start must not depend
+on them getting it right. Before this rule an identity clash threw out of `loadAll`, so
+Tenon started with *no* plugins; a duplicate directory name did worse and trapped the
+process, since the reload index is keyed by that name and was built assuming it was
+unique.
+
 ## Creating one with an agent (T-061)
 
 Settings ▸ Automation ▸ **Create with AI…** opens a fresh terminal tab whose shell
-starts in the plugins root and types one command: `claude` with a host-authored guide
-as a single POSIX-quoted argument (`AutomationAuthoring`, pure and pinned headless).
+starts in the writable user inventory and types one command: `claude` with a
+host-authored guide as a single POSIX-quoted argument (`AutomationAuthoring`, pure and
+pinned headless).
 The guide teaches exactly what this document specifies — the `/* tenon-manifest`
-opener, cadence syntax and bounds, the `automation.fired` payload, the real
-plugins-root path, `tenon-cli intent list`/`describe` for discovery — and ends with
+opener, cadence syntax and bounds, the `automation.fired` payload, the real writable
+path plus why `Tenon.app` is never it, `tenon-cli intent list`/`describe` for
+discovery — and ends with
 the T-060 verification loop: save, watch the schedule appear, press Run Now, read the
 run's outcome, expect the consent prompt on the first privileged call.
 

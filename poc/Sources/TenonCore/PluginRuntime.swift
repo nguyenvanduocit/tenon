@@ -33,6 +33,7 @@ public actor PluginRuntime {
         let body: PluginViewNode?
         let subtitle: String?
         let actions: [ViewAction]
+        let modal: PluginViewModal?
     }
 
     private struct PendingProviderCall {
@@ -1602,7 +1603,8 @@ private extension PluginRuntime {
             items: parsed.items,
             body: parsed.body,
             subtitle: parsed.subtitle,
-            actions: parsed.actions
+            actions: parsed.actions,
+            modal: parsed.modal
         )
         markStateChanged()
     }
@@ -1776,13 +1778,14 @@ private extension PluginRuntime {
                             subtitle: body.subtitle,
                             actions: body.actions,
                             items: body.items,
-                            body: body.body
+                            body: body.body,
+                            modal: body.modal
                         )
                     )
                 }
             } else {
                 let body = viewBodies[viewID]?[Self.singletonViewKey]
-                    ?? ViewBody(items: [], body: nil, subtitle: nil, actions: [])
+                    ?? ViewBody(items: [], body: nil, subtitle: nil, actions: [], modal: nil)
                 result.append(
                     PluginViewInfo(
                         viewID: viewID,
@@ -1792,7 +1795,8 @@ private extension PluginRuntime {
                         subtitle: body.subtitle,
                         actions: body.actions,
                         items: body.items,
-                        body: body.body
+                        body: body.body,
+                        modal: body.modal
                     )
                 )
             }

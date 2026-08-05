@@ -188,6 +188,162 @@ final class AppStatePathsTests: XCTestCase {
         )
     }
 
+    // MARK: - T-062: authoring never writes into the app bundle
+
+    /// The incident this pins: an agent was handed the bundle's own plugins folder,
+    /// wrote a plugin there, and the write broke the app's code signature.
+    func testBundledInventoryIsSealedAndAuthoringGoesToTheUserInventory() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bundledRoot = root
+            .appendingPathComponent("Tenon.app", isDirectory: true)
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("plugins", isDirectory: true)
+        let applicationSupport = root.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: bundledRoot,
+            withIntermediateDirectories: true
+        )
+
+        let paths = try AppStatePaths.resolve(
+            environment: [:],
+            applicationSupportDirectory: applicationSupport,
+            bundledPluginsRoot: bundledRoot
+        )
+
+        XCTAssertFalse(
+            paths.pluginInventoryIsWritable,
+            "the app bundle is sealed; a write there invalidates its signature"
+        )
+        XCTAssertFalse(
+            paths.userPluginInventoryRoot.path.contains(".app/"),
+            "the authoring inventory must live outside any app bundle"
+        )
+        XCTAssertTrue(
+            FileManager.default.fileExists(
+                atPath: paths.userPluginInventoryRoot.path
+            ),
+            "the user inventory is created up front so authoring never has to invent it"
+        )
+    }
+
+    func testDeveloperOverrideInventoryStaysWritable() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inventoryRoot = root.appendingPathComponent(
+            "source-plugins",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: inventoryRoot,
+            withIntermediateDirectories: true
+        )
+
+        let paths = try AppStatePaths.resolve(
+            environment: ["TENON_PLUGINS_DIR": inventoryRoot.path],
+            applicationSupportDirectory: root.appendingPathComponent(
+                "Application Support",
+                isDirectory: true
+            ),
+            bundledPluginsRoot: nil
+        )
+
+        XCTAssertTrue(
+            paths.pluginInventoryIsWritable,
+            "a developer root is an ordinary directory, so authoring may land there"
+        )
+    }
+
+    /// End to end through the real composition: whatever the authoring flow is handed
+    /// is writable and outside the bundle.
+    func testCompositionOffersAWritableInventoryOutsideTheBundle() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bundledRoot = root
+            .appendingPathComponent("Tenon.app", isDirectory: true)
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("plugins", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: bundledRoot,
+            withIntermediateDirectories: true
+        )
+        let paths = try AppStatePaths.resolve(
+            environment: [:],
+            applicationSupportDirectory: root.appendingPathComponent(
+                "Application Support",
+                isDirectory: true
+            ),
+            bundledPluginsRoot: bundledRoot
+        )
+
+        let composition = try AppComposition(paths: paths)
+        let writable = composition.host.writableInventoryRoot
+
+        XCTAssertEqual(writable, paths.userPluginInventoryRoot)
+        XCTAssertNotEqual(
+            writable,
+            bundledRoot,
+            "the sealed bundle must never be offered as a place to write a plugin"
+        )
+    }
+
+    /// The incident in one assertion. "Create with AI…" opens a terminal whose shell
+    /// starts wherever this line says, and the agent writes its plugin into that
+    /// directory — so this is the line that put `git-auto-update.js` inside
+    /// `Tenon.app` and broke its signature. Everything else in this task is the
+    /// machinery that lets this line have a correct answer to give.
+    @MainActor
+    func testCreateWithAIStartsTheAgentOutsideTheAppBundle() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let bundledRoot = root
+            .appendingPathComponent("Tenon.app", isDirectory: true)
+            .appendingPathComponent("Contents", isDirectory: true)
+            .appendingPathComponent("Resources", isDirectory: true)
+            .appendingPathComponent("plugins", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: bundledRoot,
+            withIntermediateDirectories: true
+        )
+        let paths = try AppStatePaths.resolve(
+            environment: [:],
+            applicationSupportDirectory: root.appendingPathComponent(
+                "Application Support",
+                isDirectory: true
+            ),
+            bundledPluginsRoot: bundledRoot
+        )
+        let composition = try AppComposition(paths: paths)
+
+        composition.openAutomationAuthoringPane()
+
+        let paneID = try XCTUnwrap(
+            composition.store.catalog.activeSlotID,
+            "the flow opens a terminal pane to author in"
+        )
+        let startsIn = try XCTUnwrap(
+            composition.terminalSurfaces.paneDirectory(for: paneID)?.cwd
+        )
+        XCTAssertEqual(
+            startsIn.standardizedFileURL,
+            paths.userPluginInventoryRoot.standardizedFileURL,
+            "the agent must be started in the writable inventory"
+        )
+        XCTAssertFalse(
+            startsIn.path.contains(".app/"),
+            "no path inside an app bundle may ever be handed to the authoring agent"
+        )
+    }
+
     private func standingConsentContracts(
         environment: [String: String],
         pluginID: String

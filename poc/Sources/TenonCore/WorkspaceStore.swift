@@ -82,6 +82,10 @@ public final class WorkspaceStore {
         apply { $0.closeTab(id) }
     }
 
+    public func closeTab(_ id: UUID, in workspaceID: UUID) {
+        apply { $0.closeTab(id, in: workspaceID) }
+    }
+
     public func addSlot(content: SlotContent = .terminal) {
         if apply({ $0.addSlot(content: content) }) { recent?.record(content) }
     }
@@ -135,12 +139,18 @@ public final class WorkspaceStore {
         if apply({ $0.setSlotContent(id, content) }) { recent?.record(content) }
     }
 
-    /// Opens `content` in the active tab, reusing the pane that already shows this kind of
-    /// surface — so clicking file after file in the tree changes one editor instead of
-    /// spawning tabs — and otherwise splitting the active pane to make one. Placement is
-    /// host policy: this never opens a tab. `SlotContent.yieldsPane(to:)` decides which
-    /// panes qualify.
+    /// Opens `content` in the active tab, adding its first pane when the tab is empty,
+    /// reusing the pane that already shows this kind of surface, and otherwise splitting
+    /// the active pane to make one. Placement is host policy: this never opens a tab.
+    /// `SlotContent.yieldsPane(to:)` decides which existing panes qualify.
     public func openContent(_ content: SlotContent) {
+        // An empty tab has no active pane for SpatialLayout to split. Its first pane is
+        // still the same placement operation; keeping the rule here makes DIRECT callers
+        // and the workspace.content.open.v1 adapter behave identically.
+        if catalog.activeTab?.slots.isEmpty == true {
+            addSlot(content: content)
+            return
+        }
         if let existing = reusableSlotID(for: content) {
             setSlotContent(existing, content)
             focusSlot(existing)
@@ -192,6 +202,18 @@ public final class WorkspaceStore {
 
     public func fillSlotWidth(_ id: UUID) {
         apply { $0.fillSlotWidth(id) }
+    }
+
+    public func resizeSlot(
+        _ id: UUID,
+        direction: ResizeDirection,
+        fraction: SpatialExtentFraction
+    ) {
+        apply { $0.resizeSlot(id, direction: direction, fraction: fraction) }
+    }
+
+    public func cycleSlotExtent(_ id: UUID, direction: ResizeDirection) {
+        apply { $0.cycleSlotExtent(id, direction: direction) }
     }
 
     @discardableResult

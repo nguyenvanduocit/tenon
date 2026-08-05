@@ -448,12 +448,19 @@ public struct WorkspaceCatalog: Equatable, Sendable {
 
     @discardableResult
     public mutating func closeTab(_ id: UUID) -> [WorkspaceEvent] {
-        guard let workspaceIndex = activeWorkspaceIndex,
+        closeTab(id, in: activeWorkspaceID)
+    }
+
+    /// Closes a tab in a named workspace without selecting that workspace. This is used
+    /// by host-owned placement cleanup that may finish after the human navigates away.
+    @discardableResult
+    public mutating func closeTab(_ id: UUID, in workspaceID: UUID) -> [WorkspaceEvent] {
+        guard let workspaceIndex = workspaces.firstIndex(where: { $0.id == workspaceID }),
               workspaces[workspaceIndex].tabs.count > 1,
               let tabIndex = workspaces[workspaceIndex].tabs.firstIndex(where: { $0.id == id })
         else { return [] }
 
-        let workspaceID = workspaces[workspaceIndex].id
+        let workspaceIsActive = activeWorkspaceID == workspaceID
         let removed = workspaces[workspaceIndex].tabs.remove(at: tabIndex)
         var events = removed.slots.map {
             WorkspaceEvent.slotClosed(slot: $0.id, tab: removed.id, workspace: workspaceID)
@@ -464,13 +471,15 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             let nextIndex = max(0, tabIndex - 1)
             let next = workspaces[workspaceIndex].tabs[nextIndex]
             workspaces[workspaceIndex].activeTabID = next.id
-            events.append(.tabSelected(tab: next.id, workspace: workspaceID))
-            if let slotID = next.activeSlotID {
-                events.append(.slotFocused(
-                    slot: slotID,
-                    tab: next.id,
-                    workspace: workspaceID
-                ))
+            if workspaceIsActive {
+                events.append(.tabSelected(tab: next.id, workspace: workspaceID))
+                if let slotID = next.activeSlotID {
+                    events.append(.slotFocused(
+                        slot: slotID,
+                        tab: next.id,
+                        workspace: workspaceID
+                    ))
+                }
             }
         }
 
@@ -972,6 +981,45 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         let tab = workspaces[location.workspace].tabs[location.tab]
         guard tab.slots.contains(where: { $0.id == id }) else { return [] }
         return applyResize(SpatialLayout.fillWidth(tab.spatialSlots, slotID: id))
+    }
+
+    /// Sends one edge of a pane to a fraction of the canvas — what the border's
+    /// contextual menu asks for. Same shape as `fillSlotWidth`: the caller names a pane
+    /// and an edge, never a geometry, so the sizing rule stays in `SpatialLayout` and
+    /// the commit takes the same validated `applyResize` path as a drag.
+    @discardableResult
+    public mutating func resizeSlot(
+        _ id: UUID,
+        direction: ResizeDirection,
+        fraction: SpatialExtentFraction
+    ) -> [WorkspaceEvent] {
+        guard let location = activeTabLocation else { return [] }
+        let tab = workspaces[location.workspace].tabs[location.tab]
+        guard tab.slots.contains(where: { $0.id == id }) else { return [] }
+        return applyResize(SpatialLayout.resize(
+            tab.spatialSlots,
+            slotID: id,
+            direction: direction,
+            fraction: fraction
+        ))
+    }
+
+    /// Steps one edge of a pane to the next size in that border's cycle — what a
+    /// double-click on the border asks for. Same shape again: the caller names a pane and
+    /// an edge, the cycle rule stays in `SpatialLayout`, the commit stays `applyResize`.
+    @discardableResult
+    public mutating func cycleSlotExtent(
+        _ id: UUID,
+        direction: ResizeDirection
+    ) -> [WorkspaceEvent] {
+        guard let location = activeTabLocation else { return [] }
+        let tab = workspaces[location.workspace].tabs[location.tab]
+        guard tab.slots.contains(where: { $0.id == id }) else { return [] }
+        return applyResize(SpatialLayout.cycleExtent(
+            tab.spatialSlots,
+            slotID: id,
+            direction: direction
+        ))
     }
 
     private var activeWorkspaceIndex: Int? {

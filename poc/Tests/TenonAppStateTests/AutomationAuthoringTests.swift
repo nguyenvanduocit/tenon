@@ -46,6 +46,18 @@ final class AutomationAuthoringTests: XCTestCase {
             prompt.contains("consent"),
             "the first privileged firing prompts the user; the agent must warn them"
         )
+        // T-062: an agent once wrote a plugin into the signed app bundle and broke it.
+        // The call site now hands over a writable root; the guide says why it matters.
+        XCTAssertTrue(
+            prompt.contains("Tenon.app") && prompt.contains("signature"),
+            "the guide must tell the agent why writing into the app bundle breaks the app"
+        )
+        // The first agent-written plugin failed to decode over exactly this: the
+        // envelope is required, its halves are not.
+        XCTAssertTrue(
+            prompt.contains("\"intents\": { \"uses\": [] }"),
+            "the guide must show the minimal intents envelope the loader demands"
+        )
     }
 
     func testCommandIsClaudePlusTheWholePromptAsOneQuotedArgument() {

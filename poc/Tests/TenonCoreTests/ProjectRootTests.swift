@@ -41,7 +41,6 @@ final class ProjectRootTests: XCTestCase {
         let resolution = ProjectRoot.resolve(cwd: deep)
 
         XCTAssertEqual(resolution.root, repo)
-        XCTAssertEqual(resolution.source, .automatic)
     }
 
     func testTheRepositoryRootResolvesToItself() throws {
@@ -71,7 +70,6 @@ final class ProjectRootTests: XCTestCase {
             worktree,
             "a linked worktree is its own project root, not the repo it points back into"
         )
-        XCTAssertEqual(resolution.source, .automatic)
     }
 
     /// A submodule is the same shape as a worktree — `.git` as a file — and the nearest
@@ -109,7 +107,6 @@ final class ProjectRootTests: XCTestCase {
             resolution.root,
             "with no repository the panels must fall back to the workspace, not to /"
         )
-        XCTAssertEqual(resolution.source, .automatic)
     }
 
     func testASymlinkedCwdResolvesToTheSameRootAsTheRealPath() throws {
@@ -145,43 +142,6 @@ final class ProjectRootTests: XCTestCase {
         let gone = scratch.appendingPathComponent("gone/deeper", isDirectory: true)
 
         XCTAssertNil(ProjectRoot.resolve(cwd: gone).root)
-    }
-
-    // MARK: - The pin
-
-    func testAPinnedRootWinsOverAutomaticResolution() throws {
-        let repo = try directory("repo")
-        try gitDirectory(in: repo)
-        let deep = try directory("repo/src")
-        let elsewhere = try directory("elsewhere")
-
-        let resolution = ProjectRoot.resolve(cwd: deep, pinned: elsewhere)
-
-        XCTAssertEqual(resolution.root, elsewhere)
-        XCTAssertEqual(resolution.source, .pinned)
-    }
-
-    func testAPinnedRootHoldsEvenWhereAutomaticResolutionWouldFindNothing() throws {
-        let loose = try directory("loose")
-        let pinned = try directory("pinned")
-
-        let resolution = ProjectRoot.resolve(cwd: loose, pinned: pinned)
-
-        XCTAssertEqual(resolution.root, pinned)
-        XCTAssertEqual(resolution.source, .pinned)
-    }
-
-    func testClearingThePinRevertsToAutomaticResolution() throws {
-        let repo = try directory("repo")
-        try gitDirectory(in: repo)
-        let deep = try directory("repo/src")
-
-        let pinned = ProjectRoot.resolve(cwd: deep, pinned: try directory("elsewhere"))
-        let automatic = ProjectRoot.resolve(cwd: deep, pinned: nil)
-
-        XCTAssertEqual(pinned.source, .pinned)
-        XCTAssertEqual(automatic.source, .automatic)
-        XCTAssertEqual(automatic.root, repo, "\"Use Automatic\" must return the real root")
     }
 
     // MARK: - The point of the whole task: `cd` inside one repo re-roots nothing
@@ -225,21 +185,6 @@ final class ProjectRootTests: XCTestCase {
         let after = ProjectRoot.resolve(cwd: try directory("loose"))
 
         XCTAssertTrue(ProjectRoot.rerootsPanels(from: before, to: after))
-    }
-
-    func testPinningAndUnpinningTheSameDirectoryStillCountsAsAReRoot() throws {
-        let repo = try directory("repo")
-        try gitDirectory(in: repo)
-        let deep = try directory("repo/src")
-
-        let automatic = ProjectRoot.resolve(cwd: deep)
-        let pinned = ProjectRoot.resolve(cwd: deep, pinned: repo)
-
-        XCTAssertEqual(automatic.root, pinned.root)
-        XCTAssertTrue(
-            ProjectRoot.rerootsPanels(from: automatic, to: pinned),
-            "the same path arrived at by a pin must still repaint the AUTO/pinned marker"
-        )
     }
 
     // MARK: - Helpers

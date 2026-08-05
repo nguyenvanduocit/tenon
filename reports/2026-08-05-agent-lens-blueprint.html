@@ -1,0 +1,514 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenon Agent Lens — Product &amp; Architecture Blueprint</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f3f0e8;
+      --paper: #fffdf8;
+      --ink: #17201d;
+      --muted: #68716d;
+      --line: #d7d3c9;
+      --soft: #ece9e0;
+      --amber: #d47424;
+      --amber-soft: #f7e4cf;
+      --green: #24735a;
+      --green-soft: #dcefe7;
+      --blue: #316f91;
+      --blue-soft: #dcebf3;
+      --red: #a74338;
+      --red-soft: #f3dedb;
+      --violet: #6956a8;
+      --violet-soft: #e8e2f5;
+      --shadow: 0 16px 45px rgba(28, 35, 32, .09);
+      --radius: 18px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: ui-sans-serif, -apple-system, BlinkMacSystemFont, "SF Pro Text", sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #111513;
+        --paper: #171c19;
+        --ink: #edf2ef;
+        --muted: #a6b0aa;
+        --line: #303a35;
+        --soft: #202722;
+        --amber: #f0a25c;
+        --amber-soft: #3e2b1d;
+        --green: #68c59f;
+        --green-soft: #1c382e;
+        --blue: #80bbda;
+        --blue-soft: #1c3441;
+        --red: #ee8a80;
+        --red-soft: #3b2524;
+        --violet: #b5a5ed;
+        --violet-soft: #2d2842;
+        --shadow: 0 18px 55px rgba(0, 0, 0, .24);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background:
+        radial-gradient(circle at 88% 3%, color-mix(in srgb, var(--amber) 16%, transparent), transparent 26rem),
+        radial-gradient(circle at 2% 24%, color-mix(in srgb, var(--green) 10%, transparent), transparent 24rem),
+        var(--bg);
+      font-family: var(--sans);
+      line-height: 1.58;
+    }
+    a { color: inherit; }
+    code, pre { font-family: var(--mono); }
+    code { font-size: .91em; }
+    .shell { display: grid; grid-template-columns: 240px minmax(0, 1fr); min-height: 100vh; }
+    nav {
+      position: sticky;
+      top: 0;
+      height: 100vh;
+      padding: 28px 18px;
+      border-right: 1px solid var(--line);
+      background: color-mix(in srgb, var(--paper) 86%, transparent);
+      backdrop-filter: blur(18px);
+      overflow: auto;
+    }
+    .brand { padding: 0 10px 22px; border-bottom: 1px solid var(--line); margin-bottom: 18px; }
+    .brand-mark { font-family: var(--mono); color: var(--amber); font-weight: 800; letter-spacing: .08em; }
+    .brand small { display: block; color: var(--muted); margin-top: 5px; }
+    nav a { display: block; padding: 8px 10px; border-radius: 9px; text-decoration: none; color: var(--muted); font-size: 13px; }
+    nav a:hover { color: var(--ink); background: var(--soft); }
+    main { width: min(1180px, 100%); padding: 56px 56px 100px; }
+    section { scroll-margin-top: 30px; margin-top: 76px; }
+    .hero { margin-top: 0; padding: 54px; background: var(--paper); border: 1px solid var(--line); border-radius: 26px; box-shadow: var(--shadow); position: relative; overflow: hidden; }
+    .hero::after { content: ">_"; position: absolute; right: 30px; bottom: -34px; font: 900 140px/1 var(--mono); color: color-mix(in srgb, var(--amber) 11%, transparent); }
+    .eyebrow { color: var(--amber); font: 700 12px/1.3 var(--mono); letter-spacing: .12em; text-transform: uppercase; }
+    h1 { max-width: 850px; margin: 16px 0 18px; font-size: clamp(40px, 6vw, 78px); line-height: .99; letter-spacing: -.05em; }
+    h2 { font-size: clamp(27px, 3vw, 40px); line-height: 1.1; letter-spacing: -.035em; margin: 0 0 18px; }
+    h3 { font-size: 18px; line-height: 1.3; margin: 0 0 10px; }
+    p { margin: 0 0 15px; }
+    .lead { max-width: 820px; font-size: 20px; color: var(--muted); }
+    .verdict { margin-top: 30px; max-width: 900px; padding: 22px 24px; border-left: 4px solid var(--amber); border-radius: 0 14px 14px 0; background: var(--amber-soft); font-size: 18px; }
+    .meta { margin-top: 25px; display: flex; gap: 10px; flex-wrap: wrap; }
+    .pill { display: inline-flex; align-items: center; gap: 7px; padding: 6px 10px; border: 1px solid var(--line); border-radius: 999px; background: var(--paper); font: 600 12px/1.2 var(--mono); }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .green { color: var(--green); }
+    .amber { color: var(--amber); }
+    .blue { color: var(--blue); }
+    .red { color: var(--red); }
+    .violet { color: var(--violet); }
+    .section-intro { max-width: 790px; color: var(--muted); font-size: 17px; margin-bottom: 25px; }
+    .grid { display: grid; gap: 16px; }
+    .grid.two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .grid.three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .grid.four { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+    .card { padding: 22px; background: var(--paper); border: 1px solid var(--line); border-radius: var(--radius); box-shadow: 0 8px 25px rgba(27, 32, 29, .04); }
+    .card p:last-child, .callout p:last-child { margin-bottom: 0; }
+    .number { display: grid; place-items: center; width: 31px; height: 31px; margin-bottom: 14px; border-radius: 10px; background: var(--soft); color: var(--amber); font: 800 13px/1 var(--mono); }
+    .callout { padding: 22px 24px; border-radius: var(--radius); border: 1px solid var(--line); background: var(--soft); }
+    .callout.good { background: var(--green-soft); }
+    .callout.warn { background: var(--amber-soft); }
+    .callout.bad { background: var(--red-soft); }
+    .kicker { margin-bottom: 7px; font: 700 11px/1.3 var(--mono); letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+    ul, ol { margin: 10px 0 0; padding-left: 20px; }
+    li { margin: 5px 0; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+    table { width: 100%; border-collapse: collapse; min-width: 820px; }
+    th, td { padding: 14px 16px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); background: var(--soft); font: 700 11px/1.3 var(--mono); letter-spacing: .08em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    .recommended td { background: color-mix(in srgb, var(--green-soft) 62%, transparent); }
+    .status { white-space: nowrap; font: 700 11px/1.3 var(--mono); }
+    .diagram { padding: 24px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); overflow-x: auto; }
+    svg { display: block; width: 100%; min-width: 820px; height: auto; }
+    .mock-window { border: 1px solid var(--line); border-radius: 20px; overflow: hidden; background: #141916; box-shadow: var(--shadow); color: #e9f0ec; }
+    .mock-title { display: flex; align-items: center; gap: 8px; padding: 11px 14px; border-bottom: 1px solid #354039; background: #1b211e; }
+    .traffic { width: 9px; height: 9px; border-radius: 50%; background: #6e7972; }
+    .mock-title strong { margin-left: 8px; font-size: 12px; }
+    .segmented { margin-left: auto; display: flex; gap: 2px; padding: 3px; border-radius: 8px; background: #0f1311; font-size: 11px; }
+    .segmented span { padding: 4px 8px; border-radius: 6px; color: #89938e; }
+    .segmented .on { color: #fff; background: #354039; }
+    .transcript { min-height: 440px; padding: 26px max(22px, 7%); background: linear-gradient(145deg, #121714, #181e1a); }
+    .message { max-width: 760px; margin-bottom: 22px; }
+    .message.user { margin-left: auto; max-width: 570px; padding: 13px 15px; border-radius: 15px 15px 4px 15px; background: #2f493e; }
+    .label { margin-bottom: 6px; color: #9fa9a3; font: 700 10px/1.2 var(--mono); letter-spacing: .09em; text-transform: uppercase; }
+    .tool { margin: 9px 0; padding: 12px 14px; border: 1px solid #39453e; border-radius: 11px; background: #1d2420; }
+    .tool-head { display: flex; gap: 9px; align-items: center; font: 650 12px/1.3 var(--mono); }
+    .tool-head .ok { color: #6fcca6; }
+    .tool small { display: block; color: #9fa9a3; margin-top: 5px; }
+    .decision { margin: 13px 0; padding: 15px; border: 1px solid #76542f; border-radius: 12px; background: #2d241b; }
+    .decision strong { color: #f3b873; }
+    .composer { display: flex; align-items: center; gap: 10px; padding: 13px 15px; border-top: 1px solid #354039; background: #1b211e; color: #8f9993; }
+    .composer .input { flex: 1; padding: 9px 11px; border: 1px solid #3c4741; border-radius: 10px; background: #121714; }
+    .composer button { border: 0; padding: 9px 12px; border-radius: 9px; color: #1c211e; background: #efa15b; font-weight: 750; }
+    pre { margin: 0; padding: 18px; overflow: auto; border: 1px solid var(--line); border-radius: 14px; background: #111613; color: #dce9e1; font-size: 12px; line-height: 1.65; }
+    .timeline { position: relative; padding-left: 32px; }
+    .timeline::before { content: ""; position: absolute; left: 10px; top: 10px; bottom: 10px; width: 1px; background: var(--line); }
+    .step { position: relative; padding: 0 0 24px; }
+    .step::before { content: ""; position: absolute; left: -27px; top: 7px; width: 11px; height: 11px; border: 3px solid var(--paper); border-radius: 50%; background: var(--amber); box-shadow: 0 0 0 1px var(--line); }
+    .step:last-child { padding-bottom: 0; }
+    .step strong { display: block; }
+    .step span { color: var(--muted); }
+    .decision-log { counter-reset: decisions; }
+    .decision-item { display: grid; grid-template-columns: 42px minmax(0, 1fr); gap: 14px; padding: 16px 0; border-bottom: 1px solid var(--line); }
+    .decision-item:last-child { border-bottom: 0; }
+    .decision-item::before { counter-increment: decisions; content: "D" counter(decisions); color: var(--amber); font: 800 12px/1.4 var(--mono); }
+    .refs { font-size: 13px; color: var(--muted); }
+    .refs a { text-decoration-color: var(--line); }
+    footer { margin-top: 80px; padding-top: 25px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; }
+
+    @media (max-width: 920px) {
+      .shell { display: block; }
+      nav { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--line); }
+      nav .links { display: flex; gap: 3px; overflow-x: auto; }
+      nav a { white-space: nowrap; }
+      main { padding: 34px 22px 70px; }
+      .hero { padding: 32px 26px; }
+      .grid.two, .grid.three, .grid.four { grid-template-columns: 1fr; }
+    }
+
+    @media print {
+      :root { color-scheme: light; }
+      body { background: #fff; }
+      .shell { display: block; }
+      nav { display: none; }
+      main { width: 100%; padding: 0; }
+      section { break-inside: avoid; margin-top: 42px; }
+      .hero, .card, .diagram, .table-wrap { box-shadow: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+    <nav aria-label="Mục lục">
+      <div class="brand">
+        <div class="brand-mark">TENON / AGENT LENS</div>
+        <small>Product &amp; architecture blueprint · 05.08.2026</small>
+      </div>
+      <div class="links">
+        <a href="#decision">01 — Quyết định</a>
+        <a href="#ux">02 — Trải nghiệm</a>
+        <a href="#architecture">03 — Kiến trúc</a>
+        <a href="#ingestion">04 — Adapter ladder</a>
+        <a href="#model">05 — Domain model</a>
+        <a href="#swift">06 — Swift 6</a>
+        <a href="#boundaries">07 — Boundary law</a>
+        <a href="#trust">08 — Trust &amp; failure</a>
+        <a href="#rollout">09 — Rollout</a>
+        <a href="#tests">10 — Tests &amp; metrics</a>
+        <a href="#decisions">11 — Decision log</a>
+      </div>
+    </nav>
+
+    <main>
+      <section class="hero" id="decision">
+        <div class="eyebrow">Recommendation / Hybrid, capability-driven</div>
+        <h1>Đừng biến terminal thành chat. Hãy đặt một Agent Lens lên cùng session.</h1>
+        <p class="lead">Tenon nên cho người dùng một giao diện hội thoại thống nhất, nhưng không lấy giao diện đó làm runtime mới. PTY vẫn chạy agent thật; một lớp projection đọc semantic events từ protocol, transcript và hook, rồi render chúng thành Conversation, Activity và Attention UI.</p>
+        <div class="verdict"><strong>Giải pháp đề xuất:</strong> Conversation là chế độ mặc định cho agent session; Terminal là escape hatch luôn có thể quay lại. Cùng một slot, cùng một process, cùng một lịch sử—không restart, không replay, không giả lập TUI.</div>
+        <div class="meta">
+          <span class="pill green"><span class="dot"></span>PTY-compatible</span>
+          <span class="pill blue"><span class="dot"></span>Protocol-ready</span>
+          <span class="pill amber"><span class="dot"></span>Evidence-linked</span>
+          <span class="pill violet"><span class="dot"></span>Swift 6-safe</span>
+        </div>
+      </section>
+
+      <section>
+        <h2>Một câu trả lời ngắn cho bài toán sản phẩm</h2>
+        <p class="section-intro">User không ghét sức mạnh của terminal; họ ghét phải tự giải mã một màn hình nhiễu, khác nhau theo từng agent, để biết điều gì đang xảy ra và họ cần làm gì.</p>
+        <div class="grid four">
+          <article class="card"><div class="number">01</div><h3>Conversation</h3><p>Prompt, câu trả lời, tool run và artifact theo một visual grammar chung.</p></article>
+          <article class="card"><div class="number">02</div><h3>Attention</h3><p>Approval, câu hỏi, failure và ready-for-review được ưu tiên hơn log đang chạy.</p></article>
+          <article class="card"><div class="number">03</div><h3>Evidence</h3><p>Mọi claim quan trọng quay lại transcript, diff, command receipt hoặc test result.</p></article>
+          <article class="card"><div class="number">04</div><h3>Escape hatch</h3><p>Terminal thô vẫn ở đó cho power user, lỗi adapter và tính năng vendor-specific.</p></article>
+        </div>
+      </section>
+
+      <section id="ux">
+        <h2>UX: một ngôn ngữ chung, không san phẳng năng lực</h2>
+        <p class="section-intro">Header chỉ cho ba mode: <strong>Conversation</strong>, <strong>Activity</strong>, <strong>Terminal</strong>. Capability nào không có thì UI không dựng giả control đó; nó giải thích ngắn gọn và đưa user về Terminal khi cần.</p>
+        <div class="mock-window" role="img" aria-label="Minh họa Conversation mode trong một terminal slot">
+          <div class="mock-title">
+            <span class="traffic"></span><span class="traffic"></span><span class="traffic"></span>
+            <strong>Codex · checkout refactor</strong>
+            <span class="pill green" style="background:#183128;border-color:#315443">● Running</span>
+            <div class="segmented"><span class="on">Conversation</span><span>Activity</span><span>Terminal</span></div>
+          </div>
+          <div class="transcript">
+            <div class="message user">Refactor checkout state để bỏ callback, giữ behavior và thêm tests.</div>
+            <div class="message">
+              <div class="label">Assistant</div>
+              <p>Tôi đã lần theo state ownership. Thay đổi an toàn nhất là giữ reducer đồng bộ và đưa I/O sang coordinator.</p>
+              <div class="tool"><div class="tool-head"><span class="ok">✓</span> Read 6 files</div><small>Workspace.swift, CheckoutStore.swift, 4 test files · 1.2s</small></div>
+              <div class="tool"><div class="tool-head"><span class="ok">✓</span> Tests</div><small>42 passed · receipt available</small></div>
+              <div class="decision"><strong>Cần quyết định</strong><p style="margin-top:6px">API cũ nên deprecated một release hay xóa ngay? Không thay đổi code cho đến khi bạn chọn.</p></div>
+            </div>
+          </div>
+          <div class="composer"><div class="input">Trả lời agent…</div><span>⌘↩</span><button>Send</button></div>
+        </div>
+
+        <div class="grid three" style="margin-top:18px">
+          <article class="card"><div class="kicker">Conversation</div><h3>Đọc như chat</h3><p>Reasoning mặc định thu gọn; tool calls gộp theo turn; code/diff/artifact có renderer riêng.</p></article>
+          <article class="card"><div class="kicker">Activity</div><h3>Đọc như timeline</h3><p>Cho người kỹ thuật biết process, tool, approval, token/latency và lỗi adapter mà không đọc ANSI.</p></article>
+          <article class="card"><div class="kicker">Terminal</div><h3>Đọc đúng nguồn thô</h3><p>Surface libghostty hiện hữu được mount lại; PTY và scrollback chưa từng bị hủy.</p></article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Điều học từ Orca—and nơi Tenon nên đi xa hơn</h2>
+        <div class="grid two">
+          <div class="callout good"><div class="kicker">Giữ lại</div><h3>Overlay trên PTY sống</h3><p>Orca chứng minh pattern thực dụng: transcript JSONL được normalize thành message model; live preview lấp khoảng trễ; composer gửi lại vào PTY. Đây là MVP tốt.</p></div>
+          <div class="callout warn"><div class="kicker">Nâng cấp</div><h3>Không dừng ở transcript renderer</h3><p>Tenon cần capability negotiation, evidence provenance, attention states, typed reducer và protocol-native adapter khi vendor cung cấp transport ổn định.</p></div>
+        </div>
+      </section>
+
+      <section id="architecture">
+        <h2>Kiến trúc: Agent Lens là projection cùng slot</h2>
+        <p class="section-intro">Không thêm <code>SlotContent.chat</code>. Một terminal slot có thể có hoặc không có một <code>AgentPresentationSession</code>. Surface pool giữ execution; session pool giữ semantic projection; SwiftUI chọn renderer.</p>
+        <div class="diagram">
+          <svg viewBox="0 0 1100 520" role="img" aria-labelledby="arch-title arch-desc">
+            <title id="arch-title">Kiến trúc Agent Lens</title>
+            <desc id="arch-desc">PTY và provider sources đi qua adapters và reducer để tạo Conversation Snapshot cho SwiftUI.</desc>
+            <defs>
+              <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" fill="#8f9c95"/></marker>
+              <style>
+                .bx{fill:#1a211d;stroke:#46534c;stroke-width:2}.hi{fill:#2c241b;stroke:#ad7542;stroke-width:2}.gr{fill:#193129;stroke:#41856a;stroke-width:2}.bl{fill:#1a2e39;stroke:#4e87a5;stroke-width:2}.tx{fill:#edf2ef;font:600 16px -apple-system,BlinkMacSystemFont,sans-serif}.sm{fill:#aeb8b2;font:13px ui-monospace,monospace}.ln{stroke:#8f9c95;stroke-width:2;fill:none;marker-end:url(#arrow)}
+              </style>
+            </defs>
+            <rect class="hi" x="34" y="55" width="210" height="115" rx="16"/><text class="tx" x="58" y="90">TerminalSurface</text><text class="sm" x="58" y="119">PTY · process · scrollback</text><text class="sm" x="58" y="143">execution truth</text>
+            <rect class="bx" x="34" y="205" width="210" height="80" rx="16"/><text class="tx" x="58" y="240">Provider transcript</text><text class="sm" x="58" y="264">JSONL / session file</text>
+            <rect class="bx" x="34" y="318" width="210" height="80" rx="16"/><text class="tx" x="58" y="353">Lifecycle hooks</text><text class="sm" x="58" y="377">session · status · approval</text>
+            <rect class="bx" x="34" y="431" width="210" height="58" rx="16"/><text class="tx" x="58" y="466">Native protocol</text>
+
+            <rect class="bl" x="332" y="82" width="236" height="330" rx="18"/><text class="tx" x="359" y="118">Provider Adapter</text><text class="sm" x="359" y="149">resolve session identity</text><text class="sm" x="359" y="177">negotiate capabilities</text><text class="sm" x="359" y="205">decode + normalize</text><text class="sm" x="359" y="233">anchor provenance</text><text class="sm" x="359" y="261">send semantic command</text><text class="sm" x="359" y="303">AsyncThrowingStream</text><text class="sm" x="359" y="331">ConversationEvent</text><text class="sm" x="359" y="373">bounded / cancellable</text>
+
+            <rect class="gr" x="652" y="82" width="204" height="160" rx="18"/><text class="tx" x="678" y="118">Session Actor</text><text class="sm" x="678" y="149">order + dedupe</text><text class="sm" x="678" y="177">reconcile preview</text><text class="sm" x="678" y="205">deterministic reducer</text>
+            <rect class="gr" x="652" y="282" width="204" height="130" rx="18"/><text class="tx" x="678" y="318">Snapshot Projector</text><text class="sm" x="678" y="349">coalesce deltas</text><text class="sm" x="678" y="377">immutable Sendable state</text>
+
+            <rect class="hi" x="930" y="63" width="145" height="90" rx="16"/><text class="tx" x="950" y="100">Conversation</text><text class="sm" x="950" y="126">default UX</text>
+            <rect class="bx" x="930" y="186" width="145" height="90" rx="16"/><text class="tx" x="950" y="223">Activity</text><text class="sm" x="950" y="249">timeline</text>
+            <rect class="bx" x="930" y="309" width="145" height="90" rx="16"/><text class="tx" x="950" y="346">Terminal</text><text class="sm" x="950" y="372">same PTY</text>
+            <rect class="bx" x="930" y="432" width="145" height="58" rx="16"/><text class="tx" x="950" y="467">Attention</text>
+
+            <path class="ln" d="M244 112 H332"/><path class="ln" d="M244 245 H332"/><path class="ln" d="M244 358 H332"/><path class="ln" d="M244 460 C285 460 290 370 332 370"/>
+            <path class="ln" d="M568 180 H652"/><path class="ln" d="M754 242 V282"/>
+            <path class="ln" d="M856 330 C895 330 885 108 930 108"/><path class="ln" d="M856 342 C896 342 891 231 930 231"/><path class="ln" d="M244 112 C800 20 835 354 930 354"/><path class="ln" d="M856 365 C905 365 889 461 930 461"/>
+          </svg>
+        </div>
+        <div class="callout good" style="margin-top:16px"><strong>Invariant quan trọng nhất:</strong> terminal là nguồn sự thật về execution; semantic event stream là nguồn sự thật về presentation. UI không suy diễn tool call, approval hay completion từ pixel.</div>
+      </section>
+
+      <section id="ingestion">
+        <h2>Adapter ladder: ưu tiên tín hiệu có nghĩa, degrade trung thực</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Tier</th><th>Nguồn</th><th>Dùng khi</th><th>Độ tin cậy</th><th>UI behavior</th></tr></thead>
+            <tbody>
+              <tr><td class="status green">A · Native</td><td>Provider protocol / app-server</td><td>Tenon-managed session và protocol ổn định</td><td>Cao nhất; typed lifecycle</td><td>Full chat, tools, approval, model/session controls theo capability</td></tr>
+              <tr class="recommended"><td class="status green">B · Transcript</td><td>JSONL + managed lifecycle hooks</td><td>CLI/TUI đang chạy trong PTY</td><td>Cao cho nội dung; hook xác nhận lifecycle</td><td>MVP mặc định; live preview bù write latency</td></tr>
+              <tr><td class="status amber">C · Semantic PTY</td><td>OSC/private sideband emitted by wrapper</td><td>Provider không có transcript tốt nhưng wrapper kiểm soát được</td><td>Trung bình-cao theo frame</td><td>Status và anchors; nội dung vẫn từ nguồn gốc</td></tr>
+              <tr><td class="status red">D · Screen</td><td>Scrollback/viewport parser</td><td>Không có tích hợp nào khác</td><td>Thấp, dễ sai theo version/theme</td><td>Chỉ “Readable terminal”; badge Degraded; không dựng tool/role giả</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="grid two" style="margin-top:18px">
+          <article class="card"><h3>Capability, không phải vendor switch</h3><pre>struct AgentCapabilities: OptionSet, Sendable {
+  static let semanticMessages
+  static let toolLifecycle
+  static let approvals
+  static let sessionResume
+  static let structuredInput
+  static let modelSelection
+  static let evidenceAnchors
+}</pre></article>
+          <article class="card"><h3>Session correlation, không đoán filename</h3><p>Tenon-launched session mang descriptor chính xác. Session chạy thủ công được nối bằng hook kế thừa <code>TENON_PANE_ID</code>, provider session ID, cwd và process identity. Scan “file mới nhất” chỉ là recovery, không là identity rule.</p><p class="refs">Managed hooks phải merge cấu hình có namespace, backup, rollback và không ghi đè hook của user.</p></article>
+        </div>
+      </section>
+
+      <section>
+        <h2>So sánh bốn hướng</h2>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Hướng</th><th>Time-to-value</th><th>Coverage</th><th>Fidelity</th><th>Chi phí bảo trì</th><th>Kết luận</th></tr></thead>
+            <tbody>
+              <tr><td>Parse TUI/screen</td><td>Nhanh để demo</td><td>Rộng bề ngoài</td><td>Thấp</td><td>Rất cao theo mỗi release</td><td class="status red">Không dùng làm core</td></tr>
+              <tr><td>Transcript + hook</td><td>Nhanh</td><td>Claude/Codex/Grok tốt</td><td>Khá cao</td><td>Vừa</td><td class="status amber">MVP</td></tr>
+              <tr><td>Protocol-only</td><td>Chậm</td><td>Hẹp lúc đầu</td><td>Cao nhất</td><td>Vừa theo vendor</td><td class="status blue">Đích dài hạn</td></tr>
+              <tr class="recommended"><td><strong>Hybrid capability-driven</strong></td><td><strong>Nhanh</strong></td><td><strong>Rộng, honest degrade</strong></td><td><strong>Cao khi có nguồn</strong></td><td><strong>Được cô lập trong adapters</strong></td><td class="status green">Khuyến nghị</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="model">
+        <h2>Canonical model: event log nhỏ, reducer thuần, snapshot ổn định</h2>
+        <div class="grid two">
+          <article class="card">
+            <div class="kicker">Domain events</div>
+            <pre>enum ConversationEvent: Sendable {
+  case turnStarted(TurnID, EvidenceAnchor)
+  case userMessage(Message)
+  case assistantDelta(MessageID, TextDelta)
+  case assistantMessage(Message)
+  case reasoning(ReasoningBlock)
+  case toolStarted(ToolRun)
+  case toolUpdated(ToolRunID, ToolDelta)
+  case toolFinished(ToolReceipt)
+  case question(InteractionRequest)
+  case approval(ApprovalRequest)
+  case artifact(ArtifactReference)
+  case status(SessionStatus)
+  case diagnostic(AdapterDiagnostic)
+  case turnFinished(TurnReceipt)
+}</pre>
+          </article>
+          <article class="card">
+            <div class="kicker">Required metadata</div>
+            <ul>
+              <li><strong>Stable ID:</strong> provider ID khi có; deterministic derived ID khi không.</li>
+              <li><strong>Cursor + revision:</strong> ordering và replacement không phụ thuộc array index.</li>
+              <li><strong>Provenance:</strong> source kind, location, byte/range, hash, captured-at.</li>
+              <li><strong>Authority:</strong> reported claim khác verified observation.</li>
+              <li><strong>Confidence:</strong> native, transcript, hook, inferred, degraded.</li>
+              <li><strong>Freshness:</strong> current, superseded, stale, source-missing.</li>
+            </ul>
+          </article>
+        </div>
+        <div class="callout warn" style="margin-top:16px"><strong>Không persist UI tree.</strong> Persist event cursor, source identity và lightweight snapshot. Khi schema adapter đổi, replay bounded events hoặc rebuild từ transcript; raw source không bị copy thành một database “sự thật” thứ hai.</div>
+      </section>
+
+      <section id="swift">
+        <h2>Swift 6 design: actor ownership rõ, MainActor nhẹ</h2>
+        <p class="section-intro">Repo đang ở Swift language mode 6, macOS 14 và warnings-as-errors. Thiết kế phải Sendable-clean ngay từ đầu; không dựa vào implicit main-actor isolation hay <code>Task.detached</code>.</p>
+        <div class="grid three">
+          <article class="card"><div class="kicker">Ownership</div><h3><code>AgentSessionCoordinator</code> actor</h3><p>Sở hữu adapter task, cursor, reducer state, optimistic sends và reconciliation. Một actor cho một session để tránh contention giữa panes.</p></article>
+          <article class="card"><div class="kicker">Transport</div><h3><code>AsyncThrowingStream</code></h3><p>Adapter trả stream có cancellation và terminal state. Tool/status lane bounded; message/receipt lane không drop.</p></article>
+          <article class="card"><div class="kicker">Presentation</div><h3><code>@MainActor @Observable</code></h3><p>Chỉ nhận immutable snapshots đã coalesce. Không đẩy từng byte token qua Observation graph.</p></article>
+        </div>
+        <div class="grid two" style="margin-top:18px">
+          <article class="card"><h3>Backpressure có chính sách</h3><ul><li>Assistant delta coalesce khoảng 30–60 Hz.</li><li>Status mới thay status cũ chưa render.</li><li>Không drop user message, final message, approval, tool receipt.</li><li>Tool output lớn trở thành bounded artifact/resource, row chỉ giữ summary.</li><li>Overflow sinh diagnostic rõ ràng, không im lặng mất dữ liệu.</li></ul></article>
+          <article class="card"><h3>Lifetime có cấu trúc</h3><ul><li>Session task bắt đầu khi Agent Lens attach.</li><li>Unmount UI không giết PTY; detach lens hủy watch/tasks.</li><li>Slot close hủy coordinator và giải phóng adapter resources.</li><li>Long-running tasks dùng cancellation + weak ownership đúng chỗ.</li><li>Test dùng injected clock/stream; không sleep để đợi race.</li></ul></article>
+        </div>
+        <div class="callout good" style="margin-top:16px"><strong>SwiftUI rendering:</strong> <code>ScrollView + LazyVStack</code>, stable IDs, per-row state hẹp; autoscroll chỉ khi user đang gần đáy; khi user đọc phía trên, hiện “N updates” thay vì giật viewport. Terminal view có thể detach để Ghostty tự occlude renderer trong khi PTY tiếp tục sống.</div>
+      </section>
+
+      <section>
+        <h2>Input path: một composer, nhiều transport</h2>
+        <div class="grid three">
+          <article class="card"><div class="number">A</div><h3>Structured transport</h3><p>Gửi typed command trực tiếp tới provider protocol; approval và answers giữ request ID.</p></article>
+          <article class="card"><div class="number">B</div><h3>PTY transport</h3><p>Một per-session FIFO gửi bracketed paste frame, sau đó Enter riêng; không trộn hai send đang chạy.</p></article>
+          <article class="card"><div class="number">C</div><h3>Unavailable</h3><p>Nếu TUI đang ở modal không thể xác định an toàn, composer disable và nút “Continue in Terminal” nhận focus.</p></article>
+        </div>
+        <div class="callout bad" style="margin-top:16px"><strong>Không gửi mù.</strong> Composer không được giả định mọi TUI nhận text ở mọi state. Adapter phải chứng minh <code>canAcceptText</code>; nếu chỉ inferred, UI cảnh báo hoặc chuyển Terminal.</div>
+      </section>
+
+      <section id="boundaries">
+        <h2>Áp interaction boundary law của Tenon</h2>
+        <p class="section-intro">MVP có thể làm hoàn toàn trong host, không thêm public <code>tenon.*</code>, core intent, audience hay control operation.</p>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>Interaction</th><th>Classification</th><th>Cách đóng gói</th></tr></thead>
+            <tbody>
+              <tr><td>SwiftUI Conversation → session service</td><td class="status green">DIRECT</td><td>Cùng semantic owner, typed Swift call.</td></tr>
+              <tr><td>Provider output đã xảy ra</td><td class="status blue">EVENT</td><td><code>ConversationEvent</code> nội bộ; không dùng để yêu cầu mutation.</td></tr>
+              <tr><td>Transcript watch / native protocol stream</td><td class="status violet">RESOURCE / STREAM</td><td>Owner, capacity, overflow, cancellation, teardown, terminal state đều explicit.</td></tr>
+              <tr><td>User send / approve trong built-in UI</td><td class="status green">DIRECT</td><td>Gọi cùng typed application service.</td></tr>
+              <tr><td>Plugin/CLI/agent gửi finite agent operation trong tương lai</td><td class="status amber">INTENT</td><td>Chỉ khi thật sự public; adapter gọi lại cùng service. Cần inventory + tests + superseded-path deletion.</td></tr>
+              <tr><td>Plugin đăng ký provider adapter trong tương lai</td><td class="status blue">CONTRIBUTION</td><td>Declarative registration; stream runtime vẫn theo resource protocol.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="callout warn" style="margin-top:16px"><strong>Điểm cần tôn trọng:</strong> tài liệu hiện tại nói structured conversation “inside PTY byte stream” không phải lý do để dựng Tenon-level duplex channel. Proposal này không dựng channel đó: PTY input vẫn đi qua surface, còn transcript/protocol watch là host-owned resource và UI gọi service trực tiếp.</div>
+      </section>
+
+      <section id="trust">
+        <h2>Trust model: đẹp nhưng không được tạo overconfidence</h2>
+        <div class="grid two">
+          <article class="card"><div class="kicker">Evidence</div><h3>Claim không tự biến thành fact</h3><p>“Tests passed” trong assistant text là reported claim. Chỉ command/test receipt có exit status và anchor mới được badge Verified.</p></article>
+          <article class="card"><div class="kicker">Ingestion</div><h3>Transcript là untrusted input</h3><p>Path phải được resolver cấp, canonicalize và scope theo provider/session. Giới hạn record size, depth, output, attachment và render URL.</p></article>
+          <article class="card"><div class="kicker">Summaries</div><h3>Không chạy với ambient authority</h3><p>Nếu dùng model để nén context, broker read-only nhận evidence bundle tối thiểu; output là candidate và bắt buộc resolve exact anchors.</p></article>
+          <article class="card"><div class="kicker">Degradation</div><h3>Thất bại phải lộ ra</h3><p>Adapter lag, malformed JSON, lost hook và cursor gap đều thành diagnostic + freshness state; Conversation không âm thầm đứng yên.</p></article>
+        </div>
+        <div class="table-wrap" style="margin-top:18px">
+          <table>
+            <thead><tr><th>Failure</th><th>User thấy gì</th><th>Hệ thống làm gì</th></tr></thead>
+            <tbody>
+              <tr><td>Transcript chưa flush</td><td>Live preview + “syncing”</td><td>Reconcile preview với durable record bằng stable ID/content fingerprint.</td></tr>
+              <tr><td>Adapter không nhận dạng version</td><td>Degraded badge, Terminal vẫn dùng được</td><td>Không parse speculative schema; capture bounded diagnostic.</td></tr>
+              <tr><td>Hook bị user thay đổi</td><td>“Lifecycle signals unavailable”</td><td>Không reinstall tự động; offer repair flow với diff.</td></tr>
+              <tr><td>Event overflow</td><td>Gap marker, không giấu mất dữ liệu</td><td>Stop trusting projection; rebuild from source cursor/snapshot.</td></tr>
+              <tr><td>PTY đã exit</td><td>Conversation read-only + exit receipt</td><td>Giữ evidence tới khi slot đóng.</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
+      <section id="rollout">
+        <h2>Rollout: ship một wedge nhỏ nhưng đúng trục</h2>
+        <div class="timeline">
+          <div class="step"><strong>Phase 0 — Read-only spike · 1–2 tuần</strong><span>Claude + Codex transcript decoders, fixture corpus, static Conversation preview; chưa hook, chưa composer.</span></div>
+          <div class="step"><strong>Phase 1 — Same-slot Agent Lens · 2–3 tuần</strong><span>Detection, managed hook correlation, Conversation/Terminal toggle, live updates, degraded state, per-slot lifetime.</span></div>
+          <div class="step"><strong>Phase 2 — Safe steering · 2 tuần</strong><span>PTY input queue, optimistic user message + reconciliation, questions/approvals cards khi source đủ mạnh.</span></div>
+          <div class="step"><strong>Phase 3 — Attention layer · 2–3 tuần</strong><span>needs-input, failed, ready-for-review, completed; exact re-entry và evidence anchors.</span></div>
+          <div class="step"><strong>Phase 4 — Protocol-native adapter</strong><span>Codex/app-server hoặc provider protocol ổn định; UI giữ nguyên, chỉ adapter/capabilities thay đổi.</span></div>
+          <div class="step"><strong>Phase 5 — Public extensibility, chỉ nếu có nhu cầu thật</strong><span>Normative inventory, contribution/resource contracts, security review và architecture fitness tests trong cùng change.</span></div>
+        </div>
+        <div class="callout good" style="margin-top:20px"><strong>Vertical slice nên chọn:</strong> một Claude hoặc Codex process chạy thật trong libghostty; attach đúng session; render user/assistant/tool; send một follow-up; toggle về terminal không mất state; kill/close không leak watch task.</div>
+      </section>
+
+      <section id="tests">
+        <h2>Release gates: correctness trước độ bóng</h2>
+        <div class="grid two">
+          <article class="card"><h3>Engineering gates</h3><ul><li>Golden fixtures theo provider/version, gồm malformed/partial/huge records.</li><li>Reducer replay deterministic; duplicate/out-of-order events không đổi final snapshot.</li><li>Cancellation và deallocation tests cho slot close, tab switch, app termination.</li><li>Backpressure tests chứng minh receipt/approval không bị drop.</li><li>UI performance: streaming không gây body invalidation toàn transcript.</li><li>Accessibility: VoiceOver order, keyboard-only mode switch, reduced motion, contrast.</li></ul></article>
+          <article class="card"><h3>Product gates</h3><ul><li>Giảm ≥30% median time để user tái định hướng.</li><li>Traceability error = 0 cho material claims.</li><li>False-attention items &lt;10%.</li><li>Send success và reconciliation success được đo theo adapter tier.</li><li>Terminal-switch rate: đo vì sao user phải thoát Conversation.</li><li>Outcome quality không giảm khi số workstreams tăng.</li></ul></article>
+        </div>
+        <div class="callout warn" style="margin-top:16px"><strong>North-star metric:</strong> verified outcomes per minute of human attention—not message count, token count hay số agent đang mở.</div>
+      </section>
+
+      <section id="decisions">
+        <h2>Decision log / non-negotiables</h2>
+        <div class="card decision-log">
+          <div class="decision-item"><div><strong>Same slot, same PTY.</strong><p>Conversation là presentation mode, không là content/runtime mới.</p></div></div>
+          <div class="decision-item"><div><strong>Capability-driven.</strong><p>UI render theo năng lực được negotiate, không theo chuỗi <code>if provider == ...</code> rải khắp views.</p></div></div>
+          <div class="decision-item"><div><strong>Protocol/transcript first, pixels last.</strong><p>Screen parsing không có quyền tạo semantic fact.</p></div></div>
+          <div class="decision-item"><div><strong>Evidence is reversible.</strong><p>Mọi claim quan trọng quay về exact source, hash và freshness.</p></div></div>
+          <div class="decision-item"><div><strong>No public API in MVP.</strong><p>Host-internal DIRECT + RESOURCE/STREAM đủ để validate product trước khi mở platform surface.</p></div></div>
+          <div class="decision-item"><div><strong>Graceful degradation is a feature.</strong><p>Agent lạ vẫn là terminal tốt; adapter lỗi không làm process lỗi theo.</p></div></div>
+          <div class="decision-item"><div><strong>Attention beats decoration.</strong><p>Tool folding, approvals, failures và re-entry quan trọng hơn bubble styling.</p></div></div>
+        </div>
+      </section>
+
+      <section>
+        <h2>Không làm trong MVP</h2>
+        <div class="grid three">
+          <article class="card"><h3>Universal TUI parser</h3><p>Không thể có semantics bền vững từ ANSI/pixel của nhiều app và nhiều version.</p></article>
+          <article class="card"><h3>AI-generated truth</h3><p>Summary không thay thế event, receipt hoặc evidence anchor.</p></article>
+          <article class="card"><h3>Plugin API tổng quát</h3><p>Chưa có product proof thì chưa gánh public lifecycle, capability và security contract.</p></article>
+          <article class="card"><h3>Model/settings parity</h3><p>Chỉ expose control khi provider adapter có typed capability, không keyboard-drive menu.</p></article>
+          <article class="card"><h3>Terminal replacement</h3><p>Power users, unknown commands và recovery luôn cần raw surface.</p></article>
+          <article class="card"><h3>Unbounded logs</h3><p>Large outputs thành artifact/resource; transcript rows giữ compact summary.</p></article>
+        </div>
+      </section>
+
+      <section>
+        <h2>Repo fit / evidence đã kiểm tra</h2>
+        <div class="card refs">
+          <p><strong>Tenon:</strong> Swift 6 + macOS 14 + warnings-as-errors trong <code>poc/Package.swift</code>; terminal surface được giữ theo slot trong <code>SurfacePool.swift</code>; <code>GhosttyNSView</code> occlude renderer khi detach nhưng giữ PTY/scrollback; <code>BuiltInSlotContentView</code> hiện render terminal trực tiếp; interaction classification theo <code>docs/architecture-interaction-boundaries.md</code>.</p>
+          <p><strong>Orca:</strong> overlay trong <code>TerminalPane.tsx</code>; normalized model trong <code>native-chat-types.ts</code>; provider decoders + transcript watch; live session preview và PTY send path. Kết luận: Orca là PTY harness có semantic transcript projection, không phải TUI-to-chat pixel renderer.</p>
+          <p><strong>Product research:</strong> <code>docs/research-human-agent-supervision.md</code> đã chọn human-attention, evidence-linked context và exact re-entry làm wedge; blueprint này biến direction đó thành same-slot conversation architecture.</p>
+        </div>
+      </section>
+
+      <footer>
+        <p><strong>Recommendation:</strong> ship Agent Lens as a host-internal, same-slot projection; prove Claude/Codex value first; only then standardize a public adapter contract.</p>
+        <p>Prepared for Tenon · 2026-08-05 · Self-contained HTML, no external assets.</p>
+      </footer>
+    </main>
+  </div>
+</body>
+</html>

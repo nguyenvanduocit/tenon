@@ -15,9 +15,9 @@ struct LauncherMenu: View {
     /// Shared with ⌘⇧P: same frecency store, so a habit formed in one surface shows in
     /// the other. Its `query`/`selection` belong to the overlay and stay untouched here.
     var palette: CommandPaletteState
-    /// How a chosen row is dispatched. `nil` is the keyboard-surface meaning — the
-    /// focused pane, through the shared invoker. A tab chip's popover injects a send
-    /// that names its own tab, so the menu can talk about a tab that is not selected.
+    /// How a chosen row is dispatched. `nil` inherits the focused pane through the shared
+    /// invoker. Anchors with stronger placement meaning inject a send: the title-bar `+`
+    /// creates a tab, while a tab chip names the tab that was clicked.
     var send: ((String) async -> IntentResult?)? = nil
     let dismiss: () -> Void
 

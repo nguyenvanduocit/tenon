@@ -132,52 +132,233 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertEqual(requestCount, 0)
     }
 
-    func testControlClickingEmptyGridRequestsLauncherAtThePointer() throws {
-        let slotID = UUID()
-        let fixture = try makeCanvasFixture(
-            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
-            activeSlotID: slotID
-        )
-        defer { fixture.window.orderOut(nil) }
-        var requestedAnchor: NSRect?
-        fixture.canvas.onPresentEmptyGridLauncher = { requestedAnchor = $0 }
-        let point = CGPoint(x: 900, y: 600)
-        let event = try mouseEvent(
-            .leftMouseDown,
-            for: fixture.canvas,
-            local: point,
-            window: fixture.window,
-            modifierFlags: [.control]
-        )
+    func testPaneDropEdgeUsesTheFourTriangularTargetQuadrants() {
+        let frame = CGRect(x: 100, y: 200, width: 400, height: 200)
 
-        fixture.canvas.mouseDown(with: event)
-
-        XCTAssertEqual(requestedAnchor?.origin, point)
+        XCTAssertEqual(
+            SpatialCanvasInteractionCoordinator.dropEdge(
+                at: CGPoint(x: 120, y: 300),
+                in: frame
+            ),
+            .left
+        )
+        XCTAssertEqual(
+            SpatialCanvasInteractionCoordinator.dropEdge(
+                at: CGPoint(x: 480, y: 300),
+                in: frame
+            ),
+            .right
+        )
+        XCTAssertEqual(
+            SpatialCanvasInteractionCoordinator.dropEdge(
+                at: CGPoint(x: 300, y: 210),
+                in: frame
+            ),
+            .top
+        )
+        XCTAssertEqual(
+            SpatialCanvasInteractionCoordinator.dropEdge(
+                at: CGPoint(x: 300, y: 390),
+                in: frame
+            ),
+            .bottom
+        )
     }
 
-    func testControlClickingAnOccupiedGridCellDoesNotRequestTheGridLauncher() throws {
-        let slotID = UUID()
+    func testHeaderDragKeepsTheLivePaneInPlaceAndCarriesAKeroStyleThumbnail() throws {
+        let sourceID = UUID()
+        let targetID = UUID()
         let fixture = try makeCanvasFixture(
-            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
-            activeSlotID: slotID
+            slots: [
+                workspaceSlot(sourceID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(targetID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: sourceID
         )
         defer { fixture.window.orderOut(nil) }
-        var requestCount = 0
-        fixture.canvas.onPresentEmptyGridLauncher = { _ in requestCount += 1 }
-        let event = try mouseEvent(
-            .leftMouseDown,
-            for: fixture.canvas,
-            local: CGPoint(x: 599, y: 600),
-            window: fixture.window,
-            modifierFlags: [.control]
+        let source = try XCTUnwrap(fixture.card(for: sourceID))
+        let target = try XCTUnwrap(fixture.card(for: targetID))
+        let sourceFrame = source.frame
+        let pointer = CGPoint(x: 1_100, y: 600)
+
+        fixture.canvas.begin(
+            slotID: sourceID,
+            region: .header,
+            pointer: CGPoint(x: 300, y: 20)
         )
+        fixture.canvas.drag(to: pointer)
 
-        fixture.canvas.mouseDown(with: event)
+        XCTAssertEqual(source.frame, sourceFrame, "the live surface stays mounted in its layout")
+        XCTAssertEqual(source.alphaValue, 0.55, accuracy: 0.001)
+        let thumbnail = try XCTUnwrap(fixture.canvas.dragThumbnailView)
+        XCTAssertEqual(thumbnail.frame.midX, pointer.x, accuracy: 0.5)
+        XCTAssertEqual(thumbnail.frame.midY, pointer.y, accuracy: 0.5)
+        XCTAssertLessThanOrEqual(thumbnail.frame.width, 220)
+        XCTAssertLessThanOrEqual(thumbnail.frame.height, 160)
+        XCTAssertEqual(
+            thumbnail.frame.width / thumbnail.frame.height,
+            sourceFrame.width / sourceFrame.height,
+            accuracy: 0.001
+        )
+        XCTAssertEqual(thumbnail.alphaValue, 0.9, accuracy: 0.001)
 
-        XCTAssertEqual(requestCount, 0)
+        let highlight = try XCTUnwrap(fixture.canvas.dropHighlightView)
+        XCTAssertEqual(highlight.frame, CGRect(
+            x: target.frame.midX,
+            y: target.frame.minY,
+            width: target.frame.width / 2,
+            height: target.frame.height
+        ))
+
+        fixture.canvas.end()
+
+        XCTAssertEqual(fixture.store.catalog.slot(id: sourceID)?.rect, GridRect(
+            x: 6, y: 0, width: 6, height: 12
+        ))
+        XCTAssertEqual(fixture.store.catalog.slot(id: targetID)?.rect, GridRect(
+            x: 0, y: 0, width: 6, height: 12
+        ))
+        XCTAssertEqual(source.alphaValue, 1, accuracy: 0.001)
+        XCTAssertNil(fixture.canvas.dragThumbnailView)
+        XCTAssertNil(fixture.canvas.dropHighlightView)
     }
 
-    func testMovePreviewUsesSpatialMoveTransactionAwayFromTargets() throws {
+    func testKeroStylePickupStillReparentsToTheExistingTabBarTarget() throws {
+        let leftID = UUID()
+        let movingID = UUID()
+        let targetSlotID = UUID()
+        let targetTab = TenonCore.Tab(
+            slots: [workspaceSlot(targetSlotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: targetSlotID
+        )
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(leftID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(movingID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: movingID,
+            additionalTabs: [targetTab]
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.router.tabBarBand = CGRect(x: 0, y: 1_200, width: 1_200, height: 50)
+        fixture.router.tabChipFrames = [
+            targetTab.id: CGRect(x: 800, y: 1_200, width: 200, height: 50),
+        ]
+
+        fixture.canvas.begin(
+            slotID: movingID,
+            region: .header,
+            pointer: CGPoint(x: 900, y: 20)
+        )
+        fixture.canvas.drag(
+            to: CGPoint(x: 900, y: -20),
+            window: CGPoint(x: 900, y: 1_225)
+        )
+
+        XCTAssertEqual(fixture.router.activeDropTarget, .existingTab(targetTab.id))
+        XCTAssertNotNil(fixture.canvas.dragThumbnailView)
+        XCTAssertEqual(NSCursor.current, .closedHand)
+
+        fixture.canvas.end()
+
+        XCTAssertEqual(fixture.store.catalog.activeWorkspace?.tabs.count, 2)
+        XCTAssertEqual(fixture.store.catalog.activeTab?.id, targetTab.id)
+        XCTAssertEqual(Set(fixture.store.catalog.activeTab?.slots.map(\.id) ?? []), [
+            targetSlotID,
+            movingID,
+        ])
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: leftID)?.rect,
+            GridRect(x: 0, y: 0, width: 12, height: 12)
+        )
+        XCTAssertEqual(fixture.router.activeDropTarget, .none)
+        XCTAssertNil(fixture.canvas.dragThumbnailView)
+    }
+
+    func testHiddenCardsFromAnotherTabCannotInterceptAPaneDrop() throws {
+        let hiddenID = UUID()
+        let movingID = UUID()
+        let visibleTargetID = UUID()
+        let sourceTab = TenonCore.Tab(
+            slots: [
+                workspaceSlot(movingID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(visibleTargetID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: movingID
+        )
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(hiddenID, x: 6, y: 0, width: 6, height: 12)],
+            activeSlotID: hiddenID,
+            additionalTabs: [sourceTab]
+        )
+        defer { fixture.window.orderOut(nil) }
+
+        fixture.store.selectTab(sourceTab.id)
+        fixture.reconfigure()
+        XCTAssertNil(fixture.card(for: hiddenID))
+
+        fixture.canvas.begin(
+            slotID: movingID,
+            region: .header,
+            pointer: CGPoint(x: 300, y: 40)
+        )
+        fixture.canvas.drag(to: CGPoint(x: 1_050, y: 600))
+
+        XCTAssertNotNil(fixture.canvas.dropHighlightView)
+        fixture.canvas.end()
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: movingID)?.rect,
+            GridRect(x: 6, y: 0, width: 6, height: 12)
+        )
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: visibleTargetID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12)
+        )
+    }
+
+    func testDetachingCanvasCancelsTheOwnedDragAndClearsPresentation() throws {
+        let sourceID = UUID()
+        let targetID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(sourceID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(targetID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: sourceID
+        )
+        defer { fixture.window.orderOut(nil) }
+        let source = try XCTUnwrap(fixture.card(for: sourceID))
+        fixture.router.tabBarBand = CGRect(x: 0, y: 1_200, width: 1_200, height: 50)
+
+        fixture.canvas.begin(
+            slotID: sourceID,
+            region: .header,
+            pointer: CGPoint(x: 300, y: 40)
+        )
+        fixture.canvas.drag(
+            to: CGPoint(x: 300, y: -20),
+            window: CGPoint(x: 600, y: 1_225)
+        )
+        XCTAssertEqual(source.alphaValue, 0.55, accuracy: 0.001)
+        XCTAssertNotNil(fixture.canvas.dragThumbnailView)
+        XCTAssertEqual(fixture.router.activeDropTarget, .newTab)
+
+        fixture.canvas.removeFromSuperview()
+
+        XCTAssertEqual(source.alphaValue, 1, accuracy: 0.001)
+        XCTAssertNil(fixture.canvas.dragThumbnailView)
+        XCTAssertNil(fixture.canvas.dropHighlightView)
+        XCTAssertEqual(fixture.router.activeDropTarget, .none)
+        XCTAssertEqual(NSCursor.current, .arrow)
+        fixture.canvas.end()
+        XCTAssertEqual(fixture.store.catalog.activeWorkspace?.tabs.count, 1)
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: sourceID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12)
+        )
+    }
+
+    func testMoveAwayFromTargetsCarriesNoLayoutCommit() {
         let movingID = UUID()
         let otherID = UUID()
         let slots = [
@@ -193,26 +374,56 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             pointer: CGPoint(x: 100, y: 100)
         )
 
-        let preview = try XCTUnwrap(
-            coordinator.update(pointer: CGPoint(x: 400, y: 400))
-        )
-
-        guard case .move(let transaction) = preview else {
-            return XCTFail("expected a move preview, got \(preview)")
-        }
-        XCTAssertTrue(transaction.isValid)
-        XCTAssertEqual(
-            transaction.proposal.first { $0.id == movingID }?.rect,
-            GridRect(x: 3, y: 3, width: 3, height: 3)
-        )
+        XCTAssertNil(coordinator.update(
+            pointer: CGPoint(x: 400, y: 400),
+            slotFrames: [
+                movingID: CGRect(x: 0, y: 0, width: 300, height: 300),
+                otherID: CGRect(x: 600, y: 0, width: 300, height: 300),
+            ]
+        ))
+        XCTAssertTrue(coordinator.isCarryingPane)
+        XCTAssertNil(coordinator.moveTarget)
+        XCTAssertEqual(coordinator.finish(), .rollback(slots))
     }
 
-    func testPointerOverAnotherSlotSelectsCompleteRectSwap() throws {
+    func testPanePickupRequiresFourPointsOfPointerTravel() {
         let movingID = UUID()
         let targetID = UUID()
         let slots = [
-            slot(movingID, x: 0, y: 0, width: 3, height: 6),
-            slot(targetID, x: 6, y: 6, width: 6, height: 3),
+            slot(movingID, x: 0, y: 0, width: 3, height: 3),
+            slot(targetID, x: 6, y: 0, width: 6, height: 12),
+        ]
+        let coordinator = SpatialCanvasInteractionCoordinator(
+            canvasSize: CGSize(width: 1_200, height: 1_200)
+        )
+        coordinator.beginMove(
+            slotID: movingID,
+            slots: slots,
+            pointer: CGPoint(x: 700, y: 600)
+        )
+        let frames = [
+            movingID: CGRect(x: 0, y: 0, width: 300, height: 300),
+            targetID: CGRect(x: 600, y: 0, width: 600, height: 1_200),
+        ]
+
+        XCTAssertNil(coordinator.update(
+            pointer: CGPoint(x: 703, y: 600),
+            slotFrames: frames
+        ))
+        XCTAssertFalse(coordinator.isCarryingPane)
+        XCTAssertNotNil(coordinator.update(
+            pointer: CGPoint(x: 704, y: 600),
+            slotFrames: frames
+        ))
+        XCTAssertTrue(coordinator.isCarryingPane)
+    }
+
+    func testPointerOverAnotherSlotBuildsADirectionalMoveBesideTransaction() throws {
+        let movingID = UUID()
+        let targetID = UUID()
+        let slots = [
+            slot(movingID, x: 0, y: 0, width: 3, height: 3),
+            slot(targetID, x: 6, y: 0, width: 6, height: 12),
         ]
         let coordinator = SpatialCanvasInteractionCoordinator(
             canvasSize: CGSize(width: 1_200, height: 1_200)
@@ -224,20 +435,30 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
 
         let preview = try XCTUnwrap(
-            coordinator.update(pointer: CGPoint(x: 900, y: 750))
+            coordinator.update(
+                pointer: CGPoint(x: 1_100, y: 600),
+                slotFrames: [
+                    movingID: CGRect(x: 0, y: 0, width: 300, height: 300),
+                    targetID: CGRect(x: 600, y: 0, width: 600, height: 1_200),
+                ]
+            )
         )
 
-        guard case .swap(let transaction) = preview else {
-            return XCTFail("expected a swap preview, got \(preview)")
+        guard case .move(let transaction) = preview else {
+            return XCTFail("expected a directional move preview, got \(preview)")
         }
         XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(coordinator.moveTarget, SpatialCanvasMoveTarget(
+            slotID: targetID,
+            edge: .right
+        ))
         XCTAssertEqual(
             transaction.proposal.first { $0.id == movingID }?.rect,
-            GridRect(x: 6, y: 6, width: 6, height: 3)
+            GridRect(x: 9, y: 0, width: 3, height: 12)
         )
         XCTAssertEqual(
             transaction.proposal.first { $0.id == targetID }?.rect,
-            GridRect(x: 0, y: 0, width: 3, height: 6)
+            GridRect(x: 6, y: 0, width: 3, height: 12)
         )
     }
 
@@ -318,6 +539,156 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let result = try XCTUnwrap(coordinator.finish())
 
         XCTAssertEqual(result, .rollback(slots))
+    }
+
+    func testMovingFromAValidTargetIntoAGapClearsTheTargetAndRollsBack() throws {
+        let movingID = UUID()
+        let targetID = UUID()
+        let slots = [
+            slot(movingID, x: 0, y: 0, width: 3, height: 3),
+            slot(targetID, x: 6, y: 0, width: 6, height: 12),
+        ]
+        let coordinator = SpatialCanvasInteractionCoordinator(
+            canvasSize: CGSize(width: 1_200, height: 1_200)
+        )
+        coordinator.beginMove(
+            slotID: movingID,
+            slots: slots,
+            pointer: CGPoint(x: 100, y: 100)
+        )
+        let frames = [
+            movingID: CGRect(x: 0, y: 0, width: 300, height: 300),
+            targetID: CGRect(x: 600, y: 0, width: 600, height: 1_200),
+        ]
+        XCTAssertNotNil(coordinator.update(
+            pointer: CGPoint(x: 1_100, y: 600),
+            slotFrames: frames
+        ))
+        XCTAssertNil(coordinator.update(
+            pointer: CGPoint(x: 450, y: 600),
+            slotFrames: frames
+        ))
+        XCTAssertNil(coordinator.preview)
+        XCTAssertNil(coordinator.moveTarget)
+        XCTAssertEqual(coordinator.finish(), .rollback(slots))
+    }
+
+    func testResizeIntoAnImpossibleShapeHoldsTheLastValidResize() throws {
+        let leftID = UUID()
+        let rightID = UUID()
+        let slots = [
+            slot(leftID, x: 0, y: 0, width: 6, height: 12),
+            slot(rightID, x: 6, y: 0, width: 6, height: 12),
+        ]
+        let coordinator = SpatialCanvasInteractionCoordinator(
+            canvasSize: CGSize(width: 1_200, height: 1_200)
+        )
+        coordinator.beginResize(
+            slotID: leftID,
+            direction: .east,
+            slots: slots,
+            pointer: CGPoint(x: 600, y: 600)
+        )
+        _ = coordinator.update(pointer: CGPoint(x: 800, y: 600))
+
+        let held = try XCTUnwrap(
+            coordinator.update(pointer: CGPoint(x: 1_100, y: 600))
+        )
+
+        guard case .resize(let transaction) = held else {
+            return XCTFail("expected a resize preview, got \(held)")
+        }
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(
+            transaction.proposal.first { $0.id == leftID }?.rect,
+            GridRect(x: 0, y: 0, width: 8, height: 12)
+        )
+        XCTAssertEqual(
+            transaction.proposal.first { $0.id == rightID }?.rect,
+            GridRect(x: 8, y: 0, width: 4, height: 12),
+            "the edge stops where the neighbour's minimum width stops it"
+        )
+    }
+
+    func testUnrelatedViewRefreshKeepsTheResizePreviewOnScreen() throws {
+        let leftID = UUID()
+        let rightID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(leftID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(rightID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: leftID
+        )
+        defer { fixture.window.orderOut(nil) }
+
+        fixture.canvas.begin(
+            slotID: leftID,
+            region: .resize(.east),
+            pointer: CGPoint(x: 600, y: 600)
+        )
+        fixture.canvas.drag(to: CGPoint(x: 800, y: 600))
+        let previewFrames = fixture.cardFrames
+
+        // SwiftUI may update this representable while the pointer is still down for
+        // unrelated title, attention, or plugin state. The model intentionally stays
+        // unchanged until mouse-up, so reconfiguration must preserve the live preview.
+        fixture.reconfigure()
+
+        XCTAssertEqual(
+            fixture.cardFrames,
+            previewFrames,
+            "an unrelated SwiftUI update must not snap a live resize back to its baseline"
+        )
+
+        fixture.canvas.end()
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: leftID)?.rect,
+            GridRect(x: 0, y: 0, width: 8, height: 12)
+        )
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: rightID)?.rect,
+            GridRect(x: 8, y: 0, width: 4, height: 12)
+        )
+    }
+
+    func testDragWithoutASplittableTargetKeepsTheLiveCardAndRollsBack() throws {
+        let movingID = UUID()
+        let blockingID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(movingID, x: 0, y: 0, width: 3, height: 3),
+                workspaceSlot(blockingID, x: 9, y: 0, width: 3, height: 12),
+            ],
+            activeSlotID: movingID
+        )
+        defer { fixture.window.orderOut(nil) }
+        let card = try XCTUnwrap(
+            fixture.canvas.subviews
+                .compactMap { $0 as? SpatialSlotCardView }
+                .first { $0.slotID == movingID }
+        )
+
+        fixture.canvas.begin(
+            slotID: movingID,
+            region: .header,
+            pointer: CGPoint(x: 100, y: 100)
+        )
+        let originalFrame = card.frame
+        fixture.canvas.drag(to: CGPoint(x: 800, y: 100))
+
+        XCTAssertEqual(card.frame, originalFrame)
+        XCTAssertEqual(card.alphaValue, 0.55, accuracy: 0.001)
+        XCTAssertNotNil(fixture.canvas.dragThumbnailView)
+        XCTAssertNil(fixture.canvas.dropHighlightView)
+
+        fixture.canvas.end()
+
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: movingID)?.rect,
+            GridRect(x: 0, y: 0, width: 3, height: 3)
+        )
+        XCTAssertEqual(card.alphaValue, 1, accuracy: 0.001)
     }
 
     func testNonOriginCardConvertsParentCoordinatesForHeaderEdgeAndCloseHitTesting() {
@@ -439,22 +810,6 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
     }
 
-    func testInvalidLayoutPreviewKeepsItsErrorBorder() {
-        let card = SpatialSlotCardView(slotID: UUID())
-
-        card.setState(isActive: true, previewIsValid: nil)
-        let resting = try? XCTUnwrap(card.layer?.borderWidth)
-        XCTAssertEqual(resting, 1)
-
-        card.setState(isActive: true, previewIsValid: false)
-        XCTAssertEqual(card.layer?.borderWidth, 1.5)
-        XCTAssertGreaterThan(
-            card.layer?.borderWidth ?? 0,
-            resting ?? 0,
-            "an invalid preview must read as heavier than a resting card, not merely different"
-        )
-    }
-
     func testCloseInactiveSlotDoesNotFocusItBeforeTheCloseAction() throws {
         let activeID = UUID()
         let inactiveID = UUID()
@@ -514,7 +869,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertTrue(fixture.window.firstResponder === previousResponder)
         XCTAssertEqual(
             fixture.store.catalog.slot(id: slotID)?.rect,
-            GridRect(x: 3, y: 0, width: 3, height: 3)
+            GridRect(x: 0, y: 0, width: 3, height: 3)
         )
     }
 
@@ -668,6 +1023,16 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             row: 3
         )
         fixture.store.applyMove(intervening)
+
+        fixture.reconfigure()
+        let authoritativeFrame = card.frame
+        fixture.canvas.drag(to: CGPoint(x: 700, y: 100))
+
+        XCTAssertEqual(
+            card.frame,
+            authoritativeFrame,
+            "a cancelled stale gesture must not reintroduce its old preview"
+        )
         fixture.canvas.end()
 
         XCTAssertEqual(
@@ -689,6 +1054,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             activeSlotID: slotID
         )
         defer { fixture.window.orderOut(nil) }
+        _ = fixture.pool.surface(for: slotID, workspacePath: fixture.workspacePath)
 
         let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
 
@@ -871,25 +1237,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         local: CGPoint,
         window: NSWindow
     ) throws -> NSEvent {
-        try mouseEvent(
-            .rightMouseDown,
-            for: card,
-            local: local,
-            window: window
-        )
-    }
-
-    private func mouseEvent(
-        _ type: NSEvent.EventType,
-        for view: NSView,
-        local: CGPoint,
-        window: NSWindow,
-        modifierFlags: NSEvent.ModifierFlags = []
-    ) throws -> NSEvent {
         try XCTUnwrap(NSEvent.mouseEvent(
-            with: type,
-            location: view.convert(local, to: nil),
-            modifierFlags: modifierFlags,
+            with: .rightMouseDown,
+            location: card.convert(local, to: nil),
+            modifierFlags: [],
             timestamp: 0,
             windowNumber: window.windowNumber,
             context: nil,
@@ -934,7 +1285,8 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
     private func makeCanvasFixture(
         slots: [WorkspaceSlot],
-        activeSlotID: UUID
+        activeSlotID: UUID,
+        additionalTabs: [TenonCore.Tab] = []
     ) throws -> CanvasFixture {
         let tab = TenonCore.Tab(
             slots: slots,
@@ -944,7 +1296,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let workspace = Workspace(
             name: "Test",
             path: workspacePath,
-            tabs: [tab],
+            tabs: [tab] + additionalTabs,
             activeTabID: tab.id
         )
         let store = WorkspaceStore(
@@ -982,6 +1334,8 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let palette = CommandPaletteState(
             storeURL: stateRoot.appendingPathComponent("frecency.json")
         )
+        let editorStates = EditorPaneStateStore()
+        let agentLens = AgentLensPool()
         let router = DragRouter()
         let container = FlippedTestView(
             frame: CGRect(x: 0, y: 0, width: 1_200, height: 1_200)
@@ -999,15 +1353,16 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         canvas.configure(
             tab: tab,
             workspacePath: workspacePath,
-            allLiveSlotIDs: Set(slots.map(\.id)),
+            allLiveSlotIDs: Set(([tab] + additionalTabs).flatMap { $0.slots.map(\.id) }),
             activeSlotID: activeSlotID,
             store: store,
             pool: pool,
+            agentLens: agentLens,
             webPool: webPool,
             host: host,
             intentRuntime: intentRuntime,
             palette: palette,
-            editorStates: EditorPaneStateStore(),
+            editorStates: editorStates,
             pluginSnapshots: [],
             pluginViewSections: [],
             webSurfaceTitles: [:],
@@ -1021,6 +1376,12 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             canvas: canvas,
             store: store,
             pool: pool,
+            webPool: webPool,
+            host: host,
+            intentRuntime: intentRuntime,
+            palette: palette,
+            editorStates: editorStates,
+            agentLens: agentLens,
             router: router,
             workspacePath: workspacePath
         )
@@ -1041,6 +1402,53 @@ private struct CanvasFixture {
     let canvas: SpatialCanvasNSView
     let store: WorkspaceStore
     let pool: SurfacePool
+    let webPool: PluginWebSurfacePool
+    let host: PluginHost
+    let intentRuntime: AppIntentRuntime
+    let palette: CommandPaletteState
+    let editorStates: EditorPaneStateStore
+    let agentLens: AgentLensPool
     let router: DragRouter
     let workspacePath: URL
+
+    @MainActor
+    var cardFrames: [UUID: CGRect] {
+        Dictionary(uniqueKeysWithValues: canvas.subviews.compactMap { view in
+            guard let card = view as? SpatialSlotCardView else { return nil }
+            return (card.slotID, card.frame)
+        })
+    }
+
+    @MainActor
+    func card(for id: UUID) -> SpatialSlotCardView? {
+        canvas.subviews
+            .compactMap { $0 as? SpatialSlotCardView }
+            .first { $0.slotID == id }
+    }
+
+    @MainActor
+    func reconfigure() {
+        guard let tab = store.catalog.activeTab else { return }
+        canvas.configure(
+            tab: tab,
+            workspacePath: workspacePath,
+            allLiveSlotIDs: Set(store.catalog.workspaces.flatMap { workspace in
+                workspace.tabs.flatMap { $0.slots.map(\.id) }
+            }),
+            activeSlotID: tab.activeSlotID,
+            store: store,
+            pool: pool,
+            agentLens: agentLens,
+            webPool: webPool,
+            host: host,
+            intentRuntime: intentRuntime,
+            palette: palette,
+            editorStates: editorStates,
+            pluginSnapshots: [],
+            pluginViewSections: [],
+            webSurfaceTitles: [:],
+            paneAttention: [:],
+            router: router
+        )
+    }
 }

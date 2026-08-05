@@ -2,11 +2,11 @@ import Foundation
 
 /// Where a command chosen from a tab's context menu should land.
 ///
-/// The launcher and the palette invoke a command against whatever pane is focused, which
-/// is right for a keyboard surface and wrong for a menu opened by right-clicking a
-/// *specific* tab — including a tab that is not the selected one. This resolves the pane
-/// that scope should name, so the answer is a value the tests can pin rather than a side
-/// effect of which pane happened to have focus.
+/// The palette and unanchored launcher surfaces invoke a command against whatever pane is
+/// focused, which is wrong for a menu opened by right-clicking a *specific* tab — including
+/// a tab that is not selected. This resolves the pane that scope should name, so the answer
+/// is a value the tests can pin rather than a side effect of which pane happened to have
+/// focus.
 ///
 /// Pure by construction: it reads a catalog and returns identifiers. Placement itself
 /// stays where `workspace.content.open.v1` already put it — host policy, reusing a pane

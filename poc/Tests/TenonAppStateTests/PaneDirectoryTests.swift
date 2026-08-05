@@ -38,7 +38,6 @@ final class PaneDirectoryTests: XCTestCase {
         // Seeded from the launch directory, so a pane is useful even where the bundle
         // ships no shell integration and no OSC 7 ever arrives.
         XCTAssertEqual(pool.paneDirectory(for: slot)?.projectRoot, repo)
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.source, .automatic)
     }
 
     func testAnOrdinaryCdInsideOneRepositoryUpdatesTheCwdButNotifiesNobody() throws {
@@ -112,98 +111,14 @@ final class PaneDirectoryTests: XCTestCase {
         )
     }
 
-    // MARK: - The pin
-
-    func testPinningOverridesTheResolvedRootAndNotifies() throws {
+    func testClosingAPaneReleasesItsDirectory() throws {
         let repo = try repository("repo")
-        let elsewhere = try directory("elsewhere")
         let pool = makePool()
         _ = pool.surface(for: slot, workspacePath: repo)
-        var reported: [ProjectRoot.PaneDirectory] = []
-        pool.onPaneDirectoryChange = { directory, _ in reported.append(directory) }
-
-        pool.pinProjectRoot(elsewhere, for: slot)
-
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.projectRoot, elsewhere)
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.source, .pinned)
-        XCTAssertTrue(pool.hasPinnedProjectRoot(for: slot))
-        XCTAssertEqual(reported.count, 1)
-    }
-
-    func testAPinnedPaneIgnoresTheShellWalkingIntoAnotherWorktree() throws {
-        let repo = try repository("main")
-        let worktree = try linkedWorktree("wt", of: repo)
-        let pinned = try directory("pinned")
-        let pool = makePool()
-        let stub = try XCTUnwrap(
-            pool.surface(for: slot, workspacePath: repo) as? StubTerminalSurface
-        )
-        pool.pinProjectRoot(pinned, for: slot)
-        var notifications = 0
-        pool.onPaneDirectoryChange = { _, _ in notifications += 1 }
-
-        stub.onPwdChange?(worktree.path)
-
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.cwd, worktree, "the cwd still tracks")
-        XCTAssertEqual(
-            pool.paneDirectory(for: slot)?.projectRoot,
-            pinned,
-            "an explicit pin outranks whatever the shell reports"
-        )
-        XCTAssertEqual(notifications, 0)
-    }
-
-    func testUseAutomaticRevertsToTheResolvedRootOfTheCurrentCwd() throws {
-        let repo = try repository("main")
-        let worktree = try linkedWorktree("wt", of: repo)
-        let pinned = try directory("pinned")
-        let pool = makePool()
-        let stub = try XCTUnwrap(
-            pool.surface(for: slot, workspacePath: repo) as? StubTerminalSurface
-        )
-        pool.pinProjectRoot(pinned, for: slot)
-        stub.onPwdChange?(worktree.path)
-
-        pool.pinProjectRoot(nil, for: slot)
-
-        XCTAssertEqual(
-            pool.paneDirectory(for: slot)?.projectRoot,
-            worktree,
-            "reverting must re-resolve from where the shell is NOW, not where it was pinned"
-        )
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.source, .automatic)
-        XCTAssertFalse(pool.hasPinnedProjectRoot(for: slot))
-    }
-
-    func testThePinSurvivesSwitchingBetweenPanes() throws {
-        let repo = try repository("repo")
-        let pinned = try directory("pinned")
-        let pool = makePool()
-        _ = pool.surface(for: slot, workspacePath: repo)
-        pool.pinProjectRoot(pinned, for: slot)
-
-        // Another pane is opened and used; the first pane's surface is already built, so
-        // this is the ordinary "work elsewhere and come back" path.
-        _ = pool.surface(for: UUID(), workspacePath: repo)
-
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.projectRoot, pinned)
-        XCTAssertEqual(pool.paneDirectory(for: slot)?.source, .pinned)
-    }
-
-    func testClosingAPaneReleasesItsDirectoryAndItsPin() throws {
-        let repo = try repository("repo")
-        let pinned = try directory("pinned")
-        let pool = makePool()
-        _ = pool.surface(for: slot, workspacePath: repo)
-        pool.pinProjectRoot(pinned, for: slot)
 
         pool.retainOnly([])
 
         XCTAssertNil(pool.paneDirectory(for: slot))
-        XCTAssertFalse(
-            pool.hasPinnedProjectRoot(for: slot),
-            "a pin must die with its pane rather than leaking onto the next slot id"
-        )
     }
 
     // MARK: - Helpers

@@ -13,45 +13,27 @@ import Foundation
 /// edge case here — it is precisely the linked worktree and the submodule, which is to say
 /// the parallel-agent layout this product targets.
 public enum ProjectRoot {
-    /// Whether the root was discovered or chosen by the user. The distinction is visible in
-    /// the UI ("AUTO" vs pinned), so it is part of the resolved value rather than something
-    /// each call site recomputes.
-    public enum Source: String, Equatable, Sendable {
-        case automatic
-        case pinned
-    }
-
     public struct Resolution: Equatable, Sendable {
         /// `nil` when the cwd sits under no repository at all. The panels then keep their
         /// existing fallback (the workspace path); this rule never guesses `/`.
         public let root: URL?
-        public let source: Source
 
-        public init(root: URL?, source: Source) {
+        public init(root: URL?) {
             self.root = root
-            self.source = source
         }
     }
 
     /// Resolves the project root for a pane sitting in `cwd`.
-    ///
-    /// A `pinned` root always wins — that is "Set Project Directory…", an explicit human
-    /// override, and it holds even where automatic resolution would find a different
-    /// repository or none at all. Passing `nil` is "Use Automatic".
-    public static func resolve(cwd: URL, pinned: URL? = nil) -> Resolution {
-        if let pinned {
-            return Resolution(root: canonical(pinned), source: .pinned)
-        }
-
+    public static func resolve(cwd: URL) -> Resolution {
         var current = canonical(cwd)
         while true {
             if hasGitEntry(at: current) {
-                return Resolution(root: current, source: .automatic)
+                return Resolution(root: current)
             }
             let parent = current.deletingLastPathComponent().standardizedFileURL
             // `/` is its own parent; stop there rather than looping forever.
             guard parent.path != current.path else {
-                return Resolution(root: nil, source: .automatic)
+                return Resolution(root: nil)
             }
             current = parent
         }
@@ -60,12 +42,9 @@ public enum ProjectRoot {
     /// Whether moving between two resolutions should actually repaint the panels.
     ///
     /// This is the no-thrash rule in one place: an ordinary `cd` within a repository
-    /// produces two resolutions with the same root, and answers `false`. The source is
-    /// compared too, because pinning a directory the automatic rule had already found
-    /// changes nothing about *where* the panels point but must still repaint the AUTO
-    /// marker that tells the user why they point there.
+    /// produces two resolutions with the same root, and answers `false`.
     public static func rerootsPanels(from: Resolution, to: Resolution) -> Bool {
-        from.root != to.root || from.source != to.source
+        from.root != to.root
     }
 
     /// Both of a pane's directories as one value, so the two can never be updated out of
@@ -73,17 +52,15 @@ public enum ProjectRoot {
     public struct PaneDirectory: Equatable, Sendable {
         public let cwd: URL
         public let projectRoot: URL?
-        public let source: Source
 
-        public init(cwd: URL, pinned: URL? = nil) {
-            let resolution = ProjectRoot.resolve(cwd: cwd, pinned: pinned)
+        public init(cwd: URL) {
+            let resolution = ProjectRoot.resolve(cwd: cwd)
             self.cwd = ProjectRoot.canonical(cwd)
             self.projectRoot = resolution.root
-            self.source = resolution.source
         }
 
         public var resolution: Resolution {
-            Resolution(root: projectRoot, source: source)
+            Resolution(root: projectRoot)
         }
     }
 

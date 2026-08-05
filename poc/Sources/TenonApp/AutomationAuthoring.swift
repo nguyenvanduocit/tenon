@@ -19,6 +19,9 @@ enum AutomationAuthoring {
         ## What a Tenon automation is
         One JavaScript file in this folder (your shell already starts here):
         \(pluginsRoot)
+        Write it THERE and nowhere else. In particular never write a plugin inside \
+        Tenon.app — that bundle is code-signed, so a file added to it breaks the \
+        signature and the app fails to launch, and the next install deletes it anyway.
         The file MUST open with a manifest header — first bytes of the file, nothing \
         above it:
 
@@ -40,6 +43,9 @@ enum AutomationAuthoring {
         file, ids unique.
         - "intents.uses" must name EVERY intent the script sends and "permissions" \
         the capabilities they need; undeclared use fails closed at call time.
+        - The "intents" block itself is required even when it declares nothing — write \
+        "intents": { "uses": [] }. The "uses" and "provides" lists inside it may be \
+        omitted; the block around them may not.
         - A .js file without the header is silently skipped; a file that claims the \
         header and gets it wrong fails loudly with a diagnostic naming the file.
 

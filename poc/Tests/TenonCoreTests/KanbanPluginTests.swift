@@ -158,14 +158,20 @@ final class KanbanPluginTests: XCTestCase {
         XCTAssertTrue(labels.contains("high/M"), "a card carries its meta badge")
     }
 
-    /// The two nodes that make the board read as a board rather than as scattered cards.
-    /// Both were found by rendering the real tree offscreen, not by reading it: a bare
-    /// `vstack` column collapses to the width of its own heading when it holds no cards,
-    /// and a row of columns without the trailing `spacer` centres them against each
-    /// other, so a short column floats in the middle of the pane beside a tall one. A
-    /// card's title is its own node under the id line for the same reason — beside the
-    /// id and the badge it wraps into a column of single words.
-    func testEveryColumnIsAFullWidthBoxThatPinsItsCardsToTheTop() async throws {
+    /// The nodes that make the board read as a board rather than as scattered cards.
+    /// Found by rendering the real tree offscreen, not by reading it: a bare `vstack`
+    /// column collapses to the width of its own heading when it holds no cards, and a row
+    /// of columns without the trailing `spacer` centres them against each other, so a
+    /// short column floats in the middle of the pane beside a tall one. A card's title is
+    /// its own node under the id line for the same reason — beside the id and the badge it
+    /// wraps into a column of single words.
+    ///
+    /// T-066 adds the rule the pane could not express before: a column is a **fixed**
+    /// width, identical for every column, and the row of them lives inside a horizontal
+    /// `scroll`. Sharing the pane equally meant five columns on a narrow pane were five
+    /// unreadable slivers; a fixed width instead lets the board run off the edge and be
+    /// scrolled to, which is what a board does.
+    func testEveryColumnIsAFixedWidthBoxInsideAHorizontalScroll() async throws {
         let bridge = makeBridge()
         let runtime = try await makeStartedRuntime(bridge: bridge)
         try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
@@ -173,27 +179,43 @@ final class KanbanPluginTests: XCTestCase {
             await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
         }
 
-        let body = await body(of: runtime, instance: Fixture.paneA)
-        let root = Self.children(of: body ?? .spacer)
-        let row = try XCTUnwrap(root.first {
-            if case .hstack = $0 { return true }
-            return false
-        })
+        let rendered = await body(of: runtime, instance: Fixture.paneA)
+        let body = try XCTUnwrap(rendered)
+        let scroll = try XCTUnwrap(
+            Self.firstScroll(in: body),
+            "the board is wrapped in a scroll, or fixed columns fall off an unreachable edge"
+        )
+        guard case let .scroll(axis, _) = scroll else { return }
+        XCTAssertEqual(axis, .horizontal, "the overflow a fixed-width board creates is sideways")
+
+        let row = try XCTUnwrap(Self.columnRow(in: scroll), "the columns sit inside the scroll")
         let columns = Self.children(of: row)
         XCTAssertEqual(columns.count, 3)
+        var widths: [Double?] = []
         for column in columns {
-            guard case let .box(_, _, _, parts) = column else {
+            guard case let .box(_, _, _, width, parts) = column else {
                 XCTFail("a column must be a box — a vstack claims only its content's width")
                 continue
             }
+            widths.append(width)
             guard case .spacer = try XCTUnwrap(parts.last) else {
                 XCTFail("a column must end in a spacer, or its cards centre in the row")
                 continue
             }
         }
+        XCTAssertEqual(
+            widths.compactMap { $0 }.count,
+            3,
+            "every column declares a width; one that does not would stretch over the rest"
+        )
+        XCTAssertEqual(
+            Set(widths.compactMap { $0 }).count,
+            1,
+            "all columns are the same width whatever they hold"
+        )
 
         // The Todo column's first card: id line, then the title on its own line.
-        guard case let .box(_, _, _, todo) = columns[0] else { return }
+        guard case let .box(_, _, _, _, todo) = columns[0] else { return }
         let card = try XCTUnwrap(todo.first {
             if case .card = $0 { return true }
             return false
@@ -364,9 +386,98 @@ final class KanbanPluginTests: XCTestCase {
         )
     }
 
-    /// The detail block lives inside the card now, and its toggle is a card button.
-    func testTogglingDetailsRevealsThemInsideTheCardAndHidesThemAgain() async throws {
+    /// T-066: More opens the task in the modal rather than growing the card.
+    ///
+    /// A card is one column wide. Expanding the detail inside it pushed every card below
+    /// it down the column and still had to wrap the criteria into single words, so the
+    /// detail now gets a sheet the size of the window. The card keeps its own size no
+    /// matter which task is open — asserted here, because the inline expansion is gone
+    /// rather than merely unused.
+    func testMoreOpensTheTaskInAModalAndLeavesTheCardUnchanged() async throws {
         let bridge = makeBridge()
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+        let cardBefore = await Self.card(
+            withID: "T-101",
+            in: body(of: runtime, instance: Fixture.paneA)
+        )
+
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: "more:T-101"
+        )
+
+        let opened = await eventually {
+            await Self.texts(in: self.modal(of: runtime, instance: Fixture.paneA)?.body)
+                .contains("Something still open")
+        }
+        XCTAssertTrue(opened, "More must show what the task still owes, in the modal")
+
+        let published = await self.modal(of: runtime, instance: Fixture.paneA)
+        let modal = try XCTUnwrap(published)
+        XCTAssertTrue(modal.title.contains("T-101"), "the sheet names the task it is showing")
+        let inModal = Self.texts(in: modal.body)
+        XCTAssertTrue(inModal.contains("One line of description."))
+        XCTAssertTrue(inModal.contains { $0.contains("priority high") })
+
+        let cardAfter = await Self.card(
+            withID: "T-101",
+            in: body(of: runtime, instance: Fixture.paneA)
+        )
+        XCTAssertEqual(
+            cardAfter,
+            cardBefore,
+            "opening the detail must not change the card — that was the inline expansion"
+        )
+    }
+
+    /// Dismissal is the plugin's decision, not the host's: Escape, the backdrop, and the
+    /// close control all deliver the modal's action id here, and only this handler takes
+    /// the modal away. A host that cleared it itself would leave the plugin believing a
+    /// task is still open.
+    func testDismissingTheModalClosesItThroughThePluginsOwnAction() async throws {
+        let bridge = makeBridge()
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: "more:T-101"
+        )
+        _ = await eventually { await self.modal(of: runtime, instance: Fixture.paneA) != nil }
+
+        let opened = await self.modal(of: runtime, instance: Fixture.paneA)
+        let dismiss = try XCTUnwrap(opened).dismissAction
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: dismiss
+        )
+
+        let closed = await eventually {
+            await self.modal(of: runtime, instance: Fixture.paneA) == nil
+        }
+        XCTAssertTrue(closed, "the dismiss action the modal published must close it")
+    }
+
+    /// T-066: the modal is where a started agent is watched.
+    ///
+    /// Start opens the agent's pane and the modal then follows *that* pane —
+    /// `terminal.viewport.read.v1` under the pane's own invocation scope — showing whether
+    /// it is still running and the tail of what it printed. Reading the viewport rather
+    /// than paging the whole scrollback is deliberate: the question a supervisor asks a
+    /// running agent is "what is it doing now", and the answer is one bounded read
+    /// however long the run gets (VISION: evidence-linked compression).
+    func testStartTracksTheAgentPaneInTheModal() async throws {
+        let bridge = makeBridge()
+        await bridge.setViewport(text: "> claude 'Do task T-101'\nReading the task file\n")
         let runtime = try await makeStartedRuntime(bridge: bridge)
         try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
         _ = await eventually {
@@ -376,37 +487,42 @@ final class KanbanPluginTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "board",
             instanceID: Fixture.paneA,
-            itemID: "toggle:T-101"
+            itemID: "start:T-101"
         )
 
-        let revealed = await eventually {
-            await self.labels(of: runtime, instance: Fixture.paneA)
-                .contains("Something still open")
+        let tracking = await eventually(attempts: 400) {
+            await Self.texts(in: self.modal(of: runtime, instance: Fixture.paneA)?.body)
+                .contains { $0.contains("Reading the task file") }
         }
-        XCTAssertTrue(revealed, "toggling a card must show what the task still owes")
-
-        let card = await Self.card(
-            withID: "T-101",
-            in: body(of: runtime, instance: Fixture.paneA)
-        )
-        let inCard = Self.texts(in: card)
-        XCTAssertTrue(inCard.contains("One line of description."))
-        XCTAssertTrue(inCard.contains { $0.contains("priority high") })
         XCTAssertTrue(
-            inCard.contains("Something still open"),
-            "the detail renders inside the task's own card"
+            tracking,
+            "Start must open the modal on the pane it started and show its output"
         )
 
-        _ = try await runtime.invokeViewSelect(
-            viewID: "board",
-            instanceID: Fixture.paneA,
-            itemID: "toggle:T-101"
+        let running = Self.texts(in: await modal(of: runtime, instance: Fixture.paneA)?.body)
+        XCTAssertTrue(
+            running.contains { $0.lowercased().contains("running") },
+            "a live pane reads as running: \(running)"
         )
-        let hidden = await eventually {
-            let labels = await self.labels(of: runtime, instance: Fixture.paneA)
-            return !labels.contains("Something still open")
+
+        // The scope is the started pane, not the kanban pane: a read without it would
+        // report whatever terminal happens to be focused.
+        let reads = await bridge.requests().filter {
+            $0.intentID.rawValue == "terminal.viewport.read.v1"
         }
-        XCTAssertTrue(hidden, "the same button toggles the detail back off")
+        let scoped = try XCTUnwrap(reads.last)
+        XCTAssertEqual(
+            scoped.scopeOverride?.paneID?.uuidString.lowercased(),
+            KanbanBridge.agentPaneID.lowercased(),
+            "the viewport read is scoped to the pane Start opened"
+        )
+
+        await bridge.setViewport(text: "Done.\n", exited: true)
+        let ended = await eventually(attempts: 400) {
+            let texts = await Self.texts(in: self.modal(of: runtime, instance: Fixture.paneA)?.body)
+            return texts.contains { $0.lowercased().contains("exited") }
+        }
+        XCTAssertTrue(ended, "a pane that exited must stop reading as running")
     }
 
     /// The product point of the whole plugin: a click puts an agent on a task in a real
@@ -1116,6 +1232,22 @@ final class KanbanPluginTests: XCTestCase {
             .first { $0.instanceID == instance }?.body
     }
 
+    private func modal(
+        of runtime: PluginRuntime,
+        instance: String
+    ) async -> PluginViewModal? {
+        await runtime.snapshot().views
+            .first { $0.instanceID == instance }?.modal
+    }
+
+    private static func firstScroll(in node: PluginViewNode) -> PluginViewNode? {
+        if case .scroll = node { return node }
+        for child in children(of: node) {
+            if let found = firstScroll(in: child) { return found }
+        }
+        return nil
+    }
+
     /// Every human-visible string in the pane, row items and body tree alike, so the
     /// honest-error assertions read the same whichever way the pane rendered.
     private func labels(
@@ -1144,11 +1276,7 @@ final class KanbanPluginTests: XCTestCase {
         instance: String
     ) async -> [RenderedColumn] {
         guard let body = await body(of: runtime, instance: instance),
-              case let .vstack(_, rootChildren) = body,
-              let columnsNode = rootChildren.first(where: {
-                  if case .hstack = $0 { return true }
-                  return false
-              }),
+              let columnsNode = Self.columnRow(in: body),
               case let .hstack(_, columnNodes) = columnsNode
         else {
             return []
@@ -1157,7 +1285,7 @@ final class KanbanPluginTests: XCTestCase {
             // A column is a `box`: the node that claims the full width offered to it, so
             // every column takes an equal share of the pane and an empty one still holds
             // its place instead of collapsing to the width of its heading.
-            guard case let .box(_, _, _, parts) = columnNode,
+            guard case let .box(_, _, _, _, parts) = columnNode,
                   let headerNode = parts.first,
                   case let .hstack(_, header) = headerNode
             else {
@@ -1185,6 +1313,24 @@ final class KanbanPluginTests: XCTestCase {
         }
     }
 
+    /// The row of columns, wherever the tree puts it: it sits inside the horizontal
+    /// `scroll` now, so finding it by walking rather than by position keeps every
+    /// board assertion independent of how the board is wrapped.
+    private static func columnRow(in node: PluginViewNode) -> PluginViewNode? {
+        if case .hstack = node, !children(of: node).isEmpty,
+           children(of: node).allSatisfy({
+               if case .box = $0 { return true }
+               return false
+           })
+        {
+            return node
+        }
+        for child in children(of: node) {
+            if let found = columnRow(in: child) { return found }
+        }
+        return nil
+    }
+
     private static func cardID(_ children: [PluginViewNode]) -> String? {
         for child in children {
             if case let .hstack(_, header) = child {
@@ -1199,9 +1345,10 @@ final class KanbanPluginTests: XCTestCase {
     private static func children(of node: PluginViewNode) -> [PluginViewNode] {
         switch node {
         case let .vstack(_, children), let .hstack(_, children), let .card(children),
-             let .grid(_, _, children), let .field(_, children):
+             let .grid(_, _, children), let .field(_, children),
+             let .scroll(_, children):
             return children
-        case let .box(_, _, _, children):
+        case let .box(_, _, _, _, children):
             return children
         default:
             return []
@@ -1345,6 +1492,11 @@ private actor KanbanBridge: KanbanIntentBridge {
     private var invalidatedWriteCursors: Int
     private var writeStagings: [String: WriteStaging] = [:]
     private var recorded: [PluginIntentSendRequest] = []
+    /// The pane `terminal.open.v1` hands back, and what a read of it currently shows —
+    /// enough of the terminal contract for the modal's run tracking (T-066).
+    static let agentPaneID = "CCCCCCCC-3333-0000-0000-000000000041"
+    private var viewportText = ""
+    private var viewportExited = false
 
     init(
         workspaces: [Workspace],
@@ -1367,6 +1519,11 @@ private actor KanbanBridge: KanbanIntentBridge {
     func requests() -> [PluginIntentSendRequest] { recorded }
 
     func fileContents(_ path: String) -> String? { files[path] }
+
+    func setViewport(text: String, exited: Bool = false) {
+        viewportText = text
+        viewportExited = exited
+    }
 
     func setFile(_ path: String, to text: String) { files[path] = text }
 
@@ -1404,6 +1561,16 @@ private actor KanbanBridge: KanbanIntentBridge {
             }
         case "filesystem.file.write.v1":
             return write(request)
+        case "terminal.open.v1":
+            value = .object(["paneID": .string(Self.agentPaneID)])
+        case "terminal.viewport.read.v1":
+            value = .object([
+                "paneID": .string(Self.agentPaneID),
+                "text": .string(viewportText),
+                "exited": .bool(viewportExited),
+                "columns": .integer(80),
+                "rows": .integer(24),
+            ])
         default:
             value = .object([:])
         }

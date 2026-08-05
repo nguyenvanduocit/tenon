@@ -83,6 +83,31 @@ public struct ViewAction: Sendable, Equatable, Identifiable {
     }
 }
 
+/// A view's modal presentation: the same node vocabulary, shown over the whole shell
+/// instead of inside the pane.
+///
+/// Presentation only, exactly like `browserBar`. The plugin owns whether a modal exists
+/// — it publishes one by setting this and takes it away by clearing it — and the host
+/// owns how it looks and how it is dismissed. Escape, the backdrop, and the close control
+/// all deliver `dismissAction` back through the view's `onSelect`, so the host never
+/// mutates plugin state behind its back.
+public struct PluginViewModal: Sendable, Equatable {
+    /// Bounds the header (invariant 10); the body's nodes carry their own.
+    public static let maximumTitleLength = 160
+    /// The action id delivered on dismiss when the plugin names none.
+    public static let defaultDismissAction = "modal.dismiss"
+
+    public let title: String
+    public let body: PluginViewNode?
+    public let dismissAction: String
+
+    public init(title: String, body: PluginViewNode?, dismissAction: String) {
+        self.title = String(title.prefix(Self.maximumTitleLength))
+        self.body = body
+        self.dismissAction = dismissAction
+    }
+}
+
 /// One immutable view contribution visible to the host.
 public struct PluginViewInfo: Sendable, Equatable, Identifiable {
     public let viewID: String
@@ -93,6 +118,7 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
     public let actions: [ViewAction]
     public let items: [PluginRowItem]
     public let body: PluginViewNode?
+    public let modal: PluginViewModal?
 
     public var id: String {
         instanceID.map { "\(viewID)#\($0)" } ?? viewID
@@ -106,7 +132,8 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
         subtitle: String?,
         actions: [ViewAction],
         items: [PluginRowItem],
-        body: PluginViewNode?
+        body: PluginViewNode?,
+        modal: PluginViewModal? = nil
     ) {
         self.viewID = viewID
         self.instanceID = instanceID
@@ -116,6 +143,7 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
         self.actions = actions
         self.items = items
         self.body = body
+        self.modal = modal
     }
 }
 

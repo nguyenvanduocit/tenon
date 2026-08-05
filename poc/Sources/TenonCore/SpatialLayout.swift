@@ -39,6 +39,14 @@ public enum SplitAxis: Equatable, Sendable {
     case vertical
 }
 
+/// Which half of a target pane receives a pane carried by a header drag.
+public enum SpatialDropEdge: Equatable, Sendable {
+    case left
+    case right
+    case top
+    case bottom
+}
+
 public enum ResizeDirection: Equatable, Sendable {
     case north
     case east
@@ -49,20 +57,37 @@ public enum ResizeDirection: Equatable, Sendable {
     case southEast
     case southWest
 
-    var includesNorth: Bool {
+    public var includesNorth: Bool {
         self == .north || self == .northEast || self == .northWest
     }
 
-    var includesEast: Bool {
+    public var includesEast: Bool {
         self == .east || self == .northEast || self == .southEast
     }
 
-    var includesSouth: Bool {
+    public var includesSouth: Bool {
         self == .south || self == .southEast || self == .southWest
     }
 
-    var includesWest: Bool {
+    public var includesWest: Bool {
         self == .west || self == .northWest || self == .southWest
+    }
+}
+
+/// The sizes a pane border offers when it is asked to resize by name rather than by
+/// drag. A fraction is of the whole canvas, never of the pane's current size, so "1/2"
+/// means the same width wherever the pane sits.
+public enum SpatialExtentFraction: Equatable, Sendable, CaseIterable {
+    case oneThird
+    case oneHalf
+    case full
+
+    func extent(of total: Int) -> Int {
+        switch self {
+        case .oneThird: return total / 3
+        case .oneHalf: return total / 2
+        case .full: return total
+        }
     }
 }
 
@@ -502,6 +527,115 @@ public enum SpatialLayout {
         )
     }
 
+    /// The same resize, named by destination instead of by delta: the edge given by
+    /// `direction` lands at `fraction` of the canvas while the opposite edge stays
+    /// fixed — the anchor a drag on that edge already uses. A corner names both axes.
+    ///
+    /// The fraction is converted to the delta that reaches it and handed to the
+    /// delta-based `resize`, so neighbour coupling, detachment, clamping, and validity
+    /// are the drag's, not a second set of rules. A destination that changes nothing
+    /// yields an invalid transaction, so a caller can tell "already that size" from a
+    /// real change without diffing rects itself.
+    public static func resize(
+        _ slots: [SpatialSlot],
+        slotID: UUID,
+        direction: ResizeDirection,
+        fraction: SpatialExtentFraction
+    ) -> ResizeLayoutTransaction {
+        let refused = ResizeLayoutTransaction(
+            isValid: false,
+            isDetached: false,
+            baseline: slots,
+            proposal: slots,
+            affectedSlotIDs: []
+        )
+        guard isValid(slots),
+              let target = slots.first(where: { $0.id == slotID })
+        else { return refused }
+
+        let horizontal = direction.includesEast || direction.includesWest
+        let vertical = direction.includesNorth || direction.includesSouth
+        let widthDelta = horizontal
+            ? fraction.extent(of: columns) - target.rect.width
+            : 0
+        let heightDelta = vertical
+            ? fraction.extent(of: rows) - target.rect.height
+            : 0
+
+        // West and north edges grow toward smaller coordinates, so the delta that
+        // moves such an edge is the negation of the size change it produces.
+        let transaction = resize(
+            slots,
+            slotID: slotID,
+            direction: direction,
+            deltaColumns: direction.includesWest ? -widthDelta : widthDelta,
+            deltaRows: direction.includesNorth ? -heightDelta : heightDelta
+        )
+        guard transaction.proposal != slots else { return refused }
+        return transaction
+    }
+
+    /// Steps one edge to the next size in the border's own cycle — Full, then 1/2, then
+    /// 1/3, then Full again — starting from whichever of the three the pane currently
+    /// sits on. A pane sitting on none of them goes Full, so the first double-click on a
+    /// border always means "fill this direction".
+    ///
+    /// A size the layout would refuse is skipped for the next one, so the cycle never
+    /// answers with nothing while some size was still reachable. The sizes themselves are
+    /// `resize(…, fraction:)`, which is what the border's contextual menu lists: one
+    /// vocabulary, reached either by naming a size or by stepping to it.
+    public static func cycleExtent(
+        _ slots: [SpatialSlot],
+        slotID: UUID,
+        direction: ResizeDirection
+    ) -> ResizeLayoutTransaction {
+        let refused = ResizeLayoutTransaction(
+            isValid: false,
+            isDetached: false,
+            baseline: slots,
+            proposal: slots,
+            affectedSlotIDs: []
+        )
+        guard isValid(slots),
+              let target = slots.first(where: { $0.id == slotID })
+        else { return refused }
+
+        let cycle: [SpatialExtentFraction] = [.full, .oneHalf, .oneThird]
+        let current = cycle.firstIndex {
+            occupies(target.rect, direction: direction, fraction: $0)
+        }
+        // On a known size, the walk starts at the one after it; on none, at the head of
+        // the cycle, which is Full.
+        let candidates = current.map { start in
+            (1...cycle.count).map { cycle[(start + $0) % cycle.count] }
+        } ?? cycle
+
+        for fraction in candidates {
+            let transaction = resize(
+                slots,
+                slotID: slotID,
+                direction: direction,
+                fraction: fraction
+            )
+            if transaction.isValid { return transaction }
+        }
+        return refused
+    }
+
+    /// Whether a pane already sits on one of the cycle's sizes, measured on the axes the
+    /// edge moves. A corner sits on a size only when both of its axes do.
+    private static func occupies(
+        _ rect: GridRect,
+        direction: ResizeDirection,
+        fraction: SpatialExtentFraction
+    ) -> Bool {
+        let horizontal = direction.includesEast || direction.includesWest
+        let vertical = direction.includesNorth || direction.includesSouth
+        let widthMatches = !horizontal || rect.width == fraction.extent(of: columns)
+        let heightMatches = !vertical || rect.height == fraction.extent(of: rows)
+        return widthMatches && heightMatches
+    }
+
     /// Grows one slot sideways until it meets the slots that share its rows, or the
     /// canvas edge where none do. Nothing else moves: a neighbour is a stop, never
     /// something to shrink, so filling never rearranges the rest of the layout. A slot
@@ -603,6 +737,67 @@ public enum SpatialLayout {
             baseline: slots,
             proposal: proposal,
             affectedSlotIDs: [slotID]
+        )
+    }
+
+    /// Collapses the carried pane's old footprint, then divides the target in half
+    /// and places the carried pane on the requested edge. The operation mirrors a
+    /// structural pane move while preserving the spatial model's stable slot order.
+    public static func moveBeside(
+        _ slots: [SpatialSlot],
+        slotID: UUID,
+        targetID: UUID,
+        edge: SpatialDropEdge
+    ) -> SpatialLayoutTransaction {
+        func invalid() -> SpatialLayoutTransaction {
+            SpatialLayoutTransaction(
+                kind: .move,
+                isValid: false,
+                baseline: slots,
+                proposal: slots,
+                affectedSlotIDs: []
+            )
+        }
+
+        guard isValid(slots),
+              slotID != targetID,
+              slots.contains(where: { $0.id == slotID }),
+              slots.contains(where: { $0.id == targetID }),
+              let closed = close(slots, slotID: slotID)
+        else { return invalid() }
+
+        let axis: SplitAxis = edge == .left || edge == .right
+            ? .horizontal
+            : .vertical
+        guard let split = split(
+            closed.proposal,
+            slotID: targetID,
+            newSlotID: slotID,
+            axis: axis
+        ) else { return invalid() }
+
+        var rects = Dictionary(
+            uniqueKeysWithValues: split.proposal.map { ($0.id, $0.rect) }
+        )
+        if edge == .left || edge == .top {
+            let sourceRect = rects[slotID]
+            rects[slotID] = rects[targetID]
+            rects[targetID] = sourceRect
+        }
+        let proposal = slots.map { slot in
+            SpatialSlot(id: slot.id, rect: rects[slot.id] ?? slot.rect)
+        }
+        let affectedSlotIDs = slots.compactMap { slot in
+            rects[slot.id] == slot.rect ? nil : slot.id
+        }
+        guard isValid(proposal), !affectedSlotIDs.isEmpty else { return invalid() }
+
+        return SpatialLayoutTransaction(
+            kind: .move,
+            isValid: true,
+            baseline: slots,
+            proposal: proposal,
+            affectedSlotIDs: affectedSlotIDs
         )
     }
 

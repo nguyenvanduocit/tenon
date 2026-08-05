@@ -118,21 +118,15 @@ private struct WorkspaceRow: View {
     let select: () -> Void
     let remove: () -> Void
 
+    @State private var isHovering = false
+
     var body: some View {
         Button(action: select) {
-            HStack(spacing: 9) {
-                ZStack {
-                    RoundedRectangle(cornerRadius: 6)
-                        .fill(
-                            isActive
-                                ? TenonTheme.amber.opacity(0.16)
-                                : TenonTheme.chromeRaised
-                        )
-                    Text(workspace.name.prefix(1).uppercased())
-                        .font(TenonTheme.utilityFont(size: 10, weight: .bold))
-                        .foregroundStyle(isActive ? TenonTheme.amber : TenonTheme.muted)
-                }
-                .frame(width: 29, height: 29)
+            HStack(spacing: 8) {
+                Image(systemName: "folder")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(isActive ? TenonTheme.amber : TenonTheme.muted)
+                    .frame(width: 29, height: 29)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(workspace.name)
@@ -142,7 +136,7 @@ private struct WorkspaceRow: View {
                                 weight: unseenCount > 0 ? .bold : .semibold
                             )
                         )
-                        .foregroundStyle(TenonTheme.text)
+                        .foregroundStyle(isActive ? TenonTheme.text : TenonTheme.muted)
                         .lineLimit(1)
                     Text("\(workspace.tabs.count) \(workspace.tabs.count == 1 ? "tab" : "tabs")")
                         .font(TenonTheme.utilityFont(size: 8))
@@ -163,18 +157,19 @@ private struct WorkspaceRow: View {
             .padding(.leading, 9)
             .padding(.trailing, 8)
             .frame(height: 46)
-            .background(
-                isActive ? TenonTheme.chromeRaised.opacity(0.96) : Color.clear
-            )
-            .overlay(alignment: .leading) {
-                Rectangle()
-                    .fill(isActive ? TenonTheme.amber : Color.clear)
-                    .frame(width: 2)
+            .background {
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(
+                        isActive
+                            ? Color.primary.opacity(0.09)
+                            : (isHovering ? Color.primary.opacity(0.04) : .clear)
+                    )
             }
-            .clipShape(RoundedRectangle(cornerRadius: 7))
-            .contentShape(Rectangle())
+            .contentShape(RoundedRectangle(cornerRadius: 6))
         }
         .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .accessibilityAddTraits(isActive ? .isSelected : [])
         .accessibilityIdentifier("tenon.workspaceRow")
         .contextMenu {
             Button("Remove Workspace", role: .destructive, action: remove)

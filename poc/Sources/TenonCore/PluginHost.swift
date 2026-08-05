@@ -95,11 +95,37 @@ public struct PluginViewSection: Sendable, Equatable, Identifiable {
     public let actions: [ViewAction]
     public let items: [PluginRowItem]
     public let body: PluginViewNode?
+    /// Set while this view wants a modal over the whole shell; nil otherwise.
+    public let modal: PluginViewModal?
 
     public var id: String {
         instanceID.map {
             "\(pluginID.rawValue).\(viewID)#\($0)"
         } ?? "\(pluginID.rawValue).\(viewID)"
+    }
+
+    public init(
+        pluginID: PluginID,
+        viewID: String,
+        instanceID: String?,
+        instanced: Bool,
+        title: String,
+        subtitle: String?,
+        actions: [ViewAction],
+        items: [PluginRowItem],
+        body: PluginViewNode?,
+        modal: PluginViewModal? = nil
+    ) {
+        self.pluginID = pluginID
+        self.viewID = viewID
+        self.instanceID = instanceID
+        self.instanced = instanced
+        self.title = title
+        self.subtitle = subtitle
+        self.actions = actions
+        self.items = items
+        self.body = body
+        self.modal = modal
     }
 }
 
@@ -125,6 +151,7 @@ public struct PluginIntentPresentation: Sendable, Equatable, Identifiable {
 
 public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible {
     case stopped
+    case noInventoryConfigured
     case manifestInvalid(directory: String, diagnostic: String)
     case duplicatePluginID(pluginID: PluginID, directories: [String])
     case overlappingPluginNamespaces(first: PluginID, second: PluginID)
@@ -150,6 +177,8 @@ public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible
         switch self {
         case .stopped:
             "plugin host has stopped"
+        case .noInventoryConfigured:
+            "the plugin host needs at least one inventory to load from"
         case let .manifestInvalid(directory, diagnostic):
             "plugin manifest in \(directory) is invalid: \(diagnostic)"
         case let .duplicatePluginID(pluginID, directories):
@@ -299,8 +328,20 @@ public final class PluginHost {
     public private(set) var paletteQueryRevision = 0
     public private(set) var log: [String] = []
 
+    /// Every place plugins load from, ordered; the first is the primary one (T-062).
     @ObservationIgnored
-    public let pluginsRoot: URL
+    public let inventories: [PluginInventory]
+
+    /// The primary inventory's root — what "the plugins folder" means when only one
+    /// is configured, which is every test and the developer override.
+    public var pluginsRoot: URL { inventories[0].root }
+
+    /// Where a newly authored plugin may be written. Nil when every configured
+    /// inventory is sealed, which is the honest answer for a signed app bundle: the
+    /// caller must not invent a path.
+    public var writableInventoryRoot: URL? {
+        inventories.first(where: \.isWritable)?.root
+    }
 
     @ObservationIgnored
     public let stateRoot: URL
@@ -328,8 +369,43 @@ public final class PluginHost {
     @ObservationIgnored
     private let coreCatalog: CoreIntentCatalog
 
-    @ObservationIgnored
-    private let authorization: PluginHostAuthorization
+    /// Which inventory currently holds an entry of this name. Falls back to the
+    /// primary root so a name present in none resolves exactly where it used to —
+    /// that path is how a vanished plugin is noticed and uninstalled.
+    private func inventoryRoot(containingEntryNamed name: String) -> URL {
+        for inventory in inventories
+        where FileManager.default.fileExists(
+            atPath: inventory.root.appendingPathComponent(name).path
+        ) {
+            return inventory.root
+        }
+        return pluginsRoot
+    }
+
+    /// Whether a discovered plugin belongs to the primary inventory. An unowned
+    /// directory counts as primary: discovery cannot produce one, and if something ever
+    /// does, the strict old behaviour is the safer answer.
+    private func isPrimaryInventory(_ directory: URL) -> Bool {
+        guard let owner = PluginInventoryResolution.inventory(
+            for: directory,
+            in: inventories
+        ) else {
+            return true
+        }
+        return owner.root.standardizedFileURL.path
+            == inventories[0].root.standardizedFileURL.path
+    }
+
+    /// The authorization a plugin discovered at `directory` answers to — the one
+    /// belonging to the inventory that owns it. Fail-closed: a directory no inventory
+    /// claims is treated as untrusted rather than inheriting the primary's trust.
+    private func authorization(
+        forPluginAt directory: URL
+    ) -> PluginHostAuthorization {
+        PluginInventoryResolution.inventory(for: directory, in: inventories)?
+            .authorization
+            ?? PluginHostAuthorization(approvedOpenIntentIDs: { _, _ in [] })
+    }
 
     @ObservationIgnored
     private let invocationScopeProvider: InvocationScopeProvider
@@ -359,7 +435,9 @@ public final class PluginHost {
     private var registeredProviderIDs: Set<PluginID> = []
 
     @ObservationIgnored
-    private var watcher: PluginWatcher?
+    /// One watcher per inventory (T-062): a user plugin has to hot-reload exactly like
+    /// a bundled one, and FSEvents watches a root, not a set of them.
+    private var watchers: [PluginWatcher] = []
 
     @ObservationIgnored
     private var watcherReloadTask: Task<Void, Never>?
@@ -483,7 +561,8 @@ public final class PluginHost {
         )
     }
 
-    init(
+    /// One writable inventory — the shape every test and the developer override use.
+    convenience init(
         pluginsRoot: URL,
         stateRoot: URL,
         kernel: IntentKernelComponents,
@@ -491,10 +570,51 @@ public final class PluginHost {
         invocationScopeProvider: @escaping InvocationScopeProvider,
         runtimeFactory: PluginHostRuntimeFactory
     ) throws {
-        self.pluginsRoot = pluginsRoot
+        try self.init(
+            inventories: [
+                PluginInventory(
+                    root: pluginsRoot,
+                    authorization: authorization,
+                    isWritable: true
+                ),
+            ],
+            stateRoot: stateRoot,
+            kernel: kernel,
+            invocationScopeProvider: invocationScopeProvider,
+            runtimeFactory: runtimeFactory
+        )
+    }
+
+    public convenience init(
+        inventories: [PluginInventory],
+        stateRoot: URL,
+        kernel: IntentKernelComponents,
+        invocationScopeProvider: @escaping InvocationScopeProvider = {
+            InvocationScope()
+        }
+    ) throws {
+        try self.init(
+            inventories: inventories,
+            stateRoot: stateRoot,
+            kernel: kernel,
+            invocationScopeProvider: invocationScopeProvider,
+            runtimeFactory: .live
+        )
+    }
+
+    init(
+        inventories: [PluginInventory],
+        stateRoot: URL,
+        kernel: IntentKernelComponents,
+        invocationScopeProvider: @escaping InvocationScopeProvider,
+        runtimeFactory: PluginHostRuntimeFactory
+    ) throws {
+        guard !inventories.isEmpty else {
+            throw PluginHostError.noInventoryConfigured
+        }
+        self.inventories = inventories
         self.stateRoot = stateRoot
         self.kernel = kernel
-        self.authorization = authorization
         self.invocationScopeProvider = invocationScopeProvider
         self.runtimeFactory = runtimeFactory
         installations = try PluginInstallationStore(pluginsRoot: stateRoot)
@@ -514,13 +634,16 @@ public final class PluginHost {
             endLifecycleOperation()
         }
         do {
-            let prepared = try await prepareAllManifests()
+            let (prepared, manifestFailures) = try await prepareAllManifests()
             try await installStaticContracts(from: prepared)
             try await activate(
                 prepared,
                 replacingManifestInventory: true
             )
-            loadFailures = []
+            // Not `[]`: a user plugin that would not decode was skipped rather than
+            // fatal, and dropping its diagnostic here would leave the author with a
+            // plugin that simply never appears and no way to learn why.
+            loadFailures = manifestFailures
             if prepared.isEmpty {
                 appendLog("host: no plugins found under \(pluginsRoot.path)")
             }
@@ -545,7 +668,10 @@ public final class PluginHost {
     ) async throws {
         try Task.checkCancellation()
 
-        let directory = pluginsRoot.appendingPathComponent(directoryName)
+        let directory = inventoryRoot(
+            containingEntryNamed: directoryName
+        )
+        .appendingPathComponent(directoryName)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(
             atPath: directory.path,
@@ -573,7 +699,17 @@ public final class PluginHost {
         }
 
         do {
-            let allPrepared = try await prepareAllManifests()
+            let (allPrepared, manifestFailures) = try await prepareAllManifests()
+            // Reloading the broken plugin itself still reports its own manifest error,
+            // rather than the misleading "directory missing" its absence would produce.
+            if let failure = manifestFailures.first(
+                where: { $0.directoryName == directoryName }
+            ) {
+                throw PluginHostError.manifestInvalid(
+                    directory: failure.directoryName,
+                    diagnostic: failure.diagnostic
+                )
+            }
             guard let prepared = allPrepared.first(where: {
                 $0.record.directoryName == directoryName
             }) else {
@@ -585,6 +721,14 @@ public final class PluginHost {
                 replacingManifestInventory: false
             )
             loadFailures.removeAll { $0.directoryName == directoryName }
+            // A sibling that would not decode is still broken after this reload; keep
+            // its diagnostic visible instead of letting an unrelated reload erase it.
+            for failure in manifestFailures
+            where !loadFailures.contains(where: {
+                $0.directoryName == failure.directoryName
+            }) {
+                loadFailures.append(failure)
+            }
             appendLog("host: reloaded \(prepared.record.manifest.id.rawValue)")
         } catch {
             recordLoadFailure(error, fallbackDirectory: directoryName)
@@ -592,11 +736,26 @@ public final class PluginHost {
         }
     }
 
-    private func prepareAllManifests() async throws -> [PreparedPlugin] {
+    /// Decodes every discovered manifest, and says which ones would not decode.
+    ///
+    /// A manifest failure in the **primary** inventory still throws: that inventory
+    /// ships with the app or stands in for it, so an unreadable manifest there is a
+    /// build error and hiding it would be worse than failing. A failure in any other
+    /// inventory is recorded and skipped — plugins there are written by the user or by
+    /// an agent working with them, and one of those must never stop Tenon or its other
+    /// plugins from starting (invariant 4, which until now was only honoured on the
+    /// hot-reload path).
+    private func prepareAllManifests() async throws -> (
+        plugins: [PreparedPlugin],
+        failures: [PluginLoadFailure]
+    ) {
         _ = try await coreCatalog.install()
 
-        let directories = PluginLoader.discover(in: pluginsRoot)
+        let directories = PluginLoader.discover(
+            in: inventories.map(\.root)
+        )
         var decoded: [(directory: URL, manifest: PluginManifest)] = []
+        var failures: [PluginLoadFailure] = []
         decoded.reserveCapacity(directories.count)
         for directory in directories {
             do {
@@ -607,13 +766,25 @@ public final class PluginHost {
                     )
                 )
             } catch {
-                throw PluginHostError.manifestInvalid(
+                let invalid = PluginHostError.manifestInvalid(
                     directory: directory.lastPathComponent,
                     diagnostic: Self.diagnostic(for: error)
+                )
+                guard !isPrimaryInventory(directory) else {
+                    throw invalid
+                }
+                failures.append(
+                    PluginLoadFailure(
+                        directoryName: directory.lastPathComponent,
+                        diagnostic: Self.diagnostic(for: error)
+                    )
                 )
             }
         }
 
+        let admitted = admitByInventoryPrecedence(decoded)
+        failures.append(contentsOf: admitted.failures)
+        decoded = admitted.accepted
         try validatePluginIdentities(decoded)
 
         let catalogSnapshot = await kernel.catalog.snapshot
@@ -623,98 +794,215 @@ public final class PluginHost {
         result.reserveCapacity(decoded.count)
 
         for item in decoded {
-            var declarations: [IntentContractDeclaration] = []
-            var rules: [IntentDispatchRule] = []
-            var openReferences: Set<IntentID> = []
-
-            for provision in item.manifest.intents.provides {
-                if let declaration = try provision.declaration(
-                    owner: item.manifest.id
-                ) {
-                    _ = try await scratchCatalog.register(declaration)
-                    let scratchSnapshot = await scratchCatalog.snapshot
-                    guard let candidate = scratchSnapshot.contract(
-                        named: declaration.name
-                    ) else {
-                        throw PluginHostError.contractConflict(
-                            pluginID: item.manifest.id,
-                            intentID: declaration.name
-                        )
-                    }
-                    if let existing = catalogSnapshot.contract(
-                        named: declaration.name
-                    ), existing != candidate {
-                        throw PluginHostError.contractConflict(
-                            pluginID: item.manifest.id,
-                            intentID: declaration.name
-                        )
-                    }
-
-                    let rule = try Self.pluginDispatchRule(
-                        declaration: declaration,
-                        providerID: ProviderID(item.manifest.id.rawValue)
+            do {
+                result.append(
+                    try await prepare(
+                        item,
+                        against: catalogSnapshot,
+                        dispatcherSnapshot: dispatcherSnapshot,
+                        scratchCatalog: scratchCatalog
                     )
-                    if let existingRule = dispatcherSnapshot.rules[declaration.name],
-                       existingRule != rule
-                    {
-                        throw PluginHostError.dispatchRuleConflict(
-                            pluginID: item.manifest.id,
-                            intentID: declaration.name
-                        )
-                    }
-                    declarations.append(declaration)
-                    rules.append(rule)
-                } else {
-                    guard let contract = catalogSnapshot.contract(
-                        named: provision.name
-                    ) else {
-                        throw PluginHostError.unknownContractReference(
-                            pluginID: item.manifest.id,
-                            intentID: provision.name
-                        )
-                    }
-                    guard contract.contractClass == .open,
-                          contract.owner == .core
-                    else {
-                        throw PluginHostError.nonOpenContractReference(
-                            pluginID: item.manifest.id,
-                            intentID: provision.name
-                        )
-                    }
-                    openReferences.insert(provision.name)
+                )
+            } catch {
+                // Same rule as an undecodable manifest, for the rest of the ways a
+                // plugin can be wrong — an intent it declares clashing with one already
+                // owned, a `provides` entry naming no contract at all. Every one of them
+                // is a plausible mistake in a plugin someone just wrote, and none of them
+                // is a reason for Tenon to start with no plugins (invariant 4).
+                guard !isPrimaryInventory(item.directory) else {
+                    throw error
                 }
+                failures.append(
+                    PluginLoadFailure(
+                        directoryName: item.directory.lastPathComponent,
+                        diagnostic: Self.diagnostic(for: error)
+                    )
+                )
+            }
+        }
+
+        return (
+            plugins: result.sorted {
+                $0.record.manifest.id.rawValue
+                    < $1.record.manifest.id.rawValue
+            },
+            failures: failures.sorted {
+                $0.directoryName < $1.directoryName
+            }
+        )
+    }
+
+    /// Everything one plugin must satisfy on its own before a runtime is built for it.
+    ///
+    /// `scratchCatalog` accumulates across the batch so two plugins cannot claim one
+    /// contract. A plugin rejected part-way leaves its earlier declarations in there,
+    /// which changes nothing: a declared contract must sit under its owner's id
+    /// (`PluginIntentProvision.validate(owner:)`), and by here no two candidates share an
+    /// id or an overlapping namespace, so nobody else can name them.
+    private func prepare(
+        _ item: (directory: URL, manifest: PluginManifest),
+        against catalogSnapshot: ContractCatalogSnapshot,
+        dispatcherSnapshot: IntentDispatcherSnapshot,
+        scratchCatalog: ContractCatalog
+    ) async throws -> PreparedPlugin {
+        var declarations: [IntentContractDeclaration] = []
+        var rules: [IntentDispatchRule] = []
+        var openReferences: Set<IntentID> = []
+
+        for provision in item.manifest.intents.provides {
+            if let declaration = try provision.declaration(
+                owner: item.manifest.id
+            ) {
+                _ = try await scratchCatalog.register(declaration)
+                let scratchSnapshot = await scratchCatalog.snapshot
+                guard let candidate = scratchSnapshot.contract(
+                    named: declaration.name
+                ) else {
+                    throw PluginHostError.contractConflict(
+                        pluginID: item.manifest.id,
+                        intentID: declaration.name
+                    )
+                }
+                if let existing = catalogSnapshot.contract(
+                    named: declaration.name
+                ), existing != candidate {
+                    throw PluginHostError.contractConflict(
+                        pluginID: item.manifest.id,
+                        intentID: declaration.name
+                    )
+                }
+
+                let rule = try Self.pluginDispatchRule(
+                    declaration: declaration,
+                    providerID: ProviderID(item.manifest.id.rawValue)
+                )
+                if let existingRule = dispatcherSnapshot.rules[declaration.name],
+                   existingRule != rule
+                {
+                    throw PluginHostError.dispatchRuleConflict(
+                        pluginID: item.manifest.id,
+                        intentID: declaration.name
+                    )
+                }
+                declarations.append(declaration)
+                rules.append(rule)
+            } else {
+                guard let contract = catalogSnapshot.contract(
+                    named: provision.name
+                ) else {
+                    throw PluginHostError.unknownContractReference(
+                        pluginID: item.manifest.id,
+                        intentID: provision.name
+                    )
+                }
+                guard contract.contractClass == .open,
+                      contract.owner == .core
+                else {
+                    throw PluginHostError.nonOpenContractReference(
+                        pluginID: item.manifest.id,
+                        intentID: provision.name
+                    )
+                }
+                openReferences.insert(provision.name)
+            }
+        }
+
+        let isEnabled = try await installations.isEnabled(
+            for: item.manifest.id
+        )
+        let installation = try await installations.installation(
+            for: item.manifest.id
+        )
+        return PreparedPlugin(
+            record: ManifestRecord(
+                directoryName: item.directory.lastPathComponent,
+                directory: item.directory,
+                manifest: item.manifest,
+                isEnabled: isEnabled
+            ),
+            installation: installation,
+            declarations: declarations.sorted {
+                $0.name.rawValue < $1.name.rawValue
+            },
+            dispatchRules: rules.sorted {
+                $0.intentID.rawValue < $1.intentID.rawValue
+            },
+            openIntentReferences: openReferences
+        )
+    }
+
+    /// Resolves identity clashes between inventories by yielding to the earlier one,
+    /// so a plugin the user wrote can lose a name without taking Tenon with it (T-062).
+    ///
+    /// Discovery is ordered by inventory, so "first claim wins" is exactly "the bundled
+    /// inventory wins" — the rule `docs/design-automations.md` states. Only a plugin
+    /// outside the primary inventory can be dropped this way; whatever survives goes to
+    /// `validatePluginIdentities` untouched, where a surviving clash can only be
+    /// primary-on-primary and still throws. That asymmetry is the point: the primary
+    /// inventory ships with the app, so a clash there is a build error worth stopping
+    /// for, while a clash in writable user content is Tuesday.
+    ///
+    /// A **directory name** is an identity here as much as a plugin id is: it keys hot
+    /// reload, uninstall-on-delete, and every load failure, and two inventories can hold
+    /// the same one. Left alone it built `pluginIDByDirectory` from duplicate keys and
+    /// trapped the process — the loudest possible version of the incident this task
+    /// exists to prevent.
+    private func admitByInventoryPrecedence(
+        _ decoded: [(directory: URL, manifest: PluginManifest)]
+    ) -> (
+        accepted: [(directory: URL, manifest: PluginManifest)],
+        failures: [PluginLoadFailure]
+    ) {
+        var accepted: [(directory: URL, manifest: PluginManifest)] = []
+        var failures: [PluginLoadFailure] = []
+        var claimedIDs: [PluginID: String] = [:]
+        var claimedDirectoryNames: Set<String> = []
+
+        for item in decoded {
+            let pluginID = item.manifest.id
+            let directoryName = item.directory.lastPathComponent
+            var refusal: String?
+
+            if pluginID.rawValue == CoreIntentCatalog.trustedProviderIDRawValue
+                || pluginID.rawValue.hasPrefix(
+                    CoreIntentCatalog.trustedProviderIDRawValue + "."
+                )
+            {
+                refusal = "plugin id \(pluginID.rawValue) is reserved for the host's own provider"
+            } else if let owner = claimedIDs[pluginID] {
+                refusal = "plugin id \(pluginID.rawValue) is already loaded from \(owner)"
+            } else if claimedDirectoryNames.contains(directoryName) {
+                refusal = "a plugin directory named \(directoryName) is already loaded "
+                    + "from an earlier inventory; rename this one"
+            } else if let overlapping = claimedIDs.keys.first(where: {
+                pluginID.rawValue.hasPrefix($0.rawValue + ".")
+                    || $0.rawValue.hasPrefix(pluginID.rawValue + ".")
+            }) {
+                refusal = "plugin id \(pluginID.rawValue) overlaps the namespace of "
+                    + "\(overlapping.rawValue), which is already loaded"
+            } else if let expected = pluginIDByDirectory[directoryName],
+                      expected != pluginID
+            {
+                refusal = "directory \(directoryName) previously held "
+                    + "\(expected.rawValue) and now declares \(pluginID.rawValue)"
             }
 
-            let isEnabled = try await installations.isEnabled(
-                for: item.manifest.id
-            )
-            let installation = try await installations.installation(
-                for: item.manifest.id
-            )
-            result.append(
-                PreparedPlugin(
-                    record: ManifestRecord(
-                        directoryName: item.directory.lastPathComponent,
-                        directory: item.directory,
-                        manifest: item.manifest,
-                        isEnabled: isEnabled
-                    ),
-                    installation: installation,
-                    declarations: declarations.sorted {
-                        $0.name.rawValue < $1.name.rawValue
-                    },
-                    dispatchRules: rules.sorted {
-                        $0.intentID.rawValue < $1.intentID.rawValue
-                    },
-                    openIntentReferences: openReferences
+            if let refusal, !isPrimaryInventory(item.directory) {
+                failures.append(
+                    PluginLoadFailure(
+                        directoryName: directoryName,
+                        diagnostic: refusal
+                    )
                 )
-            )
+                continue
+            }
+
+            accepted.append(item)
+            claimedIDs[pluginID] = directoryName
+            claimedDirectoryNames.insert(directoryName)
         }
 
-        return result.sorted {
-            $0.record.manifest.id.rawValue
-                < $1.record.manifest.id.rawValue
-        }
+        return (accepted, failures)
     }
 
     private func validatePluginIdentities(
@@ -902,8 +1190,10 @@ public final class PluginHost {
         var runtime: (any PluginHostRuntime)?
 
         do {
-            let approvedOpenIntentIDs = try await authorization
-                .approvedOpenIntentIDs(identity.installation, manifest)
+            let approvedOpenIntentIDs = try await authorization(
+                forPluginAt: prepared.record.directory
+            )
+            .approvedOpenIntentIDs(identity.installation, manifest)
             guard approvedOpenIntentIDs.isSubset(
                 of: prepared.openIntentReferences
             ) else {
@@ -957,7 +1247,9 @@ public final class PluginHost {
             // API the confirmation dialog writes to, not a bypass — every invocation still
             // clears declared use, audience, capability, and scope. Re-seeding on each
             // activation keeps consent in step with the grants replaced just above.
-            if await authorization.grantsStandingConsent(
+            if await authorization(
+                forPluginAt: prepared.record.directory
+            ).grantsStandingConsent(
                 identity.installation,
                 manifest
             ) {
@@ -1610,7 +1902,6 @@ public final class PluginHost {
         var payload: [String: IntentValue] = [
             "slotId": .string(slotID.uuidString),
             "cwd": .string(directory.cwd.path),
-            "pinned": .bool(directory.source == .pinned),
         ]
         if let root = directory.projectRoot {
             payload["projectRoot"] = .string(root.path)
@@ -1773,11 +2064,21 @@ public final class PluginHost {
 
     public func startWatching() throws {
         try requireRunning()
-        guard watcher == nil else {
+        guard watchers.isEmpty else {
             return
         }
+        for inventory in inventories {
+            startWatching(inventory.root)
+        }
+        appendLog(
+            "host: watching "
+                + inventories.map(\.root.path).joined(separator: ", ")
+        )
+    }
+
+    private func startWatching(_ root: URL) {
         let watcher = PluginWatcher(
-            root: pluginsRoot
+            root: root
         ) { [weak self] changedDirectories in
             guard let self else {
                 return
@@ -1810,13 +2111,12 @@ public final class PluginHost {
             }
         }
         watcher.start()
-        self.watcher = watcher
-        appendLog("host: watching \(pluginsRoot.path)")
+        watchers.append(watcher)
     }
 
     public func stopWatching() {
-        watcher?.stop()
-        watcher = nil
+        watchers.forEach { $0.stop() }
+        watchers = []
         watcherReloadTask?.cancel()
         watcherReloadTask = nil
     }
@@ -2356,7 +2656,8 @@ private extension PluginHost {
                     subtitle: $0.subtitle,
                     actions: $0.actions,
                     items: $0.items,
-                    body: $0.body
+                    body: $0.body,
+                    modal: $0.modal
                 )
             }
         }

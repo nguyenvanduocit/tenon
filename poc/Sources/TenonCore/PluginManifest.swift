@@ -58,6 +58,10 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         name = try c.decode(String.self, forKey: .name)
         version = try c.decode(String.self, forKey: .version)
         permissions = try c.decodeIfPresent([String].self, forKey: .permissions) ?? []
+        // The envelope itself stays required: stating what a plugin uses and provides,
+        // even as two empty lists, is a deliberate act by its author
+        // (`testLoaderRejectsManifestWithoutCompleteIntentsEnvelope`). Only the two
+        // halves inside it default to empty — see `PluginIntentManifest.init(from:)`.
         intents = try c.decode(
             PluginIntentManifest.self,
             forKey: .intents
@@ -163,6 +167,26 @@ public struct PluginIntentManifest: Sendable, Equatable, Codable {
     ) {
         self.uses = uses
         self.provides = provides
+    }
+
+    /// Both halves are optional and default to empty (T-062).
+    ///
+    /// The synthesized decoder demanded both keys, so a plugin that sends intents but
+    /// provides none had to write `"provides": []` to load at all. Every bundled
+    /// manifest happens to spell both out, so nothing caught it — and the first
+    /// agent-written plugin, following a guide that showed `uses` alone, failed to
+    /// decode. Absent means empty here exactly as it already does for `permissions`
+    /// and `settings` on the manifest itself; declaring nothing must never be a
+    /// different thing from declaring an empty list.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        self.init(
+            uses: try c.decodeIfPresent([IntentID].self, forKey: .uses) ?? [],
+            provides: try c.decodeIfPresent(
+                [PluginIntentProvision].self,
+                forKey: .provides
+            ) ?? []
+        )
     }
 
     fileprivate func validate(owner: PluginID) throws {
@@ -596,6 +620,15 @@ public enum PluginLoader {
     /// to be a plugin, and one stray script in the plugins folder must not fail a reload for
     /// every real plugin beside it. A file that does claim to be one and gets it wrong
     /// fails loudly — that distinction is what `PluginManifestHeader.hasHeader` is for.
+    /// Every plugin across an ordered list of roots (T-062). Order is preserved between
+    /// roots and by name within one, so the earliest inventory wins any identity clash
+    /// downstream — a user plugin can never displace a bundled one by reusing its id.
+    /// A root that does not exist contributes nothing rather than failing the sweep:
+    /// the user inventory is empty until someone writes their first plugin.
+    public static func discover(in roots: [URL]) -> [URL] {
+        roots.flatMap { discover(in: $0) }
+    }
+
     public static func discover(in root: URL) -> [URL] {
         let fm = FileManager.default
         guard let entries = try? fm.contentsOfDirectory(

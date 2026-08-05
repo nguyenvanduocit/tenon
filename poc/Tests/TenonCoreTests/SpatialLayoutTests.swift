@@ -514,6 +514,85 @@ final class SpatialLayoutTests: XCTestCase {
         ])
     }
 
+    func testMoveBesidePlacesTheCarriedPaneOnTheRequestedHalfOfTheTarget() {
+        let original = [
+            slot(a, 0, 0, 3, 3),
+            slot(b, 6, 0, 6, 12),
+        ]
+
+        let left = SpatialLayout.moveBeside(
+            original,
+            slotID: a,
+            targetID: b,
+            edge: .left
+        )
+        XCTAssertTrue(left.isValid)
+        XCTAssertEqual(left.kind, .move)
+        XCTAssertEqual(left.proposal, [
+            slot(a, 6, 0, 3, 12),
+            slot(b, 9, 0, 3, 12),
+        ])
+
+        let right = SpatialLayout.moveBeside(
+            original,
+            slotID: a,
+            targetID: b,
+            edge: .right
+        )
+        XCTAssertTrue(right.isValid)
+        XCTAssertEqual(right.proposal, [
+            slot(a, 9, 0, 3, 12),
+            slot(b, 6, 0, 3, 12),
+        ])
+
+        let top = SpatialLayout.moveBeside(
+            original,
+            slotID: a,
+            targetID: b,
+            edge: .top
+        )
+        XCTAssertTrue(top.isValid)
+        XCTAssertEqual(top.proposal, [
+            slot(a, 6, 0, 6, 6),
+            slot(b, 6, 6, 6, 6),
+        ])
+
+        let bottom = SpatialLayout.moveBeside(
+            original,
+            slotID: a,
+            targetID: b,
+            edge: .bottom
+        )
+        XCTAssertTrue(bottom.isValid)
+        XCTAssertEqual(bottom.proposal, [
+            slot(a, 6, 6, 6, 6),
+            slot(b, 6, 0, 6, 6),
+        ])
+        XCTAssertEqual(bottom.baseline, original)
+        XCTAssertEqual(Set(bottom.affectedSlotIDs), Set([a, b]))
+        XCTAssertEqual(original[0].rect, GridRect(x: 0, y: 0, width: 3, height: 3))
+    }
+
+    func testMoveBesideRefusesTheSourceItselfAndATargetTooSmallToSplit() {
+        let original = [
+            slot(a, 0, 0, 3, 3),
+            slot(b, 6, 0, 3, 12),
+        ]
+
+        XCTAssertFalse(SpatialLayout.moveBeside(
+            original,
+            slotID: a,
+            targetID: a,
+            edge: .right
+        ).isValid)
+        XCTAssertFalse(SpatialLayout.moveBeside(
+            original,
+            slotID: a,
+            targetID: b,
+            edge: .right
+        ).isValid)
+    }
+
     func testSwapExchangesGeometryWithoutChangingInputOrOrdering() {
         let original = [
             slot(a, 0, 0, 7, 12),
@@ -701,6 +780,238 @@ final class SpatialLayoutTests: XCTestCase {
         let original = [slot(a, 0, 0, 12, 12)]
 
         let transaction = SpatialLayout.fillWidth(original, slotID: d)
+
+        XCTAssertFalse(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, original)
+        XCTAssertEqual(transaction.affectedSlotIDs, [])
+    }
+
+    func testFractionResizeMovesTheGrabbedEdgeAndLeavesTheOppositeOneFixed() {
+        let original = [slot(a, 0, 0, 12, 12)]
+
+        XCTAssertEqual(
+            SpatialLayout.resize(
+                original,
+                slotID: a,
+                direction: .east,
+                fraction: .oneHalf
+            ).proposal,
+            [slot(a, 0, 0, 6, 12)]
+        )
+        XCTAssertEqual(
+            SpatialLayout.resize(
+                original,
+                slotID: a,
+                direction: .west,
+                fraction: .oneHalf
+            ).proposal,
+            [slot(a, 6, 0, 6, 12)]
+        )
+        XCTAssertEqual(
+            SpatialLayout.resize(
+                original,
+                slotID: a,
+                direction: .south,
+                fraction: .oneThird
+            ).proposal,
+            [slot(a, 0, 0, 12, 4)]
+        )
+        XCTAssertEqual(
+            SpatialLayout.resize(
+                original,
+                slotID: a,
+                direction: .north,
+                fraction: .oneThird
+            ).proposal,
+            [slot(a, 0, 8, 12, 4)]
+        )
+    }
+
+    func testFractionResizeOnACornerSizesBothAxes() {
+        let original = [slot(a, 0, 0, 12, 12)]
+
+        XCTAssertEqual(
+            SpatialLayout.resize(
+                original,
+                slotID: a,
+                direction: .southEast,
+                fraction: .oneHalf
+            ).proposal,
+            [slot(a, 0, 0, 6, 6)]
+        )
+        XCTAssertEqual(
+            SpatialLayout.resize(
+                original,
+                slotID: a,
+                direction: .northWest,
+                fraction: .oneThird
+            ).proposal,
+            [slot(a, 8, 8, 4, 4)]
+        )
+    }
+
+    func testFractionResizeCouplesTheNeighborSharingTheGrabbedEdge() {
+        let transaction = SpatialLayout.resize(
+            [
+                slot(a, 0, 0, 6, 12),
+                slot(b, 6, 0, 6, 12),
+            ],
+            slotID: a,
+            direction: .east,
+            fraction: .oneThird
+        )
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertFalse(transaction.isDetached)
+        XCTAssertEqual(transaction.proposal, [
+            slot(a, 0, 0, 4, 12),
+            slot(b, 4, 0, 8, 12),
+        ])
+        XCTAssertEqual(transaction.affectedSlotIDs, [a, b])
+    }
+
+    func testFractionResizeRefusesADestinationThatWouldSwallowANeighbor() {
+        let transaction = SpatialLayout.resize(
+            [
+                slot(a, 0, 0, 6, 12),
+                slot(b, 6, 0, 6, 12),
+            ],
+            slotID: a,
+            direction: .east,
+            fraction: .full
+        )
+
+        XCTAssertFalse(transaction.isValid)
+    }
+
+    func testFractionResizeIsInvalidWhenThePaneIsAlreadyThatSize() {
+        let original = [slot(a, 0, 0, 12, 12)]
+
+        let transaction = SpatialLayout.resize(
+            original,
+            slotID: a,
+            direction: .east,
+            fraction: .full
+        )
+
+        XCTAssertFalse(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, original)
+        XCTAssertEqual(transaction.affectedSlotIDs, [])
+    }
+
+    func testFractionResizeOfAnUnknownSlotIsInvalid() {
+        let original = [slot(a, 0, 0, 12, 12)]
+
+        let transaction = SpatialLayout.resize(
+            original,
+            slotID: d,
+            direction: .south,
+            fraction: .oneHalf
+        )
+
+        XCTAssertFalse(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, original)
+        XCTAssertEqual(transaction.affectedSlotIDs, [])
+    }
+
+    func testCyclingAWidthWalksFullThenHalfThenThirdAndBackToFull() {
+        var slots = [slot(a, 0, 0, 5, 12)]
+        var reached: [Int] = []
+
+        for _ in 0..<4 {
+            let transaction = SpatialLayout.cycleExtent(
+                slots,
+                slotID: a,
+                direction: .east
+            )
+            XCTAssertTrue(transaction.isValid)
+            slots = transaction.proposal
+            reached.append(slots[0].rect.width)
+        }
+
+        XCTAssertEqual(reached, [12, 6, 4, 12])
+        XCTAssertEqual(slots, [slot(a, 0, 0, 12, 12)])
+    }
+
+    func testCyclingAHorizontalEdgeWalksTheHeightAndKeepsTheOppositeEdgeFixed() {
+        var slots = [slot(a, 0, 0, 12, 5)]
+        var reached: [Int] = []
+
+        for _ in 0..<3 {
+            slots = SpatialLayout.cycleExtent(
+                slots,
+                slotID: a,
+                direction: .south
+            ).proposal
+            reached.append(slots[0].rect.height)
+        }
+
+        XCTAssertEqual(reached, [12, 6, 4])
+
+        XCTAssertEqual(
+            SpatialLayout.cycleExtent(
+                [slot(a, 0, 0, 12, 12)],
+                slotID: a,
+                direction: .north
+            ).proposal,
+            [slot(a, 0, 6, 12, 6)]
+        )
+    }
+
+    func testCyclingACornerTreatsAPaneAsSizedOnlyWhenBothAxesAgree() {
+        let transaction = SpatialLayout.cycleExtent(
+            [slot(a, 0, 0, 6, 12)],
+            slotID: a,
+            direction: .southEast
+        )
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, [slot(a, 0, 0, 12, 12)])
+    }
+
+    func testCyclingSkipsASizeTheLayoutRefusesForTheNextOneThatFits() {
+        let transaction = SpatialLayout.cycleExtent(
+            [
+                slot(a, 0, 0, 4, 12),
+                slot(b, 4, 0, 8, 12),
+            ],
+            slotID: a,
+            direction: .east
+        )
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, [
+            slot(a, 0, 0, 6, 12),
+            slot(b, 6, 0, 6, 12),
+        ])
+    }
+
+    func testCyclingIsInvalidWhenNoSizeInTheCycleFits() {
+        let original = [
+            slot(a, 0, 0, 3, 12),
+            slot(b, 3, 0, 3, 12),
+            slot(c, 6, 0, 6, 12),
+        ]
+
+        let transaction = SpatialLayout.cycleExtent(
+            original,
+            slotID: a,
+            direction: .east
+        )
+
+        XCTAssertFalse(transaction.isValid)
+        XCTAssertEqual(transaction.proposal, original)
+        XCTAssertEqual(transaction.affectedSlotIDs, [])
+    }
+
+    func testCyclingAnUnknownSlotIsInvalid() {
+        let original = [slot(a, 0, 0, 12, 12)]
+
+        let transaction = SpatialLayout.cycleExtent(
+            original,
+            slotID: d,
+            direction: .east
+        )
 
         XCTAssertFalse(transaction.isValid)
         XCTAssertEqual(transaction.proposal, original)

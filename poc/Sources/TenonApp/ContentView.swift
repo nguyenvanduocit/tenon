@@ -11,6 +11,7 @@ struct ContentView: View {
     var host: PluginHost
     var store: WorkspaceStore
     var pool: SurfacePool
+    var agentLens: AgentLensPool
     var webPool: PluginWebSurfacePool
     var intentRuntime: AppIntentRuntime
     var router: DragRouter
@@ -65,6 +66,7 @@ struct ContentView: View {
                     WorkspaceStageView(
                         store: store,
                         pool: pool,
+                        agentLens: agentLens,
                         webPool: webPool,
                         host: host,
                         intentRuntime: intentRuntime,
@@ -115,6 +117,10 @@ struct ContentView: View {
         // Host presentation for plugin-only `ui.pick/prompt/confirm/toast.v1`
         // intents. Renders nothing until an authorized request arrives.
         .overlay { PluginUIOverlay(state: pluginUI) }
+        // A plugin view's modal, over the whole shell. Renders nothing until a view
+        // publishes one, and dismissing routes back to that view rather than clearing
+        // it here — the plugin owns the state.
+        .overlay { PluginModalOverlay(host: host) }
         // Rebuild the whole shell when the accent changes so every chrome element
         // re-reads TenonTheme.amber. Reading the shared store here registers the
         // observation; terminal surfaces persist in the pool across the rebuild.
