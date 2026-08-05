@@ -60,6 +60,123 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
     }
 
+    func testEmptyGridLauncherAnchorExistsOnlyInAnUnoccupiedGridCell() {
+        let slots = [
+            slot(UUID(), x: 0, y: 0, width: 6, height: 12),
+        ]
+
+        XCTAssertEqual(
+            SpatialCanvasInteractionCoordinator.emptyGridLauncherAnchor(
+                at: CGPoint(x: 900, y: 600),
+                canvasSize: CGSize(width: 1_200, height: 1_200),
+                slots: slots
+            ),
+            CGPoint(x: 900, y: 600)
+        )
+        XCTAssertNil(
+            SpatialCanvasInteractionCoordinator.emptyGridLauncherAnchor(
+                at: CGPoint(x: 599, y: 600),
+                canvasSize: CGSize(width: 1_200, height: 1_200),
+                slots: slots
+            ),
+            "the visual gutter inside an occupied cell is not empty grid space"
+        )
+        XCTAssertNil(
+            SpatialCanvasInteractionCoordinator.emptyGridLauncherAnchor(
+                at: CGPoint(x: 1_200, y: 600),
+                canvasSize: CGSize(width: 1_200, height: 1_200),
+                slots: slots
+            ),
+            "a right-click outside the canvas cannot open its launcher"
+        )
+    }
+
+    func testRightClickingEmptyGridRequestsLauncherAtThePointer() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        var requestedAnchor: NSRect?
+        fixture.canvas.onPresentEmptyGridLauncher = { requestedAnchor = $0 }
+        let point = CGPoint(x: 900, y: 600)
+        let event = try rightMouseEvent(
+            fixture.canvas,
+            local: point,
+            window: fixture.window
+        )
+
+        fixture.canvas.rightMouseDown(with: event)
+
+        XCTAssertEqual(requestedAnchor?.origin, point)
+    }
+
+    func testRightClickingAnOccupiedGridCellDoesNotRequestTheGridLauncher() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        var requestCount = 0
+        fixture.canvas.onPresentEmptyGridLauncher = { _ in requestCount += 1 }
+        let event = try rightMouseEvent(
+            fixture.canvas,
+            local: CGPoint(x: 599, y: 600),
+            window: fixture.window
+        )
+
+        fixture.canvas.rightMouseDown(with: event)
+
+        XCTAssertEqual(requestCount, 0)
+    }
+
+    func testControlClickingEmptyGridRequestsLauncherAtThePointer() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        var requestedAnchor: NSRect?
+        fixture.canvas.onPresentEmptyGridLauncher = { requestedAnchor = $0 }
+        let point = CGPoint(x: 900, y: 600)
+        let event = try mouseEvent(
+            .leftMouseDown,
+            for: fixture.canvas,
+            local: point,
+            window: fixture.window,
+            modifierFlags: [.control]
+        )
+
+        fixture.canvas.mouseDown(with: event)
+
+        XCTAssertEqual(requestedAnchor?.origin, point)
+    }
+
+    func testControlClickingAnOccupiedGridCellDoesNotRequestTheGridLauncher() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        var requestCount = 0
+        fixture.canvas.onPresentEmptyGridLauncher = { _ in requestCount += 1 }
+        let event = try mouseEvent(
+            .leftMouseDown,
+            for: fixture.canvas,
+            local: CGPoint(x: 599, y: 600),
+            window: fixture.window,
+            modifierFlags: [.control]
+        )
+
+        fixture.canvas.mouseDown(with: event)
+
+        XCTAssertEqual(requestCount, 0)
+    }
+
     func testMovePreviewUsesSpatialMoveTransactionAwayFromTargets() throws {
         let movingID = UUID()
         let otherID = UUID()
@@ -750,14 +867,29 @@ final class SpatialCanvasInteractionTests: XCTestCase {
     }
 
     private func rightMouseEvent(
-        _ card: SpatialSlotCardView,
+        _ card: NSView,
         local: CGPoint,
         window: NSWindow
     ) throws -> NSEvent {
+        try mouseEvent(
+            .rightMouseDown,
+            for: card,
+            local: local,
+            window: window
+        )
+    }
+
+    private func mouseEvent(
+        _ type: NSEvent.EventType,
+        for view: NSView,
+        local: CGPoint,
+        window: NSWindow,
+        modifierFlags: NSEvent.ModifierFlags = []
+    ) throws -> NSEvent {
         try XCTUnwrap(NSEvent.mouseEvent(
-            with: .rightMouseDown,
-            location: card.convert(local, to: nil),
-            modifierFlags: [],
+            with: type,
+            location: view.convert(local, to: nil),
+            modifierFlags: modifierFlags,
             timestamp: 0,
             windowNumber: window.windowNumber,
             context: nil,
@@ -824,6 +956,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let pool = SurfacePool(backendName: "Stub") { _, _ in
             StubTerminalSurface()
         }
+        let webPool = PluginWebSurfacePool()
         let pluginsRoot = workspacePath
             .appendingPathComponent("tenon-empty-plugins-\(UUID())")
         let stateRoot = workspacePath
@@ -834,12 +967,20 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         // An empty plugin root on purpose: these tests are about pointer geometry on the
         // canvas, so the host is present only to satisfy `configure` and must contribute
         // no panes of its own.
+        let intentRuntime = try AppIntentRuntime(
+            stateRoot: stateRoot,
+            workspaceStore: store,
+            terminalSurfaces: pool,
+            webSurfaces: webPool,
+            userInterface: PluginUIState()
+        )
         let host = try PluginHost(
             pluginsRoot: pluginsRoot,
             stateRoot: stateRoot,
-            kernel: IntentKernelComponents(
-                persistence: IntentSQLiteIdempotencyPersistence.inMemory()
-            )
+            kernel: intentRuntime.kernel
+        )
+        let palette = CommandPaletteState(
+            storeURL: stateRoot.appendingPathComponent("frecency.json")
         )
         let router = DragRouter()
         let container = FlippedTestView(
@@ -862,8 +1003,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             activeSlotID: activeSlotID,
             store: store,
             pool: pool,
-            webPool: PluginWebSurfacePool(),
+            webPool: webPool,
             host: host,
+            intentRuntime: intentRuntime,
+            palette: palette,
             editorStates: EditorPaneStateStore(),
             pluginSnapshots: [],
             pluginViewSections: [],

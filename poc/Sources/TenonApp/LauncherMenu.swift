@@ -4,10 +4,11 @@ import TenonCore
 import TenonIntentCore
 
 /// The search-first launcher listing the creation verbs plugins declared with
-/// `palette.launcher`: the tab strip's `+` popover, and the same popover a tab chip
-/// opens on right-click. It ranks through the same `CommandIndex` the palette does and
-/// shares its frecency, so every surface learns one set of habits and the shell keeps
-/// no ordering of its own. Adding an entry here is a `manifest.json` change.
+/// `palette.launcher`: the tab strip's `+` popover, a tab chip's right-click, and a
+/// right-click on empty spatial-grid space. It ranks through the same `CommandIndex`
+/// the palette does and shares its frecency, so every surface learns one set of habits
+/// and the shell keeps no ordering of its own. Adding an entry here is a `manifest.json`
+/// change.
 struct LauncherMenu: View {
     var host: PluginHost
     var intentRuntime: AppIntentRuntime

@@ -273,6 +273,77 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
     }
 
+    func testEveryLauncherSurfaceReusesSharedMenuAndOnlyItProjectsCommands() throws {
+        let launcher = try source("TenonApp/LauncherMenu.swift")
+        let titleBar = try source("TenonApp/ShellTitleBar.swift")
+        let canvas = try source("TenonApp/SpatialCanvasView.swift")
+        let emptyGridPresentation = try sourceSlice(
+            canvas,
+            from: "private func presentEmptyGridLauncher(",
+            before: "func popoverDidClose("
+        )
+
+        assertContains(
+            launcher,
+            ["host.commandIndex.launcherOnly.rank("],
+            file: "LauncherMenu.swift"
+        )
+        assertContains(
+            titleBar,
+            ["LauncherMenu("],
+            file: "ShellTitleBar.swift"
+        )
+        assertContains(
+            emptyGridPresentation,
+            [
+                "NSHostingController(rootView: LauncherMenu(",
+            ],
+            file: "SpatialCanvasView.swift empty-grid launcher"
+        )
+        XCTAssertFalse(
+            emptyGridPresentation.contains("send:"),
+            "the grid launcher must use focused scope, never the tab-context send adapter"
+        )
+        XCTAssertFalse(
+            emptyGridPresentation.contains("TabContextPlacement"),
+            "the grid launcher must not acquire tab-context placement semantics"
+        )
+        let forbiddenParallelUI = [
+            "Button(", "Menu(", "List(", "ScrollView(", "VStack(", "HStack(", "ForEach(",
+        ]
+        let buildsParallelUI = emptyGridPresentation.split(separator: "\n").contains { line in
+            let sourceLine = line.trimmingCharacters(in: .whitespaces)
+            return forbiddenParallelUI.contains { sourceLine.hasPrefix($0) }
+        }
+        XCTAssertFalse(
+            buildsParallelUI,
+            "the hosting slice must not wrap LauncherMenu with parallel launcher UI"
+        )
+        let appRoot = packageRoot
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("TenonApp")
+        let appSources = try swiftFiles(under: appRoot).map { file in
+            let contents = try String(contentsOf: file, encoding: .utf8)
+            return (name: file.lastPathComponent, contents: contents)
+        }
+        let commandIndexOwners = appSources.compactMap { source in
+            source.contents.contains("commandIndex") ? source.name : nil
+        }.sorted()
+        XCTAssertEqual(
+            commandIndexOwners,
+            ["LauncherMenu.swift", "PaletteOverlay.swift"],
+            "only the two shared command presentations may inspect the command index"
+        )
+        let projectionOwners = appSources.compactMap { source in
+            source.contents.contains("commandIndex.launcherOnly") ? source.name : nil
+        }.sorted()
+        XCTAssertEqual(
+            projectionOwners,
+            ["LauncherMenu.swift"],
+            "launcher membership must be projected in LauncherMenu, never copied by an anchor"
+        )
+    }
+
     func testCommandPaletteDocumentStatesCurrentKeyBindingContract() throws {
         let documentURL = packageRoot
             .deletingLastPathComponent()

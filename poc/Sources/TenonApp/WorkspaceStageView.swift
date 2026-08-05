@@ -8,6 +8,8 @@ struct WorkspaceStageView: View {
     var pool: SurfacePool
     var webPool: PluginWebSurfacePool
     var host: PluginHost
+    var intentRuntime: AppIntentRuntime
+    var palette: CommandPaletteState
     var editorStates: EditorPaneStateStore
     var router: DragRouter
 
@@ -28,6 +30,8 @@ struct WorkspaceStageView: View {
                     pool: pool,
                     webPool: webPool,
                     host: host,
+                    intentRuntime: intentRuntime,
+                    palette: palette,
                     editorStates: editorStates,
                     pluginSnapshots: pluginSnapshots,
                     pluginViewSections: pluginViewSections,

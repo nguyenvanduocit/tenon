@@ -90,6 +90,33 @@ final class SpatialCanvasInteractionCoordinator {
         return .body
     }
 
+    /// The launcher belongs only to grid cells no pane owns. Testing the 12 x 12 model
+    /// instead of card frames keeps the visual gutter between neighbouring panes from
+    /// masquerading as empty workspace.
+    static func emptyGridLauncherAnchor(
+        at point: CGPoint,
+        canvasSize: CGSize,
+        slots: [SpatialSlot]
+    ) -> CGPoint? {
+        guard canvasSize.width > 0,
+              canvasSize.height > 0,
+              point.x >= 0,
+              point.y >= 0,
+              point.x < canvasSize.width,
+              point.y < canvasSize.height
+        else { return nil }
+
+        let column = Int(point.x / canvasSize.width * CGFloat(SpatialLayout.columns))
+        let row = Int(point.y / canvasSize.height * CGFloat(SpatialLayout.rows))
+        let isOccupied = slots.contains { slot in
+            column >= slot.rect.x &&
+                column < slot.rect.x + slot.rect.width &&
+                row >= slot.rect.y &&
+                row < slot.rect.y + slot.rect.height
+        }
+        return isOccupied ? nil : point
+    }
+
     /// A pane header answers a second click the way a window title bar does — it grows
     /// the pane into the space beside it. Every other region keeps its drag, whatever
     /// the click count, so a rapid pair on a resize edge still resizes.
@@ -242,6 +269,8 @@ struct SpatialCanvasView: NSViewRepresentable {
     let pool: SurfacePool
     let webPool: PluginWebSurfacePool
     let host: PluginHost
+    let intentRuntime: AppIntentRuntime
+    let palette: CommandPaletteState
     let editorStates: EditorPaneStateStore
     let pluginSnapshots: [PluginSnapshot]
     let pluginViewSections: [PluginViewSection]
@@ -264,6 +293,8 @@ struct SpatialCanvasView: NSViewRepresentable {
             pool: pool,
             webPool: webPool,
             host: host,
+            intentRuntime: intentRuntime,
+            palette: palette,
             editorStates: editorStates,
             pluginSnapshots: pluginSnapshots,
             pluginViewSections: pluginViewSections,
@@ -281,18 +312,27 @@ struct SpatialCanvasView: NSViewRepresentable {
     }
 }
 
-final class SpatialCanvasNSView: NSView {
+final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     private let interaction = SpatialCanvasInteractionCoordinator(canvasSize: .zero)
     private var cards: [UUID: SpatialSlotCardView] = [:]
     private var displayedSlots: [SpatialSlot] = []
     private var store: WorkspaceStore?
     private var pool: SurfacePool?
+    private var host: PluginHost?
+    private var intentRuntime: AppIntentRuntime?
+    private var palette: CommandPaletteState?
     private var router: DragRouter?
     private var tabID: UUID?
     private var activeSlotID: UUID?
     private var gestureSlotID: UUID?
     private var responderBeforeGesture: NSResponder?
     private var mouseMonitor: Any?
+    private var launcherPopover: NSPopover?
+
+    /// Test seam for the AppKit presentation edge. Production leaves it nil and hosts
+    /// `LauncherMenu` below; tests replace only the final popover side effect while the
+    /// same empty-grid routing still runs.
+    var onPresentEmptyGridLauncher: ((NSRect) -> Void)?
 
     /// Set while the pointer is over the tab bar during a header drag: releasing
     /// there reparents the dragged slot instead of committing an in-canvas move.
@@ -358,6 +398,26 @@ final class SpatialCanvasNSView: NSView {
         super.keyDown(with: event)
     }
 
+    override func rightMouseDown(with event: NSEvent) {
+        let point = convert(event.locationInWindow, from: nil)
+        guard requestEmptyGridLauncher(at: point) else {
+            super.rightMouseDown(with: event)
+            return
+        }
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard event.modifierFlags.contains(.control) else {
+            super.mouseDown(with: event)
+            return
+        }
+        let point = convert(event.locationInWindow, from: nil)
+        guard requestEmptyGridLauncher(at: point) else {
+            super.mouseDown(with: event)
+            return
+        }
+    }
+
     func configure(
         tab: TenonCore.Tab,
         workspacePath: URL,
@@ -367,6 +427,8 @@ final class SpatialCanvasNSView: NSView {
         pool: SurfacePool,
         webPool: PluginWebSurfacePool,
         host: PluginHost,
+        intentRuntime: AppIntentRuntime,
+        palette: CommandPaletteState,
         editorStates: EditorPaneStateStore,
         pluginSnapshots: [PluginSnapshot],
         pluginViewSections: [PluginViewSection],
@@ -376,6 +438,9 @@ final class SpatialCanvasNSView: NSView {
     ) {
         self.store = store
         self.pool = pool
+        self.host = host
+        self.intentRuntime = intentRuntime
+        self.palette = palette
         self.router = router
         self.tabID = tab.id
         self.activeSlotID = activeSlotID
@@ -447,6 +512,57 @@ final class SpatialCanvasNSView: NSView {
         displayedSlots = tab.spatialSlots
         applyFrames(displayedSlots)
         setPreviewValidity(nil)
+    }
+
+    /// Opens the shared launcher at a right-/control-click that belongs to no pane.
+    /// Returning whether the click was consumed keeps the responder fallback explicit.
+    @discardableResult
+    func requestEmptyGridLauncher(at point: CGPoint) -> Bool {
+        guard let point = SpatialCanvasInteractionCoordinator.emptyGridLauncherAnchor(
+            at: point,
+            canvasSize: bounds.size,
+            slots: displayedSlots
+        ) else { return false }
+
+        let anchor = NSRect(x: point.x, y: point.y, width: 1, height: 1)
+        if let onPresentEmptyGridLauncher {
+            onPresentEmptyGridLauncher(anchor)
+        } else {
+            presentEmptyGridLauncher(relativeTo: anchor)
+        }
+        return true
+    }
+
+    /// Hosts the exact search-first launcher used by the title-bar `+` and tab-chip
+    /// right-click. Membership, ranking, grouping, icons, invocation, failure display,
+    /// and frecency therefore remain one implementation in `LauncherMenu`.
+    private func presentEmptyGridLauncher(relativeTo anchor: NSRect) {
+        guard let host, let intentRuntime, let palette, window != nil else { return }
+
+        launcherPopover?.performClose(nil)
+        let popover = NSPopover()
+        popover.behavior = .transient
+        popover.delegate = self
+        popover.contentViewController = NSHostingController(rootView: LauncherMenu(
+            host: host,
+            intentRuntime: intentRuntime,
+            palette: palette,
+            dismiss: { [weak self, weak popover] in
+                popover?.performClose(nil)
+                if self?.launcherPopover === popover {
+                    self?.launcherPopover = nil
+                }
+            }
+        ))
+        launcherPopover = popover
+        popover.show(relativeTo: anchor, of: self, preferredEdge: .minY)
+    }
+
+    func popoverDidClose(_ notification: Notification) {
+        guard let closed = notification.object as? NSPopover,
+              closed === launcherPopover
+        else { return }
+        launcherPopover = nil
     }
 
     private func makeCard(slotID: UUID) -> SpatialSlotCardView {
@@ -737,9 +853,12 @@ final class SpatialCanvasNSView: NSView {
     }
 
     func stopMouseMonitoring() {
-        guard let mouseMonitor else { return }
-        NSEvent.removeMonitor(mouseMonitor)
-        self.mouseMonitor = nil
+        if let mouseMonitor {
+            NSEvent.removeMonitor(mouseMonitor)
+            self.mouseMonitor = nil
+        }
+        launcherPopover?.performClose(nil)
+        launcherPopover = nil
     }
 
     /// The local monitor only bridges body clicks that the hosted terminal or

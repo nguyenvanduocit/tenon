@@ -67,6 +67,8 @@ struct ContentView: View {
                         pool: pool,
                         webPool: webPool,
                         host: host,
+                        intentRuntime: intentRuntime,
+                        palette: palette,
                         editorStates: editorStates,
                         router: router
                     )

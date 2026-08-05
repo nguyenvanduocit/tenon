@@ -201,15 +201,19 @@ Current DIRECT inventory:
   and the host-native completion-notification adapter. No plugin EVENT exists for this
   state; if a plugin ever needs visibility into pane attention, that is a NEW classified
   EVENT admitted through this law's ordered decision — never a reuse of this host state;
-- tab context-menu sourcing and its placement resolution (T-039): the menu is host-native
-  SwiftUI reading `CommandIndex.launcherOnly` — the same index the `+` launcher reads, not a
-  second list — and `TabContextPlacement` is a pure rule naming which tab a chosen command
-  is talking about. Plugin-contributed entries remain CONTRIBUTIONs (palette declarations),
-  and invoking one is the existing INTENT path under the palette principal, differing only
-  in that the scope is named at the call site instead of inherited from which pane has
-  focus. **Placement itself is not decided here**: it stays inside
-  `workspace.content.open.v1`, whose contract already makes it host policy — reuse the pane
-  showing this kind of content, otherwise split, never open a tab;
+- launcher surfaces and tab-context placement (T-039, AIO-8): the title-bar `+`, a tab
+  right-click, and a right-click on an unoccupied spatial-grid cell all host the same
+  `LauncherMenu`, which alone reads `CommandIndex.launcherOnly` — there is no second list or
+  presentation. Detecting that a grid cell is unoccupied and presenting/dismissing the
+  popover are host-native DIRECT UI control: same semantic owner, no caller principal, no
+  result, no independent lifetime, no authority, and no backpressure. Plugin-contributed
+  entries remain CONTRIBUTIONs (palette declarations), and choosing one takes the existing
+  finite INTENT path under the palette principal with its existing authority, failure, and
+  admission semantics. The `+` and empty-grid anchors inherit the focused scope; only a tab
+  anchor names scope at the call site through the pure `TabContextPlacement` rule so a
+  background tab receives its own result. **Placement itself is not decided here**: it
+  stays inside `workspace.content.open.v1`, whose contract already makes it host policy —
+  reuse the pane showing this kind of content, otherwise split, never open a tab;
 - file-pane renderer selection (T-038): `SlotContent.file(path:)` and its native editor
   were already host-owned, so rendering a PNG as a picture or an HTML file as a page
   crosses no ownership boundary — same-owner DIRECT, no new intent, no new plugin, no new
