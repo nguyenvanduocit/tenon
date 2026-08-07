@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import Foundation
 
 /// A diff row's identity, derived from the line numbers the row shows rather than

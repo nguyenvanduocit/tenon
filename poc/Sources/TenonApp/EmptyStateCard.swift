@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import SwiftUI
 import TenonCore
 
@@ -217,6 +218,7 @@ private struct AgentLaunchCardRow: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(TenonTheme.amber.opacity(0.9))
                     .frame(width: 16)
+                    .accessibilityHidden(true)
                 Text(suggestion.agent.label)
                     .font(TenonTheme.interfaceFont(size: 12, weight: .medium))
                     .foregroundStyle(hovering ? TenonTheme.text : TenonTheme.muted)

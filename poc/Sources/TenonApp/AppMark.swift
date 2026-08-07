@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import AppKit
 import Foundation
 

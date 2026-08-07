@@ -1,3 +1,4 @@
+// @domain: command-surface
 import Foundation
 
 public extension PluginIntentPresentation {

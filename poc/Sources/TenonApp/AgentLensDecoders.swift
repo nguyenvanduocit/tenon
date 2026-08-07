@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import CryptoKit
 import Foundation
 

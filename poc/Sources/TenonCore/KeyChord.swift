@@ -1,3 +1,4 @@
+// @domain: command-surface
 import Foundation
 
 /// A normalized product keybinding that is independent of AppKit and SwiftUI.

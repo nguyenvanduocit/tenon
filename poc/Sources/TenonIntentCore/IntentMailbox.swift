@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 public enum IntentAdmissionClass: String, Sendable, Equatable, Codable {

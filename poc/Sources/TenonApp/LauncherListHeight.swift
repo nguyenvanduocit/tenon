@@ -1,3 +1,4 @@
+// @domain: command-surface
 import CoreGraphics
 
 /// The height the launcher's result list actually needs, stated rather than offered.

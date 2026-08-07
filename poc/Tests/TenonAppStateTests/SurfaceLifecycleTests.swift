@@ -161,6 +161,43 @@ final class SurfaceLifecycleTests: XCTestCase {
         XCTAssertEqual(surface?.terminateCount, 1)
     }
 
+    func testCloseInspectionIncludesOnlyLiveSurfacesInTheTargetTab() {
+        let pool = makePool()
+        let target = pool.surface(for: slot, workspacePath: scratch) as? StubTerminalSurface
+        let otherSlot = UUID()
+        let other = pool.surface(for: otherSlot, workspacePath: scratch) as? StubTerminalSurface
+        target?.foregroundPID = 4908
+        other?.foregroundPID = 7001
+
+        XCTAssertEqual(
+            pool.terminalProcessSnapshot(for: [slot]),
+            TerminalProcessInspectionSnapshot(
+                liveTerminalCount: 1,
+                foregroundPIDs: [4908]
+            )
+        )
+
+        target?.processExited = true
+        XCTAssertEqual(
+            pool.terminalProcessSnapshot(for: [slot, otherSlot]),
+            TerminalProcessInspectionSnapshot(
+                liveTerminalCount: 1,
+                foregroundPIDs: [7001]
+            ),
+            "an exited surface needs no warning and an unrelated live surface stays scoped"
+        )
+    }
+
+    func testLiveSurfaceWithoutProcessIdentityMakesCloseInspectionIncomplete() {
+        let pool = makePool()
+        _ = pool.surface(for: slot, workspacePath: scratch)
+
+        let snapshot = pool.terminalProcessSnapshot(for: [slot])
+
+        XCTAssertEqual(snapshot.liveTerminalCount, 1)
+        XCTAssertFalse(snapshot.hasCompleteIdentity)
+    }
+
     // MARK: - Restored panes: placeholder data now, a fresh shell on first view
 
     func testARestoredPaneShowsItsRecordedDirectoryAndSpawnsAFreshShellThere() throws {

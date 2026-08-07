@@ -44,7 +44,6 @@ enum AutomationPaneFilter: String, CaseIterable, Identifiable {
 
 enum AutomationScheduleAvailability: Equatable {
     case ready
-    case pluginDisabled
     case pluginUnavailable(String?)
 
     var isReady: Bool { self == .ready }
@@ -176,16 +175,17 @@ enum AutomationPanePresentation {
             }
         )
 
+        // A disabled plugin is not part of the product right now, so neither is anything
+        // it declares: its schedules leave the pane entirely rather than lingering as
+        // rows nobody can act on. Enabling it in Settings brings them back intact,
+        // including their pause preference.
         return plugins
+            .filter(\.isEnabled)
             .flatMap { plugin -> [AutomationScheduleSummary] in
-                let availability: AutomationScheduleAvailability
-                if !plugin.isEnabled {
-                    availability = .pluginDisabled
-                } else if !plugin.isLoaded || plugin.error != nil {
-                    availability = .pluginUnavailable(plugin.error)
-                } else {
-                    availability = .ready
-                }
+                let availability: AutomationScheduleAvailability =
+                    plugin.isLoaded && plugin.error == nil
+                        ? .ready
+                        : .pluginUnavailable(plugin.error)
 
                 return plugin.automationSchedules.map { spec in
                     let key = scheduleKey(pluginID: plugin.id, scheduleID: spec.id)
@@ -389,8 +389,12 @@ struct AutomationSlotView: View {
                         )
                         .frame(maxHeight: .infinity, alignment: .top)
                     AutomationVerticalDivider()
-                    detail(summary: selected, records: records)
-                        .frame(minWidth: 360)
+                    detail(
+                        summary: selected,
+                        records: records,
+                        hasSchedules: !summaries.isEmpty
+                    )
+                    .frame(minWidth: 360)
                 }
                 VStack(spacing: 0) {
                     navigator(summaries: visible)
@@ -399,7 +403,11 @@ struct AutomationSlotView: View {
                             alignment: .top
                         )
                     AutomationDivider()
-                    detail(summary: selected, records: records)
+                    detail(
+                        summary: selected,
+                        records: records,
+                        hasSchedules: !summaries.isEmpty
+                    )
                 }
             }
         }
@@ -447,7 +455,8 @@ struct AutomationSlotView: View {
     @ViewBuilder
     private func detail(
         summary: AutomationScheduleSummary?,
-        records: [AutomationRunRecord]
+        records: [AutomationRunRecord],
+        hasSchedules: Bool
     ) -> some View {
         if let summary {
             AutomationScheduleDetail(
@@ -466,7 +475,7 @@ struct AutomationSlotView: View {
             )
         } else {
             AutomationEmptyDetail(
-                hasSchedules: !host.plugins.flatMap(\.automationSchedules).isEmpty,
+                hasSchedules: hasSchedules,
                 create: actions.createWithAI
             )
         }
@@ -811,6 +820,7 @@ private struct AutomationScheduleNavigator: View {
                         }
                     }
                 }
+                .tenonScrollbarStyle()
             }
         }
         .background(TenonTheme.chrome)
@@ -905,6 +915,7 @@ private struct AutomationScheduleDetail: View {
             }
             .padding(AutomationPaneMetrics.contentInset)
         }
+        .tenonScrollbarStyle()
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .background(TenonTheme.panel)
         .accessibilityIdentifier("tenon.automation.detail")
@@ -988,8 +999,6 @@ private struct AutomationScheduleNotice: View {
             return "The most recent event was not accepted by a live plugin generation. Inspect the plugin, then retry."
         case .unavailable:
             switch summary.availability {
-            case .pluginDisabled:
-                return "The declaring plugin is disabled. Enable it in Settings before running this schedule."
             case .pluginUnavailable(let diagnostic):
                 return diagnostic.map { "The plugin is unavailable: \($0)" }
                     ?? "The declaring plugin is not currently loaded."

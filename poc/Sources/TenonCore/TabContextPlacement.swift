@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import Foundation
 
 /// Where a command chosen from a tab's context menu should land.

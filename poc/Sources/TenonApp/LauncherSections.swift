@@ -1,3 +1,4 @@
+// @domain: command-surface
 import TenonCore
 
 /// The launcher popover's one authoritative order.

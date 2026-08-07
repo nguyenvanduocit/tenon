@@ -222,7 +222,7 @@ private struct LatencyBudgetFixture: Sendable {
             ),
             telemetry: try IntentTelemetry(),
             limits: try IntentDispatcherLimits(),
-            confirmationAuthorizer: IntentConfirmationAuthorizer { _ in .approved }
+            confirmationAuthorizer: IntentConfirmationAuthorizer { _ in .allowOnce }
         )
         try await dispatcher.registerRule(
             IntentDispatchRule(

@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 public struct IntentID: Sendable, Equatable, Hashable, Codable, CustomStringConvertible {

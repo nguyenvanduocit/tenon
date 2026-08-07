@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import AppKit
 import Foundation
 import TenonCore

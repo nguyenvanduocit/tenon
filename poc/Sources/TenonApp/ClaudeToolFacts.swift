@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 
 /// How one Claude Code tool call reads to a human, and what its result says about the way

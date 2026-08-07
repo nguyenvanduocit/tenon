@@ -13,6 +13,12 @@ import Foundation
 /// is assertable with no PTY and no window. `TerminalJobTerminator` is the part that runs `ps`
 /// and signals.
 public enum TerminalJobTermination {
+    public enum Inspection: Equatable, Sendable {
+        case idle
+        case running
+        case unavailable
+    }
+
     public struct ProcessRow: Equatable, Sendable {
         public let pid: pid_t
         public let processGroup: pid_t
@@ -55,6 +61,43 @@ public enum TerminalJobTermination {
         return row.tty
     }
 
+    /// Whether any inspected terminal contains work beyond its foreground shell.
+    ///
+    /// A live interactive terminal always contributes one process group: its shell (and any
+    /// wrapper/helper in that same group). A foreground command, pipeline, or background job
+    /// contributes another group on that tty. Resolving the tty from the backend's current
+    /// foreground pid keeps the rule independent of shell names and catches quiet jobs as
+    /// well as jobs producing output.
+    ///
+    /// Missing foreground rows are `unavailable`, not `idle`: the process may have raced the
+    /// table read or `ps` may have failed. A destructive close can then fail safe by asking.
+    public static func inspection(
+        foregroundPIDs: Set<UInt64>,
+        in table: String
+    ) -> Inspection {
+        guard !foregroundPIDs.isEmpty else { return .idle }
+
+        let rows = rows(parsing: table)
+        var ttyNames: Set<String> = []
+        for rawPID in foregroundPIDs {
+            guard rawPID > 1,
+                  rawPID <= UInt64(pid_t.max),
+                  let row = rows.first(where: { $0.pid == pid_t(rawPID) }),
+                  row.tty != "?",
+                  row.tty != "??"
+            else { return .unavailable }
+            ttyNames.insert(row.tty)
+        }
+        guard ttyNames.count == foregroundPIDs.count else { return .unavailable }
+
+        for tty in ttyNames {
+            let processes = rows.filter { $0.tty == tty }
+            guard !processes.isEmpty else { return .unavailable }
+            if Set(processes.map(\.processGroup)).count > 1 { return .running }
+        }
+        return .idle
+    }
+
     /// Every process group on `tty`, with the root's group LAST.
     ///
     /// Order matters: the root's group owns the terminal, so killing it first can collapse the
@@ -77,6 +120,29 @@ public enum TerminalJobTermination {
 
         let groups = Set(onThisTTY.map(\.processGroup))
         return groups.filter { $0 != rootGroup }.sorted() + [rootGroup]
+    }
+}
+
+/// Reads the process table away from `MainActor` for the tab-close confirmation path.
+/// The decision itself stays pure in `TerminalJobTermination.inspection` above.
+public actor TerminalJobInspector {
+    public typealias ProcessTable = @Sendable ([String]) -> String
+
+    private let processTable: ProcessTable
+
+    public init(processTable: @escaping ProcessTable) {
+        self.processTable = processTable
+    }
+
+    public static let live = TerminalJobInspector(
+        processTable: TerminalJobTerminator.Environment.live.processTable
+    )
+
+    public func inspect(foregroundPIDs: Set<UInt64>) -> TerminalJobTermination.Inspection {
+        TerminalJobTermination.inspection(
+            foregroundPIDs: foregroundPIDs,
+            in: processTable(["-A", "-o", "pid=,pgid=,tty="])
+        )
     }
 }
 

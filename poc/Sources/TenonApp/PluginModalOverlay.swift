@@ -1,3 +1,4 @@
+// @domain: plugin-contributions
 import SwiftUI
 import TenonCore
 import TenonIntentCore
@@ -38,8 +39,15 @@ struct PluginModalPresentation: Equatable {
 /// the modal's `dismissAction` to the owning view's `onSelect` — the host never clears a
 /// modal itself, because the plugin owns whether one exists (invariant 6: one semantic
 /// implementation, and here the semantics are the plugin's).
+/// A modal is a promise that the rest of the app is unavailable, and that promise has to hold
+/// for someone driving by keyboard or VoiceOver too — not only for a mouse the backdrop
+/// intercepts. So the dialog carries `isModal` (which takes the shell behind it out of the
+/// accessibility tree), owns focus from the moment it appears, keeps keyboard traversal inside
+/// itself, and names its one icon-only control.
 struct PluginModalOverlay: View {
     let host: PluginHost
+
+    @FocusState private var dialogFocused: Bool
 
     var body: some View {
         if let presentation = PluginModalPresentation.resolve(from: host.pluginViews) {
@@ -47,6 +55,10 @@ struct PluginModalOverlay: View {
                 Color.black.opacity(0.45)
                     .ignoresSafeArea()
                     .onTapGesture { dismiss(presentation) }
+                    // A backdrop is a mouse affordance. VoiceOver reaches the same action
+                    // through Escape and the close button, and an unlabelled full-screen
+                    // element in the tree would only be an obstacle.
+                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 0) {
                     header(presentation)
@@ -63,6 +75,7 @@ struct PluginModalOverlay: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)
                     }
+                    .tenonScrollbarStyle()
                 }
                 .frame(width: 560)
                 .frame(maxHeight: 520)
@@ -70,6 +83,16 @@ struct PluginModalOverlay: View {
                 .clipShape(RoundedRectangle(cornerRadius: 12))
                 .overlay(RoundedRectangle(cornerRadius: 12).stroke(TenonTheme.line, lineWidth: 1))
                 .shadow(color: .black.opacity(0.5), radius: 30, y: 12)
+                // Tab and arrow traversal stay inside the dialog rather than walking out
+                // into a workspace the modal claims is unavailable.
+                .focusSection()
+                .focusable()
+                .focused($dialogFocused)
+                .accessibilityElement(children: .contain)
+                .accessibilityAddTraits(.isModal)
+                .accessibilityLabel(presentation.modal.title)
+                .accessibilityIdentifier("tenon.plugin-modal")
+                .onAppear { dialogFocused = true }
             }
             // Escape dismisses, the same key that closes the palette.
             .onExitCommand { dismiss(presentation) }
@@ -91,6 +114,9 @@ struct PluginModalOverlay: View {
             }
             .buttonStyle(.plain)
             .keyboardShortcut(.cancelAction)
+            .accessibilityLabel("Close \(presentation.modal.title)")
+            .accessibilityIdentifier("tenon.plugin-modal.close")
+            .help("Close")
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 12)

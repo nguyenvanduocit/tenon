@@ -33,9 +33,11 @@ The shell publishes these identifiers from the SwiftUI/AppKit views in `Sources/
 - **Addressable as one element.** A slot wraps a terminal `NSView`; wrap the slot in a
   container that is an accessibility element, e.g. `.accessibilityElement(children: .contain)`
   alongside the identifier, so `slots.element(boundBy:)` resolves to the slot, not its guts.
-- **Expose order/identity via `accessibilityValue`.** Each value contains the stable slot UUID
-  and its current `x,y,width,height` grid rectangle, so a move or swap is observable from the
-  accessibility tree.
+- **Expose order/identity via `accessibilityIdentifier`.** Each slot's identifier is
+  `tenon.slot#<uuid>@<x>,<y>,<width>,<height>`, so a move or swap is observable from the
+  accessibility tree — match it with `identifier BEGINSWITH "tenon.slot"`. The identifier is
+  the machine channel because it is never spoken; `accessibilityValue` says where the pane is
+  in the words a person using VoiceOver would want ("Column 2, row 1").
 
 ## Running
 

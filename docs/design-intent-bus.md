@@ -686,6 +686,15 @@ confirmation: never | policy | always
 external: true | false
 ```
 
+`policy` confirmation presents one closed set of positive decisions: **Allow Once** for the
+current coalesced request wave, **Always Allow** for the current caller/contract pair, and
+**Always Allow for This User** for every `policy` contract invoked by the stable caller
+identity. The caller-wide choice is a confirmation grant, not ambient authority: declared
+use, audience, capabilities, argument/scope policy, provider consent, and admission still
+run for every call. `always` presents only Allow Once and never reads or records standing
+consent. Denial is wave-local, so a later request can ask again; unanswered prompts expire at
+the caller's deadline.
+
 For core contracts, the core catalog is authoritative. Plugin-owned metadata is untrusted:
 missing fields get pessimistic defaults (`write`, `none`, `policy`, `external: true`) and
 cannot lower host policy. This follows MCP's useful risk vocabulary without treating

@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import AppKit
 import SwiftUI
 import TenonCore
@@ -289,18 +290,20 @@ struct AgentLensSlotView: View {
     /// the pane instead of pasted into it.
     @ViewBuilder private var inspector: some View {
         if model.showsInspector {
-            ZStack(alignment: .topTrailing) {
-                Rectangle()
-                    .fill(TenonTheme.ink.opacity(0.35))
-                    .onTapGesture { model.showsInspector = false }
-                    .accessibilityHidden(true)
-
-                AgentLensInspector(snapshot: model.snapshot, inspection: model.inspection)
-                    .frame(maxWidth: 420, maxHeight: .infinity)
-                    .overlay(alignment: .leading) {
-                        Divider().overlay(TenonTheme.line)
-                    }
-            }
+            // The scrim is the base and the panel is drawn on it, for the same reason the
+            // timeline uses an overlay: a `ZStack` would size itself by asking the panel —
+            // and the lazy list inside it — what it wants, which measures rows nobody can see.
+            Rectangle()
+                .fill(TenonTheme.ink.opacity(0.35))
+                .onTapGesture { model.showsInspector = false }
+                .accessibilityHidden(true)
+                .overlay(alignment: .topTrailing) {
+                    AgentLensInspector(snapshot: model.snapshot, inspection: model.inspection)
+                        .frame(maxWidth: 420, maxHeight: .infinity)
+                        .overlay(alignment: .leading) {
+                            Divider().overlay(TenonTheme.line)
+                        }
+                }
         }
     }
 
@@ -354,8 +357,16 @@ private struct AgentSessionView: View {
 
     private var timeline: some View {
         ScrollViewReader { proxy in
-            ZStack(alignment: .bottomTrailing) {
-                ScrollView {
+            // `.overlay` rather than a `ZStack`, and the difference is measured.
+            //
+            // A `ZStack` computes its own size by asking every child what it wants, and asking
+            // a `ScrollView` that makes the lazy list inside it measure its estimates — which
+            // materialises timeline items that are nowhere near the screen. The T-091 sample
+            // names that path frame for frame: `_ZStackLayout.sizeThatFits` →
+            // `ScrollViewLayoutComputer.Engine.sizeThatFits` → `LazyStack.measureEstimates` →
+            // `ForEachState.item(at:offset:)` over `AgentTimelineItem`. An overlay is sized by
+            // the view it sits on instead, so the scroll view is never asked what it "wants".
+            ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0) {
                         AgentHookSetupNotice(provider: model.snapshot.provider)
 
@@ -377,7 +388,8 @@ private struct AgentSessionView: View {
                                 inspect: inspect,
                                 chooseOption: chooseOption,
                                 openTerminal: openTerminal,
-                                fileLinks: fileLinks
+                                fileLinks: fileLinks,
+                                submittedOptionRequestID: model.submittedOptionRequestID
                             )
                                 .id(item.id)
                         }
@@ -398,8 +410,9 @@ private struct AgentSessionView: View {
                     .padding(.top, 12)
                     .frame(maxWidth: 860, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .center)
-                }
-
+            }
+            .tenonScrollbarStyle()
+            .overlay(alignment: .bottomTrailing) {
                 if unseenUpdates > 0 {
                     Button {
                         if reduceMotion {
@@ -442,44 +455,25 @@ private struct AgentSessionView: View {
     }
 
     private var composer: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let request = model.snapshot.pendingInteraction, !request.options.isEmpty {
-                ScrollView(.horizontal) {
-                    HStack(spacing: 6) {
-                        ForEach(request.options) { option in
-                            Button { chooseOption(request, option) } label: {
-                                Text(option.label).lineLimit(1)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .help(option.detail.isEmpty ? "Use this answer" : option.detail)
-                        }
-                    }
-                }
-                .scrollIndicators(.hidden)
-                .accessibilityLabel("Suggested answers")
+        TextField(composerPlaceholder, text: $model.draft, axis: .vertical)
+            .textFieldStyle(.plain)
+            .lineLimit(1...6)
+            .focused($composerFocused)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(TenonTheme.panel, in: .rect(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(composerFocused ? TenonTheme.amber : TenonTheme.line)
             }
-
-            TextField(composerPlaceholder, text: $model.draft, axis: .vertical)
-                .textFieldStyle(.plain)
-                .lineLimit(1...6)
-                .focused($composerFocused)
-                .padding(.horizontal, 10)
-                .padding(.vertical, 7)
-                .background(TenonTheme.panel, in: .rect(cornerRadius: 6))
-                .overlay {
-                    RoundedRectangle(cornerRadius: 6)
-                        .stroke(composerFocused ? TenonTheme.amber : TenonTheme.line)
-                }
-                .onSubmit(of: .text) {
-                    guard model.canSend else { return }
-                    Task { await model.sendDraft() }
-                }
-                .onExitCommand { composerFocused = false }
-                .accessibilityHint("Input is sent only while the detected agent remains the terminal foreground process")
-        }
-        .padding(10)
-        .background(TenonTheme.chrome)
+            .onSubmit(of: .text) {
+                guard model.canSend else { return }
+                Task { await model.sendDraft() }
+            }
+            .onExitCommand { composerFocused = false }
+            .accessibilityHint("Input is sent only while the detected agent remains the terminal foreground process")
+            .padding(10)
+            .background(TenonTheme.chrome)
     }
 
     private var composerPlaceholder: String {
@@ -518,6 +512,7 @@ private struct AgentTimelineRow: View {
     let chooseOption: (AgentInteractionRequest, AgentInteractionOption) -> Void
     let openTerminal: () -> Void
     let fileLinks: AgentFileLinks
+    let submittedOptionRequestID: String?
 
     @ViewBuilder var body: some View {
         switch item.content {
@@ -539,7 +534,8 @@ private struct AgentTimelineRow: View {
                 occurredAt: item.occurredAt,
                 inspect: { inspect(.interaction(request)) },
                 chooseOption: chooseOption,
-                openTerminal: openTerminal
+                openTerminal: openTerminal,
+                answerSubmitted: submittedOptionRequestID == request.id
             )
         case .diagnostic(let diagnostic):
             AgentSpineDiagnosticRow(
@@ -684,6 +680,7 @@ private struct AgentSpineMessageRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 5) {
                     Image(systemName: expanded ? "chevron.down" : "chevron.right")
                         .font(.caption2)
+                        .accessibilityHidden(true)
                     Text(expanded ? "Reasoning trace" : compactPreview)
                         .font(.caption)
                         .lineLimit(expanded ? 1 : 2)
@@ -767,6 +764,7 @@ private struct AgentSpineInteractionRow: View {
     let inspect: () -> Void
     let chooseOption: (AgentInteractionRequest, AgentInteractionOption) -> Void
     let openTerminal: () -> Void
+    let answerSubmitted: Bool
 
     var body: some View {
         AgentSpineChrome(
@@ -819,11 +817,14 @@ private struct AgentSpineInteractionRow: View {
                         Button(option.label) { chooseOption(request, option) }
                             .buttonStyle(.bordered)
                             .controlSize(.small)
+                            .disabled(answerSubmitted)
                             .help(option.detail.isEmpty ? "Use this answer" : option.detail)
                     }
                 }
             }
+            .tenonScrollbarStyle()
             .scrollIndicators(.hidden)
+            .accessibilityLabel("Suggested answers")
         }
     }
 }
@@ -963,6 +964,7 @@ private struct AgentLensInspector: View {
             }
             .padding(14)
         }
+        .tenonScrollbarStyle()
         .background(TenonTheme.chrome)
         .accessibilityIdentifier("tenon.agentLens.inspector")
     }

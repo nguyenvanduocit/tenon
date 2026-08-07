@@ -1,3 +1,5 @@
+// @domain: intent-bus
+
 import Foundation
 
 public struct IntentDispatcherSnapshot: Sendable, Equatable {
@@ -17,7 +19,7 @@ public actor IntentDispatcher {
     public typealias ProgressSink = @Sendable (IntentProgressNotification) async -> Void
 
     typealias CallerConsentPersistence = @Sendable (
-        _ key: CallerConsentKey,
+        _ target: CallerConsentGrantTarget,
         _ fence: CallerConsentGrantFence
     ) async throws -> Bool
 
@@ -60,7 +62,8 @@ public actor IntentDispatcher {
     }
 
     private enum CallerConsentWaveOutcome: Sendable {
-        case approved
+        case allowOnce
+        case standingConsent
         case denied
         case persistenceFailed
         case cancelled
@@ -68,7 +71,8 @@ public actor IntentDispatcher {
 
     private enum CallerConsentAuthorization: Sendable {
         case standingConsent
-        case approved
+        case allowOnce
+        case grant(CallerConsentGrantTarget)
         case denied
     }
 
@@ -135,9 +139,9 @@ public actor IntentDispatcher {
         self.limits = limits
         self.confirmationAuthorizer = confirmationAuthorizer
         self.progressSink = progressSink
-        callerConsentPersistence = { key, fence in
+        callerConsentPersistence = { target, fence in
             try await policy.grantStandingConsent(
-                for: key,
+                for: target,
                 guardedBy: fence
             )
         }
@@ -393,110 +397,23 @@ public actor IntentDispatcher {
             )
         }
 
-        do {
-            let validation = try contract.validateInput(request.input)
-            guard validation.isValid else {
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(
-                        code: .invalidInput,
-                        details: Self.validationDetails(validation.issues),
-                        requestID: requestID
-                    )
-                )
-            }
-        } catch {
-            return await finishWithoutExecution(
-                envelope: envelope,
-                result: Self.failure(code: .internal, requestID: requestID)
-            )
-        }
-        await telemetry.markValidated(requestID: requestID)
-
-        let capabilityRequirements: [CapabilityRequirement]
-        do {
-            capabilityRequirements = try rule.capabilityRequirements(input: request.input)
-        } catch {
-            return await finishWithoutExecution(
-                envelope: envelope,
-                result: Self.failure(
-                    code: .invalidInput,
-                    details: .object(["reason": .string("capability-path-invalid")]),
-                    requestID: requestID
-                )
-            )
-        }
-
-        let basePolicy = await policy.authorize(
-            PolicyInvocationRequest(
-                envelope: envelope,
-                capabilityRequirements: capabilityRequirements,
-                providerConsent: .notRequired
-            )
-        )
-        guard case .allowed = basePolicy.verdict else {
-            return await finishWithoutExecution(
-                envelope: envelope,
-                result: Self.policyFailure(
-                    decision: basePolicy,
-                    requestID: requestID
-                )
-            )
-        }
-        await telemetry.markAuthorized(
-            requestID: requestID,
-            policyRevision: basePolicy.policyRevision
-        )
-
-        if Task.isCancelled {
-            return await finishWithoutExecution(
-                envelope: envelope,
-                result: Self.failure(code: .cancelled, requestID: requestID)
-            )
-        }
-        if ContinuousClock.now >= deadline {
-            return await finishWithoutExecution(
-                envelope: envelope,
-                result: Self.failure(code: .deadlineExceeded, requestID: requestID)
-            )
-        }
-
+        // Validation and authorization, as one decision: the request is either allowed to look
+        // for a provider — carrying whatever idempotency claim it prepared — or it is settled
+        // here, before anything has been reserved on its behalf.
         let preparedIdempotency: PreparedIdempotency?
-        do {
-            preparedIdempotency = try Self.prepareIdempotency(
-                contract: contract,
-                envelope: envelope,
-                limits: rule.valueLimits
-            )
-        } catch {
-            return await finishWithoutExecution(
-                envelope: envelope,
-                result: Self.failure(
-                    code: .invalidInput,
-                    details: .object(["reason": .string("idempotency-key-invalid")]),
-                    requestID: requestID
-                )
-            )
-        }
-
-        if let preparedIdempotency {
-            do {
-                if let decision = try await idempotency.lookup(
-                    key: preparedIdempotency.key,
-                    fingerprint: preparedIdempotency.fingerprint
-                ) {
-                    return await finishExistingIdempotency(
-                        decision,
-                        prepared: preparedIdempotency,
-                        envelope: envelope
-                    )
-                }
-            } catch {
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(code: .internal, requestID: requestID)
-                )
-            }
+        let capabilityRequirements: [CapabilityRequirement]
+        switch await authorizeRequest(
+            request,
+            envelope: envelope,
+            contract: contract,
+            rule: rule,
+            deadline: deadline
+        ) {
+        case let .authorized(capabilities, prepared):
+            capabilityRequirements = capabilities
+            preparedIdempotency = prepared
+        case let .settled(result):
+            return result
         }
 
         let selection: ProviderSelection
@@ -565,159 +482,19 @@ public actor IntentDispatcher {
             )
         }
 
+        // The confirmation phase, as one decision: either this request carries a consent
+        // requirement into execution, or it is already settled and nothing runs.
         let callerConsentRequirement: CallerConsentRequirement
-        switch Self.effectiveConfirmation(contract: contract, caller: envelope.caller) {
-        case .never:
-            callerConsentRequirement = .notRequired
-            await telemetry.markConfirmation(
-                requestID: requestID,
-                disposition: .notRequired
-            )
-
-        case .policy:
-            let key = CallerConsentKey(
-                caller: envelope.caller,
-                contract: contract.name
-            )
-            callerConsentRequirement = .required(key)
-            let outcome = await resolveCallerConsent(
-                key: key,
-                confirmationRequest: IntentConfirmationRequest(
-                    envelope: envelope,
-                    contract: contract,
-                    providerID: selection.providerID
-                ),
-                deadline: deadline
-            )
-            if Task.isCancelled {
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .cancelled
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(code: .cancelled, requestID: requestID)
-                )
-            }
-            if ContinuousClock.now >= deadline {
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .timedOut
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(code: .deadlineExceeded, requestID: requestID)
-                )
-            }
-            switch outcome {
-            case .approved:
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .approved
-                )
-            case .denied:
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .denied
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(
-                        code: .denied,
-                        details: .object([
-                            "reason": .string("confirmation-denied")
-                        ]),
-                        requestID: requestID,
-                        providerID: selection.providerID
-                    )
-                )
-            case .persistenceFailed:
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .approved
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(
-                        code: .internal,
-                        details: .object([
-                            "reason": .string(
-                                "caller-consent-persistence-failed"
-                            )
-                        ]),
-                        requestID: requestID,
-                        providerID: selection.providerID
-                    )
-                )
-            case .cancelled:
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .cancelled
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(code: .cancelled, requestID: requestID)
-                )
-            }
-
-        case .always:
-            callerConsentRequirement = .notRequired
-            let confirmation = await confirmationAuthorizer.authorize(
-                IntentConfirmationRequest(
-                    envelope: envelope,
-                    contract: contract,
-                    providerID: selection.providerID
-                )
-            )
-            if Task.isCancelled {
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .cancelled
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(code: .cancelled, requestID: requestID)
-                )
-            }
-            if ContinuousClock.now >= deadline {
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .timedOut
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(code: .deadlineExceeded, requestID: requestID)
-                )
-            }
-            guard confirmation == .approved else {
-                await telemetry.markConfirmation(
-                    requestID: requestID,
-                    disposition: .denied
-                )
-                await registry.releaseSelection(selection)
-                return await finishWithoutExecution(
-                    envelope: envelope,
-                    result: Self.failure(
-                        code: .denied,
-                        details: .object([
-                            "reason": .string("confirmation-denied")
-                        ]),
-                        requestID: requestID,
-                        providerID: selection.providerID
-                    )
-                )
-            }
-            await telemetry.markConfirmation(
-                requestID: requestID,
-                disposition: .approved
-            )
+        switch await resolveCallerConsentPhase(
+            envelope: envelope,
+            contract: contract,
+            selection: selection,
+            deadline: deadline
+        ) {
+        case let .required(requirement):
+            callerConsentRequirement = requirement
+        case let .settled(result):
+            return result
         }
 
         let executionPolicyRequest = PolicyInvocationRequest(
@@ -773,64 +550,20 @@ public actor IntentDispatcher {
             }
         }
 
+        // Admission, as one decision: the request either holds a live provider lease and a
+        // place in the global budget, or it is already settled and nothing was reserved.
         let lease: ProviderLease
-        do {
-            lease = try await registry.acquire(selection)
-        } catch let error as ProviderResolutionError {
-            return await settleBeforeMailboxExecution(
-                preparedIdempotency,
-                envelope: envelope,
-                result: Self.resolutionFailure(error, requestID: requestID),
-                providerID: selection.providerID
-            )
-        } catch {
-            return await settleBeforeMailboxExecution(
-                preparedIdempotency,
-                envelope: envelope,
-                result: Self.failure(
-                    code: .internal,
-                    requestID: requestID,
-                    providerID: selection.providerID
-                ),
-                providerID: selection.providerID
-            )
-        }
-
-        do {
-            try admitExecution(
-                envelope: envelope,
-                providerID: lease.providerID,
-                generation: lease.generation,
-                encodedBytes: accounting.encodedBytes,
-                admissionClass: rule.admissionClass
-            )
-        } catch GlobalAdmissionFailure.cycle {
-            await lease.release()
-            return await settleBeforeMailboxExecution(
-                preparedIdempotency,
-                envelope: envelope,
-                result: Self.failure(
-                    code: .cycleDetected,
-                    requestID: requestID,
-                    providerID: lease.providerID
-                ),
-                providerID: lease.providerID
-            )
-        } catch {
-            await lease.release()
-            await telemetry.markAdmissionRejected(requestID: requestID)
-            return await settleBeforeMailboxExecution(
-                preparedIdempotency,
-                envelope: envelope,
-                result: Self.failure(
-                    code: .overloaded,
-                    retryable: true,
-                    retryAfterMilliseconds: 25,
-                    requestID: requestID,
-                    providerID: lease.providerID
-                ),
-                providerID: lease.providerID
-            )
+        switch await admitToProvider(
+            envelope: envelope,
+            selection: selection,
+            prepared: preparedIdempotency,
+            encodedBytes: accounting.encodedBytes,
+            admissionClass: rule.admissionClass
+        ) {
+        case let .admitted(acquired):
+            lease = acquired
+        case let .settled(result):
+            return result
         }
 
         await telemetry.markQueued(
@@ -839,93 +572,30 @@ public actor IntentDispatcher {
             generation: lease.generation
         )
 
-        let telemetry = self.telemetry
-        let progressSink = self.progressSink
-        let progressMinimumInterval = limits.progressMinimumInterval
+        // Everything the provider call needs, named once.
+        //
+        // The operation runs detached inside the mailbox, so it captures rather than reads —
+        // and a closure that captures ten separate locals is a parameter list pretending not
+        // to be one. `InvocationContext` is that list, given a name, so the factory below takes
+        // one value and a reader can see what an invocation is actually made of.
         let reporter = IntentProgressReporter(
             requestID: requestID,
-            minimumInterval: progressMinimumInterval
-        ) { notification in
+            minimumInterval: limits.progressMinimumInterval
+        ) { [telemetry, progressSink] notification in
             await telemetry.markProgress(requestID: notification.requestID)
             await progressSink(notification)
         }
-        let idempotencyStore = self.idempotency
-        let dispatcher = self
-        let policy = self.policy
-        let registry = self.registry
-        let providerPrincipal = lease.principal
-        let operation: IntentMailboxJob.Operation = {
-            let executionPolicy = await policy.authorize(executionPolicyRequest)
-            guard case .allowed = executionPolicy.verdict else {
-                return .failure(Self.policyProviderFailure(executionPolicy))
-            }
-            await telemetry.markAuthorized(
-                requestID: requestID,
-                policyRevision: executionPolicy.policyRevision
+        let operation = makeProviderOperation(
+            InvocationContext(
+                envelope: envelope,
+                contract: contract,
+                valueLimits: rule.valueLimits,
+                lease: lease,
+                prepared: preparedIdempotency,
+                policyRequest: executionPolicyRequest,
+                reporter: reporter
             )
-            await telemetry.markStarted(requestID: requestID)
-            if let preparedIdempotency {
-                do {
-                    try await idempotencyStore.markRunning(
-                        key: preparedIdempotency.key,
-                        requestID: requestID
-                    )
-                } catch {
-                    return .failure(
-                        IntentProviderFailure(code: .kernel(.internal))
-                    )
-                }
-            }
-
-            let context = IntentProviderContext(
-                requestID: requestID,
-                authorizedFilesystemPaths:
-                executionPolicy.authorizedFilesystemPaths,
-                authorizedNetworkHosts:
-                executionPolicy.authorizedNetworkHosts,
-                nestedSend: { nestedRequest in
-                    await dispatcher.sendFromProvider(
-                        nestedRequest,
-                        principal: providerPrincipal,
-                        inheritedScope: envelope.scope,
-                        causalContext: CausalContext(
-                            traceID: envelope.traceID,
-                            parentRequestID: envelope.requestID,
-                            parentDeadline: envelope.deadline
-                        )
-                    )
-                },
-                progressSink: { progress in
-                    await reporter.report(progress)
-                }
-            )
-            do {
-                try Task.checkCancellation()
-                let reply = try await lease.binding.invoke(
-                    envelope: envelope,
-                    context: context
-                )
-                let validation = Self.validateProviderReply(
-                    reply,
-                    contract: contract,
-                    valueLimits: rule.valueLimits
-                )
-                await registry.recordOutputValidation(
-                    providerID: lease.providerID,
-                    generation: lease.generation,
-                    isValid: validation.isContractValid
-                )
-                return validation.reply
-            } catch is CancellationError {
-                return .failure(
-                    IntentProviderFailure(code: .kernel(.cancelled))
-                )
-            } catch {
-                return .failure(
-                    IntentProviderFailure(code: .kernel(.handlerFailed))
-                )
-            }
-        }
+        )
 
         let job: IntentMailboxJob
         do {
@@ -936,7 +606,7 @@ public actor IntentDispatcher {
                 encodedBytes: accounting.encodedBytes,
                 admissionClass: rule.admissionClass,
                 operation: operation
-            ) { completion in
+            ) { [telemetry, dispatcher = self] completion in
                 await lease.release()
                 await dispatcher.releaseExecutionFromCompletion(requestID: requestID)
                 await telemetry.markPhysicallyCompleted(
@@ -1031,15 +701,555 @@ public actor IntentDispatcher {
 
     /// The confirmation a contract actually demands from this caller.
     ///
-    /// `.policy` means standing consent: the person answers once for a caller and a
-    /// contract, and the answer is remembered. That is the right shape when the authority
-    /// being granted is the *kind* of operation — may this plugin write to the terminal.
+    /// `.policy` offers three approval scopes: the current wave, this caller/contract, or
+    /// every policy-confirmed contract for this caller. Standing choices are remembered.
+    /// That is the right shape when the authority being granted is the *kind* of operation
+    /// — may this plugin write to the terminal.
     /// It is the wrong shape for a delegable (`open`-class) contract asked by an agent,
     /// because there the danger is the payload rather than the kind, and an agent's payload
     /// can be written by whatever it just read. One approval would otherwise become
     /// permission to open anything, forever, from any page the agent is pointed at.
     ///
     /// Pure, so the rule is asserted without a kernel. See `docs/design-open-handlers.md`.
+    /// What the admission phase decided.
+    ///
+    /// The two failure families it covers — a provider that cannot be leased, and a global
+    /// budget that will not take another call — are the ones that must not leave a reservation
+    /// or a lease behind. Both exits here release what they took and settle the prepared
+    /// idempotency claim, so a caller retrying sees a finished request rather than a stuck one.
+    private enum ProviderAdmissionPhase {
+        case admitted(ProviderLease)
+        case settled(IntentResult)
+    }
+
+    private func admitToProvider(
+        envelope: IntentEnvelope,
+        selection: ProviderSelection,
+        prepared: PreparedIdempotency?,
+        encodedBytes: Int,
+        admissionClass: IntentAdmissionClass
+    ) async -> ProviderAdmissionPhase {
+        let requestID = envelope.requestID
+        let lease: ProviderLease
+        do {
+            lease = try await registry.acquire(selection)
+        } catch let error as ProviderResolutionError {
+            return .settled(
+                await settleBeforeMailboxExecution(
+                    prepared,
+                    envelope: envelope,
+                    result: Self.resolutionFailure(error, requestID: requestID),
+                    providerID: selection.providerID
+                )
+            )
+        } catch {
+            return .settled(
+                await settleBeforeMailboxExecution(
+                    prepared,
+                    envelope: envelope,
+                    result: Self.failure(
+                        code: .internal,
+                        requestID: requestID,
+                        providerID: selection.providerID
+                    ),
+                    providerID: selection.providerID
+                )
+            )
+        }
+
+        do {
+            try admitExecution(
+                envelope: envelope,
+                providerID: lease.providerID,
+                generation: lease.generation,
+                encodedBytes: encodedBytes,
+                admissionClass: admissionClass
+            )
+        } catch GlobalAdmissionFailure.cycle {
+            await lease.release()
+            return .settled(
+                await settleBeforeMailboxExecution(
+                    prepared,
+                    envelope: envelope,
+                    result: Self.failure(
+                        code: .cycleDetected,
+                        requestID: requestID,
+                        providerID: lease.providerID
+                    ),
+                    providerID: lease.providerID
+                )
+            )
+        } catch {
+            await lease.release()
+            await telemetry.markAdmissionRejected(requestID: requestID)
+            return .settled(
+                await settleBeforeMailboxExecution(
+                    prepared,
+                    envelope: envelope,
+                    result: Self.failure(
+                        code: .overloaded,
+                        retryable: true,
+                        retryAfterMilliseconds: 25,
+                        requestID: requestID,
+                        providerID: lease.providerID
+                    ),
+                    providerID: lease.providerID
+                )
+            )
+        }
+
+        return .admitted(lease)
+    }
+
+    /// Everything one provider invocation is made of.
+    ///
+    /// It exists because the operation below runs detached — the mailbox owns when it runs, so
+    /// it cannot read the dispatcher's locals at that point and has to carry them. Naming the
+    /// set makes the capture one value instead of ten, and makes "what does an invocation need"
+    /// a question with a written answer.
+    private struct InvocationContext {
+        let envelope: IntentEnvelope
+        let contract: IntentContract
+        let valueLimits: IntentValueLimits
+        let lease: ProviderLease
+        let prepared: PreparedIdempotency?
+        let policyRequest: PolicyInvocationRequest
+        let reporter: IntentProgressReporter
+    }
+
+    /// The provider call itself: re-authorize at the moment of execution, mark the idempotency
+    /// claim running, hand the provider a context it can nest through, and validate what comes
+    /// back against the contract before anything downstream sees it.
+    private func makeProviderOperation(
+        _ invocation: InvocationContext
+    ) -> IntentMailboxJob.Operation {
+        let requestID = invocation.envelope.requestID
+        let telemetry = self.telemetry
+        let idempotencyStore = self.idempotency
+        let policy = self.policy
+        let registry = self.registry
+        let dispatcher = self
+        let providerPrincipal = invocation.lease.principal
+
+        return {
+            let executionPolicy = await policy.authorize(invocation.policyRequest)
+            guard case .allowed = executionPolicy.verdict else {
+                return .failure(Self.policyProviderFailure(executionPolicy))
+            }
+            await telemetry.markAuthorized(
+                requestID: requestID,
+                policyRevision: executionPolicy.policyRevision
+            )
+            await telemetry.markStarted(requestID: requestID)
+            if let prepared = invocation.prepared {
+                do {
+                    try await idempotencyStore.markRunning(
+                        key: prepared.key,
+                        requestID: requestID
+                    )
+                } catch {
+                    return .failure(
+                        IntentProviderFailure(code: .kernel(.internal))
+                    )
+                }
+            }
+
+            let context = IntentProviderContext(
+                requestID: requestID,
+                authorizedFilesystemPaths:
+                executionPolicy.authorizedFilesystemPaths,
+                authorizedNetworkHosts:
+                executionPolicy.authorizedNetworkHosts,
+                nestedSend: { nestedRequest in
+                    await dispatcher.sendFromProvider(
+                        nestedRequest,
+                        principal: providerPrincipal,
+                        inheritedScope: invocation.envelope.scope,
+                        causalContext: CausalContext(
+                            traceID: invocation.envelope.traceID,
+                            parentRequestID: invocation.envelope.requestID,
+                            parentDeadline: invocation.envelope.deadline
+                        )
+                    )
+                },
+                progressSink: { progress in
+                    await invocation.reporter.report(progress)
+                }
+            )
+            do {
+                try Task.checkCancellation()
+                let reply = try await invocation.lease.binding.invoke(
+                    envelope: invocation.envelope,
+                    context: context
+                )
+                let validation = Self.validateProviderReply(
+                    reply,
+                    contract: invocation.contract,
+                    valueLimits: invocation.valueLimits
+                )
+                await registry.recordOutputValidation(
+                    providerID: invocation.lease.providerID,
+                    generation: invocation.lease.generation,
+                    isValid: validation.isContractValid
+                )
+                return validation.reply
+            } catch is CancellationError {
+                return .failure(
+                    IntentProviderFailure(code: .kernel(.cancelled))
+                )
+            } catch {
+                return .failure(
+                    IntentProviderFailure(code: .kernel(.handlerFailed))
+                )
+            }
+        }
+    }
+
+    /// What the validation-and-authorization phase decided.
+    ///
+    /// Everything before a provider is chosen: does the input match the contract, does the
+    /// caller hold the capabilities the rule requires, is the request still alive, and has this
+    /// exact call already been answered. None of it reserves anything, which is why every exit
+    /// here is a plain settlement.
+    private enum RequestAuthorizationPhase {
+        /// What an authorized request carries forward: the capabilities its rule resolved from
+        /// this input, and the idempotency claim it prepared (if the contract has one).
+        case authorized(capabilities: [CapabilityRequirement], prepared: PreparedIdempotency?)
+        case settled(IntentResult)
+    }
+
+    private func authorizeRequest(
+        _ request: IntentDispatchRequest,
+        envelope: IntentEnvelope,
+        contract: IntentContract,
+        rule: IntentDispatchRule,
+        deadline: ContinuousClock.Instant
+    ) async -> RequestAuthorizationPhase {
+        let requestID = envelope.requestID
+        do {
+            let validation = try contract.validateInput(request.input)
+            guard validation.isValid else {
+                return .settled(
+                    await finishWithoutExecution(
+                        envelope: envelope,
+                        result: Self.failure(
+                            code: .invalidInput,
+                            details: Self.validationDetails(validation.issues),
+                            requestID: requestID
+                        )
+                    )
+                )
+            }
+        } catch {
+            return .settled(
+                await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .internal, requestID: requestID)
+                )
+            )
+        }
+        await telemetry.markValidated(requestID: requestID)
+
+        let capabilityRequirements: [CapabilityRequirement]
+        do {
+            capabilityRequirements = try rule.capabilityRequirements(input: request.input)
+        } catch {
+            return .settled(
+                await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(
+                        code: .invalidInput,
+                        details: .object(["reason": .string("capability-path-invalid")]),
+                        requestID: requestID
+                    )
+                )
+            )
+        }
+
+        let basePolicy = await policy.authorize(
+            PolicyInvocationRequest(
+                envelope: envelope,
+                capabilityRequirements: capabilityRequirements,
+                providerConsent: .notRequired
+            )
+        )
+        guard case .allowed = basePolicy.verdict else {
+            return .settled(
+                await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.policyFailure(
+                        decision: basePolicy,
+                        requestID: requestID
+                    )
+                )
+            )
+        }
+        await telemetry.markAuthorized(
+            requestID: requestID,
+            policyRevision: basePolicy.policyRevision
+        )
+
+        if Task.isCancelled {
+            return .settled(
+                await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .cancelled, requestID: requestID)
+                )
+            )
+        }
+        if ContinuousClock.now >= deadline {
+            return .settled(
+                await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .deadlineExceeded, requestID: requestID)
+                )
+            )
+        }
+
+        let prepared: PreparedIdempotency?
+        do {
+            prepared = try Self.prepareIdempotency(
+                contract: contract,
+                envelope: envelope,
+                limits: rule.valueLimits
+            )
+        } catch {
+            return .settled(
+                await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(
+                        code: .invalidInput,
+                        details: .object(["reason": .string("idempotency-key-invalid")]),
+                        requestID: requestID
+                    )
+                )
+            )
+        }
+
+        if let prepared {
+            do {
+                if let decision = try await idempotency.lookup(
+                    key: prepared.key,
+                    fingerprint: prepared.fingerprint
+                ) {
+                    return .settled(
+                        await finishExistingIdempotency(
+                            decision,
+                            prepared: prepared,
+                            envelope: envelope
+                        )
+                    )
+                }
+            } catch {
+                return .settled(
+                    await finishWithoutExecution(
+                        envelope: envelope,
+                        result: Self.failure(code: .internal, requestID: requestID)
+                    )
+                )
+            }
+        }
+
+        return .authorized(capabilities: capabilityRequirements, prepared: prepared)
+    }
+
+    /// What the confirmation phase decided.
+    ///
+    /// A typed phase value rather than a mutated local plus five early returns: the caller sees
+    /// exactly two outcomes, and every path that ends the request — cancelled, past deadline,
+    /// denied, or a consent grant that could not be persisted — releases the provider selection
+    /// before it leaves.
+    private enum CallerConsentPhase {
+        case required(CallerConsentRequirement)
+        case settled(IntentResult)
+    }
+
+    private func resolveCallerConsentPhase(
+        envelope: IntentEnvelope,
+        contract: IntentContract,
+        selection: ProviderSelection,
+        deadline: ContinuousClock.Instant
+    ) async -> CallerConsentPhase {
+        let requestID = envelope.requestID
+        switch Self.effectiveConfirmation(contract: contract, caller: envelope.caller) {
+        case .never:
+            await telemetry.markConfirmation(
+                requestID: requestID,
+                disposition: .notRequired
+            )
+            return .required(.notRequired)
+
+        case .policy:
+            let key = CallerConsentKey(
+                caller: envelope.caller,
+                contract: contract.name
+            )
+            let outcome = await resolveCallerConsent(
+                key: key,
+                confirmationRequest: IntentConfirmationRequest(
+                    envelope: envelope,
+                    contract: contract,
+                    providerID: selection.providerID,
+                    confirmation: .policy
+                ),
+                deadline: deadline
+            )
+            if Task.isCancelled {
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .cancelled
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .cancelled, requestID: requestID)
+                    )
+                )
+            }
+            if ContinuousClock.now >= deadline {
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .timedOut
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .deadlineExceeded, requestID: requestID)
+                    )
+                )
+            }
+            switch outcome {
+            case .allowOnce:
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .approved
+                )
+                return .required(.allowOnce(key))
+            case .standingConsent:
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .approved
+                )
+                return .required(.required(key))
+            case .denied:
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .denied
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(
+                    code: .denied,
+                    details: .object([
+                    "reason": .string("confirmation-denied")
+                    ]),
+                    requestID: requestID,
+                    providerID: selection.providerID
+                    )
+                    )
+                )
+            case .persistenceFailed:
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .approved
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(
+                    code: .internal,
+                    details: .object([
+                    "reason": .string(
+                    "caller-consent-persistence-failed"
+                    )
+                    ]),
+                    requestID: requestID,
+                    providerID: selection.providerID
+                    )
+                    )
+                )
+            case .cancelled:
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .cancelled
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .cancelled, requestID: requestID)
+                    )
+                )
+            }
+
+        case .always:
+            let confirmation = await confirmationAuthorizer.authorize(
+                IntentConfirmationRequest(
+                    envelope: envelope,
+                    contract: contract,
+                    providerID: selection.providerID,
+                    confirmation: .always
+                )
+            )
+            if Task.isCancelled {
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .cancelled
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .cancelled, requestID: requestID)
+                    )
+                )
+            }
+            if ContinuousClock.now >= deadline {
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .timedOut
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(code: .deadlineExceeded, requestID: requestID)
+                    )
+                )
+            }
+            guard confirmation != .denied else {
+                await telemetry.markConfirmation(
+                    requestID: requestID,
+                    disposition: .denied
+                )
+                await registry.releaseSelection(selection)
+                return .settled(
+                    await finishWithoutExecution(
+                    envelope: envelope,
+                    result: Self.failure(
+                    code: .denied,
+                    details: .object([
+                    "reason": .string("confirmation-denied")
+                    ]),
+                    requestID: requestID,
+                    providerID: selection.providerID
+                    )
+                    )
+                )
+            }
+            await telemetry.markConfirmation(
+                requestID: requestID,
+                disposition: .approved
+            )
+            return .required(.notRequired)
+        }
+    }
+
     static func effectiveConfirmation(
         contract: IntentContract,
         caller: IntentPrincipal
@@ -1141,9 +1351,22 @@ public actor IntentDispatcher {
                 let confirmation = await confirmationAuthorizer.authorize(
                     confirmationRequest
                 )
-                authorization = confirmation == .approved
-                    ? .approved
-                    : .denied
+                switch confirmation {
+                case .allowOnce:
+                    authorization = .allowOnce
+                case .alwaysAllow:
+                    authorization = .grant(.contract(key))
+                case .alwaysAllowForCaller:
+                    authorization = .grant(
+                        .caller(
+                            CallerWideConsentKey(
+                                caller: confirmationRequest.envelope.caller
+                            )
+                        )
+                    )
+                case .denied:
+                    authorization = .denied
+                }
             }
             guard !Task.isCancelled else { return }
             await self?.completeCallerConsentFlight(
@@ -1197,16 +1420,18 @@ public actor IntentDispatcher {
         let outcome: CallerConsentWaveOutcome
         switch authorization {
         case .standingConsent:
-            outcome = .approved
+            outcome = .standingConsent
+        case .allowOnce:
+            outcome = .allowOnce
         case .denied:
             outcome = .denied
-        case .approved:
+        case let .grant(target):
             do {
                 let didPersist = try await callerConsentPersistence(
-                    key,
+                    target,
                     flight.grantFence
                 )
-                outcome = didPersist ? .approved : .cancelled
+                outcome = didPersist ? .standingConsent : .cancelled
             } catch {
                 outcome = .persistenceFailed
             }

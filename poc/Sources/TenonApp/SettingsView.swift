@@ -1,3 +1,4 @@
+// @domain: plugin-settings
 import SwiftUI
 import TenonCore
 import TenonIntentCore
@@ -24,7 +25,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationSplitView {
             List(selection: $route) {
-                sidebarRow(.general, "General", "gearshape.fill", .gray)
+                sidebarRow(.general, "General", "gearshape.fill")
 
                 if !settingsPlugins.isEmpty {
                     Section("Plugins") {
@@ -32,24 +33,19 @@ struct SettingsView: View {
                             sidebarRow(
                                 .plugin(plugin.id),
                                 plugin.settingsTitle,
-                                plugin.icon ?? "puzzlepiece.extension.fill",
-                                pluginTint(plugin.id)
+                                plugin.icon ?? "puzzlepiece.extension.fill"
                             )
                         }
                     }
                 }
 
                 Section {
-                    sidebarRow(
-                        .automation,
-                        "Automation",
-                        "clock.arrow.circlepath",
-                        TenonTheme.amber
-                    )
-                    sidebarRow(.cli, "CLI", "terminal.fill", .blue)
-                    sidebarRow(.extensions, "Extensions", "puzzlepiece.extension.fill", .indigo)
+                    sidebarRow(.automation, "Automation", "clock.arrow.circlepath")
+                    sidebarRow(.cli, "CLI", "terminal.fill")
+                    sidebarRow(.extensions, "Extensions", "puzzlepiece.extension.fill")
                 }
             }
+            .tenonScrollbarStyle()
             .navigationSplitViewColumnWidth(min: 195, ideal: 215, max: 250)
             .toolbar(removing: .sidebarToggle)
         } detail: {
@@ -61,13 +57,12 @@ struct SettingsView: View {
     private func sidebarRow(
         _ route: SettingsRoute,
         _ title: String,
-        _ systemImage: String,
-        _ tint: Color
+        _ systemImage: String
     ) -> some View {
         Label {
             Text(title)
         } icon: {
-            SettingsIconBadge(systemName: systemImage, tint: tint)
+            SettingsIconBadge(systemName: systemImage)
         }
         .tag(route)
         .padding(.vertical, 2)
@@ -97,14 +92,6 @@ struct SettingsView: View {
         }
     }
 
-    /// A stable, pleasant tint per plugin so the sidebar reads like macOS's varied icons.
-    private func pluginTint(_ pluginID: PluginID) -> Color {
-        let palette: [Color] = [.orange, .green, .pink, .teal, .purple, .cyan]
-        let hash = pluginID.rawValue.utf8.reduce(UInt64(14_695_981_039_346_656_037)) {
-            ($0 ^ UInt64($1)) &* 1_099_511_628_211
-        }
-        return palette[Int(hash % UInt64(palette.count))]
-    }
 }
 
 private enum SettingsRoute: Hashable {
@@ -116,20 +103,28 @@ private enum SettingsRoute: Hashable {
 }
 
 /// A white SF Symbol on a rounded, tinted square — the macOS System Settings sidebar glyph.
+/// One treatment for every settings page.
+///
+/// Colour here would be decoration: a hue assigned to "CLI" or to a plugin says nothing about
+/// state, and the design law reserves additional colours for real status — success, warning,
+/// destructive. Selection is already carried by the list, and it is the only thing in this
+/// sidebar that differs between rows.
 private struct SettingsIconBadge: View {
     let systemName: String
-    let tint: Color
 
     var body: some View {
         Image(systemName: systemName)
             .font(.system(size: 11, weight: .semibold))
-            .foregroundStyle(.white)
+            .foregroundStyle(TenonTheme.text)
             .frame(width: 20, height: 20)
-            .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(tint))
+            .background(
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(TenonTheme.chromeRaised)
+            )
     }
 }
 
-// MARK: - Automation
+// MARK: - Automation  @domain: automation
 
 /// Automation configuration only. The operational schedules, Run Now actions, authoring,
 /// and delivery history live in the dedicated Automation view on the Canvas.
@@ -149,17 +144,21 @@ private struct AutomationSettingsDetail: View {
                     + "available in the Automation view on the Canvas.")
             }
         }
+        .tenonScrollbarStyle()
         .formStyle(.grouped)
     }
 }
 
-// MARK: - CLI
+// MARK: - CLI  @domain: cli-control
 
 /// The "CLI" settings page: an Install button that copies the self-contained `tenon-cli` binary
 /// into `~/.local/bin` so agents and scripts can drive Tenon from any terminal.
 private struct CLISettingsDetail: View {
     let instanceChannel: AppInstanceChannel
-    @State private var installedPath: String?
+    /// Read once off the main thread and refreshed after an install, rather than stat'd from
+    /// inside `body` on every render.
+    @State private var status = CLICommandInstaller.Status()
+    @State private var isInstalling = false
     @State private var errorMessage: String?
 
     var body: some View {
@@ -179,25 +178,20 @@ private struct CLISettingsDetail: View {
 
             Section {
                 HStack(spacing: 10) {
-                    Button(CLICommandInstaller.isInstalled ? "Reinstall Command" : "Install Command") {
+                    Button(status.isInstalled ? "Reinstall Command" : "Install Command") {
                         install()
                     }
-                    .disabled(!CLICommandInstaller.canInstall(in: instanceChannel))
+                    .disabled(!status.canInstall || isInstalling)
 
-                    if CLICommandInstaller.isInstalled {
+                    if status.isInstalled {
                         Label("Installed", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                             .font(.callout)
                     }
                 }
 
-                if let installedPath {
+                if let installedPath = status.installedPath {
                     Text("Installed to \(installedPath)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                } else if CLICommandInstaller.isInstalled {
-                    Text("Installed to \(CLICommandInstaller.installedURL.path)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -208,7 +202,7 @@ private struct CLISettingsDetail: View {
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
                         .font(.caption)
-                } else if !CLICommandInstaller.canInstall(in: instanceChannel) {
+                } else if !status.canInstall {
                     Label("No tenon-cli binary is available in this build to install.",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -226,20 +220,27 @@ private struct CLISettingsDetail: View {
                     .textSelection(.enabled)
             }
         }
+        .tenonScrollbarStyle()
         .formStyle(.grouped)
+        .task { status = await CLICommandInstaller.status(in: instanceChannel) }
     }
 
     private func install() {
-        do {
-            installedPath = try CLICommandInstaller.install(in: instanceChannel).path
-            errorMessage = nil
-        } catch {
-            errorMessage = "\(error)"
+        isInstalling = true
+        Task {
+            defer { isInstalling = false }
+            do {
+                _ = try await CLICommandInstaller.installOffMain(in: instanceChannel)
+                errorMessage = nil
+            } catch {
+                errorMessage = "\(error)"
+            }
+            status = await CLICommandInstaller.status(in: instanceChannel)
         }
     }
 }
 
-// MARK: - General
+// MARK: - General  @domain: plugin-settings
 
 private struct GeneralSettingsDetail: View {
     @Bindable var prefs: AppPreferencesStore
@@ -292,6 +293,7 @@ private struct GeneralSettingsDetail: View {
                     + "focus marks. Terminal colours come from ghostty.")
             }
         }
+        .tenonScrollbarStyle()
         .formStyle(.grouped)
     }
 
@@ -307,7 +309,7 @@ private struct GeneralSettingsDetail: View {
     }
 }
 
-// MARK: - Per-plugin settings (generic renderer — the whole point)
+// MARK: - Per-plugin settings (generic renderer — the whole point)  @domain: plugin-settings
 
 private struct PluginSettingsForm: View {
     var host: PluginHost
@@ -360,6 +362,7 @@ private struct PluginSettingsForm: View {
                     .font(.system(.caption, design: .monospaced))
             }
         }
+        .tenonScrollbarStyle()
         .formStyle(.grouped)
     }
 
@@ -531,7 +534,7 @@ private struct SpecControl: View {
     }
 }
 
-// MARK: - Extensions (enable/permissions for every plugin, settings or not)
+// MARK: - Extensions (enable/permissions for every plugin, settings or not)  @domain: plugin-settings
 
 private struct ExtensionsDetail: View {
     var host: PluginHost
@@ -552,6 +555,7 @@ private struct ExtensionsDetail: View {
                 ExtensionPluginSection(host: host, plugin: plugin)
             }
         }
+        .tenonScrollbarStyle()
         .formStyle(.grouped)
     }
 }

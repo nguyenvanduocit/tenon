@@ -806,6 +806,7 @@ final class IntentPolicyTests: XCTestCase {
         assertSendable(PolicyFingerprint.self)
         assertSendable(ProviderConsentKey.self)
         assertSendable(CallerConsentKey.self)
+        assertSendable(CallerWideConsentKey.self)
         assertSendable(CallerConsentRequirement.self)
         assertSendable(PolicySnapshot.self)
         assertSendable(PolicyDecision.self)

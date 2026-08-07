@@ -1,9 +1,10 @@
+// @domain: editor-and-diff, repository-read
 import AppKit
 import Observation
 import SwiftUI
 import TenonCore
 
-// MARK: - Content model
+// MARK: - Content model  @domain: editor-and-diff
 
 /// Both resolved sides of a diff, produced off the main actor.
 private struct ResolvedDiff: Sendable {
@@ -208,72 +209,15 @@ private enum DiffGitLoader {
         return text
     }
 
-    /// Drains stdout and stderr concurrently so a chatty stderr cannot deadlock a
-    /// large stdout read.
     private static func runGit(_ args: [String], repo: String) -> (status: Int32, data: Data) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = args
-        process.currentDirectoryURL = URL(fileURLWithPath: repo, isDirectory: true)
-        var env = ProcessInfo.processInfo.environment
-        env["GIT_OPTIONAL_LOCKS"] = "0"
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["LC_ALL"] = "C"
-        process.environment = env
-
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return (-1, Data()) }
-
-        let box = OutputBox()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            while let chunk = try? stdout.fileHandleForReading.read(upToCount: 64 * 1_024),
-                  !chunk.isEmpty
-            {
-                if !box.append(chunk, limit: maxBytes) {
-                    process.terminate()
-                    break
-                }
-            }
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            while let chunk = try? stderr.fileHandleForReading.read(upToCount: 64 * 1_024),
-                  !chunk.isEmpty
-            {}
-            group.leave()
-        }
-        process.waitUntilExit()
-        group.wait()
-        return (process.terminationStatus, box.snapshot)
-    }
-
-    private final class OutputBox: @unchecked Sendable {
-        private let lock = NSLock()
-        private var value = Data()
-
-        var snapshot: Data { lock.withLock { value } }
-
-        func append(_ chunk: Data, limit: Int) -> Bool {
-            lock.withLock {
-                guard value.count + chunk.count <= limit else {
-                    value = Data(repeating: 0, count: limit + 1)
-                    return false
-                }
-                value.append(chunk)
-                return true
-            }
-        }
+        let output = GitCommand.run(args, in: repo, byteLimit: maxBytes)
+        // An over-limit read is reported as a failure so the caller shows "too large" rather
+        // than diffing a truncated file as if it were the whole one.
+        return (output.exceededLimit ? -1 : output.status, output.data)
     }
 }
 
-// MARK: - View
+// MARK: - View  @domain: editor-and-diff
 
 private enum DiffStyle: String, CaseIterable, Identifiable {
     case unified, split
@@ -425,7 +369,7 @@ struct DiffSlotView: View {
         )
     }
 
-    // MARK: content
+    // MARK: content  @domain: editor-and-diff
 
     @ViewBuilder
     private var content: some View {
@@ -452,6 +396,7 @@ struct DiffSlotView: View {
                     .frame(minHeight: geo.size.height, alignment: .topLeading)
                     .padding(.bottom, 8)
                 }
+                .tenonScrollbarStyle()
             }
         }
     }
@@ -516,7 +461,7 @@ struct DiffSlotView: View {
             .background(TenonTheme.amber.opacity(0.06))
     }
 
-    // MARK: unified
+    // MARK: unified  @domain: editor-and-diff
 
     private func unifiedRow(_ line: DiffLine) -> some View {
         HStack(spacing: 0) {
@@ -543,7 +488,7 @@ struct DiffSlotView: View {
         .background(bg(line.kind))
     }
 
-    // MARK: split
+    // MARK: split  @domain: editor-and-diff
 
     private enum SplitSide { case left, right }
 
@@ -585,7 +530,7 @@ struct DiffSlotView: View {
         .background(line.map { bg($0.kind) } ?? TenonTheme.ink.opacity(0.22))
     }
 
-    // MARK: pieces
+    // MARK: pieces  @domain: editor-and-diff
 
     private func gutter(_ number: Int?) -> some View {
         Text(number.map(String.init) ?? "")

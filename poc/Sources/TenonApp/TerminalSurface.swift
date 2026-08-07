@@ -1,3 +1,4 @@
+// @domain: terminal-surface
 import AppKit
 import SwiftUI
 
@@ -98,6 +99,9 @@ final class StubTerminalSurface: TerminalSurface {
     /// The stub has no job tree, but it records the call so "closing a pane stops its work" is
     /// assertable without a terminal — the same trick `sentText` plays for delivery.
     private(set) var terminateCount = 0
+    /// Mutable process identity makes close protection assertable without a real PTY.
+    var processExited = false
+    var foregroundPID: UInt64?
 
     func terminate() {
         terminateCount += 1

@@ -1,3 +1,4 @@
+// @domain: repository-read, row-list
 import AppKit
 import Observation
 import SwiftUI
@@ -8,7 +9,6 @@ struct ChangeEntry: Identifiable, Equatable, Sendable {
     let path: String
     /// Single-letter porcelain status (M/A/D/R/U/?).
     let badge: String
-    let tint: ChangeTint
     /// True for the index (staged) side, false for the worktree side.
     let staged: Bool
     let untracked: Bool
@@ -16,17 +16,17 @@ struct ChangeEntry: Identifiable, Equatable, Sendable {
     var id: String { (staged ? "s/" : "w/") + path }
     var name: String { (path as NSString).lastPathComponent }
     var dir: String { (path as NSString).deletingLastPathComponent }
-}
 
-enum ChangeTint: Sendable {
-    case added, removed, modified, untracked, conflict
-    @MainActor
-    var color: Color {
-        switch self {
-        case .added: return Color(nsColor: NSColor(hex: 0x61C28B))
-        case .removed, .conflict: return Color(nsColor: NSColor(hex: 0xED6A5E))
-        case .modified: return TenonTheme.amber
-        case .untracked: return TenonTheme.muted
+    /// The colour the status letter is drawn in, DERIVED from the letter rather than stored
+    /// beside it. Two fields that must agree are two fields that can disagree, and this pair
+    /// had no way to be wrong at only one of its six construction sites — so the answer is
+    /// computed once, here, from the one field git actually reported.
+    var tint: ColorToken {
+        switch badge {
+        case "A": return .green
+        case "D", "U": return .red
+        case "?": return .muted
+        default: return .amber
         }
     }
 }
@@ -166,7 +166,7 @@ private enum TreeBuilder {
     }
 }
 
-// MARK: - Model
+// MARK: - Model  @domain: repository-read
 
 @MainActor
 @Observable
@@ -237,7 +237,7 @@ final class ChangesModel {
     }
 }
 
-// MARK: - git reader (self-contained; porcelain v2, NUL-delimited)
+// MARK: - git reader (self-contained; porcelain v2, NUL-delimited)  @domain: repository-read
 
 enum GitStatusReader {
     struct Result: Sendable {
@@ -279,10 +279,10 @@ enum GitStatusReader {
                 if isRename { index += 1 }  // consume the original-path token
             } else if record.hasPrefix("u ") {
                 let path = pathAfter(record, 10)
-                out.changed.append(ChangeEntry(path: path, badge: "U", tint: .conflict, staged: false, untracked: false))
+                out.changed.append(ChangeEntry(path: path, badge: "U", staged: false, untracked: false))
             } else if record.hasPrefix("? ") {
                 let path = String(record.dropFirst(2))
-                out.changed.append(ChangeEntry(path: path, badge: "?", tint: .untracked, staged: false, untracked: true))
+                out.changed.append(ChangeEntry(path: path, badge: "?", staged: false, untracked: true))
             }
             index += 1
         }
@@ -291,20 +291,10 @@ enum GitStatusReader {
 
     private static func add(_ out: inout Result, path: String, staged: Character, worktree: Character, untracked: Bool) {
         if staged != ".", staged != "?" {
-            out.staged.append(ChangeEntry(path: path, badge: String(staged), tint: tint(staged), staged: true, untracked: false))
+            out.staged.append(ChangeEntry(path: path, badge: String(staged), staged: true, untracked: false))
         }
         if worktree != "." {
-            out.changed.append(ChangeEntry(path: path, badge: String(worktree), tint: tint(worktree), staged: false, untracked: untracked))
-        }
-    }
-
-    private static func tint(_ code: Character) -> ChangeTint {
-        switch code {
-        case "A": return .added
-        case "D": return .removed
-        case "?": return .untracked
-        case "U": return .conflict
-        default: return .modified
+            out.changed.append(ChangeEntry(path: path, badge: String(worktree), staged: false, untracked: untracked))
         }
     }
 
@@ -318,48 +308,142 @@ enum GitStatusReader {
         return ""
     }
 
-    private final class Box: @unchecked Sendable { var data = Data() }
-
     private static func runGit(_ args: [String], in dir: String) -> (status: Int32, stdout: String) {
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/git")
-        process.arguments = args
-        process.currentDirectoryURL = URL(fileURLWithPath: dir, isDirectory: true)
-        var env = ProcessInfo.processInfo.environment
-        env["GIT_OPTIONAL_LOCKS"] = "0"
-        env["GIT_TERMINAL_PROMPT"] = "0"
-        env["LC_ALL"] = "C"
-        process.environment = env
-        let stdout = Pipe()
-        let stderr = Pipe()
-        process.standardOutput = stdout
-        process.standardError = stderr
-        process.standardInput = FileHandle.nullDevice
-        do { try process.run() } catch { return (-1, "") }
-        let box = Box()
-        let group = DispatchGroup()
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            box.data = stdout.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            _ = stderr.fileHandleForReading.readDataToEndOfFile()
-            group.leave()
-        }
-        process.waitUntilExit()
-        group.wait()
-        return (process.terminationStatus, String(data: box.data, encoding: .utf8) ?? "")
+        let output = GitCommand.run(args, in: dir)
+        return (output.exceededLimit ? -1 : output.status, output.text)
     }
 }
 
-// MARK: - View
+// MARK: - rows  @domain: row-list
 
-/// The Changes pane: a kero-style list of changed files (staged + working tree),
-/// grouped and colour-coded. Clicking a file opens its diff in the host's default
-/// diff view in a NEW TAB (`SlotContent.diff` via `store.newTab`) — never carved
-/// inline. Replaces the old raw `git diff` text dump.
+/// Turns a loaded `ChangesModel` into the rows the shared list draws, plus the two lookups
+/// a click needs to interpret a row id.
+///
+/// Pure, and outside the view, for the reason the header builder is: which rows exist is
+/// arithmetic over the model, the layout and the collapsed set, and none of that needs a
+/// window to be true. It is also the whole of what this pane still decides about drawing —
+/// indent, hover, chevron and menu all belong to `TreeRowsView` now.
+struct ChangesRowPlan {
+    /// Row ids that name a section heading or a directory, so the click handler can tell
+    /// "toggle me" from "open my diff" without re-deriving the tree.
+    let items: [TreeRowItem]
+    let entries: [String: ChangeEntry]
+    let directories: Set<String>
+
+    // These rows publish no `menu`, and that is a decision rather than an omission. The verbs
+    // a changed file wants — reveal it in Finder, copy its path — already exist as the
+    // canonical intents `file.reveal.v1` and `clipboard.write.v1`, so spelling them here would
+    // mean new same-owner DIRECT behaviour, and `docs/architecture-interaction-boundaries.md`
+    // records that this inventory already grew 3.21× in characters "ambient, not decided".
+    // Adding to it is a reviewed edit, and reusing a row renderer is not the change that
+    // earns one. What the shared row gives these files WITHOUT any of that: drag a row to
+    // Finder or a terminal, which is the path verb a human reaches for most (T-086 carries
+    // the question of the rest).
+
+    static func build(
+        staged: [ChangeEntry],
+        changed: [ChangeEntry],
+        layout: ChangesLayout,
+        collapsed: Set<String>,
+        selected: String?,
+        repoRoot: String
+    ) -> ChangesRowPlan {
+        var plan = Builder(layout: layout, collapsed: collapsed, selected: selected, repoRoot: repoRoot)
+        if !staged.isEmpty { plan.section("Staged", staged) }
+        if !changed.isEmpty { plan.section("Changes", changed) }
+        return ChangesRowPlan(
+            items: plan.items,
+            entries: plan.entries,
+            directories: plan.directories
+        )
+    }
+
+    private struct Builder {
+        let layout: ChangesLayout
+        let collapsed: Set<String>
+        let selected: String?
+        let repoRoot: String
+
+        var items: [TreeRowItem] = []
+        var entries: [String: ChangeEntry] = [:]
+        var directories: Set<String> = []
+
+        /// An absolute path, or nil when this model was seeded rather than read. Nil disables
+        /// the row's drag-out and its Finder verbs, which is correct: a snapshot's paths name
+        /// no file on this disk.
+        func absolute(_ path: String) -> String? {
+            repoRoot.isEmpty ? nil : (repoRoot as NSString).appendingPathComponent(path)
+        }
+
+        mutating func section(_ title: String, _ files: [ChangeEntry]) {
+            items.append(TreeRowItem(
+                kind: .sectionHeader,
+                id: "section:" + title,
+                label: title,
+                depth: 0,
+                icon: nil,
+                accessory: RowAccessory(text: "\(files.count)", tint: .muted)
+            ))
+            if layout == .flat {
+                for file in files { append(file, depth: 0, showDirectory: true) }
+            } else {
+                flatten(TreeBuilder.build(files), depth: 0, section: title)
+            }
+        }
+
+        mutating func append(_ entry: ChangeEntry, depth: Int, showDirectory: Bool) {
+            entries[entry.id] = entry
+            items.append(TreeRowItem(
+                id: entry.id,
+                label: entry.name,
+                detail: showDirectory && !entry.dir.isEmpty ? entry.dir : nil,
+                depth: depth,
+                icon: "doc.text",
+                selected: selected == entry.id,
+                accessory: RowAccessory(text: entry.badge, tint: entry.tint),
+                path: absolute(entry.path)
+            ))
+        }
+
+        mutating func flatten(_ node: TreeBuilder.Node, depth: Int, section: String) {
+            for start in node.sortedSubdirs {
+                var directory = start
+                var name = directory.name
+                // Collapse single-child chains (poc / Sources / TenonApp → one row).
+                while directory.subdirs.count == 1,
+                      directory.files.isEmpty,
+                      let only = directory.sortedSubdirs.first
+                {
+                    name += "/" + only.name
+                    directory = only
+                }
+                let id = section + ":" + directory.path
+                directories.insert(id)
+                let isCollapsed = collapsed.contains(id)
+                items.append(TreeRowItem(
+                    id: id,
+                    label: name,
+                    depth: depth,
+                    icon: "folder.fill",
+                    expanded: !isCollapsed,
+                    path: absolute(directory.path)
+                ))
+                if !isCollapsed {
+                    flatten(directory, depth: depth + 1, section: section)
+                }
+            }
+            for file in node.sortedFiles {
+                append(file, depth: depth, showDirectory: false)
+            }
+        }
+    }
+}
+
+// MARK: - View  @domain: row-list
+
+/// The Changes pane: the changed files of the working tree (staged + unstaged), grouped and
+/// colour-coded, drawn by the same `TreeRowsView` the file explorer uses. Clicking a file
+/// opens its diff in the tab's diff pane, or beside it — never a new tab.
 struct ChangesPanelView: View {
     let store: WorkspaceStore?
     private let root: URL?
@@ -372,13 +456,14 @@ struct ChangesPanelView: View {
     /// `SpatialSlotCardView.configure`; this is the other half of that loop.
     private let headerStore: PaneHeaderStore
     @State private var model: ChangesModel
-    @State private var hovered: String?
     /// Unmoved: the pane still owns which layout it is showing. Putting the picker in the
     /// chrome moved pixels, not ownership — the store carries a value up and a typed command
     /// back down, and this stays the only place the answer lives.
     @State private var layout: ChangesLayout = .tree
     /// Directory rows the user has collapsed, keyed by "section:dirPath".
     @State private var collapsed: Set<String> = []
+    /// The row the user last opened, so the list keeps showing which diff is on screen.
+    @State private var selected: String?
 
     init(root: URL, slotID: UUID, headerStore: PaneHeaderStore, store: WorkspaceStore?) {
         self.root = root
@@ -416,7 +501,7 @@ struct ChangesPanelView: View {
                 // frozen at mount time. `$layout` is a binding into `@State` and `model` is
                 // `@State` itself; both address storage the pane keeps across every re-root,
                 // and neither is a copy of a value that has since moved on.
-                let selected = $layout
+                let selectedLayout = $layout
                 let changes = model
                 headerStore.onCommand(for: slotID) { command, value in
                     switch command {
@@ -424,7 +509,7 @@ struct ChangesPanelView: View {
                         guard let next = value.flatMap(ChangesLayout.init(rawValue:)) else {
                             return
                         }
-                        selected.wrappedValue = next
+                        selectedLayout.wrappedValue = next
                     case .changesRefresh:
                         // No workspace captured: the model is what knows which one it read.
                         changes.reload()
@@ -458,6 +543,17 @@ struct ChangesPanelView: View {
         )
     }
 
+    private var plan: ChangesRowPlan {
+        ChangesRowPlan.build(
+            staged: model.staged,
+            changed: model.changed,
+            layout: layout,
+            collapsed: collapsed,
+            selected: selected,
+            repoRoot: model.repoRoot
+        )
+    }
+
     @ViewBuilder
     private var content: some View {
         if !model.loaded && model.isLoading {
@@ -466,145 +562,30 @@ struct ChangesPanelView: View {
             placeholder(icon: "questionmark.folder", text: "Not a git repository")
         } else if model.total == 0 {
             placeholder(icon: "checkmark.circle", text: "Working tree clean")
-        } else if embedInScrollView {
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 0) { list }
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                    .padding(.vertical, 4)
-            }
         } else {
-            VStack(alignment: .leading, spacing: 0) { list }
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-                .padding(.vertical, 4)
+            let plan = plan
+            TreeRowsView(
+                items: plan.items,
+                onSelect: { id, menuID in select(id, menuID, in: plan) },
+                // No row of this pane is ever `editing`, so nothing can commit an edit.
+                onSubmit: { _, _ in },
+                scrolls: embedInScrollView
+            )
         }
     }
 
-    @ViewBuilder
-    private var list: some View {
-        if !model.staged.isEmpty { section("Staged", model.staged) }
-        if !model.changed.isEmpty { section("Changes", model.changed) }
-    }
+    // MARK: interaction  @domain: row-list
 
-    @ViewBuilder
-    private func section(_ title: String, _ entries: [ChangeEntry]) -> some View {
-        sectionHeader(title, entries.count)
-        if layout == .flat {
-            ForEach(entries) { row($0, indent: 0, showDir: true) }
-        } else {
-            ForEach(treeRows(entries, section: title)) { treeRow($0) }
-        }
-    }
-
-    private func sectionHeader(_ title: String, _ count: Int) -> some View {
-        Text("\(title.uppercased())  \(count)")
-            .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
-            .tracking(0.6)
-            .foregroundStyle(TenonTheme.muted)
-            .padding(.horizontal, 12)
-            .padding(.top, 10).padding(.bottom, 4)
-    }
-
-    @ViewBuilder
-    private func treeRow(_ node: TreeRow) -> some View {
-        switch node {
-        case .directory(let id, let name, let depth):
-            let isCollapsed = collapsed.contains(id)
-            Button {
-                if isCollapsed { collapsed.remove(id) } else { collapsed.insert(id) }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: isCollapsed ? "chevron.right" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(TenonTheme.muted)
-                        .frame(width: 10)
-                    Text(name)
-                        .font(TenonTheme.utilityFont(size: 11))
-                        .foregroundStyle(TenonTheme.muted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                    Spacer(minLength: 4)
-                }
-                .padding(.leading, 8 + CGFloat(depth) * 9)
-                .padding(.trailing, 12)
-                .frame(height: 22)
-                .background(hovered == id ? TenonTheme.chromeRaised : Color.clear)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .onHover { inside in hovered = inside ? id : (hovered == id ? nil : hovered) }
-        case .file(let entry, let depth):
-            row(entry, indent: CGFloat(depth) * 9 + 5, showDir: false)
-        }
-    }
-
-    private func row(_ entry: ChangeEntry, indent: CGFloat, showDir: Bool) -> some View {
-        Button {
+    /// - Parameter menuID: which context-menu entry was picked. These rows publish no menu,
+    ///   so it is always nil here; the parameter exists because the shared row list offers one
+    ///   route back for a click and a menu pick alike.
+    private func select(_ id: String, _ menuID: String?, in plan: ChangesRowPlan) {
+        guard menuID == nil else { return }
+        if plan.directories.contains(id) {
+            if collapsed.contains(id) { collapsed.remove(id) } else { collapsed.insert(id) }
+        } else if let entry = plan.entries[id] {
+            selected = id
             open(entry)
-        } label: {
-            HStack(spacing: 8) {
-                Text(entry.name)
-                    .font(TenonTheme.utilityFont(size: 11))
-                    .foregroundStyle(TenonTheme.text)
-                    .lineLimit(1)
-                if showDir, !entry.dir.isEmpty {
-                    Text(entry.dir)
-                        .font(TenonTheme.utilityFont(size: 9))
-                        .foregroundStyle(TenonTheme.muted)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                }
-                Spacer(minLength: 8)
-                // The status letter sits on the far right, like VS Code / GitHub.
-                Text(entry.badge)
-                    .font(TenonTheme.utilityFont(size: 11, weight: .semibold))
-                    .foregroundStyle(entry.tint.color)
-            }
-            .padding(.leading, 8 + indent)
-            .padding(.trailing, 12)
-            .frame(height: 22)
-            .background(hovered == entry.id ? TenonTheme.chromeRaised : Color.clear)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .onHover { inside in hovered = inside ? entry.id : (hovered == entry.id ? nil : hovered) }
-    }
-
-    // MARK: tree
-
-    private enum TreeRow: Identifiable {
-        case directory(id: String, name: String, depth: Int)
-        case file(entry: ChangeEntry, depth: Int)
-        var id: String {
-            switch self {
-            case .directory(let id, _, _): return id
-            case .file(let entry, _): return entry.id
-            }
-        }
-    }
-
-    private func treeRows(_ entries: [ChangeEntry], section: String) -> [TreeRow] {
-        var rows: [TreeRow] = []
-        flatten(TreeBuilder.build(entries), depth: 0, section: section, into: &rows)
-        return rows
-    }
-
-    private func flatten(_ node: TreeBuilder.Node, depth: Int, section: String, into rows: inout [TreeRow]) {
-        for start in node.sortedSubdirs {
-            var dir = start
-            var name = dir.name
-            // Collapse single-child chains (poc / Sources / TenonApp → one row).
-            while dir.subdirs.count == 1, dir.files.isEmpty, let only = dir.sortedSubdirs.first {
-                name += "/" + only.name
-                dir = only
-            }
-            let id = section + ":" + dir.path
-            rows.append(.directory(id: id, name: name, depth: depth))
-            if !collapsed.contains(id) {
-                flatten(dir, depth: depth + 1, section: section, into: &rows)
-            }
-        }
-        for file in node.sortedFiles {
-            rows.append(.file(entry: file, depth: depth))
         }
     }
 

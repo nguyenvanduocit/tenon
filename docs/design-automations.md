@@ -218,10 +218,13 @@ new public `tenon` member.
   attention, and an honest `delivered/attempted` ratio over the bounded recent-evidence
   buffer. Delivered means only that a live plugin generation accepted `automation.fired`;
   the host never calls that business success.
-- **Schedule navigator**: every manifest declaration remains visible, including declarations
-  owned by a disabled, unloaded, or failed plugin. Search and `All / Attention / Paused`
-  filters narrow a stable `(pluginID, scheduleID)` list. Selecting a row opens one inspector
-  instead of repeating all metadata in a flat log.
+- **Schedule navigator**: every declaration of an enabled plugin remains visible, including
+  declarations owned by a plugin that is unloaded or failed — that is an anomaly a person
+  still has to see. A disabled plugin is different: the person removed it from the product,
+  so its schedules leave the pane entirely and return intact, pause preference included,
+  when the plugin is enabled again. Search and `All / Attention / Paused` filters narrow a
+  stable `(pluginID, scheduleID)` list. Selecting a row opens one inspector instead of
+  repeating all metadata in a flat log.
 - **Inspector**: cadence, live next-due instant, grace, plugin identity, exact schedule id,
   availability reason, and the selected schedule's bounded delivery activity. This is read
   DIRECT from `PluginHost`, `AutomationScheduler`, and `AutomationRunHistory` state (same

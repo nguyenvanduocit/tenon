@@ -1,3 +1,4 @@
+// @domain: cli-control, intent-bus
 import Foundation
 
 /// One explicit invocation crossing the local CLI control socket.

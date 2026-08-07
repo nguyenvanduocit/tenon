@@ -445,7 +445,7 @@ public struct PaneHeaderMenuEntry: Sendable, Hashable, Identifiable {
     public static let maximumLabelLength = 64
     public static let maximumValueLength = 64
 
-    /// `value`/`label` deliberately match `PluginRowItem`'s and `RowMenuItem`'s field names —
+    /// `value`/`label` deliberately match `TreeRowItem`'s and `RowMenuItem`'s field names —
     /// one word per concept across the whole plugin API.
     public let value: String
     public let label: String

@@ -1,3 +1,5 @@
+// @domain: intent-bus
+
 import Darwin
 import Foundation
 import os
@@ -706,6 +708,32 @@ public struct CallerConsentKey: Sendable, Equatable, Hashable, Codable {
     }
 }
 
+/// One caller installation's standing approval for every `.policy` contract.
+///
+/// Like `CallerConsentKey`, this deliberately omits `sessionRevision`: the user is
+/// trusting the stable caller identity rather than one hot-reload generation. This grant
+/// bypasses only the confirmation prompt. Declared-use, audience, capability, scope, and
+/// provider checks still run for every invocation.
+public struct CallerWideConsentKey: Sendable, Equatable, Hashable, Codable {
+    public let callerID: String
+    public let callerKind: IntentPrincipal.Kind
+
+    public init(caller: IntentPrincipal) {
+        callerID = caller.id
+        callerKind = caller.kind
+    }
+
+    init(consentKey: CallerConsentKey) {
+        callerID = consentKey.callerID
+        callerKind = consentKey.callerKind
+    }
+}
+
+enum CallerConsentGrantTarget: Sendable, Equatable {
+    case contract(CallerConsentKey)
+    case caller(CallerWideConsentKey)
+}
+
 final class CallerConsentGrantFence: Sendable {
     private let isValid = OSAllocatedUnfairLock(initialState: true)
 
@@ -731,6 +759,9 @@ final class CallerConsentGrantFence: Sendable {
 
 public enum CallerConsentRequirement: Sendable, Equatable, Hashable, Codable {
     case notRequired
+    /// The authorizer approved this dispatch wave without creating standing consent.
+    case allowOnce(CallerConsentKey)
+    /// The dispatch depends on a stored contract- or caller-wide standing grant.
     case required(CallerConsentKey)
 }
 
@@ -833,6 +864,7 @@ public struct PolicySnapshot: Sendable, Equatable {
     public let exposures: [IntentID: IntentExposure]
     public let providerConsents: [ProviderConsentKey: ProviderConsentDecision]
     public let callerConsents: Set<CallerConsentKey>
+    public let callerWideConsents: Set<CallerWideConsentKey>
 
     public init(
         revision: PolicyRevision,
@@ -840,7 +872,8 @@ public struct PolicySnapshot: Sendable, Equatable {
         grants: [IntentPrincipal: Set<CapabilityGrant>],
         exposures: [IntentID: IntentExposure],
         providerConsents: [ProviderConsentKey: ProviderConsentDecision],
-        callerConsents: Set<CallerConsentKey> = []
+        callerConsents: Set<CallerConsentKey> = [],
+        callerWideConsents: Set<CallerWideConsentKey> = []
     ) {
         self.revision = revision
         self.declaredUses = declaredUses
@@ -848,6 +881,7 @@ public struct PolicySnapshot: Sendable, Equatable {
         self.exposures = exposures
         self.providerConsents = providerConsents
         self.callerConsents = callerConsents
+        self.callerWideConsents = callerWideConsents
     }
 }
 
@@ -860,6 +894,7 @@ public actor PolicyEngine {
     private var exposuresByIntent: [IntentID: IntentExposure] = [:]
     private var providerConsentDecisions: [ProviderConsentKey: ProviderConsentDecision] = [:]
     private var standingCallerConsents: Set<CallerConsentKey> = []
+    private var standingCallerWideConsents: Set<CallerWideConsentKey> = []
     private var revisionWaiters: [UUID: RevisionWaiter] = [:]
 
     public init() {}
@@ -875,7 +910,8 @@ public actor PolicyEngine {
             grants: grantsByPrincipal,
             exposures: exposuresByIntent,
             providerConsents: providerConsentDecisions,
-            callerConsents: standingCallerConsents
+            callerConsents: standingCallerConsents,
+            callerWideConsents: standingCallerWideConsents
         )
     }
 
@@ -987,7 +1023,7 @@ public actor PolicyEngine {
     /// Allow-only by construction: the confirmation dialog calls this after the user
     /// approves, and the host calls it to seed plugins the user accepted by installing the
     /// app. A modal denial is wave-local and must stay recoverable, so it has no way in
-    /// here. Consent is never authority on its own — a granted contract still clears
+    /// here. Consent is never authority on its own — a granted contract still checks
     /// declared use, audience, capability, and scope on every single invocation.
     public func grantStandingConsent(
         contract: IntentID,
@@ -1003,25 +1039,52 @@ public actor PolicyEngine {
     }
 
     func grantStandingConsent(
-        for key: CallerConsentKey,
+        for target: CallerConsentGrantTarget,
         guardedBy fence: CallerConsentGrantFence
     ) throws -> Bool {
         try fence.performIfValid {
-            guard !standingCallerConsents.contains(key) else {
-                return
+            switch target {
+            case let .contract(key):
+                guard !standingCallerConsents.contains(key) else {
+                    return
+                }
+                try prepareRevisionAdvance()
+                standingCallerConsents.insert(key)
+
+            case let .caller(key):
+                guard !standingCallerWideConsents.contains(key) else {
+                    return
+                }
+                try prepareRevisionAdvance()
+                standingCallerWideConsents.insert(key)
             }
-            try prepareRevisionAdvance()
-            standingCallerConsents.insert(key)
             commitRevisionAdvance()
         }
+    }
+
+    /// Grants one caller standing consent for every `.policy` contract.
+    public func grantStandingConsent(for caller: IntentPrincipal) throws {
+        let key = CallerWideConsentKey(caller: caller)
+        guard !standingCallerWideConsents.contains(key) else {
+            return
+        }
+        try prepareRevisionAdvance()
+        standingCallerWideConsents.insert(key)
+        commitRevisionAdvance()
     }
 
     public func hasStandingConsent(
         contract: IntentID,
         caller: IntentPrincipal
     ) -> Bool {
-        standingCallerConsents.contains(
-            CallerConsentKey(caller: caller, contract: contract)
+        hasStandingConsent(
+            for: CallerConsentKey(caller: caller, contract: contract)
+        )
+    }
+
+    public func hasStandingConsent(for caller: IntentPrincipal) -> Bool {
+        standingCallerWideConsents.contains(
+            CallerWideConsentKey(caller: caller)
         )
     }
 
@@ -1038,21 +1101,36 @@ public actor PolicyEngine {
         commitRevisionAdvance()
     }
 
+    public func revokeStandingConsent(for caller: IntentPrincipal) throws {
+        let key = CallerWideConsentKey(caller: caller)
+        guard standingCallerWideConsents.contains(key) else {
+            return
+        }
+        try prepareRevisionAdvance()
+        standingCallerWideConsents.remove(key)
+        commitRevisionAdvance()
+    }
+
     /// Drops every standing consent held by one caller identity.
     ///
     /// This is withdrawal — the user disabling or uninstalling a plugin — not generation
     /// turnover. It matches on the stable caller identity, so it takes the consents of
     /// every generation of that installation.
     public func revokeStandingConsents(for principal: IntentPrincipal) throws {
-        let revoked = standingCallerConsents.filter {
+        let revokedContracts = standingCallerConsents.filter {
             $0.callerID == principal.id
                 && $0.callerKind == principal.kind
         }
-        guard !revoked.isEmpty else {
+        let revokedCallers = standingCallerWideConsents.filter {
+            $0.callerID == principal.id
+                && $0.callerKind == principal.kind
+        }
+        guard !revokedContracts.isEmpty || !revokedCallers.isEmpty else {
             return
         }
         try prepareRevisionAdvance()
-        standingCallerConsents.subtract(revoked)
+        standingCallerConsents.subtract(revokedContracts)
+        standingCallerWideConsents.subtract(revokedCallers)
         commitRevisionAdvance()
     }
 
@@ -1201,7 +1279,7 @@ public actor PolicyEngine {
         switch request.callerConsent {
         case .notRequired:
             break
-        case let .required(key):
+        case let .allowOnce(key), let .required(key):
             guard key.contract == envelope.name else {
                 return denied(
                     .callerConsentContractMismatch(
@@ -1222,8 +1300,10 @@ public actor PolicyEngine {
                     )
                 )
             }
-            guard standingCallerConsents.contains(key) else {
-                return denied(.callerConsentRequired(key))
+            if case .required = request.callerConsent {
+                guard hasStandingConsent(for: key) else {
+                    return denied(.callerConsentRequired(key))
+                }
             }
         }
 
@@ -1235,6 +1315,13 @@ public actor PolicyEngine {
 
     private var currentRevision: PolicyRevision {
         PolicyRevision(revisionValue)
+    }
+
+    private func hasStandingConsent(for key: CallerConsentKey) -> Bool {
+        standingCallerConsents.contains(key)
+            || standingCallerWideConsents.contains(
+                CallerWideConsentKey(consentKey: key)
+            )
     }
 
     private func declaredUseDenial(

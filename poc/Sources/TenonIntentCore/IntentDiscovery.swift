@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 public enum IntentDiscoveryProjection: String, Sendable, Equatable, Hashable, Codable {

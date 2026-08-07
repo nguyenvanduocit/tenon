@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import Foundation
 
 /// What a diff should compare. Either the host resolves both sides from git

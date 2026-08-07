@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import Foundation
 
 /// Turns "where a pane's shell currently is" into "what the panels should be anchored to".

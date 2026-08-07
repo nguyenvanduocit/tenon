@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import SwiftUI
 
 /// Renders agent prose as the structure it was written in. Blocks come from the pure
@@ -213,6 +214,7 @@ private struct AgentMarkdownCodeView: View {
                     .padding(.horizontal, 9)
                     .padding(.vertical, 7)
             }
+            .tenonScrollbarStyle()
             .scrollIndicators(.hidden)
         }
         .background(TenonTheme.chromeRaised, in: .rect(cornerRadius: 6))

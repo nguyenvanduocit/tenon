@@ -1,3 +1,5 @@
+// @domain: intent-bus
+
 import Foundation
 import Observation
 import SwiftUI
@@ -22,6 +24,7 @@ enum IntentUIRequestKind: Sendable, Equatable {
     case pick(items: [IntentUIPickItem], placeholder: String?)
     case prompt(title: String, initialValue: String, multiline: Bool)
     case confirm(title: String, detail: String?, destructive: Bool)
+    case permission(title: String, detail: String, destructive: Bool)
 }
 
 struct IntentUIRequest: Identifiable, Sendable, Equatable {
@@ -33,6 +36,7 @@ enum IntentUIResponse: Sendable, Equatable {
     case selectedID(String?)
     case text(String?)
     case confirmed(Bool)
+    case permission(IntentConfirmationDecision)
 }
 
 /// App-owned presentation state for interactive intents.
@@ -133,6 +137,8 @@ final class PluginUIState {
             completeCurrent(with: .text(nil))
         case .confirm:
             completeCurrent(with: .confirmed(false))
+        case .permission:
+            completeCurrent(with: .permission(.denied))
         }
     }
 
@@ -170,6 +176,15 @@ final class PluginUIState {
         completeCurrent(with: .confirmed(true))
     }
 
+    func resolvePermission(_ decision: IntentConfirmationDecision) {
+        guard let request = current,
+              case .permission = request.kind
+        else {
+            return
+        }
+        completeCurrent(with: .permission(decision))
+    }
+
     func filteredItems(_ items: [IntentUIPickItem]) -> [IntentUIPickItem] {
         let needle = query.trimmingCharacters(in: .whitespaces).lowercased()
         guard !needle.isEmpty else { return items }
@@ -183,19 +198,33 @@ final class PluginUIState {
         IntentConfirmationAuthorizer { [weak self] request in
             guard let self else { return .denied }
             do {
-                let response = try await self.request(
-                    kind: .confirm(
-                        title: request.contract.title
-                            ?? request.contract.name.rawValue,
-                        detail: Self.confirmationDetail(request),
-                        destructive: request.contract.effects.kind
-                            == .destructive
+                let title = request.contract.title
+                    ?? request.contract.name.rawValue
+                let detail = await Self.confirmationDetail(request)
+                let kind: IntentUIRequestKind = if request.confirmation == .policy {
+                    .permission(
+                        title: title,
+                        detail: detail,
+                        destructive: request.contract.effects.kind == .destructive
                     )
+                } else {
+                    .confirm(
+                        title: title,
+                        detail: detail,
+                        destructive: request.contract.effects.kind == .destructive
+                    )
+                }
+                let response = try await self.request(
+                    kind: kind
                 )
-                guard case let .confirmed(confirmed) = response else {
+                switch response {
+                case let .permission(decision):
+                    return decision
+                case .confirmed(true):
+                    return .allowOnce
+                case .confirmed(false), .selectedID, .text:
                     return .denied
                 }
-                return confirmed ? .approved : .denied
             } catch {
                 return .denied
             }
@@ -538,6 +567,12 @@ struct PluginUIOverlay: View {
                 detail: detail,
                 destructive: destructive
             )
+        case let .permission(title, detail, destructive):
+            permissionCard(
+                title: title,
+                detail: detail,
+                destructive: destructive
+            )
         }
     }
 
@@ -605,6 +640,7 @@ struct PluginUIOverlay: View {
                     }
                     .padding(.vertical, 6)
                 }
+                .tenonScrollbarStyle()
                 .frame(maxHeight: 320)
             }
         }
@@ -669,6 +705,7 @@ struct PluginUIOverlay: View {
                     TextEditor(text: $state.draft)
                         .font(TenonTheme.interfaceFont(size: 13))
                         .scrollContentBackground(.hidden)
+                        .tenonScrollbarStyle()
                         .frame(height: 96)
                 } else {
                     TextField("", text: $state.draft)
@@ -746,6 +783,133 @@ struct PluginUIOverlay: View {
             .padding(.top, 6)
         }
         .padding(18)
+    }
+
+    private func permissionCard(
+        title: String,
+        detail: String,
+        destructive: Bool
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(
+                    TenonTheme.interfaceFont(
+                        size: 15,
+                        weight: .semibold
+                    )
+                )
+                .foregroundStyle(TenonTheme.text)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(detail)
+                .font(TenonTheme.interfaceFont(size: 12))
+                .foregroundStyle(TenonTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+
+            Text(
+                "Always Allow remembers this intent. Always Allow for This User trusts "
+                    + "this requester for every permission-gated intent."
+            )
+            .font(TenonTheme.utilityFont(size: 10))
+            .foregroundStyle(TenonTheme.muted)
+            .fixedSize(horizontal: false, vertical: true)
+
+            permissionButtons(destructive: destructive)
+                .padding(.top, 6)
+        }
+        .padding(18)
+    }
+
+    private func permissionButtons(destructive: Bool) -> some View {
+        HStack(spacing: 8) {
+            Button("Cancel", action: state.dismissCurrent)
+                .buttonStyle(.plain)
+                .font(TenonTheme.interfaceFont(size: 12))
+                .foregroundStyle(TenonTheme.muted)
+                .padding(.horizontal, 10)
+                .frame(height: 30)
+                .background(TenonTheme.panel)
+                .clipShape(
+                    RoundedRectangle(
+                        cornerRadius: 6,
+                        style: .continuous
+                    )
+                )
+
+            Spacer(minLength: 4)
+
+            permissionButton(
+                "Always Allow for This User",
+                decision: .alwaysAllowForCaller,
+                destructive: destructive
+            )
+            permissionButton(
+                "Always Allow",
+                decision: .alwaysAllow,
+                destructive: destructive
+            )
+            permissionButton(
+                "Allow Once",
+                decision: .allowOnce,
+                destructive: destructive,
+                primary: true
+            )
+            .keyboardShortcut(.defaultAction)
+        }
+    }
+
+    private func permissionButton(
+        _ label: String,
+        decision: IntentConfirmationDecision,
+        destructive: Bool,
+        primary: Bool = false
+    ) -> some View {
+        Button(label) {
+            state.resolvePermission(decision)
+        }
+        .buttonStyle(.plain)
+        .font(
+            TenonTheme.interfaceFont(
+                size: 12,
+                weight: primary ? .semibold : .regular
+            )
+        )
+        .foregroundStyle(
+            primary
+                ? (destructive ? Color.white : TenonTheme.ink)
+                : (destructive ? Color.red.opacity(0.9) : TenonTheme.text)
+        )
+        .padding(.horizontal, 10)
+        .frame(height: 30)
+        .background(
+            primary
+                ? (destructive ? Color.red.opacity(0.85) : TenonTheme.amber)
+                : TenonTheme.panel
+        )
+        .clipShape(
+            RoundedRectangle(
+                cornerRadius: 6,
+                style: .continuous
+            )
+        )
+        .accessibilityIdentifier(
+            "tenon.ui.permission.\(permissionIdentifier(for: decision))"
+        )
+    }
+
+    private func permissionIdentifier(
+        for decision: IntentConfirmationDecision
+    ) -> String {
+        switch decision {
+        case .allowOnce:
+            "allow-once"
+        case .alwaysAllow:
+            "always-allow"
+        case .alwaysAllowForCaller:
+            "always-allow-for-caller"
+        case .denied:
+            "deny"
+        }
     }
 
     private func buttons(

@@ -1,351 +1,12 @@
-// @domain: plugin-host, plugin-contributions, plugin-events, plugin-settings, intent-bus
+// @domain: plugin-host, plugin-events
 //
-// Five domains on one file is the split signal `docs/domains.md` describes, not a label to
-// tidy away: at 3134 lines this type is described in CLAUDE.md as owning "manifests,
-// activation, contributions, events, settings/storage, and hot reload". The MARK tags below
-// are the decomposition boundary that sentence implies.
-
+// The coordinator itself: identity, activation, hot reload, contribution and event routing.
+// Its vocabulary lives in `PluginHostModels.swift`, its durable stores in
+// `PluginHostPersistence.swift`, and its pure rules in `PluginHostPolicy.swift` — what is left
+// here is the part that has to happen in an order.
 import Foundation
 import Observation
 import TenonIntentCore
-
-// MARK: - Installation snapshots  @domain: plugin-host
-
-/// Static and runtime state for one verified plugin installation.
-public struct PluginSnapshot: Sendable, Equatable, Identifiable {
-    public let id: PluginID
-    public let installationID: UUID?
-    public let name: String
-    public let version: String
-    public let permissions: [String]
-    public let unknownPermissions: [String]
-    public let settingSpecs: [PluginSettingSpec]
-    public let icon: String?
-    public let displayName: String?
-    public let isLoaded: Bool
-    public let isEnabled: Bool
-    public let permissionViolations: [String]
-    public let error: String?
-    /// Manifest-declared automation schedules (T-046). Part of the Equatable lifecycle
-    /// snapshot on purpose: a reload that changes a schedule fires
-    /// `onPluginLifecycleChanged`, which is the scheduler's reconcile trigger.
-    public let automationSchedules: [AutomationScheduleSpec]
-
-    public init(
-        id: PluginID,
-        installationID: UUID?,
-        name: String,
-        version: String,
-        permissions: [String],
-        unknownPermissions: [String],
-        settingSpecs: [PluginSettingSpec],
-        icon: String?,
-        displayName: String?,
-        isLoaded: Bool,
-        isEnabled: Bool,
-        permissionViolations: [String],
-        error: String?,
-        automationSchedules: [AutomationScheduleSpec] = []
-    ) {
-        self.id = id
-        self.installationID = installationID
-        self.name = name
-        self.version = version
-        self.permissions = permissions
-        self.unknownPermissions = unknownPermissions
-        self.settingSpecs = settingSpecs
-        self.icon = icon
-        self.displayName = displayName
-        self.isLoaded = isLoaded
-        self.isEnabled = isEnabled
-        self.permissionViolations = permissionViolations
-        self.error = error
-        self.automationSchedules = automationSchedules
-    }
-
-    public var settingsTitle: String {
-        displayName ?? name
-    }
-}
-
-/// A manifest or lifecycle failure that cannot be assigned a valid plugin identity.
-public struct PluginLoadFailure: Sendable, Equatable, Identifiable {
-    public let directoryName: String
-    public let diagnostic: String
-
-    public var id: String {
-        directoryName
-    }
-
-    public init(directoryName: String, diagnostic: String) {
-        self.directoryName = directoryName
-        self.diagnostic = diagnostic
-    }
-}
-
-// MARK: - Contribution projections  @domain: plugin-contributions
-
-/// A status-bar contribution from one immutable plugin identity.
-public struct StatusItem: Sendable, Equatable, Identifiable {
-    public let pluginID: PluginID
-    public let text: String
-
-    public var id: PluginID {
-        pluginID
-    }
-}
-
-/// One plugin-contributed native view.
-public struct PluginViewSection: Sendable, Equatable, Identifiable {
-    public let pluginID: PluginID
-    public let viewID: String
-    public let instanceID: String?
-    public let instanced: Bool
-    public let title: String
-    /// What this view puts in its pane's ONE chrome header. Rebuilt from live sessions with
-    /// the rest of the section, so a retired generation leaves no chrome behind.
-    public let header: PaneHeader
-    public let items: [PluginRowItem]
-    public let body: PluginViewNode?
-    /// Set while this view wants a modal over the whole shell; nil otherwise.
-    public let modal: PluginViewModal?
-
-    public var id: String {
-        instanceID.map {
-            "\(pluginID.rawValue).\(viewID)#\($0)"
-        } ?? "\(pluginID.rawValue).\(viewID)"
-    }
-
-    public init(
-        pluginID: PluginID,
-        viewID: String,
-        instanceID: String?,
-        instanced: Bool,
-        title: String,
-        items: [PluginRowItem],
-        body: PluginViewNode?,
-        header: PaneHeader = .empty,
-        modal: PluginViewModal? = nil
-    ) {
-        self.pluginID = pluginID
-        self.viewID = viewID
-        self.instanceID = instanceID
-        self.instanced = instanced
-        self.title = title
-        self.header = header
-        self.items = items
-        self.body = body
-        self.modal = modal
-    }
-}
-
-// MARK: - Intent presentation projection  @domain: intent-bus, plugin-contributions
-
-/// Static palette metadata projected from a manifest-backed intent declaration.
-///
-/// Invocation stays on the shared dispatcher; this value is only a presentation read model.
-public struct PluginIntentPresentation: Sendable, Equatable, Identifiable {
-    public let pluginID: PluginID
-    public let intentID: IntentID
-    public let title: String
-    public let description: String?
-    public let category: String?
-    public let icon: String?
-    public let keywords: [String]
-    public let key: String?
-    public let when: String?
-    public let launcher: Bool
-    public let fillsPane: Bool
-
-    public var id: IntentID {
-        intentID
-    }
-}
-
-// MARK: - Host errors  @domain: plugin-host
-
-public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible {
-    case stopped
-    case noInventoryConfigured
-    case manifestInvalid(directory: String, diagnostic: String)
-    case duplicatePluginID(pluginID: PluginID, directories: [String])
-    case overlappingPluginNamespaces(first: PluginID, second: PluginID)
-    case reservedPluginID(PluginID)
-    case directoryIdentityChanged(
-        directory: String,
-        expected: PluginID,
-        actual: PluginID
-    )
-    case unknownContractReference(pluginID: PluginID, intentID: IntentID)
-    case nonOpenContractReference(pluginID: PluginID, intentID: IntentID)
-    case contractConflict(pluginID: PluginID, intentID: IntentID)
-    case dispatchRuleConflict(pluginID: PluginID, intentID: IntentID)
-    case pluginNotFound(PluginID)
-    case pluginDirectoryMissing(String)
-    case installationMissing(PluginID)
-    case settingNotDeclared(pluginID: PluginID, key: String)
-    case invalidSettingValue(pluginID: PluginID, key: String)
-    case runtimeFailed(pluginID: PluginID, diagnostic: String)
-    case providerActivationFailed(pluginID: PluginID, diagnostic: String)
-
-    public var description: String {
-        switch self {
-        case .stopped:
-            "plugin host has stopped"
-        case .noInventoryConfigured:
-            "the plugin host needs at least one inventory to load from"
-        case let .manifestInvalid(directory, diagnostic):
-            "plugin manifest in \(directory) is invalid: \(diagnostic)"
-        case let .duplicatePluginID(pluginID, directories):
-            "plugin ID \(pluginID.rawValue) is duplicated by \(directories.joined(separator: ", "))"
-        case let .overlappingPluginNamespaces(first, second):
-            "plugin namespaces overlap: \(first.rawValue) and \(second.rawValue)"
-        case let .reservedPluginID(pluginID):
-            "plugin ID \(pluginID.rawValue) is reserved for the core provider"
-        case let .directoryIdentityChanged(directory, expected, actual):
-            "plugin directory \(directory) changed identity from "
-                + "\(expected.rawValue) to \(actual.rawValue)"
-        case let .unknownContractReference(pluginID, intentID):
-            "\(pluginID.rawValue) references unknown intent \(intentID.rawValue)"
-        case let .nonOpenContractReference(pluginID, intentID):
-            "\(pluginID.rawValue) cannot provide non-open core intent \(intentID.rawValue)"
-        case let .contractConflict(pluginID, intentID):
-            "\(pluginID.rawValue) conflicts with canonical contract \(intentID.rawValue)"
-        case let .dispatchRuleConflict(pluginID, intentID):
-            "\(pluginID.rawValue) conflicts with canonical dispatch rule \(intentID.rawValue)"
-        case let .pluginNotFound(pluginID):
-            "plugin \(pluginID.rawValue) was not discovered"
-        case let .pluginDirectoryMissing(directory):
-            "plugin directory \(directory) is unavailable"
-        case let .installationMissing(pluginID):
-            "plugin \(pluginID.rawValue) has no installation identity"
-        case let .settingNotDeclared(pluginID, key):
-            "plugin \(pluginID.rawValue) does not declare setting \(key)"
-        case let .invalidSettingValue(pluginID, key):
-            "setting \(key) for \(pluginID.rawValue) has the wrong value type"
-        case let .runtimeFailed(pluginID, diagnostic):
-            "plugin runtime \(pluginID.rawValue) failed: \(diagnostic)"
-        case let .providerActivationFailed(pluginID, diagnostic):
-            "plugin provider \(pluginID.rawValue) failed activation: \(diagnostic)"
-        }
-    }
-}
-
-// MARK: - Host-owned authorization  @domain: plugin-host, intent-bus
-
-/// Host-owned authorization decisions that cannot come from a plugin manifest.
-public struct PluginHostAuthorization: Sendable {
-    public typealias OpenIntentApprovals = @Sendable (
-        PluginInstallationKey,
-        PluginManifest
-    ) async throws -> Set<IntentID>
-
-    /// Whether this installation's declared intents carry standing consent without asking.
-    ///
-    /// True for plugins that shipped with the app: installing Tenon is the acceptance, and
-    /// a first launch has nothing left to prompt about. The decision is host-owned on
-    /// purpose — were it a manifest field, any plugin could declare itself bundled.
-    public typealias StandingConsentDecision = @Sendable (
-        PluginInstallationKey,
-        PluginManifest
-    ) async -> Bool
-
-    /// For a plugin inventory the host itself controls — the app bundle, or the developer
-    /// root standing in for it. Everything inside shipped with the app, so the user
-    /// accepted it by installing Tenon. A user-installed plugin directory must never be
-    /// authorized through this value.
-    public static let bundledInventory = PluginHostAuthorization(
-        approvedOpenIntentIDs: { _, _ in [] },
-        grantsStandingConsent: { _, _ in true },
-        inventoryTrust: .bundledStandingConsent
-    )
-
-    let approvedOpenIntentIDs: OpenIntentApprovals
-    let grantsStandingConsent: StandingConsentDecision
-    let inventoryTrust: PluginInventoryTrust
-
-    /// Standing consent defaults to `false` while `.bundledInventory` is `true`: a caller
-    /// that forgets to decide gets prompts, never silent authority.
-    public init(
-        approvedOpenIntentIDs: @escaping OpenIntentApprovals,
-        grantsStandingConsent: @escaping StandingConsentDecision = { _, _ in false },
-        inventoryTrust: PluginInventoryTrust = .explicitEnablement
-    ) {
-        self.approvedOpenIntentIDs = approvedOpenIntentIDs
-        self.grantsStandingConsent = grantsStandingConsent
-        self.inventoryTrust = inventoryTrust
-    }
-}
-
-// MARK: - Runtime boundary  @domain: plugin-host
-
-protocol PluginHostRuntime: AnyObject, Sendable {
-    var manifest: PluginManifest { get }
-    var directory: URL { get }
-
-    func start() async throws -> PluginRuntimeStartResult
-    func snapshot() async -> PluginRuntimeSnapshot
-    func handles(event: String) async -> Bool
-    func isViewInstanced(_ viewID: String) async -> Bool
-    func emit(event: String, payload: IntentValue) async throws
-    func invokeViewSelect(
-        viewID: String,
-        instanceID: String?,
-        itemID: String,
-        value: IntentValue?
-    ) async throws -> Bool
-    func invokeViewSubmit(
-        viewID: String,
-        instanceID: String?,
-        itemID: String,
-        text: String
-    ) async throws -> Bool
-    func openViewInstance(viewID: String, instanceID: String) async throws
-    func closeViewInstance(viewID: String, instanceID: String) async throws
-    func deliverPaletteQuery(text: String, revision: Int) async
-    func shutdown(timeout: TimeInterval) async -> PluginRuntimeShutdownReport
-}
-
-extension PluginRuntime: PluginHostRuntime {}
-
-struct PluginHostRuntimeFactory: Sendable {
-    typealias Make = @Sendable (
-        PluginRuntimeConfiguration
-    ) async throws -> any PluginHostRuntime
-
-    static let live = PluginHostRuntimeFactory { configuration in
-        // Runtime construction waits for a dedicated pinned thread to start. It owns no UI
-        // state, so this work must not occupy MainActor during app launch or reload.
-        try await Task.detached(priority: .userInitiated) {
-            try PluginRuntime(configuration: configuration)
-        }.value
-    }
-
-    let make: Make
-
-    init(make: @escaping Make) {
-        self.make = make
-    }
-}
-
-// MARK: - Durable stores  @domain: plugin-settings
-
-/// Durable plugin-host stores opened during the app's concurrent startup preparation.
-/// Keeping this package-scoped preserves the ordinary `PluginHost` API while letting the
-/// production composition root avoid filesystem and lock acquisition on `MainActor`.
-package struct PluginHostPersistence: Sendable {
-    package let installations: PluginInstallationStore
-    package let settings: SettingsStore
-    package let storage: PluginStorage
-    package let secrets: SecretStore
-
-    package init(stateRoot: URL) throws {
-        installations = try PluginInstallationStore(pluginsRoot: stateRoot)
-        settings = try SettingsStore(pluginsRoot: stateRoot)
-        storage = try PluginStorage(pluginsRoot: stateRoot)
-        secrets = try SecretStore()
-    }
-}
 
 // MARK: - Host state  @domain: plugin-host
 
@@ -591,7 +252,10 @@ public final class PluginHost {
         let providerGeneration: ProviderGenerationCandidate?
     }
 
-    private struct ViewInstanceReference: Sendable, Hashable {
+    /// One open instance of one registered view. Nested in the host because it means nothing
+    /// outside it, and no longer `private` because the sorting rule that orders these lives
+    /// with the host's other pure projections.
+    struct ViewInstanceReference: Sendable, Hashable {
         let pluginID: PluginID
         let viewID: String
         let instanceID: String
@@ -747,34 +411,59 @@ public final class PluginHost {
     ) async throws {
         try Task.checkCancellation()
 
-        let directory = inventoryRoot(
+        let entry = inventoryRoot(
             containingEntryNamed: directoryName
         )
         .appendingPathComponent(directoryName)
         var isDirectory: ObjCBool = false
         guard FileManager.default.fileExists(
-            atPath: directory.path,
+            atPath: entry.path,
             isDirectory: &isDirectory
-        ), isDirectory.boolValue else {
+        ) else {
             guard let pluginID = pluginIDByDirectory[directoryName] else {
                 return
             }
             try await uninstallOperation(pluginID: pluginID)
             appendLog(
-                "host: uninstalled \(pluginID.rawValue) because its directory disappeared"
+                "host: uninstalled \(pluginID.rawValue) because its entry disappeared"
             )
             return
         }
 
-        guard FileManager.default.fileExists(
-            atPath: directory.appendingPathComponent("manifest.json").path
-        ) else {
-            let error = PluginHostError.manifestInvalid(
-                directory: directoryName,
-                diagnostic: "manifest.json is missing"
-            )
-            recordLoadFailure(error)
-            throw error
+        if isDirectory.boolValue {
+            guard FileManager.default.fileExists(
+                atPath: entry.appendingPathComponent("manifest.json").path
+            ) else {
+                let error = PluginHostError.manifestInvalid(
+                    directory: directoryName,
+                    diagnostic: "manifest.json is missing"
+                )
+                recordLoadFailure(error)
+                throw error
+            }
+        } else {
+            // T-047: a plugin is a directory or one file, and reload has to admit the
+            // same two shapes discovery does. Asking only "is it a directory?" drops a
+            // `.js` written into the root after launch — the watcher reports it, this
+            // path finds no prior installation for it, and it vanishes without a
+            // diagnostic. The admission test is the one `PluginLoader.discover` uses.
+            let source = try? String(contentsOf: entry, encoding: .utf8)
+            guard PluginLoader.isSingleFilePlugin(entry),
+                  let source,
+                  PluginManifestHeader.hasHeader(source)
+            else {
+                // A file that never claimed to be a plugin is skipped, exactly as
+                // discovery skips it. One that used to claim it and no longer does is
+                // retired instead — its header is how it asked to be loaded at all.
+                guard let pluginID = pluginIDByDirectory[directoryName] else {
+                    return
+                }
+                try await uninstallOperation(pluginID: pluginID)
+                appendLog(
+                    "host: uninstalled \(pluginID.rawValue) because its manifest header is gone"
+                )
+                return
+            }
         }
 
         do {
@@ -1847,26 +1536,20 @@ public final class PluginHost {
     ) async {
         let current = sessions
         for (pluginID, session) in current {
-            if event.hasPrefix("terminal."),
-               !session.snapshot.manifest.permissions.contains(
-                   "terminal.read"
-               )
-            {
+            guard PluginEventRouting.permits(
+                event: event,
+                manifest: session.snapshot.manifest
+            ) else {
                 continue
             }
             guard await session.runtime.handles(event: event) else {
                 continue
             }
-            do {
-                try await session.runtime.emit(
-                    event: event,
-                    payload: payload
-                )
-            } catch {
+            guard session.runtime.acceptEvent(event: event, payload: payload) else {
                 appendLog(
-                    "host: event \(event) failed for \(pluginID.rawValue): "
-                        + Self.diagnostic(for: error)
+                    "host: event \(event) was refused by \(pluginID.rawValue)"
                 )
+                continue
             }
         }
     }
@@ -1877,9 +1560,12 @@ public final class PluginHost {
     /// channel: their URLs and titles belong to one installation. The app shell checks
     /// the installation identity before calling this method; the host then resolves the
     /// current session by its stable manifest ID.
-    /// Returns whether a live, subscribed generation actually took the event. The
+    /// Returns whether a live, subscribed generation accepted the event for delivery. The
     /// outcome is host state (T-060's run history reads it); plugin-facing `publish`
     /// keeps ignoring it, so a publisher still never learns who listened (T-049).
+    ///
+    /// Acceptance is the honest answer available to a publisher: the observer's JavaScript runs
+    /// on the observer's own thread, afterwards, in the order this generation accepted things.
     @discardableResult
     public func emit(
         event: String,
@@ -1889,23 +1575,18 @@ public final class PluginHost {
         guard let session = sessions[pluginID] else {
             return false
         }
-        if event.hasPrefix("terminal."),
-           !session.snapshot.manifest.permissions.contains("terminal.read")
-        {
+        guard PluginEventRouting.permits(
+            event: event,
+            manifest: session.snapshot.manifest
+        ) else {
             return false
         }
         guard await session.runtime.handles(event: event) else {
             return false
         }
-        do {
-            try await session.runtime.emit(
-                event: event,
-                payload: payload
-            )
-        } catch {
+        guard session.runtime.acceptEvent(event: event, payload: payload) else {
             appendLog(
-                "host: event \(event) failed for \(pluginID.rawValue): "
-                    + Self.diagnostic(for: error)
+                "host: event \(event) was refused by \(pluginID.rawValue)"
             )
             return false
         }
@@ -1935,7 +1616,10 @@ public final class PluginHost {
         from publisher: PluginID
     ) async {
         guard let session = sessions[publisher],
-              session.snapshot.manifest.events?.publishes.contains(local) == true
+              PluginEventRouting.mayPublish(
+                  local: local,
+                  manifest: session.snapshot.manifest
+              )
         else {
             return
         }
@@ -1943,8 +1627,11 @@ public final class PluginHost {
             local: local,
             owner: publisher
         )
-        for (observerID, observer) in sessions
-        where observer.snapshot.manifest.events?.observes.contains(qualified) == true {
+        let observers = PluginEventRouting.observers(
+            of: qualified,
+            among: sessions.mapValues(\.snapshot.manifest)
+        )
+        for observerID in observers {
             await emit(event: qualified, payload: payload, to: observerID)
         }
     }
@@ -2754,88 +2441,15 @@ private extension PluginHost {
             $0.key.rawValue < $1.key.rawValue
         }
 
-        let nextStatusItems = orderedSessions.compactMap {
-            pluginID,
-            session in
-            session.snapshot.statusBarText.map {
-                StatusItem(pluginID: pluginID, text: $0)
-            }
-        }
-        let nextPluginViews = orderedSessions.flatMap {
-            pluginID,
-            session in
-            session.snapshot.views.map {
-                PluginViewSection(
-                    pluginID: pluginID,
-                    viewID: $0.viewID,
-                    instanceID: $0.instanceID,
-                    instanced: $0.instanced,
-                    title: $0.title,
-                    items: $0.items,
-                    body: $0.body,
-                    header: $0.header,
-                    modal: $0.modal
-                )
-            }
-        }
-        let nextIntentPresentations = orderedSessions.flatMap {
-            pluginID,
-            session in
-            Self.presentations(
-                for: session.snapshot.manifest,
-                pluginID: pluginID
-            )
-        }
-        // Provider sections rebuild only from live sessions: a retired generation's
-        // contributions vanish here, and `accept`'s identity guard already dropped its
-        // late snapshots. Results are shown only when they answer the *current* query
-        // revision; anything older renders as the provider's pending row instead.
-        let currentPaletteRevision = paletteQueryRevision
-        let nextPaletteSections = orderedSessions.flatMap {
-            pluginID,
-            session in
-            session.snapshot.paletteProviders.map { provider in
-                let isCurrent = provider.publishedRevision == currentPaletteRevision
-                    && currentPaletteRevision > 0
-                return PaletteProviderSection(
-                    pluginID: pluginID,
-                    providerID: provider.providerID,
-                    title: provider.title,
-                    isPending: !isCurrent && currentPaletteRevision > 0,
-                    results: isCurrent ? provider.results : []
-                )
-            }
-        }
-        let keyBindingRequests = nextIntentPresentations.compactMap {
-            presentation -> KeyBindingRequest? in
-            guard let key = presentation.key else {
-                return nil
-            }
-            return KeyBindingRequest(
-                target: KeyBindingTarget(
-                    pluginID: presentation.pluginID,
-                    intentID: presentation.intentID
-                ),
-                rawKey: key
-            )
-        }
-        let nextKeyBindingIndex = KeyBindingIndex(
-            requests: keyBindingRequests,
-            reserved: KeyBindingIndex.shellReserved
+        // What the live generations put on screen is one projection over their snapshots,
+        // and it is computed by `PluginContributionProjection` rather than here: the host's job
+        // in this method is to decide the order, then publish what comes back.
+        let contributions = PluginContributionProjection.make(
+            orderedSnapshots: orderedSessions.map { ($0.key, $0.value.snapshot) },
+            paletteQueryRevision: paletteQueryRevision
         )
-        let nextCommandIndex = CommandIndex(
-            nextIntentPresentations.map { presentation in
-                let target = KeyBindingTarget(
-                    pluginID: presentation.pluginID,
-                    intentID: presentation.intentID
-                )
-                return presentation.command(
-                    assignedKey: nextKeyBindingIndex.binding(
-                        for: target
-                    )?.chord
-                )
-            }
-        )
+        let nextKeyBindingIndex = contributions.keyBindingIndex
+
         let newKeyBindingDiagnostics =
             nextKeyBindingIndex.diagnostics.filter {
                 !publishedKeyBindingDiagnostics.contains($0)
@@ -2868,12 +2482,12 @@ private extension PluginHost {
         }
         let lifecycleChanged = nextPlugins != plugins
 
-        statusItems = nextStatusItems
-        pluginViews = nextPluginViews
-        intentPresentations = nextIntentPresentations
-        keyBindingIndex = nextKeyBindingIndex
-        commandIndex = nextCommandIndex
-        paletteSections = nextPaletteSections
+        statusItems = contributions.statusItems
+        pluginViews = contributions.views
+        intentPresentations = contributions.intentPresentations
+        keyBindingIndex = contributions.keyBindingIndex
+        commandIndex = contributions.commandIndex
+        paletteSections = contributions.paletteSections
         plugins = nextPlugins
         publishedKeyBindingDiagnostics = Set(
             nextKeyBindingIndex.diagnostics
@@ -2886,35 +2500,6 @@ private extension PluginHost {
         }
     }
 
-    static func presentations(
-        for manifest: PluginManifest,
-        pluginID: PluginID
-    ) -> [PluginIntentPresentation] {
-        manifest.intents.provides.compactMap { provision in
-            guard let palette = provision.palette,
-                  let title = provision.title
-            else {
-                return nil
-            }
-            return PluginIntentPresentation(
-                pluginID: pluginID,
-                intentID: provision.name,
-                title: title,
-                description: provision.description,
-                category: palette.category
-                    ?? manifest.displayName
-                    ?? manifest.name,
-                icon: palette.icon,
-                keywords: palette.keywords,
-                key: palette.key,
-                when: palette.when,
-                launcher: palette.launcher,
-                fillsPane: palette.fillsPane
-            )
-        }.sorted {
-            $0.intentID.rawValue < $1.intentID.rawValue
-        }
-    }
 
     private static func keyBindingDiagnostic(
         _ diagnostic: KeyBindingDiagnostic
@@ -2955,203 +2540,5 @@ private extension PluginHost {
         case .invalidFunctionKey(let key):
             return "invalid function key \(key)"
         }
-    }
-}
-
-// MARK: - Pure policy and projection helpers  @domain: intent-bus, plugin-contributions
-
-extension PluginHost {
-    nonisolated static func pluginDispatchRule(
-        declaration: IntentContractDeclaration,
-        providerID: ProviderID
-    ) throws -> IntentDispatchRule {
-        return try IntentDispatchRule(
-            intentID: declaration.name,
-            capabilityBindings: [],
-            exposure: IntentExposure(
-                discoverableBy: declaration.audiences,
-                invocableBy: declaration.audiences
-            ),
-            trustedDefault: providerID,
-            allowsAutomaticSelection: true,
-            providerConsent: .never,
-            admissionClass: declaration.audiences.contains(.user)
-                ? .interactive
-                : .background,
-            valueLimits: .default,
-            maximumTimeout: .seconds(30)
-        )
-    }
-
-    nonisolated static func capabilityGrants(
-        for manifest: PluginManifest
-    ) throws -> Set<CapabilityGrant> {
-        // `terminal.read` used to be excluded here, and that was right when it existed
-        // only to gate delivery of `terminal.*` EVENTs — a permission with no capability
-        // behind it. It has since been bound as the capability for the three terminal read
-        // intents (`CoreIntentCatalog.swift`: viewport read, scrollback read, wait), and
-        // the exclusion was never revisited, so every one of them was ungrantable: a plugin
-        // could declare the permission and the use, pass every other check, and still be
-        // refused with `missing-capability`. Nothing is loosened by granting it — the event
-        // gate reads `manifest.permissions` directly and is untouched, and a caller still
-        // needs both the declared permission and the declared use.
-        let capabilityPermissions = Set(
-            manifest.permissions.filter(PluginManifest.knownPermissions.contains)
-        )
-        let networkPatterns = try Set(
-            manifest.networkAllowlist.map(NetworkHostPattern.init)
-        )
-
-        return try Set(
-            capabilityPermissions.map { permission in
-                let filesystem: FilesystemGrantScope = [
-                    "filesystem.read",
-                    "filesystem.write",
-                    "process.exec",
-                    "shell.open",
-                ].contains(permission) ? .all : .none
-                let network: NetworkGrantScope
-                switch permission {
-                case "network":
-                    network = .hosts(networkPatterns)
-                case "web.view":
-                    // A visible browser pane is an explicit all-network authority: the
-                    // user can see its address and navigate links/redirects. Background
-                    // `network.fetch` remains constrained to the manifest allowlist.
-                    network = .all
-                default:
-                    network = .none
-                }
-                return CapabilityGrant(
-                    capability: try CapabilityID(permission),
-                    scope: CapabilityGrantScope(
-                        workspaces: .any,
-                        panes: .any,
-                        filesystem: filesystem,
-                        network: network
-                    )
-                )
-            }
-        )
-    }
-
-    nonisolated static func policyFingerprint(
-        manifest: PluginManifest,
-        installation: PluginInstallationKey,
-        approvedOpenIntentIDs: Set<IntentID>
-    ) throws -> PolicyFingerprint {
-        try PolicyFingerprint(
-            canonicalPolicy: .object([
-                "pluginID": .string(manifest.id.rawValue),
-                "installationID": .string(
-                    installation.installationID.uuidString.lowercased()
-                ),
-                "permissions": .array(
-                    manifest.permissions.sorted().map(IntentValue.string)
-                ),
-                "networkAllow": .array(
-                    manifest.networkAllowlist.sorted().map(
-                        IntentValue.string
-                    )
-                ),
-                "provides": .array(
-                    manifest.intents.provides.map(\.name.rawValue)
-                        .sorted().map(IntentValue.string)
-                ),
-                "approvedOpenIntents": .array(
-                    approvedOpenIntentIDs.map(\.rawValue)
-                        .sorted().map(IntentValue.string)
-                ),
-            ])
-        )
-    }
-
-    nonisolated static func isValidSettingValue(
-        _ value: IntentValue,
-        for specification: PluginSettingSpec
-    ) -> Bool {
-        switch (specification.type, value) {
-        case (.string, .string), (.boolean, .bool),
-             (.number, .number), (.number, .integer):
-            return true
-        case let (.select, .string(selected)):
-            return specification.options?.contains {
-                $0.value == selected
-            } == true
-        default:
-            return false
-        }
-    }
-
-    nonisolated static func intentDiscoveryValue(
-        _ snapshot: IntentDiscoverySnapshot
-    ) -> IntentValue {
-        .object([
-            "revision": .object([
-                "catalog": .integer(Int64(snapshot.revision.catalog)),
-                "rules": .integer(Int64(snapshot.revision.rules)),
-                "policy": .integer(
-                    Int64(snapshot.revision.policy.rawValue)
-                ),
-                "providers": .string(
-                    Self.encodedProviderRevision(
-                        snapshot.revision.providers
-                    )
-                ),
-                "session": .integer(
-                    Int64(snapshot.revision.principal.sessionRevision)
-                ),
-            ]),
-            "items": .array(
-                snapshot.items.map { item in
-                    .object([
-                        "name": .string(item.name.rawValue),
-                        "title": item.title.map(IntentValue.string)
-                            ?? .null,
-                        "description": item.description.map(
-                            IntentValue.string
-                        ) ?? .null,
-                        "deprecated": .bool(item.deprecated),
-                        "inputSchema": item.inputSchema,
-                        "outputSchema": item.outputSchema,
-                        "providers": .array(
-                            item.activeProviders.map {
-                                .string($0.rawValue)
-                            }
-                        ),
-                    ])
-                }
-            ),
-        ])
-    }
-
-    private nonisolated static func sortViewReferences(
-        _ lhs: ViewInstanceReference,
-        _ rhs: ViewInstanceReference
-    ) -> Bool {
-        (
-            lhs.pluginID.rawValue,
-            lhs.viewID,
-            lhs.instanceID
-        ) < (
-            rhs.pluginID.rawValue,
-            rhs.viewID,
-            rhs.instanceID
-        )
-    }
-
-    nonisolated static func diagnostic(for error: any Error) -> String {
-        return String(describing: error)
-    }
-
-    nonisolated static func encodedProviderRevision(
-        _ revision: ProviderRegistryRevision
-    ) -> String {
-        guard let data = try? JSONEncoder().encode(revision),
-              let value = String(data: data, encoding: .utf8)
-        else {
-            return "[]"
-        }
-        return value
     }
 }

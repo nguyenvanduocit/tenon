@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 public enum IntentOutcome: String, Sendable, Codable, CaseIterable {

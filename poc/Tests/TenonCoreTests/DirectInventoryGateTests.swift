@@ -25,7 +25,7 @@ final class DirectInventoryGateTests: XCTestCase {
     /// to force, and removing from it is the direction the law wants.
     private static let pinnedEntries: [String: Int] = [
         "ordinary functions/modules inside one plugin generation": 56,
-        "SwiftUI workspace, tab, pane, and settings interactions": 56,
+        "SwiftUI workspace, tab, pane, and settings interactions": 1313,
         "app lifecycle and composition-root wiring": 42,
         "install-channel routing": 946,
         "`WorkspaceStore` and typed workspace use cases": 47,

@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import AppKit
 import CoreGraphics
 import Observation
@@ -181,6 +182,7 @@ struct FileSlotView: View {
                     .aspectRatio(contentMode: .fit)
                     .padding(12)
             }
+            .tenonScrollbarStyle()
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .unavailable(let reason):
             VStack(spacing: 7) {

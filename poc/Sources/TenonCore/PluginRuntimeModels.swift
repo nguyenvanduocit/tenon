@@ -1,3 +1,4 @@
+// @domain: plugin-host
 import Foundation
 import TenonIntentCore
 
@@ -32,10 +33,57 @@ public struct RowMenuItem: Sendable, Equatable, Identifiable {
     }
 }
 
-/// One row in a plugin's declarative row/tree contribution.
-public struct PluginRowItem: Sendable, Equatable, Identifiable {
+/// What a row says at its trailing edge: one short token, tinted.
+///
+/// A status letter, a count, a unit — the thing a scanning eye reads down the right-hand
+/// column without reading the labels. Bounded to a few characters because that column is
+/// fixed-width by construction: a row that wants a sentence there wants `detail` instead,
+/// which truncates, or a body view rather than a row list.
+public struct RowAccessory: Sendable, Equatable {
+    /// The longest an accessory may be. Four characters holds `M`, `??`, `+12` and `9.9k`;
+    /// past that the accessory stops being a glance and starts squeezing the label.
+    public static let maximumTextLength = 4
+
+    public let text: String
+    public let tint: ColorToken
+
+    /// Returns nil for text that is empty or over the bound, so a malformed accessory costs
+    /// its own column rather than the row it is attached to.
+    public init?(text: String, tint: ColorToken = .default) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed.count <= Self.maximumTextLength else { return nil }
+        self.text = trimmed
+        self.tint = tint
+    }
+}
+
+/// One row in a declarative row/tree contribution — the single vocabulary every indented
+/// list in the product is drawn from, whether a plugin published it or a host-native pane
+/// built it in Swift.
+///
+/// The name is deliberately about the SHAPE and not about who published it: the Changes pane
+/// builds these in `TenonApp` and renders them through the same view a plugin's tree goes
+/// through, and a reader who met a plugin-owned name here would go looking for a plugin that
+/// does not exist. What keeps the boundary safe is not the name — it is that this is a
+/// bounded value either side can mint, and that a plugin's rows reach it only through the
+/// decoder, never as a native type crossing into JavaScript (invariants 2 and 6).
+public struct TreeRowItem: Sendable, Equatable, Identifiable {
+    /// Whether a row IS a row, or the heading that names the run of rows beneath it.
+    ///
+    /// A heading is a member of this vocabulary rather than a separate list-level concept
+    /// because it has to interleave: `STAGED 3 … CHANGES 27 …` is one scroll of one list,
+    /// and a list that took headings as a separate argument could not put them in order.
+    /// A heading draws no chevron, no icon and no hover, and reports no selection.
+    public enum Kind: String, Sendable, Equatable {
+        case row, sectionHeader
+    }
+
+    public let kind: Kind
     public let id: String
     public let label: String
+    /// Muted secondary text after the label — a containing directory, a timestamp, a hint.
+    /// Truncated from the middle before the label gives up any of its own width.
+    public let detail: String?
     public let depth: Int
     public let icon: String?
     public let expanded: Bool?
@@ -43,11 +91,14 @@ public struct PluginRowItem: Sendable, Equatable, Identifiable {
     public let editing: Bool
     public let placeholder: String?
     public let selected: Bool
+    public let accessory: RowAccessory?
     public let path: String?
 
     public init(
+        kind: Kind = .row,
         id: String,
         label: String,
+        detail: String? = nil,
         depth: Int,
         icon: String?,
         expanded: Bool? = nil,
@@ -55,10 +106,13 @@ public struct PluginRowItem: Sendable, Equatable, Identifiable {
         editing: Bool = false,
         placeholder: String? = nil,
         selected: Bool = false,
+        accessory: RowAccessory? = nil,
         path: String? = nil
     ) {
+        self.kind = kind
         self.id = id
         self.label = label
+        self.detail = detail
         self.depth = depth
         self.icon = icon
         self.expanded = expanded
@@ -66,6 +120,7 @@ public struct PluginRowItem: Sendable, Equatable, Identifiable {
         self.editing = editing
         self.placeholder = placeholder
         self.selected = selected
+        self.accessory = accessory
         self.path = path
     }
 }
@@ -108,7 +163,7 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
     /// to be swept (invariant 10). A view that publishes no `header` key publishes `.empty`,
     /// which is the bare chrome every pane starts with.
     public let header: PaneHeader
-    public let items: [PluginRowItem]
+    public let items: [TreeRowItem]
     public let body: PluginViewNode?
     public let modal: PluginViewModal?
 
@@ -121,7 +176,7 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
         instanceID: String?,
         instanced: Bool,
         title: String,
-        items: [PluginRowItem],
+        items: [TreeRowItem],
         body: PluginViewNode?,
         header: PaneHeader = .empty,
         modal: PluginViewModal? = nil
@@ -312,24 +367,44 @@ public struct PluginRuntimeStartResult: Sendable {
 }
 
 public struct PluginRuntimeShutdownReport: Sendable, Equatable {
+    /// The step that was still running when the shutdown deadline passed.
+    ///
+    /// Every one of these can be held open by the plugin's own JavaScript, which is why the
+    /// deadline covers them rather than only the executor stop at the end. A named phase is
+    /// what turns "quit took two seconds" into "this plugin's teardown never returned".
+    public enum StalledPhase: String, Sendable, Equatable {
+        /// `__tenonShutdown` and the JavaScript teardown around it.
+        case javaScriptTeardown
+        /// The callback pump, still delivering into a context that will not drain.
+        case callbackPump
+        /// Provider calls this generation accepted and has not settled.
+        case providerCalls
+        /// The final state publication.
+        case stateEmitter
+    }
+
     public let executorResult: PinnedThreadExecutor.ShutdownResult
     public let createdThreadIdentifier: UInt64?
     public let destroyedThreadIdentifier: UInt64?
     public let cancelledProviderCalls: Int
     public let lateProviderReplyCount: Int
+    /// `nil` when every phase finished inside the deadline.
+    public let stalledPhase: StalledPhase?
 
     public init(
         executorResult: PinnedThreadExecutor.ShutdownResult,
         createdThreadIdentifier: UInt64?,
         destroyedThreadIdentifier: UInt64?,
         cancelledProviderCalls: Int,
-        lateProviderReplyCount: Int
+        lateProviderReplyCount: Int,
+        stalledPhase: StalledPhase? = nil
     ) {
         self.executorResult = executorResult
         self.createdThreadIdentifier = createdThreadIdentifier
         self.destroyedThreadIdentifier = destroyedThreadIdentifier
         self.cancelledProviderCalls = cancelledProviderCalls
         self.lateProviderReplyCount = lateProviderReplyCount
+        self.stalledPhase = stalledPhase
     }
 }
 

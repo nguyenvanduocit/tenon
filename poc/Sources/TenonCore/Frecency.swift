@@ -1,3 +1,4 @@
+// @domain: command-surface
 import Foundation
 
 /// Frequency × recency, collapsed into one decaying number per command — the signal

@@ -131,15 +131,16 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
         app.typeKey("d", modifierFlags: .command)
         XCTAssertTrue(waitFor { self.slotCount == 2 }, "need two slots to drag one onto the other")
 
-        let slots = app.descendants(matching: .any).matching(identifier: A11y.slot)
+        let slots = slotElements
         let source = slots.element(boundBy: 0)
         let target = slots.element(boundBy: 1)
         XCTAssertTrue(source.exists && target.exists)
 
         // Record identity and geometry so we can assert the arrangement actually changed. Each
-        // slot value contains its stable UUID and current grid rect; a move/swap changes the rect
-        // encoded by the element at index 0.
-        let valueBefore = source.value as? String
+        // slot identifier carries its stable UUID and current grid rect; a move/swap changes the
+        // rect encoded by the element at index 0. Identity rides the identifier because the
+        // spoken value belongs to the person using VoiceOver.
+        let identifierBefore = source.identifier
 
         let grab = source
             .coordinate(withNormalizedOffset: .zero)
@@ -148,7 +149,7 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
         grab.press(forDuration: 0.6, thenDragTo: drop)
 
         XCTAssertTrue(
-            waitFor { (self.app.descendants(matching: .any).matching(identifier: A11y.slot).element(boundBy: 0).value as? String) != valueBefore },
+            waitFor { self.slotElements.element(boundBy: 0).identifier != identifierBefore },
             "dragging a slot onto another did not change the canvas arrangement"
         )
     }
@@ -164,7 +165,15 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
     }
 
     private var slotCount: Int {
-        app.descendants(matching: .any).matching(identifier: A11y.slot).count
+        slotElements.count
+    }
+
+    /// Slots carry their identity and grid rect in the identifier, so the query matches its
+    /// prefix rather than the whole string.
+    private var slotElements: XCUIElementQuery {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH %@", A11y.slot)
+        )
     }
 
     /// Poll a UI condition without a fixed sleep — XCUITest state settles asynchronously.

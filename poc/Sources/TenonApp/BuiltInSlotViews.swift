@@ -1,3 +1,4 @@
+// @domain: plugin-contributions
 import AppKit
 import Observation
 import SwiftUI
@@ -210,7 +211,7 @@ enum SlotPresentation {
     }
 }
 
-// MARK: - Docs
+// MARK: - Docs  @domain: plugin-contributions
 
 @MainActor
 @Observable
@@ -338,6 +339,7 @@ private struct DocsSlotView: View {
                     .padding(12)
                     .frame(maxWidth: .infinity, alignment: .topLeading)
             }
+            .tenonScrollbarStyle()
 
             if let error = model.error {
                 Text(error)
@@ -364,9 +366,9 @@ private struct DocsSlotView: View {
     }
 }
 
-// MARK: - Plugins
+// MARK: - Plugins  @domain: plugin-contributions
 
-/// Renders a plugin's declarative rows (`PluginRowItem`) as an indented tree. The
+/// Renders a plugin's declarative rows (`TreeRowItem`) as an indented tree. The
 /// disclosure chevron, container-accented icon, and dotfile dimming are all driven
 /// off the row's own fields — no knowledge of any specific plugin (VISION §6).
 private struct PluginSlotView: View {
@@ -443,11 +445,12 @@ private struct PluginSlotView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
                     }
+                    .tenonScrollbarStyle()
                     .scrollIndicators(.hidden, axes: .vertical)
                     .background(TenonTheme.panel)
                 }
             } else {
-                PluginRowsView(
+                TreeRowsView(
                     items: section.items,
                     onSelect: { itemID, menuID in
                         Task { @MainActor in
@@ -515,25 +518,36 @@ private struct PluginSlotView: View {
 /// The host knows nothing about any specific plugin — it paints the vocabulary (VISION §6).
 /// A `textfield` node: a local editable buffer that submits on Enter and re-syncs when
 /// the plugin pushes a new `value` (e.g. the address bar after a navigation).
+///
+/// A plugin republishes its whole view for any reason at all, including while someone is
+/// typing here, so `EditableFieldDraft` decides who wins: the person while the field is
+/// focused, the plugin's value the moment they leave.
 private struct PluginTextFieldView: View {
     let value: String
     let placeholder: String
     let onSubmit: (String) -> Void
 
-    @State private var draft: String = ""
+    @State private var draft = EditableFieldDraft()
+    @FocusState private var focused: Bool
 
     var body: some View {
-        TextField(placeholder, text: $draft)
+        TextField(placeholder, text: $draft.text)
             .textFieldStyle(.plain)
             .font(TenonTheme.interfaceFont(size: 12))
+            .focused($focused)
             .padding(.horizontal, 8)
             .padding(.vertical, 5)
             .background(TenonTheme.chromeRaised)
             .clipShape(RoundedRectangle(cornerRadius: 5))
             .overlay(RoundedRectangle(cornerRadius: 5).stroke(TenonTheme.line, lineWidth: 1))
-            .onSubmit { onSubmit(draft) }
-            .onAppear { draft = value }
-            .onChange(of: value) { _, newValue in draft = newValue }
+            .onSubmit { onSubmit(draft.text) }
+            .onAppear { draft = EditableFieldDraft(value: value) }
+            .onChange(of: value) { _, newValue in
+                draft.externalValueChanged(to: newValue, isFocused: focused)
+            }
+            .onChange(of: focused) { _, isFocused in
+                draft.focusChanged(to: isFocused)
+            }
     }
 }
 
@@ -696,12 +710,15 @@ struct PluginNodeView: View {
                     alignment: .topLeading
                 )
         }
+        .tenonScrollbarStyle()
     }
 
+    /// Siblings are identified by what they are, not by where they sit: a field's draft and a
+    /// live web surface have to survive the plugin inserting a row above them.
     @ViewBuilder
     private func childViews(_ children: [PluginViewNode]) -> some View {
-        ForEach(Array(children.enumerated()), id: \.offset) { _, child in
-            PluginNodeView(node: child, onAction: onAction, webSurface: webSurface)
+        ForEach(IdentifiedPluginViewNode.identify(children)) { child in
+            PluginNodeView(node: child.node, onAction: onAction, webSurface: webSurface)
         }
     }
 

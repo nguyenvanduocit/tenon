@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import AppKit
 import SwiftUI
 import TenonCore
@@ -83,6 +84,144 @@ enum TenonTheme {
         weight: NSFont.Weight = .regular
     ) -> NSFont {
         NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    }
+}
+
+/// The one scrollbar presentation used by host-native surfaces. AppKit continues to
+/// choose legacy versus overlay scrollers from the user's System Settings and pointing
+/// device; Tenon only opts into the smaller native control geometry its dense UI needs.
+@MainActor
+enum TenonScrollbarStyle {
+    static let controlSize: NSControl.ControlSize = .small
+
+    /// Returns whether applying the style changed either scroller. The guarded writes
+    /// keep SwiftUI updates from repeatedly asking AppKit to tile the scroll view.
+    @discardableResult
+    static func apply(to scrollView: NSScrollView) -> Bool {
+        var changed = false
+
+        if let verticalScroller = scrollView.verticalScroller,
+           verticalScroller.controlSize != controlSize
+        {
+            verticalScroller.controlSize = controlSize
+            changed = true
+        }
+
+        if let horizontalScroller = scrollView.horizontalScroller,
+           horizontalScroller.controlSize != controlSize
+        {
+            horizontalScroller.controlSize = controlSize
+            changed = true
+        }
+
+        if changed {
+            scrollView.tile()
+        }
+        return changed
+    }
+}
+
+extension View {
+    /// Applies Tenon's native scrollbar geometry to the `ScrollView`, `List`, or
+    /// `TextEditor` this modifier decorates. SwiftUI exposes indicator visibility but
+    /// not AppKit's scroller control size, so a zero-state probe performs that one
+    /// presentation-only bridge when the native view enters a window.
+    func tenonScrollbarStyle() -> some View {
+        background(TenonScrollbarConfigurator())
+    }
+}
+
+private struct TenonScrollbarConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> ProbeView {
+        ProbeView()
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.configureIfNeeded()
+    }
+
+    @MainActor
+    final class ProbeView: NSView {
+        private weak var configuredScrollView: NSScrollView?
+        private var configurationScheduled = false
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            scheduleConfiguration()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                configuredScrollView = nil
+            }
+            scheduleConfiguration()
+        }
+
+        func configureIfNeeded() {
+            if let configuredScrollView,
+               configuredScrollView.window === window
+            {
+                TenonScrollbarStyle.apply(to: configuredScrollView)
+                return
+            }
+            scheduleConfiguration()
+        }
+
+        private func scheduleConfiguration() {
+            guard window != nil, !configurationScheduled else { return }
+            configurationScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.configurationScheduled = false
+                guard let scrollView = self.closestMatchingScrollView() else { return }
+                self.configuredScrollView = scrollView
+                TenonScrollbarStyle.apply(to: scrollView)
+            }
+        }
+
+        /// A SwiftUI background probe is a sibling of the native scroll view, not its
+        /// descendant. The closest ancestor containing a scroller is therefore the
+        /// narrowest safe search root; matching window-space frames disambiguates peers.
+        private func closestMatchingScrollView() -> NSScrollView? {
+            guard window != nil else { return nil }
+            let probeFrame = convert(bounds, to: nil)
+            var ancestor = superview
+
+            while let searchRoot = ancestor {
+                let candidates = Self.scrollViews(in: searchRoot)
+                if !candidates.isEmpty {
+                    return candidates.min { left, right in
+                        Self.frameDistance(left, from: probeFrame)
+                            < Self.frameDistance(right, from: probeFrame)
+                    }
+                }
+                ancestor = searchRoot.superview
+            }
+            return nil
+        }
+
+        private static func scrollViews(in root: NSView) -> [NSScrollView] {
+            var result: [NSScrollView] = []
+            if let scrollView = root as? NSScrollView {
+                result.append(scrollView)
+            }
+            for subview in root.subviews {
+                result.append(contentsOf: scrollViews(in: subview))
+            }
+            return result
+        }
+
+        private static func frameDistance(
+            _ scrollView: NSScrollView,
+            from target: NSRect
+        ) -> CGFloat {
+            let frame = scrollView.convert(scrollView.bounds, to: nil)
+            return abs(frame.minX - target.minX)
+                + abs(frame.minY - target.minY)
+                + abs(frame.width - target.width)
+                + abs(frame.height - target.height)
+        }
     }
 }
 

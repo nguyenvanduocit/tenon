@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import Darwin
 import Foundation
 

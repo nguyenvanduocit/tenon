@@ -1,3 +1,4 @@
+// @domain: terminal-surface
 import Foundation
 
 /// The browser identity Tenon's web surfaces advertise.

@@ -1,0 +1,216 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tenon — code, solution, and documentation review</title>
+<style>
+  :root {
+    --bg:#f7f8fa; --fg:#18202b; --muted:#667085; --card:#fff; --line:#dde2e9;
+    --code:#f1f3f6; --accent:#2563eb; --blocker:#b42318; --major:#b54708;
+    --minor:#475467; --good:#067647; --soft-red:#fff1f0; --soft-amber:#fff8eb;
+    --soft-green:#ecfdf3; --shadow:0 8px 24px rgba(16,24,40,.06);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg:#0d1117; --fg:#e6edf3; --muted:#9da7b3; --card:#151b23; --line:#30363d;
+      --code:#11161d; --accent:#79c0ff; --blocker:#ff7b72; --major:#f2cc60;
+      --minor:#a9b4c0; --good:#56d364; --soft-red:#2b1518; --soft-amber:#2a2112;
+      --soft-green:#10261b; --shadow:none;
+    }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:15px/1.65 -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+  header { position:sticky; top:0; z-index:5; padding:16px 24px; background:color-mix(in srgb,var(--card) 94%,transparent); border-bottom:1px solid var(--line); backdrop-filter:blur(12px); }
+  header h1 { margin:0; font-size:20px; }
+  header p { margin:2px 0 0; color:var(--muted); font-size:13px; }
+  main { max-width:1120px; margin:0 auto; padding:24px; }
+  h2 { margin:30px 0 12px; font-size:18px; }
+  h3 { margin:0 0 6px; font-size:16px; }
+  p { max-width:78ch; }
+  code { font-family:ui-monospace,"SF Mono",Menlo,monospace; font-size:.9em; background:var(--code); padding:.08em .32em; border-radius:4px; overflow-wrap:anywhere; }
+  .verdict { display:grid; grid-template-columns:1.5fr 1fr; gap:16px; }
+  .panel, .finding, details { background:var(--card); border:1px solid var(--line); border-radius:12px; box-shadow:var(--shadow); }
+  .panel { padding:18px; }
+  .decision { border-left:5px solid var(--blocker); }
+  .decision strong { color:var(--blocker); font-size:18px; }
+  .counts { display:grid; grid-template-columns:repeat(3,1fr); gap:8px; }
+  .metric { text-align:center; padding:12px 8px; background:var(--code); border-radius:9px; }
+  .metric b { display:block; font-size:22px; }
+  .metric span { color:var(--muted); font-size:12px; }
+  .sev { display:inline-block; padding:2px 8px; border-radius:999px; font-size:11px; font-weight:750; letter-spacing:.04em; text-transform:uppercase; white-space:nowrap; }
+  .sev.blocker { color:var(--blocker); background:var(--soft-red); }
+  .sev.major { color:var(--major); background:var(--soft-amber); }
+  .sev.minor { color:var(--minor); background:var(--code); }
+  .sev.good { color:var(--good); background:var(--soft-green); }
+  .finding { padding:16px 18px; margin:12px 0; }
+  .finding-head { display:flex; align-items:center; gap:10px; flex-wrap:wrap; }
+  .finding p { margin:8px 0; }
+  .evidence { color:var(--muted); }
+  .fix { border-left:3px solid var(--accent); padding-left:12px; }
+  .path { overflow-wrap:anywhere; }
+  .flow { padding:16px 18px; }
+  .flow svg { display:block; width:100%; height:auto; max-height:270px; }
+  details { margin:12px 0; overflow:hidden; }
+  summary { cursor:pointer; padding:13px 16px; font-weight:700; background:var(--code); }
+  details > div { padding:8px 18px 16px; }
+  table { width:100%; border-collapse:collapse; }
+  th,td { padding:9px 10px; border-bottom:1px solid var(--line); vertical-align:top; text-align:left; }
+  th { color:var(--muted); font-size:12px; text-transform:uppercase; letter-spacing:.04em; }
+  ul { padding-left:20px; }
+  .clean { border-left:5px solid var(--good); }
+  .note { color:var(--muted); font-size:13px; }
+  @media (max-width:760px) {
+    header { position:static; padding:14px 16px; }
+    main { padding:16px; }
+    .verdict { grid-template-columns:1fr; }
+    .counts { grid-template-columns:repeat(3,1fr); }
+    table,thead,tbody,tr,th,td { display:block; }
+    thead { display:none; }
+    td { border-bottom:0; padding:6px 0; }
+    tr { display:block; padding:10px 0; border-bottom:1px solid var(--line); }
+  }
+  @media print {
+    header { position:static; backdrop-filter:none; }
+    body { background:#fff; }
+    .panel,.finding,details { box-shadow:none; break-inside:avoid; }
+    details > div { display:block !important; }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>Tenon — code, solution, and documentation review</h1>
+  <p><code>main…origin/main</code> · uncommitted workspace · 40 tracked files in the diff plus new task/test files · reviewed 2026-08-07</p>
+</header>
+<main>
+  <section class="verdict">
+    <div class="panel decision">
+      <strong>Request changes</strong>
+      <p>The shared-row and off-main-inspection directions are sound, but the branch is not merge-ready. Two tab-close paths can destroy active work without the promised confirmation, the generated project is stale, and the new domain inventory is incomplete.</p>
+    </div>
+    <div class="panel counts" aria-label="Finding counts">
+      <div class="metric"><b>4</b><span>blockers</span></div>
+      <div class="metric"><b>4</b><span>major</span></div>
+      <div class="metric"><b>4</b><span>minor/doc</span></div>
+    </div>
+  </section>
+
+  <section class="flow panel">
+    <h2>Why the close-tab result is unsafe</h2>
+    <svg viewBox="0 0 920 240" role="img" aria-label="A tab snapshot is inspected asynchronously, can become stale, then closes the current tab">
+      <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="3" orient="auto"><path d="M0,0 L0,6 L9,3z" fill="currentColor"/></marker></defs>
+      <g fill="none" stroke="currentColor" stroke-width="1.6" font-family="ui-monospace,monospace" font-size="13">
+        <rect x="20" y="55" width="180" height="78" rx="9"/><text x="110" y="84" text-anchor="middle" fill="currentColor" stroke="none">snapshot tab</text><text x="110" y="108" text-anchor="middle" fill="currentColor" stroke="none">foreground PIDs</text>
+        <rect x="280" y="55" width="180" height="78" rx="9"/><text x="370" y="84" text-anchor="middle" fill="currentColor" stroke="none">await ps</text><text x="370" y="108" text-anchor="middle" fill="currentColor" stroke="none">classify PGIDs</text>
+        <rect x="540" y="55" width="180" height="78" rx="9"/><text x="630" y="84" text-anchor="middle" fill="currentColor" stroke="none">tab changes</text><text x="630" y="108" text-anchor="middle" fill="currentColor" stroke="none">new/busy terminal</text>
+        <rect x="760" y="55" width="140" height="78" rx="9" stroke="var(--blocker)"/><text x="830" y="84" text-anchor="middle" fill="var(--blocker)" stroke="none">close tab</text><text x="830" y="108" text-anchor="middle" fill="var(--blocker)" stroke="none">stale “idle”</text>
+        <line x1="200" y1="94" x2="280" y2="94" marker-end="url(#arrow)"/><line x1="460" y1="94" x2="540" y2="94" marker-end="url(#arrow)"/><line x1="720" y1="94" x2="760" y2="94" marker-end="url(#arrow)"/>
+        <path d="M370 135 C430 200, 720 200, 826 137" stroke="var(--blocker)" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+        <text x="600" y="215" text-anchor="middle" fill="var(--blocker)" stroke="none">only tab existence is rechecked; identities are not</text>
+      </g>
+    </svg>
+  </section>
+
+  <h2>Blocking findings</h2>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev blocker">Blocker · high</span><h3>Generated Xcode project is stale, so CI will fail before tests</h3></div>
+    <p class="evidence"><span class="path"><code>poc/Tenon.xcodeproj/project.pbxproj:900</code></span> omits <code>ChangesRowPlanTests.swift</code>, <code>ScrollbarStyleTests.swift</code>, and <code>TreeRowItemTests.swift</code>. CI regenerates the project and runs <code>git diff --exit-code</code> at <code>.github/workflows/macos-ci.yml:37</code>. A clean temp generation changed the project by 27 insertions / 15 deletions and added all three files.</p>
+    <p class="fix"><b>Fix:</b> run <code>xcodegen generate</code> from <code>poc/</code> and commit the complete generated-project diff.</p>
+  </article>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev blocker">Blocker · high</span><h3>One process group does not prove “idle shell”</h3></div>
+    <p class="evidence"><code>poc/Sources/TenonCore/TerminalJobTermination.swift:74–99</code> returns <code>.idle</code> whenever a terminal has one PGID. An <code>exec codex</code>-style replacement preserves the shell PID/PGID, and job-control-disabled children can share that PGID. The new test at <code>TerminalJobTerminationTests.swift:121</code> explicitly treats an additional same-group process as idle.</p>
+    <p>This violates the documented fail-safe rule and can close active work without confirmation.</p>
+    <p class="fix"><b>Fix:</b> retain the original shell identity (PID plus executable/start identity), prove it is still the shell, and classify every unrecognized same-group process as running or unavailable. Add exec and job-control-disabled fixtures.</p>
+  </article>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev blocker">Blocker · high</span><h3>An old idle result can close a newly changed tab</h3></div>
+    <p class="evidence"><code>poc/Sources/TenonApp/ShellTitleBar.swift:96–137</code> snapshots terminal PIDs before <code>await inspect</code>. After suspension, it checks the request UUID and only whether the tab still exists; it does not compare slot membership, surface incarnation, or current foreground PIDs.</p>
+    <p>A terminal can be added, replaced, or become busy during the process-table read, then be destroyed by the stale idle result.</p>
+    <p class="fix"><b>Fix:</b> snapshot identities keyed by slot and surface token, re-snapshot after the await, and act only on exact equality. Otherwise confirm as unavailable or restart inspection. Extract an injected close coordinator and test identity mutation plus request supersession.</p>
+  </article>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev blocker">Blocker · high</span><h3>The new row-list domain does not retrieve what it says it owns</h3></div>
+    <p class="evidence"><code>rg -l '@domain:.*row-list' poc/Sources</code> returns only <code>TreeRowsView.swift</code>. Mandatory symbol-edge traversal finds the vocabulary in <code>PluginRuntimeModels.swift:41</code>, decoder in <code>PluginRuntimeValueParsing.swift:31</code>, and native planner in <code>ChangesPanelView.swift:355</code>, all untagged for <code>row-list</code>. This contradicts <code>docs/domains.md:137</code>.</p>
+    <p class="fix"><b>Fix:</b> preferably extract the vocabulary, decoder, and plan into focused tagged files. At minimum tag every genuinely owned file/section and satisfy the over-400-line MARK rule; then lower the untagged budget for newly tagged files.</p>
+  </article>
+
+  <h2>Major findings</h2>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev major">Major · high</span><h3>Claude option submission reverses the repository’s live measurement</h3></div>
+    <p class="evidence"><code>.kanban/tasks/T-069-agent-lens-hook-first-for-claude-code.md:23–29</code> and the Done board entry record that a single digit commits a Claude option and that Return can leak into the next prompt. The diff maps Claude to <code>hotkeyThenReturn</code> at <code>AgentLensSession.swift:46</code> and rewrites <code>docs/design-agent-lens.md:156</code> to assert the opposite, without a new measurement receipt.</p>
+    <p class="fix"><b>Fix:</b> restore Claude to digit-only, or re-measure the exact supported Claude version and record the transcript/terminal evidence that supersedes T-069 before changing the safety contract.</p>
+  </article>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev major">Major · high</span><h3>A transient single-file read failure uninstalls the active plugin</h3></div>
+    <p class="evidence"><code>poc/Sources/TenonCore/PluginHost.swift:786–800</code> uses <code>try?</code> to read a single-file plugin and handles a read error as “manifest header is gone,” uninstalling an existing session. That contradicts the method contract at line 736 that a failed candidate never replaces the active session.</p>
+    <p>The claimed watcher-path test at <code>SingleFilePluginTests.swift:51–80</code> edits the file and then calls <code>loadAll()</code>; it never exercises <code>reload(directoryNamed:)</code> or FSEvents.</p>
+    <p class="fix"><b>Fix:</b> distinguish read failure from a successfully read header removal. Preserve the active generation on I/O/decode failure, and add exact reload plus watcher-path regressions.</p>
+  </article>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev major">Major · high</span><h3>Public row detail is not bounded by the row contract</h3></div>
+    <p class="evidence"><code>TreeRowItem.detail</code> is stored verbatim at <code>PluginRuntimeModels.swift:85,100–114</code> and decoded verbatim at <code>PluginRuntimeValueParsing.swift:47</code>. The generic 64 KiB <code>IntentValue</code> ceiling is not a row-specific bound and does not constrain host-native Swift construction. T-085 explicitly requires both new public values to be bounded at lines 45–48.</p>
+    <p class="fix"><b>Fix:</b> introduce a source-owned detail maximum in <code>TreeRowItem</code> or a bounded value type. Drop or truncate only the detail, and test overlong/empty/non-string input.</p>
+  </article>
+
+  <article class="finding">
+    <div class="finding-head"><span class="sev major">Major · high</span><h3>Changes selection is visual-only for accessibility</h3></div>
+    <p class="evidence"><code>TreeRowsView.swift:106–170</code> expresses selection only through color/background. The row button has no selected trait or value; <code>ChangesRowPlanTests.swift:191</code> proves only the model bit. The newly advertised selection state is therefore not exposed to assistive technology.</p>
+    <p class="fix"><b>Fix:</b> make the row one coherent accessibility element, conditionally add <code>.isSelected</code>, expose expanded/collapsed and useful status meaning, hide decorative glyphs, and add a hosted accessibility-tree receipt.</p>
+  </article>
+
+  <h2>Solution and test gaps</h2>
+  <details open><summary>Scrollbar bridge is not tested end to end</summary><div>
+    <p><span class="sev minor">Minor · high</span> <code>TenonTheme.swift:133–224</code> finds an AppKit scroll view by ancestor traversal and frame-distance matching, but <code>ScrollbarStyleTests.swift:7–24</code> calls <code>TenonScrollbarStyle.apply</code> directly. Those tests remain green if the SwiftUI configurator finds nothing or styles the wrong neighboring scroll view.</p>
+    <p class="fix"><b>Fix:</b> host a decorated SwiftUI scroll view and a two-peer case in <code>NSHostingView</code>, settle layout, and assert the intended native scroller becomes small.</p>
+  </div></details>
+  <details><summary>Sidebar footer typography is below the control floor</summary><div>
+    <p><span class="sev minor">Minor · high</span> <code>WorkspaceSidebarView.swift:193–200</code> uses an 8.5 pt interface font for Help, Feedback, and Settings. <code>designs.md:78–83</code> reserves that range for utility metadata and specifies 10.5–12 pt for compact controls. <code>ViewThatFits</code> already supplies the narrow icon-only fallback.</p>
+  </div></details>
+
+  <h2>Documentation diff</h2>
+  <table>
+    <thead><tr><th>Document</th><th>Mismatch</th><th>Required change</th></tr></thead>
+    <tbody>
+      <tr><td><code>architecture-interaction-boundaries.md:203–212</code></td><td>Says closure occurs only after proving every terminal is an idle shell and that newest-request identity makes the mutation safe. The classifier and stale-snapshot blockers make both claims false.</td><td>Fix the implementation first, then describe the stable identity proof and post-await revalidation.</td></tr>
+      <tr><td><code>design-agent-lens.md:156–160</code></td><td>Contradicts the measured Claude behavior in T-069 and its Done-board evidence.</td><td>Restore digit-only or add explicit supersession evidence with provider version.</td></tr>
+      <tr><td><code>design-plugin-views.md:112–123</code></td><td>Introduces three fields (<code>kind</code>, <code>detail</code>, <code>accessory</code>) and then says “Both new fields.”</td><td>Name all three and document the exact detail bound/fail-soft behavior.</td></tr>
+      <tr><td><code>docs/domains.md:137–149</code></td><td>Claims every file-ish pane uses one row vocabulary, while T-086 explicitly leaves the Git panel outside it; the decoder/vocabulary/planner are also missing from tag retrieval.</td><td>Qualify the scope and Excludes clause, and make the tags retrieve the stated ownership.</td></tr>
+      <tr><td><code>SingleFilePluginTests.swift:51</code> / T-047 evidence</td><td>Calls the test “the same FSEvents path,” but invokes <code>loadAll()</code> explicitly.</td><td>Rename the evidence honestly or add a watcher/reload-path test.</td></tr>
+    </tbody>
+  </table>
+
+  <h2>What is solid</h2>
+  <section class="panel clean">
+    <ul>
+      <li><span class="sev good">Clean</span> Shared <code>TreeRowItem</code>/<code>TreeRowsView</code> is the right same-owner reuse boundary; plugin input remains a CONTRIBUTION and native Changes interactions remain typed DIRECT calls.</li>
+      <li>Section-qualified IDs, staged/worktree duplication, collapse projection, drag paths, empty-menu decision, and fail-soft accessory decoding have focused pure tests.</li>
+      <li>The process-table read is correctly moved off <code>MainActor</code>, bounded, and uses a typed finite result. The failure is identity proof/revalidation, not the interaction classification.</li>
+      <li>Provider-specific option framing and the submission gate are well-factored; only the Claude grammar mapping lacks evidence.</li>
+      <li><code>git diff --check</code> passes, semantic colors and native controls are used, and the interaction inventory change includes the required “why not a plugin” justification.</li>
+    </ul>
+  </section>
+
+  <h2>Verification receipts</h2>
+  <section class="panel">
+    <ul>
+      <li><code>swift build --disable-sandbox</code>: passed.</li>
+      <li>Focused changed-path run: 58 tests; 56 passed, 1 skipped, 1 failed. The repeated failure is the pre-existing real-process teardown test (<code>testAProcessThatIgnoresSIGHUPIsDeadAfterTeardown</code>); the terminate path it exercises is unchanged by this diff.</li>
+      <li>New shared-row, Changes plan, scrollbar helper, SurfacePool snapshot, and Agent Lens option/gate tests passed.</li>
+      <li>Full <code>swift test</code>: exit 1, 1,417 tests, 33 failures and 1 skip; many are process/timing/environment dependent, so this is not a clean merge receipt.</li>
+      <li>Clean temp <code>xcodegen</code>: generated-project drift confirmed; CI would fail.</li>
+      <li>No production source was edited during review.</li>
+    </ul>
+    <p class="note">Review scope is the live uncommitted workspace, not a single cohesive commit. Several independent task slices are mixed into the diff, increasing merge and attribution risk.</p>
+  </section>
+</main>
+</body>
+</html>

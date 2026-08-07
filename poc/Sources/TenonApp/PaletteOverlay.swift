@@ -1,3 +1,4 @@
+// @domain: command-surface
 import AppKit
 import SwiftUI
 import TenonCore
@@ -239,6 +240,7 @@ struct PaletteOverlay: View {
                     }
                     .padding(.vertical, 6)
                 }
+                .tenonScrollbarStyle()
                 .frame(maxHeight: ceiling)
                 // Keep the keyboard-selected row visible as the user arrows past the fold.
                 .onChange(of: palette.selection) { _, ordinal in

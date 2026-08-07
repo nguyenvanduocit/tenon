@@ -81,7 +81,7 @@ final class IntentDispatcherTests: XCTestCase {
     }
 
     func testAlwaysConfirmationApprovalReceivesAuthoritativeRequest() async throws {
-        let confirmation = DispatcherConfirmationProbe(decision: .approved)
+        let confirmation = DispatcherConfirmationProbe(decision: .allowOnce)
         let fixture = try await DispatcherFixture.make(
             effects: try confirmationEffects(.always),
             confirmationAuthorizer: IntentConfirmationAuthorizer { request in
@@ -103,6 +103,7 @@ final class IntentDispatcherTests: XCTestCase {
         XCTAssertEqual(request.envelope.name, fixture.intentID)
         XCTAssertEqual(request.envelope.input, .object(["value": .integer(7)]))
         XCTAssertEqual(request.contract.effects.confirmation, .always)
+        XCTAssertEqual(request.confirmation, .always)
         XCTAssertEqual(request.providerID, fixture.providerID)
     }
 
@@ -128,7 +129,7 @@ final class IntentDispatcherTests: XCTestCase {
     }
 
     func testKeyedReplayDoesNotRequestConfirmationOrExecuteAgain() async throws {
-        let confirmation = DispatcherConfirmationProbe(decision: .approved)
+        let confirmation = DispatcherConfirmationProbe(decision: .allowOnce)
         let invocation = DispatcherProbe()
         let fixture = try await DispatcherFixture.make(
             effects: try keyedEffects(confirmation: .always),
@@ -474,7 +475,7 @@ private struct DispatcherFixture: Sendable {
     static func make(
         effects: IntentEffects = .pessimistic,
         confirmationAuthorizer: IntentConfirmationAuthorizer =
-            IntentConfirmationAuthorizer { _ in .approved },
+            IntentConfirmationAuthorizer { _ in .allowOnce },
         operation: @escaping IntentProviderBinding.Operation
     ) async throws -> DispatcherFixture {
         let intentID = try IntentID("test.echo.v1")

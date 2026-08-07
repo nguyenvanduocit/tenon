@@ -1,3 +1,4 @@
+// @domain: command-surface
 import Foundation
 
 /// One palette presentation projected from a plugin-owned intent contract.

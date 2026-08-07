@@ -1,3 +1,4 @@
+// @domain: cli-control
 import Foundation
 import TenonCore
 import TenonIntentCore
@@ -85,15 +86,33 @@ final class CLISocketServer: @unchecked Sendable {
     /// Held until after the listening socket is removed, so no contender can inspect or reclaim
     /// the path while this server is still tearing it down.
     private var claimFD: Int32 = -1
-    private static let maximumConcurrentConnections = 8
+    static let maximumConcurrentConnections = 8
+    /// How long a burst may wait for a free permit before the app answers `busy`.
+    ///
+    /// Short, because it runs on the accept thread: a legitimate burst of fast requests clears
+    /// well inside it, and a flood of slow ones is told so immediately instead of parking
+    /// descriptors the cap was supposed to exclude.
+    private static let admissionGrace: TimeInterval = 0.25
+    /// The backstop that makes the cap unconditional. A handler that never calls its completion
+    /// would otherwise retire one permit for the life of the process; after this the request is
+    /// settled as an internal error and its permit returns.
+    private static let requestLifetimeLimit: TimeInterval = 120
+    private let admissionGrace: TimeInterval
+    private let requestLifetimeLimit: TimeInterval
     private let connectionSlots = DispatchSemaphore(
         value: maximumConcurrentConnections
     )
+    private let liveConnections = LiveConnections()
     private let connectionQueue = DispatchQueue(
         label: "dev.tenon.cli-connections",
         qos: .userInitiated,
         attributes: .concurrent
     )
+
+    /// In-flight requests: accepted, not yet answered. The cap this counts against covers the
+    /// descriptor, the main-actor hop and the async intent reply, so it is the app's whole
+    /// physical exposure to `tenon-cli` rather than its decode phase.
+    var liveConnectionCount: Int { liveConnections.count }
 
     /// `enabled: false` disables the socket + single-instance handshake entirely (role stays
     /// `.primary`, nothing binds). Used when hosting XCTest, where the app must not `exit(0)` on a
@@ -102,14 +121,21 @@ final class CLISocketServer: @unchecked Sendable {
     ///   channel path; a test that used it would fight the developer's own running Tenon for the
     ///   single-instance lock.
     /// - Parameter socketRootForTesting: replaces `/tmp` while preserving channel derivation.
+    /// - Parameter admissionGraceForTesting: shortens the wait for a free permit so a cap test
+    ///   does not spend a quarter second per refused connection.
+    /// - Parameter requestLifetimeForTesting: shortens the never-settled backstop.
     init(
         enabled: Bool = true,
         instanceChannel: AppInstanceChannel = .production,
         overridingPath: String? = nil,
         socketRootForTesting: String? = nil,
-        afterBindBeforeListenForTesting: (() -> Void)? = nil
+        afterBindBeforeListenForTesting: (() -> Void)? = nil,
+        admissionGraceForTesting: TimeInterval? = nil,
+        requestLifetimeForTesting: TimeInterval? = nil
     ) {
         self.instanceChannel = instanceChannel
+        admissionGrace = admissionGraceForTesting ?? Self.admissionGrace
+        requestLifetimeLimit = requestLifetimeForTesting ?? Self.requestLifetimeLimit
         guard enabled else {
             role = .primary
             return
@@ -206,16 +232,17 @@ final class CLISocketServer: @unchecked Sendable {
     /// nothing is listening.
     private func reportDegradation(_ reason: Degradation) {
         degradation = reason
-        NSLog("tenon: running without a control socket — \(reason.message)")
+        TenonLog.cli.error("running without a control socket — \(reason.message, privacy: .public)")
     }
 
     deinit {
+        liveConnections.drain()
         if listenFD >= 0 { close(listenFD) }
         if let socketPath { _ = Self.reclaimStaleSocket(at: socketPath) }
         if claimFD >= 0 { close(claimFD) }
     }
 
-    // MARK: - Path & single-instance handshake
+    // MARK: - Path & single-instance handshake  @domain: cli-control
 
     private static func wellKnownPath(
         for instanceChannel: AppInstanceChannel,
@@ -370,7 +397,7 @@ final class CLISocketServer: @unchecked Sendable {
             && information.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK)
     }
 
-    // MARK: - Socket setup
+    // MARK: - Socket setup  @domain: cli-control
 
     private static func bindAndListen(
         at path: String,
@@ -430,16 +457,35 @@ final class CLISocketServer: @unchecked Sendable {
                 close(client)
                 return
             }
-            // A stalled client consumes one of a fixed number of workers, never the
-            // accept thread and never an unbounded task/thread allocation.
-            self.connectionSlots.wait()
+            // A stalled client consumes one of a fixed number of permits, never the
+            // accept thread and never an unbounded task/thread allocation. The permit
+            // spans the whole request — read, main-actor hop, intent dispatch, reply —
+            // because the descriptor and the pending reply are exactly what the cap exists
+            // to bound.
+            guard self.connectionSlots.wait(
+                timeout: .now() + self.admissionGrace
+            ) == .success else {
+                Self.writeAndClose(client, .failure(
+                    id: nil,
+                    error: CLIError(
+                        code: .busy,
+                        message: "Tenon already has \(Self.maximumConcurrentConnections) requests in flight"
+                    )
+                ))
+                return
+            }
+            let permit = ConnectionPermit(
+                descriptor: client,
+                slots: self.connectionSlots,
+                registry: self.liveConnections
+            )
+            self.liveConnections.insert(permit)
             self.connectionQueue.async { [weak self] in
-                defer { self?.connectionSlots.signal() }
                 guard let self else {
-                    close(client)
+                    permit.settle { _ in }
                     return
                 }
-                self.handleConnection(client)
+                self.handleConnection(permit)
             }
         }
         let thread = Thread {
@@ -453,7 +499,7 @@ final class CLISocketServer: @unchecked Sendable {
         thread.start()
     }
 
-    // MARK: - Accept loop (background thread)
+    // MARK: - Accept loop (background thread)  @domain: cli-control
 
     private static func acceptLoop(
         descriptor: Int32,
@@ -475,44 +521,48 @@ final class CLISocketServer: @unchecked Sendable {
         }
     }
 
-    private func handleConnection(_ client: Int32) {
-        switch readLine(client) {
+    /// Runs on `connectionQueue` while holding a strong `self`, so the read phase can use the
+    /// permit's descriptor directly: nothing else settles a permit until the request has been
+    /// handed to the main actor, and `SO_RCVTIMEO` bounds the read itself.
+    private func handleConnection(_ permit: ConnectionPermit) {
+        switch readLine(permit.descriptor) {
         case .closed:
-            close(client)
+            permit.settle { _ in }
         case .tooLarge:
-            writeAndClose(client, .failure(
+            permit.settle(with: .failure(
                 id: nil,
                 error: CLIError(code: .payloadTooLarge, message: "request exceeds \(CLIProtocol.maxPayloadSize) bytes")
             ))
         case .line(let data):
-            dispatch(data, on: client)
+            dispatch(data, on: permit)
         }
     }
 
-    private func dispatch(_ data: Data, on client: Int32) {
+    private func dispatch(_ data: Data, on permit: ConnectionPermit) {
         switch CLIWireCodec.decodeRequest(data) {
         case .rejected(let response):
-            writeAndClose(client, response)
+            permit.settle(with: response)
         case .ok(let request):
             switch CLIActionParser.parse(request) {
             case .failure(let error):
-                writeAndClose(client, .failure(id: request.id, error: error))
+                permit.settle(with: .failure(id: request.id, error: error))
             case .success(let action):
+                startLifetimeWatchdog(for: permit, id: request.id)
                 DispatchQueue.main.async { [weak self] in
                     guard let self else {
-                        close(client)
+                        permit.settle { _ in }
                         return
                     }
                     guard let handler = self.onRequest else {
-                        self.writeAndCloseOffMain(client, .failure(
+                        self.settleOffMain(permit, .failure(
                             id: request.id,
                             error: CLIError(code: .notReady, message: "Tenon is still starting up")
                         ))
                         return
                     }
                     handler(action) { result in
-                        self.writeAndCloseOffMain(
-                            client,
+                        self.settleOffMain(
+                            permit,
                             result.response(id: request.id)
                         )
                     }
@@ -521,7 +571,23 @@ final class CLISocketServer: @unchecked Sendable {
         }
     }
 
-    // MARK: - Read / write
+    /// A handler that never calls its completion must not retire a permit permanently. The
+    /// watchdog and the real reply race into the same once-settlement guard, so whichever
+    /// arrives first is the only answer the client sees.
+    private func startLifetimeWatchdog(for permit: ConnectionPermit, id: String) {
+        let limit = requestLifetimeLimit
+        connectionQueue.asyncAfter(deadline: .now() + limit) { [weak permit] in
+            permit?.settle(with: .failure(
+                id: id,
+                error: CLIError(
+                    code: .internalError,
+                    message: "request was not answered within \(Int(limit))s"
+                )
+            ))
+        }
+    }
+
+    // MARK: - Read / write  @domain: cli-control
 
     private enum ReadOutcome { case line(Data); case tooLarge; case closed }
 
@@ -545,7 +611,9 @@ final class CLISocketServer: @unchecked Sendable {
         return buffer.isEmpty ? .closed : .line(buffer)
     }
 
-    private func writeAndClose(_ fd: Int32, _ response: CLIResponse) {
+    /// Writes to a descriptor this server still owns outright — the refusal path, before any
+    /// permit exists. Every descriptor that reached a permit is closed by `ConnectionPermit`.
+    private static func writeAndClose(_ fd: Int32, _ response: CLIResponse) {
         guard let data = try? CLIWireCodec.encode(response) else {
             close(fd)
             return
@@ -555,17 +623,13 @@ final class CLISocketServer: @unchecked Sendable {
         close(fd)
     }
 
-    private func writeAndCloseOffMain(_ fd: Int32, _ response: CLIResponse) {
-        connectionQueue.async { [weak self] in
-            guard let self else {
-                close(fd)
-                return
-            }
-            self.writeAndClose(fd, response)
+    private func settleOffMain(_ permit: ConnectionPermit, _ response: CLIResponse) {
+        connectionQueue.async {
+            permit.settle(with: response)
         }
     }
 
-    private static func writeAll(_ fd: Int32, _ data: Data) {
+    fileprivate static func writeAll(_ fd: Int32, _ data: Data) {
         data.withUnsafeBytes { raw in
             guard let base = raw.baseAddress else { return }
             var offset = 0
@@ -578,6 +642,98 @@ final class CLISocketServer: @unchecked Sendable {
                 if written == 0 { break }
                 offset += written
             }
+        }
+    }
+}
+
+// MARK: - Request permits  @domain: cli-control
+
+/// One accepted request, from `accept` to the last byte of its reply.
+///
+/// The permit exists because a cap that ends at decode is not a cap: the descriptor, the
+/// main-actor hop and the async intent reply all outlive the closure that used to release the
+/// slot, so a flood of valid slow requests could hold arbitrarily many descriptors while the
+/// semaphore read as free. Here the slot returns when the client's connection ends, and never
+/// before.
+///
+/// Settlement is exactly once. The real reply, the never-answered watchdog and server teardown
+/// all funnel through the same guard, so at most one of them writes, closes the descriptor and
+/// returns the slot — the others become no-ops rather than a double close of a descriptor the
+/// kernel may already have reissued.
+private final class ConnectionPermit: @unchecked Sendable {
+    let descriptor: Int32
+
+    private let slots: DispatchSemaphore
+    private weak var registry: LiveConnections?
+    private let lock = NSLock()
+    private var isSettled = false
+
+    init(descriptor: Int32, slots: DispatchSemaphore, registry: LiveConnections) {
+        self.descriptor = descriptor
+        self.slots = slots
+        self.registry = registry
+    }
+
+    /// Hands the descriptor to `body` exactly once, then closes it and returns the slot.
+    func settle(_ body: (Int32) -> Void) {
+        lock.lock()
+        guard !isSettled else {
+            lock.unlock()
+            return
+        }
+        isSettled = true
+        lock.unlock()
+
+        body(descriptor)
+        close(descriptor)
+        slots.signal()
+        registry?.remove(self)
+    }
+
+    func settle(with response: CLIResponse) {
+        settle { fd in
+            guard let data = try? CLIWireCodec.encode(response) else { return }
+            CLISocketServer.writeAll(fd, data)
+            shutdown(fd, SHUT_WR)
+        }
+    }
+
+    deinit {
+        // Reached only if the permit was dropped without settling, which would leak both the
+        // descriptor and the slot. Closing here keeps the cap true even then.
+        settle { _ in }
+    }
+}
+
+/// The in-flight set, so teardown can end requests that are still waiting on a reply instead of
+/// leaving their clients blocked on a descriptor nobody owns any more.
+private final class LiveConnections: @unchecked Sendable {
+    private let lock = NSLock()
+    private var permits: [ObjectIdentifier: ConnectionPermit] = [:]
+
+    var count: Int {
+        lock.withLock { permits.count }
+    }
+
+    func insert(_ permit: ConnectionPermit) {
+        lock.withLock { permits[ObjectIdentifier(permit)] = permit }
+    }
+
+    func remove(_ permit: ConnectionPermit) {
+        _ = lock.withLock { permits.removeValue(forKey: ObjectIdentifier(permit)) }
+    }
+
+    func drain() {
+        let pending = lock.withLock { () -> [ConnectionPermit] in
+            let values = Array(permits.values)
+            permits.removeAll()
+            return values
+        }
+        for permit in pending {
+            permit.settle(with: .failure(
+                id: nil,
+                error: CLIError(code: .notReady, message: "Tenon stopped listening")
+            ))
         }
     }
 }

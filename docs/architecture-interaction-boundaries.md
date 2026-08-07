@@ -198,7 +198,21 @@ domain semantics live once in the typed service.
 Current DIRECT inventory:
 
 - ordinary functions/modules inside one plugin generation;
-- SwiftUI workspace, tab, pane, and settings interactions;
+- SwiftUI workspace, tab, pane, and settings interactions: the fixed sidebar Help and
+  Feedback controls open Tenon's product-owned documentation and issue-entry URLs, while
+  Settings opens the existing app-owned Settings scene. A tab-close gesture snapshots the
+  live terminal identities in that tab, performs one off-main process-table read, and closes
+  immediately only when every terminal is an idle shell; running work or an unavailable
+  inspection presents one native destructive confirmation before the typed workspace close.
+  The newest close check supersedes an older in-flight check, and no check owns a lifetime
+  after its one finite idle/running/unavailable result. These are finite host SwiftUI gestures
+  with no public principal, provider selection, or independent lifetime. Authority is the
+  accepted in-window gesture; failure to prove idleness asks rather than destroys, and the
+  shared inspector serializes its short local reads while the title bar retains only the
+  newest request identity, so a superseded result cannot mutate workspace state.
+  **why not a plugin:** no CONTRIBUTION declares fixed shell-footer Help or Feedback
+  destinations or intercepts host tab chrome, no EVENT exposes host-private terminal process
+  occupancy, and no plugin-owned INTENT owns the app's Settings scene or a host tab close;
 - app lifecycle and composition-root wiring;
 - install-channel routing: the exact closed set `{production, staging}` is resolved from
   the app bundle identity at the composition root. Each channel is a singleton within
@@ -766,16 +780,25 @@ declarative view contribution.
   a dispatch. An unanswered prompt expires into `tenon.deadline-exceeded`; it does not hold
   the request. A prompt shared by several waiters survives the first of them expiring, so one
   caller's deadline cannot take the dialog away from another who is still waiting on it.
+- A `confirmation: policy` prompt has exactly three positive outcomes. **Allow Once** admits
+  only the current coalesced caller/contract wave. **Always Allow** records standing consent
+  for that caller and contract. **Always Allow for This User** records standing consent for
+  that stable caller identity across every `.policy` contract. The broad grant still bypasses
+  only confirmation: declared use, audience, capability, argument/scope, provider selection,
+  admission, cancellation, and telemetry run on every invocation. A contract narrowed to
+  `confirmation: always` offers only Allow Once and never consumes either standing grant.
 
-**Confirmation is interactive by design, and is not granted to non-interactive principals.**
-A plugin holds standing consent because it was *installed* — a human act of trust over a
-manifest that declares exactly which intents it uses. A CLI or agent principal has neither:
-anything able to open the control socket is that principal, so seeding it with standing
-consent would let any process on the machine run `.policy` verbs unprompted. That is not
-consent, it is an open door. The lawful route for unattended work is to be a plugin, which
-is what `tenon.agents.run` and the shipped fleet-review example do. The consequence is
-accepted and stated rather than worked around: a CLI caller with no human at the window can
-read state, and its `.policy` verbs expire at their deadline instead of hanging.
+**Confirmation is interactive by design, and standing consent is never seeded for a
+non-interactive principal.** A plugin can hold seeded standing consent because it was
+*installed* — a human act of trust over a manifest that declares exactly which intents it
+uses. A CLI or agent principal starts with neither standing scope: anything able to open the
+control socket is that principal, so seeding it would let any process on the machine run
+`.policy` verbs unprompted. An attended request may acquire one of the explicit standing
+scopes above, including the deliberately broad caller-wide choice; the prompt names the
+caller and states that scope before recording it. The lawful default for unattended work is
+still to be a plugin, which is what `tenon.agents.run` and the shipped fleet-review example
+do. A headless CLI caller with no human at the window can read state, and its ungranted
+`.policy` verbs expire at their deadline instead of hanging.
 
 The UI thread MUST perform only UI work. Filesystem, process, network, schema compilation,
 plugin execution, and unbounded resource work MUST NOT run on `MainActor`. Execution

@@ -174,13 +174,13 @@ final class PluginHostTests: XCTestCase {
 
         let first = try await controller.runtime(for: firstID, index: 0)
         let second = try await controller.runtime(for: secondID, index: 0)
-        let firstPayloads = await first.emittedPayloads(
+        let firstPayloads = first.emittedPayloads(
             for: "web.did-navigate"
         )
-        let secondPayloads = await second.emittedPayloads(
+        let secondPayloads = second.emittedPayloads(
             for: "web.did-navigate"
         )
-        let unauthorizedTerminalPayloads = await first.emittedPayloads(
+        let unauthorizedTerminalPayloads = first.emittedPayloads(
             for: "terminal.title-changed"
         )
         XCTAssertEqual(
@@ -361,7 +361,7 @@ final class PluginHostTests: XCTestCase {
             payload: .object([:]),
             to: pluginID
         )
-        let retiredEventPayloads = await failedRuntime.emittedPayloads(
+        let retiredEventPayloads = failedRuntime.emittedPayloads(
             for: "workspace.did-change"
         )
         XCTAssertTrue(retiredEventPayloads.isEmpty)
@@ -1269,6 +1269,20 @@ private actor FakeRuntimeController {
     }
 }
 
+/// Events a fake generation was handed, readable without entering its executor.
+private final class FakeEventLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var events: [String: [IntentValue]] = [:]
+
+    func record(event: String, payload: IntentValue) {
+        lock.withLock { events[event, default: []].append(payload) }
+    }
+
+    func payloads(for event: String) -> [IntentValue] {
+        lock.withLock { events[event] ?? [] }
+    }
+}
+
 private actor FakePluginRuntime: PluginHostRuntime {
     nonisolated let manifest: PluginManifest
     nonisolated let directory: URL
@@ -1279,7 +1293,9 @@ private actor FakePluginRuntime: PluginHostRuntime {
     private var revision: UInt64 = 0
     private var statusBarText: String?
     private var shutdownInvocationCount = 0
-    private var emittedEvents: [String: [IntentValue]] = [:]
+    /// Nonisolated because `acceptEvent` is: the host must be able to hand a fact to a
+    /// generation without waiting on that generation's executor.
+    private let emittedEvents = FakeEventLog()
     private var instancedViewIDs: Set<String> = []
     private var openedViews: Set<PluginViewInstanceKey> = []
     private var viewOpenGate: FakeStartGate?
@@ -1336,7 +1352,14 @@ private actor FakePluginRuntime: PluginHostRuntime {
     }
 
     func emit(event: String, payload: IntentValue) throws {
-        emittedEvents[event, default: []].append(payload)
+        emittedEvents.record(event: event, payload: payload)
+    }
+
+    /// The fake keeps delivery immediate: what these tests pin is the host's fan-out and
+    /// gating, and a real queue here would only make them assert their own scheduling.
+    nonisolated func acceptEvent(event: String, payload: IntentValue) -> Bool {
+        emittedEvents.record(event: event, payload: payload)
+        return true
     }
 
     func invokeViewSelect(
@@ -1423,8 +1446,8 @@ private actor FakePluginRuntime: PluginHostRuntime {
         shutdownInvocationCount
     }
 
-    func emittedPayloads(for event: String) -> [IntentValue] {
-        emittedEvents[event] ?? []
+    nonisolated func emittedPayloads(for event: String) -> [IntentValue] {
+        emittedEvents.payloads(for: event)
     }
 
     func configureInstancedView(

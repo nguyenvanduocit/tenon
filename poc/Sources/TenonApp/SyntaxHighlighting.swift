@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import AppKit
 import STPluginNeon
 // TreeSitterResource defines TreeSitterLanguage. It's an internal module of the

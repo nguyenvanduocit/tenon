@@ -322,7 +322,7 @@ final class ProviderExecutionLaneTests: XCTestCase {
                 reservedInteractiveRequests: 0,
                 reservedInteractiveBytes: 0
             ),
-            confirmationAuthorizer: IntentConfirmationAuthorizer { _ in .approved }
+            confirmationAuthorizer: IntentConfirmationAuthorizer { _ in .allowOnce }
         )
         for intentID in intentIDs {
             try await dispatcher.registerRule(

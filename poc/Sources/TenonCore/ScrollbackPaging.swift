@@ -1,3 +1,4 @@
+// @domain: terminal-surface
 import Foundation
 
 /// The paging rule behind `terminal.scrollback.read.v1`, kept as a pure function of

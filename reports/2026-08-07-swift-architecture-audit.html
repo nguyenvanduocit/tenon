@@ -1,0 +1,581 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenon — Swift Architecture &amp; Structure Audit</title>
+  <style>
+    :root {
+      color-scheme: light dark;
+      --bg: #f4f5f7;
+      --surface: #ffffff;
+      --surface-2: #eef0f3;
+      --text: #17191d;
+      --muted: #616873;
+      --line: #d9dde3;
+      --accent: #2463eb;
+      --accent-soft: #e9f0ff;
+      --critical: #b42318;
+      --critical-soft: #feeceb;
+      --high: #b54708;
+      --high-soft: #fff3e8;
+      --major: #6f42c1;
+      --major-soft: #f1ebff;
+      --medium: #175cd3;
+      --medium-soft: #eaf2ff;
+      --good: #067647;
+      --good-soft: #e8f8f0;
+      --shadow: 0 10px 32px rgba(21, 28, 40, .08);
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1014;
+        --surface: #171a20;
+        --surface-2: #20242c;
+        --text: #f3f5f7;
+        --muted: #aeb5c0;
+        --line: #313741;
+        --accent: #7aa2ff;
+        --accent-soft: #1c2b4d;
+        --critical: #ff8a80;
+        --critical-soft: #421d1d;
+        --high: #ffb36b;
+        --high-soft: #422814;
+        --major: #c6a7ff;
+        --major-soft: #302347;
+        --medium: #8fb8ff;
+        --medium-soft: #1b2b48;
+        --good: #69d8a6;
+        --good-soft: #15372b;
+        --shadow: 0 14px 38px rgba(0, 0, 0, .26);
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+      font: 15px/1.58 -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code, pre { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+    code { font-size: .91em; }
+    .shell { max-width: 1260px; margin: 0 auto; padding: 28px; }
+    .hero {
+      padding: 34px;
+      border: 1px solid var(--line);
+      border-radius: 20px;
+      background:
+        radial-gradient(circle at 90% 8%, color-mix(in srgb, var(--accent) 18%, transparent), transparent 34%),
+        var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .eyebrow { color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .12em; text-transform: uppercase; }
+    h1 { margin: 8px 0 10px; max-width: 900px; font-size: clamp(32px, 5vw, 58px); line-height: 1.02; letter-spacing: -.045em; }
+    h2 { margin: 0 0 14px; font-size: 25px; letter-spacing: -.025em; }
+    h3 { margin: 0 0 7px; font-size: 17px; }
+    p { margin: 0 0 12px; }
+    .lede { max-width: 930px; color: var(--muted); font-size: 18px; }
+    .verdict {
+      display: inline-flex; gap: 8px; align-items: center; margin-top: 15px; padding: 8px 11px;
+      border: 1px solid color-mix(in srgb, var(--high) 35%, var(--line)); border-radius: 999px;
+      background: var(--high-soft); color: var(--high); font-weight: 700;
+    }
+    .meta { display: flex; flex-wrap: wrap; gap: 14px 22px; margin-top: 20px; color: var(--muted); font-size: 13px; }
+    .grid { display: grid; gap: 16px; }
+    .stats { grid-template-columns: repeat(4, minmax(0, 1fr)); margin: 18px 0; }
+    .two { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+    .three { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+    .card, section {
+      border: 1px solid var(--line); border-radius: 16px; background: var(--surface); box-shadow: 0 5px 18px rgba(20, 25, 35, .035);
+    }
+    .card { padding: 18px; }
+    section { margin-top: 18px; padding: 26px; }
+    .stat .value { display: block; font-size: 28px; font-weight: 770; line-height: 1.08; letter-spacing: -.03em; }
+    .stat .label { color: var(--muted); font-size: 13px; }
+    .callout { padding: 16px 18px; border-left: 4px solid var(--accent); border-radius: 10px; background: var(--accent-soft); }
+    .callout strong { display: block; margin-bottom: 5px; }
+    .good { border-left-color: var(--good); background: var(--good-soft); }
+    .critical-callout { border-left-color: var(--critical); background: var(--critical-soft); }
+    .toc { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 18px; }
+    .toc a, .filter button {
+      border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px; background: var(--surface-2); color: var(--text);
+      font: inherit; font-size: 13px; cursor: pointer;
+    }
+    .filter { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0 18px; }
+    .filter button.active { border-color: var(--accent); background: var(--accent-soft); color: var(--accent); }
+    .finding { position: relative; padding-left: 22px; }
+    .finding + .finding { margin-top: 12px; }
+    .finding::before { content: ""; position: absolute; top: 24px; bottom: 24px; left: 0; width: 4px; border-radius: 6px; background: var(--medium); }
+    .finding[data-severity="critical"]::before { background: var(--critical); }
+    .finding[data-severity="high"]::before { background: var(--high); }
+    .finding[data-severity="major"]::before { background: var(--major); }
+    .finding[data-severity="medium"]::before { background: var(--medium); }
+    .badge { display: inline-block; min-width: 64px; margin-right: 7px; padding: 3px 8px; border-radius: 999px; text-align: center; font-size: 11px; font-weight: 800; letter-spacing: .04em; text-transform: uppercase; }
+    .badge.critical { color: var(--critical); background: var(--critical-soft); }
+    .badge.high { color: var(--high); background: var(--high-soft); }
+    .badge.major { color: var(--major); background: var(--major-soft); }
+    .badge.medium { color: var(--medium); background: var(--medium-soft); }
+    .badge.good { color: var(--good); background: var(--good-soft); }
+    .evidence { margin-top: 9px; color: var(--muted); font-size: 13px; }
+    .fix { margin-top: 9px; }
+    ul, ol { margin: 9px 0 0; padding-left: 22px; }
+    li + li { margin-top: 5px; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; }
+    table { width: 100%; border-collapse: collapse; min-width: 720px; }
+    th, td { padding: 11px 13px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+    th { position: sticky; top: 0; background: var(--surface-2); color: var(--muted); font-size: 12px; letter-spacing: .04em; text-transform: uppercase; }
+    tr:last-child td { border-bottom: 0; }
+    .diagram { overflow-x: auto; padding: 10px 0 2px; }
+    svg { min-width: 760px; width: 100%; height: auto; }
+    .node { fill: var(--surface-2); stroke: var(--line); stroke-width: 1.5; }
+    .node-title { fill: var(--text); font: 700 16px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .node-copy { fill: var(--muted); font: 12px -apple-system, BlinkMacSystemFont, sans-serif; }
+    .edge { stroke: var(--accent); stroke-width: 2; fill: none; marker-end: url(#arrow); }
+    pre { margin: 10px 0 0; padding: 16px; overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface-2); color: var(--text); font-size: 12px; line-height: 1.55; }
+    .phase { position: relative; padding-top: 36px; }
+    .phase .phase-no { position: absolute; top: 14px; right: 16px; color: var(--accent); font: 800 28px/1 ui-monospace, monospace; opacity: .35; }
+    .phase small { color: var(--muted); }
+    .checks { list-style: none; padding-left: 0; }
+    .checks li::before { content: "✓"; display: inline-block; width: 20px; color: var(--good); font-weight: 800; }
+    .anti li::marker { color: var(--critical); }
+    .muted { color: var(--muted); }
+    .foot { margin: 22px 0 12px; color: var(--muted); font-size: 12px; text-align: center; }
+    [hidden] { display: none !important; }
+    @media (max-width: 900px) {
+      .shell { padding: 15px; }
+      .hero, section { padding: 20px; }
+      .stats, .three { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+      .two { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 560px) {
+      .stats, .three { grid-template-columns: 1fr; }
+      h1 { font-size: 38px; }
+      .meta { display: grid; gap: 7px; }
+    }
+    @media print {
+      body { background: #fff; color: #111; }
+      .shell { max-width: none; padding: 0; }
+      .hero, section, .card { box-shadow: none; break-inside: avoid; }
+      .filter, .toc { display: none; }
+      a { color: inherit; text-decoration: underline; }
+    }
+  </style>
+</head>
+<body>
+<main class="shell">
+  <header class="hero">
+    <div class="eyebrow">Swift 6 · macOS · Architecture audit · 2026-08-07</div>
+    <h1>Boundary đúng; implementation đã đến lúc phải chia nhỏ có kiểm soát.</h1>
+    <p class="lede">Tenon có target DAG sạch, luật interaction rất mạnh và test headless rộng. Rủi ro hiện tại không nằm ở “thiếu pattern Swift”, mà ở lifecycle/backpressure chưa kín, một số UI identity/focus sai, và các coordinator vật lý quá lớn so với domain mà chúng sở hữu.</p>
+    <div class="verdict">Verdict: NEEDS DISCUSSION — sửa liveness/correctness trước, refactor dần sau</div>
+    <div class="meta">
+      <span><strong>Scope:</strong> first-party Swift + shipped plugins; loại vendor khỏi design judgment</span>
+      <span><strong>Snapshot:</strong> worktree đang dirty và thay đổi trong lúc audit</span>
+      <span><strong>Verification:</strong> <code>swift test</code> 1,444/1,444 pass</span>
+    </div>
+    <nav class="toc" aria-label="Mục lục">
+      <a href="#executive">Kết luận</a><a href="#inventory">Inventory</a><a href="#architecture">Modules</a>
+      <a href="#hotspots">Hotspots</a><a href="#findings">Findings</a><a href="#swift-practice">Swift best practice</a>
+      <a href="#target-structure">Cấu trúc đích</a><a href="#roadmap">Roadmap</a><a href="#verification">Definition of done</a>
+    </nav>
+  </header>
+
+  <div class="grid stats">
+    <div class="card stat"><span class="value">161</span><span class="label">Swift source files trong 4 first-party targets</span></div>
+    <div class="card stat"><span class="value">68.4K</span><span class="label">dòng Swift production</span></div>
+    <div class="card stat"><span class="value">57.8K</span><span class="label">dòng Swift test</span></div>
+    <div class="card stat"><span class="value">1,444</span><span class="label">tests pass, 0 failure, 89 giây</span></div>
+  </div>
+
+  <section id="executive">
+    <h2>Kết luận điều hành</h2>
+    <div class="grid three">
+      <div class="callout good"><strong>Giữ nguyên</strong>Target direction, luật DIRECT/INTENT/EVENT/RESOURCE, functional core, bounded mailbox/process/filesystem defenses và Swift 6 warnings-as-errors.</div>
+      <div class="callout critical-callout"><strong>Sửa trước</strong>Update-loop T-091, plugin shutdown/event liveness, CLI physical lifetime, singleton window và plugin UI identity/draft.</div>
+      <div class="callout"><strong>Refactor sau</strong>Tách <code>PluginHost</code>, dispatcher và canvas theo responsibility trong cùng target; chỉ split module khi metrics chứng minh.</div>
+    </div>
+    <p style="margin-top:16px">Không nên rewrite. Kiến trúc semantic đã tốt; vấn đề là cohesion vật lý và vài lifecycle contract không được mã hóa đến terminal state. Roadmap đúng là <strong>characterization → correctness → decomposition → module decision</strong>.</p>
+  </section>
+
+  <section id="inventory">
+    <h2>Inventory thư mục, target và test</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Khu vực</th><th>Files</th><th>LOC</th><th>Vai trò thực tế</th><th>Nhận định</th></tr></thead>
+        <tbody>
+          <tr><td><code>Sources/TenonIntentCore</code></td><td>21</td><td>11,482</td><td>Intent contracts, dispatcher, mailbox, policy, idempotency, registry</td><td>Kernel độc lập runtime; đúng hướng nhưng dispatcher/idempotency là hotspot lớn.</td></tr>
+          <tr><td><code>Sources/TenonCore</code></td><td>58</td><td>25,139</td><td>Workspace model, plugin host/runtime, provider implementations, persistence</td><td>Không import SwiftUI/AppKit; “headless host” tốt nhưng target đang chứa nhiều subsystem.</td></tr>
+          <tr><td><code>Sources/TenonApp</code></td><td>80</td><td>31,279</td><td>SwiftUI shell, AppKit bridges, composition root, terminal/web/editor surfaces</td><td>Feature files khá phẳng; canvas và presentation adapters cần folder hóa.</td></tr>
+          <tr><td><code>Sources/TenonCLI</code></td><td>2</td><td>534</td><td>Foundation/POSIX client cho control socket và intent bus</td><td>Boundary nhỏ, sạch, đúng luật CLI.</td></tr>
+          <tr><td><code>Tests/*</code></td><td>144</td><td>57,773</td><td>IntentCore, Core, AppState, Integration, UI</td><td>Headless rất mạnh; Xcode-only integration/UI chưa chạy trong CI.</td></tr>
+          <tr><td><code>plugins/*</code></td><td>shipped JS</td><td>—</td><td>Replaceable product features</td><td><code>git/main.js</code>, <code>kanban/main.js</code>, <code>file-explorer/main.js</code> là complexity hotspots.</td></tr>
+          <tr><td><code>Vendor/*</code></td><td>large</td><td>excluded</td><td>STTextView, Neon, tree-sitter, Ghostty artifacts</td><td>Không dùng vendor complexity để đánh giá Tenon architecture.</td></tr>
+        </tbody>
+      </table>
+    </div>
+    <div class="grid two" style="margin-top:16px">
+      <div class="card"><h3>Root layout hiện tại</h3><pre>tenon/
+├── docs/                 architecture + product decisions
+├── prototypes/           interface experiments
+├── reports/              review artifacts
+├── .kanban/              execution evidence / tasks
+└── poc/
+    ├── Sources/          4 first-party Swift targets
+    ├── Tests/            5 test layers
+    ├── plugins/          shipped JavaScript features
+    ├── Vendor/           patched third-party sources
+    ├── Package.swift     SwiftPM source
+    └── project.yml       XcodeGen source of truth</pre></div>
+      <div class="card"><h3>Độ phủ review</h3><ul class="checks">
+        <li>Folder/target dependency và access control</li>
+        <li>Nominal types, class/actor ownership và file cohesion</li>
+        <li>Long functions, lifecycle, backpressure, cancellation</li>
+        <li>SwiftUI state/identity/focus, AppKit bridges, accessibility</li>
+        <li>Tests, CI runner reachability và performance evidence</li>
+        <li>Normative domain/design/interaction contracts</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <section id="architecture">
+    <h2>Module architecture hiện tại</h2>
+    <p class="muted">Hướng phụ thuộc là điểm mạnh chính. Không có lý do tạo thêm intent hay owner boundary chỉ vì tách Swift target.</p>
+    <div class="diagram" role="img" aria-label="Sơ đồ phụ thuộc target Tenon">
+      <svg viewBox="0 0 980 340">
+        <defs><marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="3" orient="auto"><path d="M0,0 L0,6 L7,3 z" fill="currentColor"/></marker></defs>
+        <rect class="node" x="25" y="35" width="240" height="92" rx="14"/><text class="node-title" x="45" y="68">TenonApp</text><text class="node-copy" x="45" y="91">SwiftUI + AppKit + composition</text><text class="node-copy" x="45" y="110">80 files · 31.3K LOC</text>
+        <rect class="node" x="365" y="35" width="240" height="92" rx="14"/><text class="node-title" x="385" y="68">TenonCore</text><text class="node-copy" x="385" y="91">Headless workspace + plugin host</text><text class="node-copy" x="385" y="110">58 files · 25.1K LOC</text>
+        <rect class="node" x="705" y="35" width="240" height="92" rx="14"/><text class="node-title" x="725" y="68">TenonIntentCore</text><text class="node-copy" x="725" y="91">Runtime-independent kernel</text><text class="node-copy" x="725" y="110">21 files · 11.5K LOC</text>
+        <rect class="node" x="365" y="215" width="240" height="92" rx="14"/><text class="node-title" x="385" y="248">TenonCLI</text><text class="node-copy" x="385" y="271">Foundation + POSIX only</text><text class="node-copy" x="385" y="290">2 files · 534 LOC</text>
+        <path class="edge" d="M265,80 C305,80 325,80 365,80"/><path class="edge" d="M605,80 C645,80 665,80 705,80"/><path class="edge" d="M605,255 C660,255 675,130 720,117"/><path class="edge" d="M265,95 C430,170 570,160 720,117"/>
+      </svg>
+    </div>
+    <div class="grid three">
+      <div class="card"><span class="badge good">Pass</span><h3>Dependency direction</h3><p><code>IntentCore ← Core ← App</code>; CLI chỉ dùng IntentCore. Core không import AppKit/SwiftUI.</p></div>
+      <div class="card"><span class="badge good">Pass</span><h3>Interaction ownership</h3><p>DIRECT/INTENT/EVENT/RESOURCE có inventory và fitness tests; không nên tạo “service bus” nội bộ mới.</p></div>
+      <div class="card"><span class="badge medium">Decision</span><h3>Swift API surface</h3><p>Hai library products và ≥1,470 <code>public</code> declarations/members không khớp rõ với “app, never a versioned dependency”; đây là governance decision, không phải runtime defect.</p></div>
+    </div>
+  </section>
+
+  <section id="hotspots">
+    <h2>Class, type và function hotspots</h2>
+    <p class="muted">Line count không tự tạo bug; ở đây nó đáng chú ý vì trùng với nhiều domain, nhiều terminal state hoặc co-change rộng.</p>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Symbol / file</th><th>Size</th><th>Responsibility signal</th><th>Hành động</th></tr></thead>
+        <tbody>
+          <tr><td><a href="../poc/Sources/TenonCore/PluginHost.swift"><code>PluginHost.swift</code></a></td><td>3,182 lines; class ~1,993</td><td>5 domain tags; lifecycle, contributions, events, settings, intent presentation</td><td>Giữ façade, extract collaborators theo MARK/domain.</td></tr>
+          <tr><td><a href="../poc/Sources/TenonApp/SpatialCanvasView.swift"><code>SpatialCanvasView.swift</code></a></td><td>2,495 lines; 18 types</td><td>Pure coordinator + representable + NSView + hosting + drag + controls</td><td>Tách file/folder trong <code>TenonApp</code>, không tạo target ngay.</td></tr>
+          <tr><td><a href="../poc/Sources/TenonIntentCore/IntentDispatcher.swift"><code>IntentDispatcher.send</code></a></td><td>~1,176 lines</td><td>Admission, consent, causal graph, idempotency, invocation, settlement trong một transaction script</td><td>Typed phase contexts/collaborators, giữ một canonical <code>send</code>.</td></tr>
+          <tr><td><a href="../poc/Sources/TenonIntentCore/IntentIdempotency.swift"><code>IntentIdempotency.swift</code></a></td><td>2,406 lines</td><td>API types + actor store + SQLite adapter</td><td>Tách types/store/persistence trong cùng target.</td></tr>
+          <tr><td><a href="../poc/Sources/TenonCore/CoreIntentCatalog.swift"><code>CoreIntentCatalog.makeDefinitions</code></a></td><td>~1,340 lines; file 2,327</td><td>Canonical declarative inventory — size có chủ ý</td><td>Accepted exception; chỉ extract helpers nếu compile/navigation metrics cần, không phá inventory.</td></tr>
+          <tr><td><a href="../poc/Sources/TenonCore/PluginRuntime.swift"><code>PluginRuntime.swift</code></a></td><td>1,945 lines</td><td>JS execution, callback pump, invocation/state/lifecycle</td><td>Sửa containment/deadline trước khi tách.</td></tr>
+          <tr><td><code>WorkspaceCatalog</code></td><td>~1,146 lines</td><td>Pure mutation rules, heavily tested</td><td>Không chia chỉ vì LOC; chia theo mutation families khi edit pressure tăng.</td></tr>
+          <tr><td><code>plugins/git/main.js</code></td><td>635 NLOC; CCN 26</td><td><code>parseStatus</code> nested complexity</td><td>Tách pure parser/projection/local handlers; không self-send intent.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="findings">
+    <h2>Findings ưu tiên</h2>
+    <div class="filter" aria-label="Lọc mức độ">
+      <button class="active" data-filter="all">Tất cả</button><button data-filter="critical">Critical</button>
+      <button data-filter="high">High</button><button data-filter="major">Major</button><button data-filter="medium">Medium</button>
+    </div>
+
+    <article class="card finding" data-severity="critical">
+      <h3><span class="badge critical">Critical</span>T-091: SwiftUI update loop đã gây 100% CPU / 11 GB, root cause và regression test vẫn mở</h3>
+      <p>Live process sample chứng minh một lazy-layout prefetch cycle không hội tụ trong <code>NSHostingView</code>. Việc bỏ sizing options là correction đúng intent nhưng task tự ghi rõ chưa phải proven fix.</p>
+      <p class="evidence"><a href="../.kanban/tasks/T-091-a-pane-never-spins-the-update-loop.md">T-091 lines 19–99, 120–139</a>; real Agent Lens trigger chưa tái hiện ở lines 141–152.</p>
+      <p class="fix"><strong>Release gate:</strong> tái hiện trên real app + live agent, instrument update turns, xác định root, thêm bound regression. Hoàn tất T-092 diagnostics để lần spin tiếp theo tạo receipt sớm; không coi sizing-options change hay telemetry là resolution.</p>
+    </article>
+
+    <article class="card finding" data-severity="high">
+      <h3><span class="badge high">High</span>Plugin shutdown timeout không bao phủ đoạn có thể treo</h3>
+      <p><code>shutdown(timeout:)</code> chỉ đưa timeout vào executor sau <code>prepareForShutdown</code>, callback pump, invocation drain và state emitter. Synchronous runaway JS có thể giữ pinned executor trước khi deadline bắt đầu.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonCore/PluginRuntime.swift">PluginRuntime.swift:479–498, 565–639</a>; <a href="../poc/Sources/TenonCore/PluginHost.swift">PluginHost.swift:2288–2306</a>.</p>
+      <p class="fix"><strong>Fix:</strong> global deadline cho toàn state machine; JS execution watchdog/interrupt hoặc process isolation; concurrent retirement dưới một bounded deadline; test bằng helper subprocess.</p>
+    </article>
+
+    <article class="card finding" data-severity="high">
+      <h3><span class="badge high">High</span>EVENT host task vẫn bị observer chi phối, tạo cross-plugin head-of-line blocking</h3>
+      <p>JavaScript <code>tenon.events.emit</code> trả về ngay, nhưng publisher generation giữ một pending host task cho tới khi <code>PluginHost.publish</code> await tuần tự từng <code>runtime.emit</code>. Observer chậm/runaway vì thế vẫn điều khiển publisher backpressure, shutdown và thứ tự plugin sau.</p>
+      <p class="evidence"><a href="../docs/architecture-interaction-boundaries.md">Boundary law: lines 530–534, 767–777</a>; <a href="../poc/Sources/TenonCore/PluginHost.swift">PluginHost.swift:1869–1974</a>.</p>
+      <p class="fix"><strong>Fix:</strong> bounded mailbox riêng cho mỗi runtime generation; publish = validate/enqueue/return; định nghĩa capacity, overflow/coalescing, retirement và terminal state.</p>
+    </article>
+
+    <article class="card finding" data-severity="high">
+      <h3><span class="badge high">High</span>CLI cap 8 chỉ giữ decode phase, không giữ toàn physical request lifetime</h3>
+      <p>Semaphore được nhả khi closure đã post lên MainActor, trong khi FD và async intent reply còn sống. Flood valid slow requests có thể tăng FD/tasks/main-queue không giới hạn.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/CLISocketServer.swift">CLISocketServer.swift:37–39, 426–519</a>.</p>
+      <p class="fix"><strong>Fix:</strong> permit sở hữu FD đến terminal close, once-settlement guard, bounded queued+executing+replying, fail-fast busy, track/cancel tasks khi stop.</p>
+    </article>
+
+    <article class="card finding" data-severity="high">
+      <h3><span class="badge high">High</span>Main scene cho phép nhiều window nhưng composition/surface resources là singleton</h3>
+      <p><code>WindowGroup</code> dùng một <code>AppComposition</code>; <code>SurfacePool</code> chỉ có một surface/slot và Ghostty trả cùng <code>NSView</code>. New Window có thể reparent terminal view khỏi window đầu, trái one-window product contract.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/TenonApp.swift">TenonApp.swift:12–22</a>; <a href="../poc/Sources/TenonApp/SurfacePool.swift">SurfacePool.swift:86–90</a>; <a href="../poc/Sources/TenonApp/GhosttySurface.swift">GhosttySurface.swift:1363–1366</a>.</p>
+      <p class="fix"><strong>Fix:</strong> dùng singleton <code>Window("Tenon", id: "main")</code> hoặc replace New Window semantics; UI test pin đúng một main window.</p>
+    </article>
+
+    <article class="card finding" data-severity="high">
+      <h3><span class="badge high">High</span>External plugin contribution có thể ghi đè text draft đang được nhập</h3>
+      <p>Mọi external value change ghi đè <code>@State draft</code> kể cả khi field focused. Cùng repo đã có implementation focus-safe cho pane header, nên đây là behavior gap có fix pattern rõ.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/BuiltInSlotViews.swift">BuiltInSlotViews.swift:520–537</a>; đối chiếu <a href="../poc/Sources/TenonApp/PaneHeaderBar.swift">PaneHeaderBar.swift:267–302</a>.</p>
+      <p class="fix"><strong>Fix:</strong> focus/dirty rule; test plugin republish trong lúc user gõ và external value apply sau blur.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span>Agent Hook live ingestion chưa áp dụng cùng live-process validation như discovery</h3>
+      <p>Exact pane/surface token là lớp binding thứ hai nên global bearer một mình chưa tạo exploit. Tuy vậy, live ingestion vẫn project provider/PGID do client khai báo mà không revalidate foreground process như transcript discovery path; integrity risk còn thật nhưng confidence về exploit là medium.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/AgentSessionHooks.swift">AgentSessionHooks.swift:239–270, 332–358, 682–735</a>; <a href="../poc/Sources/TenonApp/AgentLensSession.swift">AgentLensSession.swift:364–393</a>.</p>
+      <p class="fix"><strong>Fix:</strong> một actor validate foreground PGID/provider ancestry/root session rồi atomically record+publish; credential per-surface, rotate theo incarnation.</p>
+    </article>
+
+    <article class="card finding" data-severity="high">
+      <h3><span class="badge high">High</span>Blocking DNS resolve nằm ngoài cancellation/deadline</h3>
+      <p><code>getaddrinfo</code> chạy trong detached task, không cooperative; transport timeout tính trước DNS và không recompute remaining time sau resolve.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonCore/NetworkIntentProvider.swift">NetworkIntentProvider.swift:103–163, 295–390</a>.</p>
+      <p class="fix"><strong>Fix:</strong> cancellable/bounded resolver ownership; recheck cancellation/deadline sau resolve và recompute transport timeout; barrier test với injected blocked resolver.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span><code>PluginHost</code> là five-domain god coordinator mà chính repo đã đánh dấu split candidate</h3>
+      <p>3,182 lines, five domains và co-change rộng. Đây là finding cohesion rõ hơn mọi generic “class nên nhỏ”.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonCore/PluginHost.swift">PluginHost.swift:1–6, 352–358</a>; <a href="../docs/domains.md">domains.md:36–38</a>.</p>
+      <p class="fix"><strong>Fix:</strong> giữ <code>PluginHost</code> façade/atomic generation commit; extract lifecycle inventory, administration/settings/storage, contribution projection, event router và presentation index bằng typed DIRECT calls.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span><code>IntentDispatcher.send</code> là transaction script ~1,176 lines</h3>
+      <p>Một actor method điều phối admission, causality, consent, idempotency, provider invocation và settlement. Single semantic entry là đúng; single physical function thì khó audit terminal path.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonIntentCore/IntentDispatcher.swift">IntentDispatcher.swift:312–1491</a>.</p>
+      <p class="fix"><strong>Fix:</strong> typed phase values như Admission/Authorization/Invocation/Settlement; actor-owned collaborators chỉ khi chúng có invariant riêng; giữ một public <code>send</code>, không thêm handwritten command API.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span><code>SpatialCanvasView.swift</code> trộn pure interaction, SwiftUI bridge, AppKit hosting và accessibility</h3>
+      <p>2,495 lines / 18 nominal types; coordinator, representable, NSView, drag overlays, content host, card và controls có lifecycle khác nhau.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/SpatialCanvasView.swift">SpatialCanvasView.swift:73, 403, 474, 1599, 1680, 1689, 2466</a>.</p>
+      <p class="fix"><strong>Fix:</strong> split thành feature folder trong cùng target; types internal/private; preserve identity and behavior; regression tests trước move.</p>
+    </article>
+
+    <article class="card finding" data-severity="medium">
+      <h3><span class="badge medium">Medium</span>Swift library products và access control chưa nói rõ supported API</h3>
+      <p>Package export <code>TenonCore</code>/<code>TenonIntentCore</code> trong khi comment nói app không phải versioned dependency; lexical scan có ≥1,470 public declarations/members, nhưng extension surface thật là JS intents/contributions.</p>
+      <p class="evidence"><a href="../poc/Package.swift">Package.swift:4–21</a>; package access đã dùng tại <a href="../poc/Sources/TenonCore/PluginHost.swift">PluginHost.swift:333–347</a>.</p>
+      <p class="fix"><strong>Decision:</strong> nếu internal, bỏ library products và migrate cross-target API sang <code>package</code>; nếu SDK, định nghĩa SemVer/docs/symbol graph. Thêm API surface baseline.</p>
+    </article>
+
+    <article class="card finding" data-severity="medium">
+      <h3><span class="badge medium">Medium</span>Domain fitness ratchet chưa đạt normative “every source file”</h3>
+      <p>141 file chưa tag vẫn pass vì test là ratchet; 48 file chưa tag dài hơn 400 lines. Đây là governance debt P0, không phải runtime blocker.</p>
+      <p class="evidence"><a href="../docs/domains.md">domains.md:20–38</a>; <a href="../poc/Tests/TenonCoreTests/DomainTagFitnessTests.swift">DomainTagFitnessTests.swift:16–20, 86–100</a>.</p>
+      <p class="fix"><strong>Fix:</strong> tag theo coherent batches + mandatory symbol-edge traversal, hạ budget mỗi batch tới 0; file mới vẫn phải tag ngay.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span>Sync filesystem/process work còn nằm trên UI ownership path</h3>
+      <p>CLI installer/file checks, recent persistence và một số Git subprocess logic chạy từ view/MainActor. Nó vừa tạo hitch risk vừa để isolation chỉ là convention.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/SettingsView.swift">SettingsView.swift:167–235</a>; <a href="../poc/Sources/TenonApp/CLICommandInstaller.swift">CLICommandInstaller.swift:23–75</a>; Git duplication ở <a href="../poc/Sources/TenonApp/DiffSlotView.swift">DiffSlotView.swift:156–250</a> và <a href="../poc/Sources/TenonApp/ChangesPanelView.swift">ChangesPanelView.swift:239–343</a>.</p>
+      <p class="fix"><strong>Fix:</strong> typed DIRECT services + persistence actor/serial writer; MainActor chỉ publish observable snapshot; coalesce/version writes.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span>Custom plugin modal thiếu native modality/focus/accessibility semantics</h3>
+      <p>Overlay tự vẽ chưa trap/own initial focus, chưa ẩn background khỏi accessibility tree, chưa có modal AX semantics và close icon thiếu spoken label.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/PluginModalOverlay.swift">PluginModalOverlay.swift:41–86</a>.</p>
+      <p class="fix"><strong>Fix:</strong> ưu tiên native <code>.sheet(item:)</code>; nếu custom, implement AX modal/focus/keyboard isolation/restore và regression test với terminal background.</p>
+    </article>
+
+    <article class="card finding" data-severity="major">
+      <h3><span class="badge major">Major</span>Native integration/UI suites chưa chạy trong CI</h3>
+      <p>CI chạy <code>swift test</code> và Xcode build, nhưng không execute 6 integration + 9 UI tests chỉ có trong Xcode scheme. Repowise cũng chưa có coverage map nên “untested hotspot” là unknown, không phải chứng cứ thiếu test.</p>
+      <p class="evidence"><a href="../.github/workflows/macos-ci.yml">macos-ci.yml:42–54</a>; <a href="../poc/project.yml">project.yml:197–250</a>.</p>
+      <p class="fix"><strong>Fix:</strong> IntegrationTests trên PR; UI smoke ở dedicated GUI lane/nightly với xcresult/screenshots/AX hierarchy/logs; ingest coverage map.</p>
+    </article>
+
+    <article class="card finding" data-severity="medium">
+      <h3><span class="badge medium">Medium</span>Stateful plugin nodes dùng offset identity nhưng chưa có reproduction</h3>
+      <p>Recursive <code>ForEach(..., id: \.offset)</code> có thể chuyển draft/focus khi sibling insert/reorder, nhưng schema chưa có stable general node ID và audit chưa tái hiện lỗi. Đây là focused schema/test item, không phải HIGH defect đã chứng minh.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/BuiltInSlotViews.swift">BuiltInSlotViews.swift:704</a>.</p>
+      <p class="fix"><strong>Fix:</strong> dựng red test reorder trước; nếu cần node ID, cập nhật CONTRIBUTION inventory, schema, parser, docs và fitness tests trong cùng change.</p>
+    </article>
+
+    <article class="card finding" data-severity="medium">
+      <h3><span class="badge medium">Medium</span>Slot accessibility value đang mang test/debug metadata</h3>
+      <p>VoiceOver nhận raw UUID/grid internals thay vì pane title, state và vị trí dễ hiểu. Đây là accessibility defect thật nhưng thấp hơn modal/focus failure.</p>
+      <p class="evidence"><a href="../poc/Sources/TenonApp/SpatialCanvasView.swift">SpatialCanvasView.swift:1746–1758, 2399</a>.</p>
+      <p class="fix"><strong>Fix:</strong> semantic label/value cho người dùng; test dùng stable identifier riêng thay vì chiếm AX value.</p>
+    </article>
+
+    <article class="card finding" data-severity="medium">
+      <h3><span class="badge medium">Medium</span>Design/accessibility/localization còn drift</h3>
+      <p>Settings dùng decorative feature palettes trái design law; header contract 31pt nhưng runtime token 34pt; attention chủ yếu truyền bằng màu; icon-only shell buttons thiếu AX label; chưa có String Catalog/locale-aware search.</p>
+      <p class="evidence"><a href="../designs.md">designs.md:47–67, 94–98, 153–155</a>; <a href="../poc/Sources/TenonApp/SettingsView.swift">SettingsView.swift:27–101</a>; <a href="../poc/Sources/TenonApp/TenonTheme.swift">TenonTheme.swift:52–74</a>.</p>
+      <p class="fix"><strong>Fix:</strong> sau correctness: reconcile tokens, add semantic spoken state + Differentiate Without Color, String Catalog, <code>LocalizedStringResource</code>, locale-aware format/search.</p>
+    </article>
+  </section>
+
+  <section id="swift-practice">
+    <h2>So sánh với Swift / SwiftUI best practice</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Practice</th><th>Tenon</th><th>Đánh giá</th><th>Khoảng cách cần đóng</th></tr></thead>
+        <tbody>
+          <tr><td>Swift 6 concurrency checks + warnings as errors</td><td>Swift language mode v6, all first-party targets warnings-as-errors</td><td><span class="badge good">Strong</span></td><td>Nâng tools 6.2 để bỏ unsafe warning flag khi toolchain được chốt.</td></tr>
+          <tr><td>Value semantics / actor ownership</td><td>Pure workspace rules, actors cho mailbox/idempotency, @MainActor observable UI</td><td><span class="badge good">Strong</span></td><td>Mã hóa persistence/UI ownership rõ hơn; audit <code>@unchecked Sendable</code> bằng invariant tests.</td></tr>
+          <tr><td>Structured lifetime + cooperative cancellation</td><td>Process/streams tốt; JS shutdown, CLI reply, DNS và agent input còn gap</td><td><span class="badge high">Gap</span></td><td>Mỗi task/FD/generation phải có owner, capacity, cancellation và terminal settlement.</td></tr>
+          <tr><td>SwiftUI stable identity</td><td>Main lists tốt; plugin recursive node/settings section còn offset ID</td><td><span class="badge high">Gap</span></td><td>Semantic stable ID, constant row identity, focus-safe external sync.</td></tr>
+          <tr><td>Small view invalidation boundaries</td><td>Nhiều model dùng Observation tốt; canvas/Agent Lens/Automation files lớn</td><td><span class="badge major">Mixed</span></td><td>Extract real <code>View</code> types với narrow inputs, không chỉ computed subviews.</td></tr>
+          <tr><td>AppKit bridge lifecycle</td><td>Source editor/PTY identity xử lý tốt; canvas update path có reentrancy risk</td><td><span class="badge major">Mixed</span></td><td>Keep <code>updateNSView</code> idempotent, không mutate observed state trong update; instrument T-091.</td></tr>
+          <tr><td>Native controls, focus, accessibility</td><td>Pane header/palette có nền tốt; modal/slot/attention/icon labels chưa đủ</td><td><span class="badge major">Mixed</span></td><td>Native sheet/control, semantic AX, keyboard traversal, Larger Text/VoiceOver receipts.</td></tr>
+          <tr><td>Access control / API resilience</td><td><code>public</code> rất rộng, package boundary chưa quyết định</td><td><span class="badge major">Decision</span></td><td>Internal/package surface hoặc formal SDK; symbol graph budget.</td></tr>
+          <tr><td>Test pyramid</td><td>1,444 headless tests + hosted AppKit + Xcode integration/UI</td><td><span class="badge good">Strong</span></td><td>Chạy native suites đúng lane; thêm adversarial lifecycle/performance receipts.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </section>
+
+  <section id="target-structure">
+    <h2>Cấu trúc đích đề xuất</h2>
+    <p><strong>Bước đầu chỉ reorganize trong target hiện có.</strong> Folder là tool giảm cognitive load; target mới chỉ đáng có khi dependency/ownership/compile metrics chứng minh.</p>
+    <div class="grid two">
+      <div class="card"><h3>TenonApp — feature folders</h3><pre>Sources/TenonApp/
+├── App/                    TenonApp, AppComposition, startup
+├── Shell/                  window, title bar, sidebar, commands
+├── Canvas/
+│   ├── SpatialInteraction.swift
+│   ├── SpatialCanvasRepresentable.swift
+│   ├── SpatialCanvasNSView.swift
+│   ├── SpatialSlotCardView.swift
+│   └── SpatialAccessibility.swift
+├── Features/
+│   ├── AgentLens/          model, projection, views, sources
+│   ├── Automation/
+│   ├── Settings/
+│   ├── Palette/
+│   ├── Files/
+│   └── Changes/
+├── Presentation/           plugin prompt + modal
+├── Bridges/                terminal, editor, web preview
+└── DesignSystem/           TenonTheme + shared native controls</pre></div>
+      <div class="card"><h3>Core targets — responsibility files</h3><pre>Sources/TenonCore/
+├── Workspace/              value catalog + store/persistence
+├── PluginHost/
+│   ├── PluginHost.swift    stable façade + atomic commit
+│   ├── Lifecycle.swift
+│   ├── Contributions.swift
+│   ├── Events.swift
+│   └── Administration.swift
+├── PluginRuntime/          generation, JS executor, shutdown
+├── Providers/              filesystem/network/process/terminal
+└── Persistence/
+
+Sources/TenonIntentCore/
+├── Contracts/
+├── Dispatch/               admission → auth → invoke → settle
+├── Mailbox/
+├── Policy/
+└── Idempotency/            types, store, SQLite adapter</pre></div>
+    </div>
+    <div class="callout" style="margin-top:16px"><strong>Target-split decision gate</strong>Sau khi file decomposition ổn định, đo incremental compile time, dependency fan-out và package/public surface. Chỉ khi có lợi ích rõ mới cân nhắc <code>TenonWorkspaceCore</code>, <code>TenonPluginPlatform</code> hoặc <code>TenonProviders</code>. Tách target không thay đổi semantic owner; same-owner vẫn DIRECT.</div>
+  </section>
+
+  <section id="roadmap">
+    <h2>Plan improve — dependency-aware roadmap</h2>
+    <div class="grid two">
+      <div class="card phase"><span class="phase-no">0</span><h3>Stabilize &amp; characterize</h3><small>0–2 tuần · P0</small><ol>
+        <li>Close T-091: real-app repro, root cause, bounded update-turn regression.</li>
+        <li>Finish T-092 health diagnostics/signposts; capture Instruments/xcresult receipts.</li>
+        <li>Add failing tests for shutdown deadline, slow event observer, CLI valid-request flood.</li>
+        <li>Pin singleton window and plugin field draft/reorder behavior bằng UI/hosted tests.</li>
+      </ol></div>
+      <div class="card phase"><span class="phase-no">1</span><h3>Correct lifecycle &amp; trust</h3><small>1–3 tuần · P0/P1</small><ol>
+        <li>Contain JS execution and bound whole shutdown state machine.</li>
+        <li>Per-runtime bounded EVENT mailboxes; fix CLI lifetime permit.</li>
+        <li>Bound/cancel DNS resolver; revalidate agent hook against live process.</li>
+        <li>Revision agent registry reconciliation; caller-cancellable Agent input.</li>
+        <li>Move filesystem/persistence work off MainActor.</li>
+      </ol></div>
+      <div class="card phase"><span class="phase-no">2</span><h3>Decompose without behavior change</h3><small>3–6 tuần · P1</small><ol>
+        <li>Feature-folder <code>SpatialCanvas</code> and <code>PluginUIPrompt</code>.</li>
+        <li>Split idempotency/policy/runtime files by responsibility.</li>
+        <li>Extract dispatcher phases; keep canonical public send.</li>
+        <li>Extract <code>PluginHost</code> collaborators one domain slice at a time, façade intact.</li>
+        <li>Characterization tests + zero XcodeGen diff per move.</li>
+      </ol></div>
+      <div class="card phase"><span class="phase-no">3</span><h3>Clarify API &amp; architecture metadata</h3><small>2–4 tuần · P1/P2</small><ol>
+        <li>Decide internal modules vs supported Swift SDK.</li>
+        <li>Migrate <code>public</code> → <code>package/internal</code> or formalize SemVer surface.</li>
+        <li>Tag 141 legacy files in coherent batches; budget → 0.</li>
+        <li>Upgrade manifest/toolchain parity and ingest coverage mapping.</li>
+      </ol></div>
+      <div class="card phase"><span class="phase-no">4</span><h3>Native quality &amp; shipped plugins</h3><small>Ongoing · P2</small><ol>
+        <li>Native modal semantics, AX labels/states, Differentiate Without Color.</li>
+        <li>Reconcile design tokens; add String Catalog and locale-aware search/formatting.</li>
+        <li>Refactor git/kanban/file-explorer pure parsers and local handlers.</li>
+        <li>Run IntegrationTests on PR, UI smoke on GUI/nightly lane.</li>
+      </ol></div>
+      <div class="card phase"><span class="phase-no">5</span><h3>Re-evaluate module splits</h3><small>Evidence gate · không mặc định</small><ol>
+        <li>Measure incremental build, index latency, co-change and import fan-out.</li>
+        <li>Split target only where ownership/dependency seam is stable.</li>
+        <li>Keep CoreIntentCatalog canonical; never fragment inventory for LOC cosmetics.</li>
+        <li>Record accepted exceptions and guardrails in fitness tests.</li>
+      </ol></div>
+    </div>
+  </section>
+
+  <section id="verification">
+    <h2>Definition of done và guardrails đề xuất</h2>
+    <div class="grid two">
+      <div class="card"><h3>Correctness receipts</h3><ul class="checks">
+        <li>Runaway plugin helper cannot block quit/reload beyond declared deadline.</li>
+        <li>EVENT publisher returns after bounded enqueue; slow observer cannot block another plugin.</li>
+        <li>CLI physical in-flight FD/request count never exceeds configured cap.</li>
+        <li>DNS cancellation/deadline test proves no stale transport starts.</li>
+        <li>Only one main window; no view reparenting.</li>
+        <li>Plugin draft/focus survives republish and reorder with stable identity.</li>
+        <li>T-091 has real repro, root explanation and red/green bound test.</li>
+      </ul></div>
+      <div class="card"><h3>Structural guardrails <span class="muted">(team targets, không phải luật Swift)</span></h3><ul class="checks">
+        <li>Untagged source budget = 0; tối đa 2 domain tags/file trước khi split review.</li>
+        <li>Coordinator &gt;800 lines hoặc function &gt;150 lines cần documented exception/review.</li>
+        <li>No stateful <code>ForEach</code> identity theo index/offset.</li>
+        <li>No synchronous filesystem/subprocess work on MainActor.</li>
+        <li>Public/package surface có symbol-graph baseline và intentional diff.</li>
+        <li><code>swift test</code>, focused fitness, XcodeGen diff, app build và native test lane đều xanh.</li>
+      </ul></div>
+    </div>
+    <div class="callout good" style="margin-top:16px"><strong>Baseline audit</strong><code>repowise distill swift test</code> hoàn tất ngày 2026-08-07: 1,444 tests, 0 failures, 89.047 giây. Static health data không có coverage map; vì vậy các nhãn “untested hotspot” chỉ được dùng như unknown traceability, không coi là thiếu test.</div>
+  </section>
+
+  <section>
+    <h2>Anti-goals</h2>
+    <ul class="anti">
+      <li>Không big-bang rewrite hoặc “module per feature”.</li>
+      <li>Không tạo intent giữa built-in SwiftUI/AppKit và same-owner application services.</li>
+      <li>Không thêm protocol cho mọi collaborator chỉ để mock; dùng value/pure function hoặc concrete actor trước.</li>
+      <li>Không blanket <code>@MainActor</code>, <code>@unchecked Sendable</code> hay <code>Task.detached</code> để dập compiler warning.</li>
+      <li>Không chia canonical intent inventory hoặc pure workspace rules chỉ để đạt line-count đẹp.</li>
+      <li>Không làm cosmetic modernization trước P0 liveness/correctness.</li>
+    </ul>
+  </section>
+
+  <p class="foot">Prepared from the live Tenon worktree. Read-only audit; report artifact is the only intentional file added by this review.</p>
+</main>
+<script>
+  const buttons = [...document.querySelectorAll('[data-filter]')];
+  const findings = [...document.querySelectorAll('.finding[data-severity]')];
+  buttons.forEach(button => button.addEventListener('click', () => {
+    const filter = button.dataset.filter;
+    buttons.forEach(item => item.classList.toggle('active', item === button));
+    findings.forEach(item => { item.hidden = filter !== 'all' && item.dataset.severity !== filter; });
+  }));
+</script>
+</body>
+</html>

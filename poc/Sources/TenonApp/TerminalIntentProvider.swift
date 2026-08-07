@@ -1,3 +1,4 @@
+// @domain: intent-bus, terminal-surface
 import Foundation
 import TenonCore
 import TenonIntentCore

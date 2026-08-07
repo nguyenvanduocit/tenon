@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import Foundation
 import Observation
 import TenonCore

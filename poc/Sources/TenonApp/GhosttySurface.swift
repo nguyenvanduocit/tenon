@@ -1,3 +1,4 @@
+// @domain: terminal-surface
 import AppKit
 import GhosttyKit
 import SwiftUI
@@ -127,7 +128,7 @@ struct GhosttySurfaceSize: Equatable {
 // event (`terminal.title-changed`). Deliberately out of scope: splits, IME preedit
 // polish, cmd-click links, selection reading, search, scrollbar overlay.
 
-// MARK: - Process-wide runtime
+// MARK: - Process-wide runtime  @domain: terminal-surface
 
 /// Owns the single `ghostty_app_t`. libghostty is initialized once per process;
 /// every surface shares this app and gets its own `ghostty_surface_t`.
@@ -164,14 +165,14 @@ final class GhosttyRuntime {
         }
 
         guard ghostty_init(UInt(CommandLine.argc), CommandLine.unsafeArgv) == GHOSTTY_SUCCESS else {
-            NSLog("tenon: ghostty_init failed")
+            TenonLog.terminal.error("ghostty_init failed")
             return
         }
 
         // Defaults only — deliberately not loading the user's ghostty config so the
         // PoC behaves the same on every machine.
         guard let cfg = ghostty_config_new() else {
-            NSLog("tenon: ghostty_config_new failed")
+            TenonLog.terminal.error("ghostty_config_new failed")
             return
         }
         ghostty_config_finalize(cfg)
@@ -209,7 +210,7 @@ final class GhosttyRuntime {
         }
 
         guard let created = ghostty_app_new(&rt, cfg) else {
-            NSLog("tenon: ghostty_app_new failed")
+            TenonLog.terminal.error("ghostty_app_new failed")
             ghostty_config_free(cfg)
             return
         }
@@ -524,7 +525,7 @@ final class GhosttyRuntime {
     }
 }
 
-// MARK: - The NSView hosting one ghostty surface
+// MARK: - The NSView hosting one ghostty surface  @domain: terminal-surface
 
 /// Uniquely owned native resources whose teardown is independent of actor state.
 ///
@@ -617,7 +618,7 @@ final class GhosttyNSView: NSView {
         }
     }
 
-    // MARK: Surface lifecycle
+    // MARK: Surface lifecycle  @domain: terminal-surface
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -740,7 +741,7 @@ final class GhosttyNSView: NSView {
 
         surface = ghostty_surface_new(app, &config)
         guard let surface else {
-            NSLog("tenon: ghostty_surface_new failed")
+            TenonLog.terminal.error("ghostty_surface_new failed")
             return
         }
 
@@ -765,7 +766,7 @@ final class GhosttyNSView: NSView {
         return (UInt32(width), UInt32(height))
     }
 
-    // MARK: Geometry
+    // MARK: Geometry  @domain: terminal-surface
 
     override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
@@ -804,7 +805,7 @@ final class GhosttyNSView: NSView {
         return value as? UInt32
     }
 
-    // MARK: Focus
+    // MARK: Focus  @domain: terminal-surface
 
     override var acceptsFirstResponder: Bool { true }
 
@@ -832,7 +833,7 @@ final class GhosttyNSView: NSView {
         ghostty_surface_set_focus(surface, focused)
     }
 
-    // MARK: Keyboard
+    // MARK: Keyboard  @domain: terminal-surface
 
     override func keyDown(with event: NSEvent) {
         guard let surface else {
@@ -957,7 +958,7 @@ final class GhosttyNSView: NSView {
         }
     }
 
-    // MARK: Mouse
+    // MARK: Mouse  @domain: terminal-surface
 
     override func updateTrackingAreas() {
         super.updateTrackingAreas()
@@ -1186,7 +1187,7 @@ final class GhosttyNSView: NSView {
         return ghostty_surface_process_exited(surface)
     }
 
-    // MARK: Preedit
+    // MARK: Preedit  @domain: terminal-surface
 
     private func syncPreedit() {
         guard let surface else { return }
@@ -1201,7 +1202,7 @@ final class GhosttyNSView: NSView {
     }
 }
 
-// MARK: - NSTextInputClient (minimal: enough for typing + basic IME)
+// MARK: - NSTextInputClient (minimal: enough for typing + basic IME)  @domain: terminal-surface
 
 extension GhosttyNSView: @MainActor NSTextInputClient {
     func insertText(_ string: Any, replacementRange: NSRange) {
@@ -1264,7 +1265,7 @@ extension GhosttyNSView: @MainActor NSTextInputClient {
     }
 }
 
-// MARK: - TerminalSurface conformance
+// MARK: - TerminalSurface conformance  @domain: terminal-surface
 
 final class GhosttySurface: TerminalSurface {
     let backendName = "libghostty"

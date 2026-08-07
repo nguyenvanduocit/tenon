@@ -45,7 +45,7 @@ Presentation follows these rules:
 | A provider message, tool transition, request, or lifecycle fact already happened | EVENT | `AgentLensEvent`, reduced into an immutable `AgentLensSnapshot` |
 | A provider reports root session identity and transcript location | EVENT | `AgentHookServer` authenticates and decodes a bounded hook payload into `AgentSessionRegistry` |
 | Claude Code reports a tool starting or finishing, a question waiting, or a turn ending | EVENT | the same authenticated hook payload, projected by `AgentHookLensProjection` into `AgentLensEvent` |
-| Answering a question the agent is showing | DIRECT | `AgentLensInputQueue.sendKeystroke` sends the key that prompt reads, never text plus a return |
+| Answering a question the agent is showing | DIRECT | `AgentLensInputQueue.submitOption` sends one provider-specific selection frame: Claude receives the option hotkey plus Return; Codex receives only the committing hotkey |
 | Clicking a file the agent cited in its prose | DIRECT | `AgentFileLinks` resolves the written path; the click calls the typed `WorkspaceStore.openContent(.file(path:))` |
 | Transcript watch | RESOURCE/STREAM | one `AgentTranscriptTailer` stream per attached transcript |
 | Native provider frame ingestion | RESOURCE/STREAM | `CodexProtocolIngress` over caller-owned transport frames |
@@ -152,6 +152,12 @@ sanitized for the bracketed-paste terminator, delivered as one bracketed-paste f
 and followed by carriage return in a separate frame. One actor drains a FIFO so two
 submissions cannot interleave. If identity changes between frames, return is withheld,
 the send fails visibly, and the UI switches back to Terminal.
+
+Listed options use the provider's actual terminal grammar. Claude's digit moves the picker
+highlight and Return accepts it, so both bytes travel in one guarded frame. Codex commits
+the digit itself, so no Return is appended where it could leak into the next prompt. The
+submitted interaction ID stays latched until the provider advances or resolves the request;
+repeat clicks are disabled and cannot send a second answer into the following prompt.
 
 Native structured input is represented as a separate capability. The transcript PTY
 adapter never claims approvals, questions, or structured input it cannot safely perform.

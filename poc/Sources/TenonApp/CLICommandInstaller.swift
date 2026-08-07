@@ -1,3 +1,4 @@
+// @domain: cli-control
 import Foundation
 
 /// Installs the `tenon-cli` binary into the user's PATH so agents and scripts can drive Tenon from
@@ -44,6 +45,34 @@ enum CLICommandInstaller {
     /// command used by production.
     static func canInstall(in instanceChannel: AppInstanceChannel) -> Bool {
         instanceChannel == .production && sourceURL != nil
+    }
+
+    /// What the settings page needs to draw, as one value.
+    struct Status: Equatable, Sendable {
+        var isInstalled = false
+        var canInstall = false
+        var installedPath: String?
+    }
+
+    /// Reads that state off the UI thread.
+    ///
+    /// Every field here is a filesystem probe, and they used to be evaluated inside `body` — so
+    /// each render stat'd a home directory that may be on a network volume, on the thread that
+    /// draws frames.
+    @concurrent
+    static func status(in instanceChannel: AppInstanceChannel) async -> Status {
+        let installed = isInstalled
+        return Status(
+            isInstalled: installed,
+            canInstall: canInstall(in: instanceChannel),
+            installedPath: installed ? installedURL.path : nil
+        )
+    }
+
+    /// Copying a binary is not UI work either.
+    @concurrent
+    static func installOffMain(in instanceChannel: AppInstanceChannel) async throws -> URL {
+        try install(in: instanceChannel)
     }
 
     enum InstallError: Error, CustomStringConvertible {

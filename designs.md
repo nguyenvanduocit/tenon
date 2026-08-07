@@ -95,7 +95,7 @@ state.
 | --- | --- |
 | title bar | 36 pt |
 | status bar | 24 pt |
-| slot header | 31 pt |
+| slot header | 34 pt |
 | compact control | 28–32 pt |
 | compact menu row | 28 pt |
 | two-line utility row | 36–40 pt |

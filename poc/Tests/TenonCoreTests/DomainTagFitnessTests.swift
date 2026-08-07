@@ -13,11 +13,11 @@ import XCTest
 /// carry `plugin-events`. That omission is the original failure tagging exists to reduce, so
 /// `docs/domains.md` keeps the symbol-traversal step mandatory rather than selling past it.
 final class DomainTagFitnessTests: XCTestCase {
-    /// Files under `Sources/` that predate the tag layer. This number may only go **down**.
+    /// Files under `Sources/` that carry no tag. It is **zero**, and may only stay there.
     ///
-    /// It is a ratchet, not a target: a new untagged file turns this red, and the fix is one
-    /// line at the top of that file. Lower it whenever you tag a batch.
-    private static let untaggedFileBudget = 146
+    /// The ratchet reached its end: every source file names the product concern it serves, so
+    /// an untagged file is now simply a missing line rather than a debt being paid down.
+    private static let untaggedFileBudget = 0
 
     func testEveryUsedDomainIsDeclaredInTheVocabulary() throws {
         let declared = try declaredDomains()

@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import CoreGraphics
 
 /// Pure geometry for the resizable workspace sidebar.

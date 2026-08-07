@@ -803,7 +803,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
     private func items(
         of runtime: PluginRuntime,
         instance: String
-    ) async -> [PluginRowItem] {
+    ) async -> [TreeRowItem] {
         await runtime.snapshot().views
             .first { $0.instanceID == instance }?.items ?? []
     }

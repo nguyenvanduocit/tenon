@@ -1,3 +1,4 @@
+// @domain: command-surface
 import SwiftUI
 import TenonCore
 
@@ -155,6 +156,7 @@ struct QuickCommandControl: View {
                     }
                     .padding(.vertical, 5)
                 }
+                .tenonScrollbarStyle()
                 .frame(height: RunbookMetrics.libraryListHeight(rows: matches.count))
             }
         }
@@ -289,6 +291,7 @@ private struct RunbookLibraryRow: View {
                         .font(.system(size: 10, weight: .semibold))
                         .foregroundStyle(hovering ? TenonTheme.amber : TenonTheme.muted)
                         .frame(width: 16)
+                        .accessibilityHidden(true)
 
                     VStack(alignment: .leading, spacing: 2) {
                         HStack(spacing: 6) {
@@ -314,6 +317,7 @@ private struct RunbookLibraryRow: View {
                             .font(.system(size: 9, weight: .medium))
                             .foregroundStyle(TenonTheme.muted)
                             .help("Only available in this project")
+                            .accessibilityLabel("Only available in this project")
                     }
 
                     Image(systemName: "play.fill")
@@ -457,6 +461,7 @@ private struct QuickCommandEditor: View {
                 }
                 .padding(RunbookMetrics.contentInset)
             }
+            .tenonScrollbarStyle()
 
             Rectangle()
                 .fill(TenonTheme.line)
@@ -568,6 +573,7 @@ private struct QuickCommandEditor: View {
                             : TenonTheme.interfaceFont(size: 12)
                     )
                     .scrollContentBackground(.hidden)
+                    .tenonScrollbarStyle()
                     .focused($focusedField, equals: .body)
                     .padding(8)
                     .accessibilityLabel(draft.runner.isAgent ? "Brief" : "Command")

@@ -1,3 +1,4 @@
+// @domain: plugin-host
 import Foundation
 
 /// The manifest carried inside a single-file plugin (T-047).

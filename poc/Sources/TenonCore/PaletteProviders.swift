@@ -1,3 +1,4 @@
+// @domain: command-surface, plugin-contributions
 import Foundation
 import TenonIntentCore
 

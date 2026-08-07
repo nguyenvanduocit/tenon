@@ -1103,18 +1103,59 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
         await queue.stop()
     }
 
-    func testAnsweringAListedOptionSendsOnlyThatKeyAndNeverSubmits() async throws {
+    func testClaudeListedOptionSelectsAndSubmitsInOneGuardedFrame() async throws {
         let recorder = AgentLensFrameRecorder()
         let queue = AgentLensInputQueue(
             transport: AgentLensInputTransport { frame in recorder.send(frame) }
         )
 
-        try await queue.sendKeystroke("2")
+        try await queue.submitOption("2", using: AgentProvider.claude.optionSubmission)
 
-        // Measured against a live claude session: the digit alone picks the option. A
-        // trailing return would be read by whatever prompt comes next.
+        XCTAssertEqual(recorder.frames, ["2\r"])
+        await queue.stop()
+    }
+
+    func testCodexListedOptionDoesNotLeakReturnIntoTheNextPrompt() async throws {
+        let recorder = AgentLensFrameRecorder()
+        let queue = AgentLensInputQueue(
+            transport: AgentLensInputTransport { frame in recorder.send(frame) }
+        )
+
+        try await queue.submitOption("2", using: AgentProvider.codex.optionSubmission)
+
         XCTAssertEqual(recorder.frames, ["2"])
         await queue.stop()
+    }
+
+    func testListedOptionsHaveOneNativeRenderer() throws {
+        let packageRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+        let view = packageRoot.appendingPathComponent("Sources/TenonApp/AgentLensView.swift")
+        let source = try String(contentsOf: view, encoding: .utf8)
+        let rendererCount = source.components(separatedBy: "ForEach(request.options)").count - 1
+
+        XCTAssertEqual(rendererCount, 1, "Listed options must have one native renderer")
+    }
+
+    func testOptionSubmissionGateRejectsDoubleClickUntilTheProviderAdvances() {
+        var gate = AgentOptionSubmissionGate()
+
+        XCTAssertTrue(gate.begin(requestID: "question-1", pendingRequestID: "question-1"))
+        XCTAssertFalse(gate.begin(requestID: "question-1", pendingRequestID: "question-1"))
+
+        gate.reconcile(pendingRequestID: "question-2")
+        XCTAssertTrue(gate.begin(requestID: "question-2", pendingRequestID: "question-2"))
+    }
+
+    func testOptionSubmissionGateReopensWhenDeliveryFails() {
+        var gate = AgentOptionSubmissionGate()
+
+        XCTAssertTrue(gate.begin(requestID: "question-1", pendingRequestID: "question-1"))
+        gate.fail(requestID: "question-1")
+
+        XCTAssertTrue(gate.begin(requestID: "question-1", pendingRequestID: "question-1"))
     }
 
     func testAFailedHookInstallCanBeRepeatedFromWhereItIsReported() {

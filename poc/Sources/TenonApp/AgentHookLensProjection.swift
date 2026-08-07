@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 
 /// Turns one provider lifecycle hook into the lens facts it carries.

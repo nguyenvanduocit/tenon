@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 public enum IntentContractClass: String, Sendable, Equatable, Hashable, Codable {

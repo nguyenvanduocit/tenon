@@ -1,3 +1,4 @@
+// @domain: command-surface
 import Foundation
 import Observation
 import TenonCore

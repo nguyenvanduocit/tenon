@@ -1,0 +1,81 @@
+// @domain: spatial-canvas
+/// The SwiftUI boundary: one `NSViewRepresentable` that makes the canvas and reconfigures it.
+///
+/// It is deliberately thin. Everything it could be tempted to decide is already decided —
+/// by the interaction coordinator above it, and by the `NSView` below it — so `updateNSView`
+/// stays a hand-off rather than a place where two layout systems negotiate.
+import AppKit
+import SwiftUI
+import TenonCore
+import TenonIntentCore
+
+struct SpatialCanvasView: NSViewRepresentable {
+    let tab: TenonCore.Tab
+    let workspacePath: URL
+    let allLiveSlotIDs: Set<UUID>
+    let activeSlotID: UUID?
+    let store: WorkspaceStore
+    let pool: SurfacePool
+    let agentLens: AgentLensPool
+    let webPool: PluginWebSurfacePool
+    let host: PluginHost
+    let intentRuntime: AppIntentRuntime
+    let palette: CommandPaletteState
+    let agentSuggestions: [AgentLaunchSuggestion]
+    let editorStates: EditorPaneStateStore
+    let pluginSnapshots: [PluginSnapshot]
+    let pluginViewSections: [PluginViewSection]
+    let webSurfaceTitles: [WebSurfaceKey: String]
+    /// T-029: the per-slot attention projection; the card header shows its state dot.
+    let paneAttention: [UUID: PaneActivity]
+    /// The host-native panes' header contributions, passed as a VALUE exactly like
+    /// `paneAttention`. `WorkspaceStageView.body` reads them off `PaneHeaderStore`, and
+    /// that read is what invalidates this representable when one changes.
+    let paneHeaders: [UUID: PaneHeader]
+    /// The same store, for the command route back down. Held apart from the dictionary
+    /// because routing a click is not something a re-render should depend on.
+    let paneHeaderStore: PaneHeaderStore
+    let router: DragRouter
+    let automation: AutomationScheduler
+    let automationSchedulesEnabled: Bool
+    let automationActions: AutomationPaneActions
+
+    func makeNSView(context: Context) -> SpatialCanvasNSView {
+        SpatialCanvasNSView()
+    }
+
+    func updateNSView(_ view: SpatialCanvasNSView, context: Context) {
+        view.configure(
+            tab: tab,
+            workspacePath: workspacePath,
+            allLiveSlotIDs: allLiveSlotIDs,
+            activeSlotID: activeSlotID,
+            store: store,
+            pool: pool,
+            agentLens: agentLens,
+            webPool: webPool,
+            host: host,
+            intentRuntime: intentRuntime,
+            palette: palette,
+            agentSuggestions: agentSuggestions,
+            editorStates: editorStates,
+            pluginSnapshots: pluginSnapshots,
+            pluginViewSections: pluginViewSections,
+            webSurfaceTitles: webSurfaceTitles,
+            paneAttention: paneAttention,
+            paneHeaders: paneHeaders,
+            paneHeaderStore: paneHeaderStore,
+            router: router,
+            automation: automation,
+            automationSchedulesEnabled: automationSchedulesEnabled,
+            automationActions: automationActions
+        )
+    }
+
+    static func dismantleNSView(
+        _ view: SpatialCanvasNSView,
+        coordinator: Coordinator
+    ) {
+        view.prepareForRemoval()
+    }
+}

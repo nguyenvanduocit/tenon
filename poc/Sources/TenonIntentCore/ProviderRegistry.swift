@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 public struct ProviderRegistryRevision: Sendable, Equatable, Hashable, Codable, Comparable {

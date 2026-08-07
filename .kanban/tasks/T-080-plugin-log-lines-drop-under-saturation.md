@@ -44,3 +44,28 @@ measured the drop at the 512/1024 boundary.
       queue, or backpressure — whichever, silence is not one of them
 - [ ] No path can deadlock the runtime actor; the actor-reentrancy argument is written down
 - [ ] Full suite green
+
+## Fixed (session 784166de, 2026-08-08)
+
+`PluginLogQueue` — ordered, bounded, and outside the actor:
+
+- **Ordered.** One queue with one consumer, so lines arrive in the order they were written.
+  `PluginLogOrderingTests` proves it, and the mutation proves the test: restoring the
+  per-line fan-out scrambles 200 lines into `0, 1, 3, 4, …, 2, 20, 22, 18, …` and loses the
+  last-line guarantee.
+- **Bounded, and loud about it.** A full queue counts what it refused and says
+  `N log line(s) were dropped` once, when it drains — never silence.
+- **Outside the actor.** Two designs were tried and rejected on evidence before this one: a
+  chained task per line released recursively and took the stack with it (SIGSEGV), and a drain
+  that hopped back onto the actor trapped on the pinned executor during shutdown (SIGTRAP).
+  The consumer never re-enters the runtime.
+- Shutdown drains the queue with the storage chain, because the last thing a failing
+  generation says is usually the most useful thing it said.
+
+## It also made the suite flaky
+
+`PaneHeaderSchemaTests.testAHeaderFullOfMalformedItemsNamesTheFirstFewAndCountsTheRest` failed
+once in a full run and passed in the next full run and in three isolated runs. It asserts the
+*order* of two `tenon.log` lines, and every line goes through `hostTasks.launch`, which neither
+orders nor guarantees delivery. So the same defect that can drop a line can also reorder two —
+the flake is a symptom of this card, not a separate one, and fixing the ledger fixes both.

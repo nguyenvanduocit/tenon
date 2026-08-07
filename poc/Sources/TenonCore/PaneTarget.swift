@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import Foundation
 
 /// Resolves a CLI pane selector to a concrete slot `UUID`, validating existence and — for

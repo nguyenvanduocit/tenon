@@ -1,3 +1,4 @@
+// @domain: spatial-canvas
 import AppKit
 import Observation
 import SwiftUI

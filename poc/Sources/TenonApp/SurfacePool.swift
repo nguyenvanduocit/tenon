@@ -1,3 +1,4 @@
+// @domain: terminal-surface
 import Foundation
 import Observation
 import SwiftUI
@@ -9,6 +10,15 @@ struct TerminalObservation: Equatable {
     let commandFinishedCount: Int
     let columns: Int?
     let rows: Int?
+}
+
+struct TerminalProcessInspectionSnapshot: Equatable, Sendable {
+    let liveTerminalCount: Int
+    let foregroundPIDs: Set<UInt64>
+
+    var hasCompleteIdentity: Bool {
+        liveTerminalCount == foregroundPIDs.count
+    }
 }
 
 /// Owns one `TerminalSurface` per slot, plus the per-slot titles the tab bar shows.
@@ -270,6 +280,20 @@ final class SurfacePool {
     /// Whether a slot's child process has exited, for `tenon-cli pane.wait --for exit`.
     func processExited(for slotID: UUID) -> Bool {
         surfaces[slotID]?.processExited ?? false
+    }
+
+    /// Captures only cheap backend identity on `MainActor`; the caller sends this value to
+    /// `TerminalJobInspector` so spawning and reading `ps` never blocks the UI thread.
+    /// A surface whose process is already gone needs no close confirmation. A live surface
+    /// without a foreground pid makes `hasCompleteIdentity` false so close fails safe.
+    func terminalProcessSnapshot(
+        for slotIDs: Set<UUID>
+    ) -> TerminalProcessInspectionSnapshot {
+        let liveSurfaces = slotIDs.compactMap { surfaces[$0] }.filter { !$0.processExited }
+        return TerminalProcessInspectionSnapshot(
+            liveTerminalCount: liveSurfaces.count,
+            foregroundPIDs: Set(liveSurfaces.compactMap(\.foregroundPID).filter { $0 > 1 })
+        )
     }
 
     /// How many shell commands have finished in a slot, for `pane.wait --for command-finished`.

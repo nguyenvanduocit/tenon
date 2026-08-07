@@ -93,3 +93,37 @@ final class PluginModalPresentationTests: XCTestCase {
         )
     }
 }
+
+@MainActor
+final class IntentPermissionPresentationTests: XCTestCase {
+    func testEveryPermissionChoiceReturnsItsDistinctDecision() async throws {
+        for decision in [
+            IntentConfirmationDecision.allowOnce,
+            .alwaysAllow,
+            .alwaysAllowForCaller,
+            .denied,
+        ] {
+            let state = PluginUIState()
+            let response = Task {
+                try await state.request(
+                    kind: .permission(
+                        title: "Write to terminal",
+                        detail: "plugin:test requests a write action on this Mac.",
+                        destructive: false
+                    )
+                )
+            }
+            while state.current == nil {
+                await Task.yield()
+            }
+
+            state.resolvePermission(decision)
+            let resolved = try await response.value
+
+            XCTAssertEqual(
+                resolved,
+                .permission(decision)
+            )
+        }
+    }
+}

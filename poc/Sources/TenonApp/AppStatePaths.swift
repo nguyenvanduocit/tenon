@@ -1,3 +1,4 @@
+// @domain: diagnostics
 import Foundation
 
 enum AppStatePathError: Error, Sendable, Equatable, CustomStringConvertible {
@@ -69,6 +70,15 @@ struct AppStatePaths: Sendable, Equatable {
     /// about this person and this machine, not about one project.
     var openHandlerApprovalsFile: URL {
         applicationSupportRoot.appendingPathComponent(".open-handler-approvals.json")
+    }
+
+    /// What the app recorded about its own health (T-092). Application-level and not
+    /// workspace-level, because a stalled runloop is a fact about this process, not about
+    /// whichever project happened to be open when it stalled.
+    var diagnosticsJournalFile: URL {
+        applicationSupportRoot
+            .appendingPathComponent("diagnostics", isDirectory: true)
+            .appendingPathComponent("health.jsonl")
     }
 
     static func resolve(

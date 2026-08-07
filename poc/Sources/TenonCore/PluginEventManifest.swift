@@ -1,3 +1,4 @@
+// @domain: plugin-events
 import Foundation
 import TenonIntentCore
 

@@ -1,3 +1,4 @@
+// @domain: workspace-model, spatial-canvas
 import Foundation
 
 public struct GridRect: Equatable, Sendable {

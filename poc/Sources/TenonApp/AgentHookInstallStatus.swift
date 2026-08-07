@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 
 /// Whether each provider's Tenon hook is actually installed, and how to try again.

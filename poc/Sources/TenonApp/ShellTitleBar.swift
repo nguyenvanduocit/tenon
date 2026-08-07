@@ -1,7 +1,15 @@
+// @domain: workspace-model, attention
 import AppKit
 import SwiftUI
 import TenonCore
 import TenonIntentCore
+
+private struct PendingTabClose {
+    let workspaceID: UUID
+    let tabID: UUID
+    let title: String
+    let reason: TerminalJobTermination.Inspection
+}
 
 /// The full-width top row shared with the traffic lights. Its left zone (app identity
 /// + sidebar toggle) sits above the sidebar column; its right zone (the tab strip,
@@ -24,6 +32,10 @@ struct ShellTitleBar: View {
     /// Which tab's right-click launcher popover is open, if any. One value for the whole
     /// strip: opening a second tab's launcher closes the first.
     @State private var contextLauncherTab: UUID?
+    @State private var pendingTabClose: PendingTabClose?
+    /// Only the newest process-table check may close or present for a tab. This keeps rapid
+    /// close clicks from letting an older asynchronous answer act on a later UI state.
+    @State private var tabCloseCheckID: UUID?
 
     /// Dispatch a launcher command as if it had been chosen *on this tab*.
     ///
@@ -82,6 +94,56 @@ struct ShellTitleBar: View {
         }
     }
 
+    private func requestClose(_ tab: TenonCore.Tab, title: String) {
+        guard let workspaceID = activeWorkspace?.id else { return }
+        tabCloseCheckID = nil
+        let snapshot = pool.terminalProcessSnapshot(for: Set(tab.slots.map(\.id)))
+        let target = PendingTabClose(
+            workspaceID: workspaceID,
+            tabID: tab.id,
+            title: title,
+            reason: .unavailable
+        )
+
+        guard snapshot.liveTerminalCount > 0 else {
+            store.closeTab(tab.id, in: workspaceID)
+            return
+        }
+        guard snapshot.hasCompleteIdentity else {
+            pendingTabClose = target
+            return
+        }
+
+        let checkID = UUID()
+        tabCloseCheckID = checkID
+        Task { @MainActor in
+            let inspection = await TerminalJobInspector.live.inspect(
+                foregroundPIDs: snapshot.foregroundPIDs
+            )
+            guard tabCloseCheckID == checkID else { return }
+            tabCloseCheckID = nil
+            guard tabExists(target.tabID, in: target.workspaceID) else { return }
+
+            switch inspection {
+            case .idle:
+                store.closeTab(target.tabID, in: target.workspaceID)
+            case .running, .unavailable:
+                pendingTabClose = PendingTabClose(
+                    workspaceID: target.workspaceID,
+                    tabID: target.tabID,
+                    title: target.title,
+                    reason: inspection
+                )
+            }
+        }
+    }
+
+    private func tabExists(_ tabID: UUID, in workspaceID: UUID) -> Bool {
+        store.catalog.workspaces
+            .first(where: { $0.id == workspaceID })?
+            .tabs.contains(where: { $0.id == tabID }) == true
+    }
+
     /// Width the tab chips actually need, so the row can hand everything past them
     /// to the drag surface instead of letting the scroll view swallow the whole side.
     @State private var tabStripWidth: CGFloat = 0
@@ -108,6 +170,35 @@ struct ShellTitleBar: View {
                 .frame(maxWidth: .infinity)
         }
         .background(WindowDragArea(color: TenonTheme.chromeNS))
+        .alert(
+            "Close Tab?",
+            isPresented: Binding(
+                get: { pendingTabClose != nil },
+                set: { if !$0 { pendingTabClose = nil } }
+            ),
+            presenting: pendingTabClose
+        ) { pending in
+            Button("Close Tab", role: .destructive) {
+                store.closeTab(pending.tabID, in: pending.workspaceID)
+                pendingTabClose = nil
+            }
+            Button("Cancel", role: .cancel) {
+                pendingTabClose = nil
+            }
+        } message: { pending in
+            switch pending.reason {
+            case .running:
+                Text(
+                    "“\(pending.title)” has running terminal processes. Closing the tab will terminate them."
+                )
+            case .unavailable:
+                Text(
+                    "Tenon couldn’t verify whether “\(pending.title)” has running terminal processes. Closing the tab will terminate any work still running."
+                )
+            case .idle:
+                EmptyView()
+            }
+        }
     }
 
     private var leftZone: some View {
@@ -174,8 +265,9 @@ struct ShellTitleBar: View {
             ScrollView(.horizontal) {
                 HStack(spacing: 3) {
                     ForEach(Array(activeTabs.enumerated()), id: \.element.id) { index, tab in
+                        let title = tabTitle(for: tab, index: index)
                         TabChip(
-                            title: tabTitle(for: tab, index: index),
+                            title: title,
                             isActive: tab.id == activeWorkspace?.activeTabID,
                             attentionState: PaneAttentionProjection.tabState(
                                 for: tab,
@@ -188,7 +280,7 @@ struct ShellTitleBar: View {
                             canClose: activeTabs.count > 1,
                             isDropTarget: router.activeDropTarget == .existingTab(tab.id),
                             select: { store.selectTab(tab.id) },
-                            close: { store.closeTab(tab.id) },
+                            close: { requestClose(tab, title: title) },
                             openLauncher: { contextLauncherTab = tab.id }
                         )
                         // Report the chip's window-space frame so a pane dragged up
@@ -264,6 +356,7 @@ struct ShellTitleBar: View {
                     }
                 )
             }
+            .tenonScrollbarStyle()
             .scrollIndicators(.hidden)
             // The strip claims only the width its chips need; everything past them
             // goes to the drag surface, so the empty stretch of the row drags and
@@ -294,7 +387,7 @@ struct ShellTitleBar: View {
         }
     }
 
-    // MARK: - Derived state
+    // MARK: - Derived state  @domain: workspace-model
 
     private var activeWorkspace: Workspace? {
         store.catalog.activeWorkspace
@@ -345,17 +438,9 @@ private struct TabChip: View {
                 Image(systemName: "terminal")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(isActive ? TenonTheme.amber : TenonTheme.muted)
+                    .accessibilityHidden(true)
                 if let attentionState {
-                    Circle()
-                        .fill(
-                            Color(
-                                nsColor: PaneAttentionProjection.dotColor(
-                                    for: attentionState
-                                )
-                            )
-                        )
-                        .frame(width: 6, height: 6)
-                        .accessibilityIdentifier("tenon.tabAttentionDot")
+                    TabAttentionDot(state: attentionState)
                 }
                 Text(title)
                     .fontWeight(isUnseen ? .bold : .medium)
@@ -392,6 +477,8 @@ private struct TabChip: View {
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help("Close tab")
+                .accessibilityLabel("Close \(title)")
             }
         }
         .overlay {
@@ -459,6 +546,35 @@ private struct RightClickCatcher: NSViewRepresentable {
     }
 }
 
+/// A tab's attention state, said out loud and — when the system asks for it — drawn as a shape
+/// rather than a hue.
+///
+/// The dot is the entire signal on this surface. Colour alone excludes anyone who cannot
+/// separate these hues and anyone reading the window through VoiceOver, so the state travels
+/// as a spoken value always, and as a glyph whenever Differentiate Without Color is on.
+private struct TabAttentionDot: View {
+    let state: PaneActivityState
+
+    var body: some View {
+        Group {
+            if PaneAttentionProjection.differentiatesWithoutColor {
+                Image(systemName: PaneAttentionProjection.symbolName(for: state))
+                    .font(.system(size: 8, weight: .semibold))
+                    .foregroundStyle(
+                        Color(nsColor: PaneAttentionProjection.dotColor(for: state))
+                    )
+            } else {
+                Circle()
+                    .fill(Color(nsColor: PaneAttentionProjection.dotColor(for: state)))
+                    .frame(width: 6, height: 6)
+            }
+        }
+        .accessibilityIdentifier("tenon.tabAttentionDot")
+        .accessibilityLabel("Activity")
+        .accessibilityValue(PaneAttentionProjection.spokenState(for: state))
+    }
+}
+
 private struct ShellIconButton: View {
     let symbol: String
     let help: String
@@ -476,5 +592,8 @@ private struct ShellIconButton: View {
         .background(TenonTheme.chromeRaised)
         .clipShape(RoundedRectangle(cornerRadius: 6))
         .help(help)
+        // An icon-only control carries no text for VoiceOver to read. The tooltip is
+        // already the sentence a person would say about it, so it is also the label.
+        .accessibilityLabel(help)
     }
 }

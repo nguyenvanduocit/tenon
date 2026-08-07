@@ -1,3 +1,4 @@
+// @domain: command-surface
 import Foundation
 
 /// The result of a fuzzy match: a score (higher is better) and the indices in the
@@ -32,12 +33,39 @@ public enum Fuzzy {
     private static let baseScore = 1
     private static let maxLeadingGapPenalty = 3
 
+    /// Case, diacritics and stroked letters folded to one comparable form.
+    ///
+    /// Plain `lowercased()` is invariant folding, which is not how anyone reads their own
+    /// alphabet: someone searching for `dong` expects to find `Đồng`, and `cafe` should find
+    /// `Café`. Diacritics come off through Foundation's fold; the letters that carry a stroke
+    /// rather than a mark — đ, ø, ł, ħ — are not diacritics to Unicode and need saying.
+    ///
+    /// The fold is deliberately locale-independent. Turkish casing maps `İ` to `ı` and `I` to
+    /// `i`, so folding a command list by the reader's locale would move which names a single
+    /// keystroke reaches — a search box that behaves differently on two machines is worse than
+    /// one that behaves the same everywhere.
+    ///
+    /// One character in, one character out: a whole-string fold can change the length
+    /// (`ß` → `ss`) and silently point the matched ranges at the wrong letters.
+    private static let strokeFolding: [Character: Character] = [
+        "đ": "d", "ø": "o", "ł": "l", "ħ": "h", "ŧ": "t", "ð": "d",
+    ]
+
+    static func folded(_ value: String) -> [Character] {
+        value.map { character in
+            let folded = String(character)
+                .folding(options: [.caseInsensitive, .diacriticInsensitive], locale: nil)
+                .first ?? character
+            return strokeFolding[folded] ?? folded
+        }
+    }
+
     public static func match(_ query: String, in candidate: String) -> FuzzyMatch? {
-        let queryChars = Array(query.lowercased())
+        let queryChars = folded(query)
         guard !queryChars.isEmpty else { return FuzzyMatch(score: 0, matchedIndices: []) }
 
         let candidateChars = Array(candidate)
-        let lowerCandidate = Array(candidate.lowercased())
+        let lowerCandidate = folded(candidate)
 
         var matchedIndices: [Int] = []
         matchedIndices.reserveCapacity(queryChars.count)

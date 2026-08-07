@@ -108,7 +108,7 @@ has no handwritten plugin helper; it uses declared canonical intents.
 editing a tagged one.
 
 Every file under `poc/Sources/` carries one tag above its imports. A file over 400 lines
-(55 of 155 today, longest 3134) tags every `// MARK:` section too, on the MARK line:
+(60 of 173 today, longest 2641) tags every `// MARK:` section too, on the MARK line:
 
 ```swift
 // @domain: plugin-host, plugin-events
@@ -142,8 +142,9 @@ tagging exists to reduce. A tag narrows where to start; it never certifies compl
 stopping at step 1 trades a silent omission for a confident one.
 
 Adding a domain means adding it to `docs/domains.md` with an Excludes line in the same change
-as the file that uses it; a declared domain matching no file fails the suite. Lower
-`untaggedFileBudget` whenever you tag a batch, never raise it.
+as the file that uses it; a declared domain matching no file fails the suite. Every source file
+is tagged today and `untaggedFileBudget` is **0** — a new file without its tag turns the suite
+red for every concurrent agent, and the fix is one line above the imports.
 
 ## Invariants — tests enforce these; do not weaken them
 
@@ -202,7 +203,7 @@ Because several agents run in parallel on that one working tree:
 - **Release when done.** When your task leaves `Doing`, the claim is gone: clear its `Owner / files` list (or archive the task) so those files are free again, and update `.kanban/board.md` per the session-end step below.
 - **Moving a task is a delete plus an insert.** A task line lives in exactly one column. Adding your line to `Doing` without removing the one you left behind puts the same task in two columns, and the stale copy reads as free work — another agent will pick up what you are already doing. Grep the board for your task id after you move it; the answer must be `1`.
 - **Keep the shared test target compiling, even mid-red.** TDD here means a test that *fails*, not a test that fails to *build*. `poc/Tests/` is one target shared by every concurrent agent, so a test naming a type that does not exist yet takes `swift test` down for everyone and destroys their evidence, not just yours. Land the type and its empty or throwing members in the same edit as the test that names them, then let the assertions be the red.
-- **A new source file ships with its `@domain:` tag.** `DomainTagFitnessTests` ratchets on the untagged count, so an untagged new file turns the suite red for every concurrent agent — the fix is one line above the imports, and the rules are in `docs/domains.md`.
+- **A new source file ships with its `@domain:` tag.** `DomainTagFitnessTests` holds the untagged count at zero, so an untagged new file turns the suite red for every concurrent agent — the fix is one line above the imports, and the rules are in `docs/domains.md`.
 
 Rule of thumb: the working tree is always live and shared, so read `.kanban/` before you write, keep it current while you work, and clear it when you finish.
 
@@ -234,3 +235,48 @@ Board: `.kanban/board.md` (index) | Tasks: `.kanban/tasks/T-NNN-slug.md` | Archi
 
 **Rules:** WIP limit = 2 in Doing. Pick highest-priority from Todo. Never skip criteria checkboxes. Slug is kebab-case from title, ≤40 chars.
 <!-- kanban:end -->
+
+<!-- gitnexus:start -->
+# GitNexus — Code Intelligence
+
+This project is indexed by GitNexus as **tenon** (28032 symbols, 310833 relationships, 300 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+
+> Index stale? Run `node .gitnexus/run.cjs analyze` from the project root — it auto-selects an available runner. No `.gitnexus/run.cjs` yet? `npx gitnexus analyze` (npm 11 crash → `npm i -g gitnexus`; #1939).
+
+## Always Do
+
+- **MUST run impact analysis before editing any symbol.** Before modifying a function, class, or method, run `impact({target: "symbolName", direction: "upstream"})` and report the blast radius (direct callers, affected processes, risk level) to the user.
+- **MUST run `detect_changes()` before committing** to verify your changes only affect expected symbols and execution flows. For regression review, compare against the default branch: `detect_changes({scope: "compare", base_ref: "main"})`.
+- **MUST warn the user** if impact analysis returns HIGH or CRITICAL risk before proceeding with edits.
+- When exploring unfamiliar code, use `query({search_query: "concept"})` to find execution flows instead of grepping. It returns process-grouped results ranked by relevance.
+- When you need full context on a specific symbol — callers, callees, which execution flows it participates in — use `context({name: "symbolName"})`.
+- For security review, `explain({target: "fileOrSymbol"})` lists taint findings (source→sink flows; needs `analyze --pdg`).
+
+## Never Do
+
+- NEVER edit a function, class, or method without first running `impact` on it.
+- NEVER ignore HIGH or CRITICAL risk warnings from impact analysis.
+- NEVER rename symbols with find-and-replace — use `rename` which understands the call graph.
+- NEVER commit changes without running `detect_changes()` to check affected scope.
+
+## Resources
+
+| Resource | Use for |
+|----------|---------|
+| `gitnexus://repo/tenon/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/tenon/clusters` | All functional areas |
+| `gitnexus://repo/tenon/processes` | All execution flows |
+| `gitnexus://repo/tenon/process/{name}` | Step-by-step execution trace |
+
+## CLI
+
+| Task | Read this skill file |
+|------|---------------------|
+| Understand architecture / "How does X work?" | `.claude/skills/gitnexus/gitnexus-exploring/SKILL.md` |
+| Blast radius / "What breaks if I change X?" | `.claude/skills/gitnexus/gitnexus-impact-analysis/SKILL.md` |
+| Trace bugs / "Why is X failing?" | `.claude/skills/gitnexus/gitnexus-debugging/SKILL.md` |
+| Rename / extract / split / refactor | `.claude/skills/gitnexus/gitnexus-refactoring/SKILL.md` |
+| Tools, resources, schema reference | `.claude/skills/gitnexus/gitnexus-guide/SKILL.md` |
+| Index, status, clean, wiki CLI commands | `.claude/skills/gitnexus/gitnexus-cli/SKILL.md` |
+
+<!-- gitnexus:end -->

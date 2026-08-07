@@ -1,3 +1,4 @@
+// @domain: workspace-model, attention
 import SwiftUI
 import TenonCore
 

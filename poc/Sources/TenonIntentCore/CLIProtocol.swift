@@ -1,3 +1,4 @@
+// @domain: cli-control
 import Foundation
 
 /// The newline-delimited JSON contract between `tenon-cli` and the running app.
@@ -33,6 +34,10 @@ public struct CLIErrorCode: RawRepresentable, Codable, Equatable, Hashable, Send
     public static let invalidParams = Self(rawValue: "invalid_params")
     public static let intentNotFound = Self(rawValue: "intent_not_found")
     public static let notReady = Self(rawValue: "not_ready")
+    /// The app already holds its full complement of in-flight requests. Refusing here is what
+    /// keeps the cap a cap: the alternative to an immediate answer is an unbounded queue of
+    /// descriptors waiting behind whatever is slow.
+    public static let busy = Self(rawValue: "busy")
     public static let internalError = Self(rawValue: "internal_error")
 }
 

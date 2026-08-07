@@ -831,6 +831,67 @@ final class PluginRuntimeConcurrencyTests: XCTestCase {
         XCTAssertEqual(report.executorResult, .stopped)
         XCTAssertEqual(report.createdThreadIdentifier, report.destroyedThreadIdentifier)
     }
+    // MARK: - Shutdown deadline (T-093)
+
+    /// The deadline has to cover the phase that can actually hang.
+    ///
+    /// A plugin sitting in a synchronous loop owns the pinned thread, so the teardown message
+    /// never even starts running. Bounding only the executor stop bounded the one phase that
+    /// could not hang, and quit and reload both wait on this call.
+    func testShutdownReturnsAtItsDeadlineWhenJavaScriptWillNotYield() async throws {
+        let runtime = try makeRuntime(
+            source: """
+            tenon.events.on("stall", function () {
+              var end = Date.now() + 1200;
+              while (Date.now() < end) {}
+            });
+            """
+        )
+        _ = try await runtime.start()
+
+        XCTAssertTrue(
+            runtime.acceptEvent(event: "stall", payload: .object([:])),
+            "precondition: the generation must accept the event that occupies its thread"
+        )
+        try await Task.sleep(for: .milliseconds(200))
+
+        let started = ContinuousClock.now
+        let report = await runtime.shutdown(timeout: 0.5)
+        let elapsed = started.duration(to: .now)
+
+        XCTAssertEqual(
+            report.stalledPhase,
+            .javaScriptTeardown,
+            "the report must name the phase the plugin held"
+        )
+        XCTAssertEqual(
+            report.executorResult,
+            .timedOut,
+            "the thread outlives the deadline — it is the plugin's loop that owns it"
+        )
+        XCTAssertLessThan(
+            elapsed,
+            .seconds(2),
+            "shutdown must return on its own deadline, not on the plugin's"
+        )
+
+        // The generation still settles once its loop ends. Waiting for that here is what keeps
+        // the stall inside this test instead of tripping the executor's quiesce precondition
+        // in whichever suite runs next.
+        try await Task.sleep(for: .milliseconds(1_500))
+    }
+
+    /// The other half: a well-behaved plugin still reports a clean stop, so the phase field
+    /// cannot quietly become "always stalled".
+    func testAWellBehavedRuntimeReportsNoStalledPhase() async throws {
+        let runtime = try makeRuntime(source: "tenon.statusBar.set(\"ready\");")
+        _ = try await runtime.start()
+
+        let report = await runtime.shutdown(timeout: 2)
+
+        XCTAssertNil(report.stalledPhase)
+        XCTAssertEqual(report.executorResult, .stopped)
+    }
 }
 
 private extension PluginRuntimeConcurrencyTests {

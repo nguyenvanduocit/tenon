@@ -1,3 +1,4 @@
+// @domain: attention
 import Foundation
 
 /// Which claim a pane currently has on human attention.

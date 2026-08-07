@@ -1,3 +1,4 @@
+// @domain: plugin-host
 import Darwin
 import Foundation
 import JavaScriptCore
@@ -90,7 +91,7 @@ public actor PluginRuntime {
     }
 
     private struct ViewBody {
-        let items: [PluginRowItem]
+        let items: [TreeRowItem]
         let body: PluginViewNode?
         let header: PaneHeader
         let modal: PluginViewModal?
@@ -161,6 +162,9 @@ public actor PluginRuntime {
     private static let singletonViewKey = ""
     private static let maximumPendingOutboundIntents = 256
     private static let maximumPendingStorageWrites = 256
+    /// How many log lines may be waiting to be written before further lines are counted
+    /// instead of queued.
+    private static let maximumQueuedLogLines = 512
     private static let maximumTimers = 256
     private static let maximumProcesses = 32
     private static let maximumWatchers = 64
@@ -204,6 +208,12 @@ public actor PluginRuntime {
     private var pendingNestedIntents: [String: PendingNestedIntent] = [:]
     private var pendingStorageTokens: Set<String> = []
     private var storageCommitTail: Task<Void, Never>?
+    /// Log lines are chained, not raced. Each line used to be its own detached task, so two
+    /// lines emitted in order could arrive in either order — and when the shared task ledger
+    /// was full the line was dropped with nothing said at all. A log line's whole job is to be
+    /// read by an author who cannot see the failure any other way; losing or reordering it
+    /// silently is the worst outcome available (T-080).
+    private let logQueue: PluginLogQueue
     private var lateProviderReplyCount = 0
 
     private var statusBarText: String?
@@ -260,6 +270,10 @@ public actor PluginRuntime {
             startupTimeout: configuration.startupTimeout
         )
         callbackMailbox = PluginRuntimeCallbackMailbox(capacity: callbackCapacity)
+        logQueue = PluginLogQueue(
+            capacity: Self.maximumQueuedLogLines,
+            sink: configuration.log
+        )
         stateEmitter = PluginRuntimeStateEmitter(sink: configuration.onStateChange)
     }
 
@@ -351,6 +365,24 @@ public actor PluginRuntime {
 
     public func isViewInstanced(_ viewID: String) -> Bool {
         viewRegistrations[viewID]?.instanced ?? false
+    }
+
+    /// Accepts a fact for delivery and returns — the publisher's half of an EVENT.
+    ///
+    /// Running the observer's JavaScript here would make every publisher wait for its slowest
+    /// observer: the host fans out to observers in turn, so one plugin holding the JS thread
+    /// delays the next plugin's delivery, the publisher's pending host task, and through it the
+    /// publisher's own retirement. Enqueueing instead keeps the publisher's cost bounded by the
+    /// mailbox's capacity rather than by someone else's code.
+    ///
+    /// `false` means the generation cannot take it — closed (retiring, failed) or over capacity,
+    /// in which case the mailbox has already marked the overflow that fails this generation.
+    /// Delivery order per generation is the enqueue order, which is what makes a fact published
+    /// after another fact observable in that order.
+    public nonisolated func acceptEvent(event: String, payload: IntentValue) -> Bool {
+        callbackMailbox.enqueue(
+            .eventPublished(name: event, payload: payload)
+        ) == .enqueued
     }
 
     public func emit(event: String, payload: IntentValue) throws {
@@ -488,24 +520,84 @@ public actor PluginRuntime {
             break
         }
 
+        // One deadline for the whole state machine.
+        //
+        // Every step before the executor stop either runs the plugin's JavaScript or waits on
+        // work that JavaScript can hold: `__tenonShutdown` itself, the callback pump draining
+        // into a live context, provider calls settling, the last state publication. A plugin
+        // stuck in a synchronous loop can hold any of them for as long as it likes, so bounding
+        // only the executor stop bounded the one phase that could not hang. Quit and reload
+        // both wait on this, which makes an unbounded phase here an unbounded app.
+        let deadline = ContinuousClock.now.advanced(by: .seconds(timeout))
+        var stalled: PluginRuntimeShutdownReport.StalledPhase?
+
         invocationGate.close()
-        let preparation = await prepareForShutdown()
-        if let callbackPump = preparation.callbackPump {
-            await callbackPump.value
+        let preparation = await withPluginDeadline(deadline) {
+            await self.prepareForShutdown()
         }
-        await invocationGate.waitUntilIdle()
-        await stateEmitter.finish()
-        let executorResult = await executor.shutdown(timeout: timeout)
+        if preparation == nil { stalled = .javaScriptTeardown }
+
+        if stalled == nil, let callbackPump = preparation?.callbackPump {
+            let pumped: Void? = await withPluginDeadline(deadline) {
+                await callbackPump.value
+            }
+            if pumped == nil { stalled = .callbackPump }
+        }
+        if stalled == nil {
+            let idle: Void? = await withPluginDeadline(deadline) {
+                await self.invocationGate.waitUntilIdle()
+            }
+            if idle == nil { stalled = .providerCalls }
+        }
+        if stalled == nil {
+            let emitted: Void? = await withPluginDeadline(deadline) {
+                await self.stateEmitter.finish()
+            }
+            if emitted == nil { stalled = .stateEmitter }
+        }
+
+        // A stalled phase means work is still queued for the pinned thread — the teardown
+        // message itself, most often, waiting behind the loop that stalled us. Stopping the
+        // executor now would leave that message to arrive at a shut-down executor, which is a
+        // precondition failure by design: the executor's contract is that callers quiesce
+        // first. So the thread is left to finish and stop with the runtime instead. The
+        // caller is already free, which was the whole point of the deadline.
+        let executorResult: PinnedThreadExecutor.ShutdownResult
+        if stalled == nil {
+            executorResult = await executor.shutdown(
+                timeout: Self.executorStopBudget(until: deadline)
+            )
+        } else {
+            executorResult = .timedOut
+        }
         let report = PluginRuntimeShutdownReport(
             executorResult: executorResult,
-            createdThreadIdentifier: preparation.createdThreadIdentifier,
-            destroyedThreadIdentifier: preparation.destroyedThreadIdentifier,
-            cancelledProviderCalls: preparation.cancelledProviderCalls,
-            lateProviderReplyCount: preparation.lateProviderReplyCount
+            createdThreadIdentifier: preparation?.createdThreadIdentifier,
+            destroyedThreadIdentifier: preparation?.destroyedThreadIdentifier,
+            cancelledProviderCalls: preparation?.cancelledProviderCalls ?? 0,
+            lateProviderReplyCount: preparation?.lateProviderReplyCount ?? 0,
+            stalledPhase: stalled
         )
         lifecycle.finish(report)
         return report
     }
+
+    /// What is left of the deadline, with a floor.
+    ///
+    /// Stopping the thread is the one step that cannot be held by a plugin, and it is also the
+    /// step that actually releases the thread. Handing it a budget of zero because an earlier
+    /// phase was slow would leave a stoppable thread running to save nothing, so the total is
+    /// bounded at the deadline plus this floor rather than exactly at the deadline.
+    private static func executorStopBudget(
+        until deadline: ContinuousClock.Instant
+    ) -> TimeInterval {
+        let remaining = ContinuousClock.now.duration(to: deadline)
+        let seconds = TimeInterval(remaining.components.seconds)
+            + TimeInterval(remaining.components.attoseconds) / 1e18
+        return max(minimumExecutorStopBudget, seconds)
+    }
+
+    private static let minimumExecutorStopBudget: TimeInterval = 0.25
 
     deinit {
         precondition(
@@ -515,7 +607,7 @@ public actor PluginRuntime {
     }
 }
 
-// MARK: - JavaScript lifecycle
+// MARK: - JavaScript lifecycle  @domain: plugin-host
 
 private extension PluginRuntime {
     func startCallbackPump() {
@@ -636,6 +728,11 @@ private extension PluginRuntime {
         await storageCommitTail?.value
         storageCommitTail = nil
 
+        // The last thing a failing generation says is often the most useful, so the log queue
+        // drains with the storage chain rather than being cancelled with the resources. It
+        // lives outside the actor, so draining it never touches the pinned executor.
+        await logQueue.finish()
+
         _ = try? callJavaScript("__tenonShutdown")
         do {
             try drainBridgeMessages()
@@ -695,7 +792,7 @@ private extension PluginRuntime {
     }
 }
 
-// MARK: - Provider bindings
+// MARK: - Provider bindings  @domain: plugin-host, intent-bus
 
 private extension PluginRuntime {
     func makeBinding(for intentID: IntentID) -> IntentProviderBinding {
@@ -860,7 +957,7 @@ private extension PluginRuntime {
     }
 }
 
-// MARK: - Bridge messages
+// MARK: - Bridge messages  @domain: plugin-host
 
 private extension PluginRuntime {
     func drainBridgeMessages() throws {
@@ -1187,7 +1284,7 @@ private extension PluginRuntime {
     }
 }
 
-// MARK: - External callback delivery
+// MARK: - External callback delivery  @domain: plugin-host
 
 private extension PluginRuntime {
     func consumeCallback(_ event: PluginRuntimeCallbackEvent) {
@@ -1284,6 +1381,22 @@ private extension PluginRuntime {
                 throw PluginRuntimeError.resourceLimitExceeded(
                     "pending paths for watcher \(handle)"
                 )
+
+            case let .eventPublished(name, payload):
+                // A generation that stopped subscribing between accept and delivery simply
+                // does not hear it; a fact has no reply, so there is nobody to tell.
+                guard phase == .active,
+                      eventSubscriptions.withLock({ $0.contains(name) })
+                else {
+                    return
+                }
+                _ = try callJavaScript(
+                    "__tenonEmit",
+                    arguments: [
+                        name,
+                        PluginRuntimeValueParsing.foundationObject(from: payload),
+                    ]
+                )
             }
 
             try drainBridgeMessages()
@@ -1312,7 +1425,7 @@ private extension PluginRuntime {
     }
 }
 
-// MARK: - Timers, processes, and file watches
+// MARK: - Timers, processes, and file watches  @domain: plugin-host
 
 private extension PluginRuntime {
     func startTimer(_ object: [String: IntentValue]) throws {
@@ -1593,7 +1706,7 @@ private extension PluginRuntime {
     }
 }
 
-// MARK: - Contributions and snapshots
+// MARK: - Contributions and snapshots  @domain: plugin-contributions
 
 private extension PluginRuntime {
     func persistStorage(_ object: [String: IntentValue]) throws {
@@ -1909,11 +2022,7 @@ private extension PluginRuntime {
     }
 
     func emitLog(_ message: String) {
-        let prefix = "[\(manifest.name)] "
-        let sink = configuration.log
-        _ = hostTasks.launch {
-            await sink(prefix + message)
-        }
+        logQueue.append("[\(manifest.name)] " + message)
     }
 
     func decodeActionIdentifier(_ identifier: String) -> Any {

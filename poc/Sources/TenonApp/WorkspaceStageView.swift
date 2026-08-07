@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import SwiftUI
 import TenonCore
 
@@ -73,6 +74,7 @@ struct WorkspaceStageView: View {
                 Image(systemName: "terminal")
                     .font(.system(size: 24, weight: .light))
                     .foregroundStyle(TenonTheme.muted)
+                    .accessibilityHidden(true)
                 Text("Add terminal")
                     .font(TenonTheme.interfaceFont(size: 12, weight: .semibold))
                 Button("New tab") {

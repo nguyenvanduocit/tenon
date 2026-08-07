@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 import SwiftUI
 
@@ -130,7 +131,7 @@ enum AgentMarkdown {
         return blocks
     }
 
-    // MARK: - Paragraphs
+    // MARK: - Paragraphs  @domain: agent-lens
 
     private static func parseParagraph(_ lines: [String], _ index: inout Int) -> String {
         var text: [String] = []
@@ -158,7 +159,7 @@ enum AgentMarkdown {
             || tableStarts(lines, at: index)
     }
 
-    // MARK: - Code
+    // MARK: - Code  @domain: agent-lens
 
     private struct Fence {
         var marker: Character
@@ -205,7 +206,7 @@ enum AgentMarkdown {
         return body.map { String($0.dropFirst(4)) }.joined(separator: "\n")
     }
 
-    // MARK: - Headings, rules, quotes
+    // MARK: - Headings, rules, quotes  @domain: agent-lens
 
     private static func heading(_ line: String) -> AgentMarkdownBlock? {
         let body = line.drop(while: { $0 == " " })
@@ -241,7 +242,7 @@ enum AgentMarkdown {
         return String(body)
     }
 
-    // MARK: - Lists
+    // MARK: - Lists  @domain: agent-lens
 
     private struct RawListItem {
         var indent: Int
@@ -343,7 +344,7 @@ enum AgentMarkdown {
         return (nil, text)
     }
 
-    // MARK: - Tables
+    // MARK: - Tables  @domain: agent-lens
 
     private static func tableStarts(_ lines: [String], at index: Int) -> Bool {
         guard index + 1 < lines.count, lines[index].contains("|") else { return false }
@@ -398,7 +399,7 @@ enum AgentMarkdown {
         return body.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
     }
 
-    // MARK: - Line helpers
+    // MARK: - Line helpers  @domain: agent-lens
 
     private static func isBlank(_ line: String) -> Bool {
         line.trimmingCharacters(in: .whitespaces).isEmpty

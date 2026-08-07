@@ -5,6 +5,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  # The UI lane launches a real app and drives it through the accessibility tree, which is
+  # too slow and too environment-sensitive to gate every push on. It runs nightly instead,
+  # and on demand.
+  schedule:
+    - cron: "0 9 * * *"
 
 concurrency:
   group: macos-ci-${{ github.ref }}
@@ -52,4 +57,78 @@ jobs:
           -scheme Tenon
           -configuration Debug
           -destination 'platform=macOS'
+          -clonedSourcePackagesDirPath .build
           CODE_SIGNING_ALLOWED=NO
+
+      # The suites that only exist in the Xcode scheme. `swift test` cannot see them, so
+      # until this step existed they were written, committed, and never run by anything.
+      - name: Run hosted integration tests
+        run: >-
+          xcodebuild test
+          -project Tenon.xcodeproj
+          -scheme Tenon
+          -configuration Debug
+          -destination 'platform=macOS'
+          -clonedSourcePackagesDirPath .build
+          -only-testing:TenonIntegrationTests
+          -resultBundlePath .build/integration.xcresult
+          CODE_SIGNING_ALLOWED=NO
+
+      - name: Keep the integration result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-xcresult
+          path: poc/.build/integration.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # A separate lane because it needs a real GUI session and real app launches: one flaky
+  # window server should not turn a code review red, and a broken end-to-end flow should not
+  # be invisible either.
+  ui-smoke:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: macos-15
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: poc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Swift 6.2 toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app
+          swift --version
+
+      - name: Install project generator
+        run: brew install xcodegen
+
+      - name: Install verified Ghostty artifacts
+        run: scripts/setup-ghosttykit.sh
+
+      - name: Generate the Xcode project
+        run: xcodegen generate
+
+      - name: Run the UI smoke suite
+        run: >-
+          xcodebuild test
+          -project Tenon.xcodeproj
+          -scheme Tenon
+          -configuration Debug
+          -destination 'platform=macOS'
+          -clonedSourcePackagesDirPath .build
+          -only-testing:TenonUITests
+          -resultBundlePath .build/ui-smoke.xcresult
+          CODE_SIGNING_ALLOWED=NO
+
+      # Screenshots, the accessibility hierarchy and the logs are the whole point of running
+      # this lane: a UI failure that leaves no artifact cannot be diagnosed after the fact.
+      - name: Keep the UI result bundle
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-smoke-xcresult
+          path: poc/.build/ui-smoke.xcresult
+          if-no-files-found: ignore
+          retention-days: 14

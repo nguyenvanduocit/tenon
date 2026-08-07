@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import AppKit
 import STTextView
 import SwiftUI
@@ -46,6 +47,7 @@ struct SourceEditorView: NSViewRepresentable {
         // Since macOS 14 NSViews no longer clip subviews by default, so without this the
         // scrolled-away line numbers draw outside the scroll view, over the header.
         scrollView.clipsToBounds = true
+        TenonScrollbarStyle.apply(to: scrollView)
 
         // Configure typography before setting the text: the font/colour setters restyle
         // the whole document, and restyling after layout leaves stale layout fragments

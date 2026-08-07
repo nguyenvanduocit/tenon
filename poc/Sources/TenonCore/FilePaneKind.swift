@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import Foundation
 
 /// Which renderer a file pane should use.

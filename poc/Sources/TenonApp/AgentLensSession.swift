@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 import Observation
 
@@ -11,6 +12,47 @@ struct AgentLensInputTransport: Sendable {
     let sendFrame: @MainActor @Sendable (String) -> Bool
 }
 
+enum AgentOptionSubmission: Sendable {
+    case hotkey
+    case hotkeyThenReturn
+
+    func frame(for hotkey: String) -> String {
+        switch self {
+        case .hotkey: hotkey
+        case .hotkeyThenReturn: hotkey + "\r"
+        }
+    }
+}
+
+struct AgentOptionSubmissionGate: Sendable {
+    private(set) var requestID: String?
+
+    mutating func begin(requestID: String, pendingRequestID: String?) -> Bool {
+        guard requestID == pendingRequestID, self.requestID != requestID else { return false }
+        self.requestID = requestID
+        return true
+    }
+
+    mutating func reconcile(pendingRequestID: String?) {
+        guard requestID != pendingRequestID else { return }
+        requestID = nil
+    }
+
+    mutating func fail(requestID: String) {
+        guard self.requestID == requestID else { return }
+        self.requestID = nil
+    }
+}
+
+extension AgentProvider {
+    var optionSubmission: AgentOptionSubmission {
+        switch self {
+        case .claude: .hotkeyThenReturn
+        case .codex: .hotkey
+        }
+    }
+}
+
 /// FIFO input owns the caller continuations and the only draining task. `draining` stays
 /// true across the inter-frame suspension, so actor reentrancy can append but can never
 /// interleave two bracketed-paste transactions.
@@ -18,10 +60,8 @@ actor AgentLensInputQueue {
     private enum Payload {
         /// A message: pasted as one bracketed transaction, then submitted.
         case text(String)
-        /// A single key the agent's own prompt is waiting on — the digit that picks an
-        /// option in a list. It is not text and must not be submitted: a stray return
-        /// would answer whatever the prompt had highlighted.
-        case keystroke(String)
+        /// The provider-specific option selection, kept in one foreground-guarded PTY frame.
+        case option(String)
     }
 
     private struct Request {
@@ -44,10 +84,10 @@ actor AgentLensInputQueue {
         try await enqueue(.text(text))
     }
 
-    /// Answers a prompt the agent is already showing, in the alphabet that prompt reads.
-    func sendKeystroke(_ key: String) async throws {
+    /// Answers a prompt using the selection sequence its provider reads.
+    func submitOption(_ key: String, using submission: AgentOptionSubmission) async throws {
         guard !key.isEmpty else { throw AgentLensInputError.empty }
-        try await enqueue(.keystroke(key))
+        try await enqueue(.option(submission.frame(for: key)))
     }
 
     private func enqueue(_ payload: Payload) async throws {
@@ -86,9 +126,9 @@ actor AgentLensInputQueue {
         while !Task.isCancelled, !stopped, !requests.isEmpty {
             let request = requests.removeFirst()
             guard case let .text(text) = request.payload else {
-                guard case let .keystroke(key) = request.payload else { continue }
+                guard case let .option(frame) = request.payload else { continue }
                 request.continuation.resume(
-                    returning: await transport.sendFrame(key)
+                    returning: await transport.sendFrame(frame)
                         ? .success(())
                         : .failure(.foregroundProcessChanged)
                 )
@@ -246,6 +286,7 @@ final class AgentLensViewModel {
     @ObservationIgnored private var inputQueue: AgentLensInputQueue?
     @ObservationIgnored private var consecutiveMisses = 0
     @ObservationIgnored private var didAnnounceHookCapabilities = false
+    private var optionSubmissionGate = AgentOptionSubmissionGate()
 
     init(slotID: UUID, terminalPool: SurfacePool, discovery: AgentLensDiscovery) {
         self.slotID = slotID
@@ -254,6 +295,8 @@ final class AgentLensViewModel {
     }
 
     var isAgentDetected: Bool { resolution != nil || snapshot.provider != nil }
+
+    var submittedOptionRequestID: String? { optionSubmissionGate.requestID }
 
     var canSend: Bool {
         resolution != nil && snapshot.canSend && !isSending &&
@@ -277,6 +320,7 @@ final class AgentLensViewModel {
         if let inputQueue { Task { await inputQueue.stop() } }
         coordinator = nil
         inputQueue = nil
+        optionSubmissionGate.reconcile(pendingRequestID: nil)
     }
 
     func sendDraft() async {
@@ -327,7 +371,10 @@ final class AgentLensViewModel {
               let identity = terminalPool?.agentTerminalIdentity(for: slotID),
               // A reused pane holds a new surface token, so a hook from the PTY that has
               // already been replaced cannot describe the session shown here.
-              identity.surfaceToken == event.surfaceToken
+              identity.surfaceToken == event.surfaceToken,
+              // What the hook says about itself is checked against the live process, the same
+              // way a reported transcript binding is.
+              AgentHookAdmission.admits(event, resolution: resolution)
         else { return }
 
         var events = AgentHookLensProjection.events(for: event, at: Date())
@@ -352,26 +399,36 @@ final class AgentLensViewModel {
 
     /// The option a person picked, sent in the alphabet the agent's own prompt reads.
     ///
-    /// Claude Code renders a question as a numbered list and takes the digit as the choice,
-    /// so the answer is that keystroke — not the option's text, which would be typed into a
-    /// list that is not accepting text. Only the decision the agent is showing right now
-    /// can be answered: an earlier question in the same call is no longer on screen, and a
-    /// digit sent for it would land on whatever the agent is asking instead.
+    /// Both providers render numbered choices, but Claude moves the highlight with the digit
+    /// and needs Return to accept it while Codex commits the digit immediately. Only the
+    /// decision the agent is showing right now can be answered: an earlier question in the
+    /// same call is no longer on screen, and a digit sent for it would land on whatever the
+    /// agent is asking instead.
     func answer(
         _ request: AgentInteractionRequest,
         with option: AgentInteractionOption
     ) async -> Bool {
         guard let inputQueue,
+              let provider = snapshot.provider,
               snapshot.pendingInteraction?.id == request.id,
               let choice = request.options.firstIndex(where: { $0.id == option.id }),
               choice < 9
         else { return false }
+        if optionSubmissionGate.requestID == request.id { return true }
+        guard optionSubmissionGate.begin(
+            requestID: request.id,
+            pendingRequestID: snapshot.pendingInteraction?.id
+        ) else { return false }
         isSending = true
         defer { isSending = false }
         do {
-            try await inputQueue.sendKeystroke(String(choice + 1))
+            try await inputQueue.submitOption(
+                String(choice + 1),
+                using: provider.optionSubmission
+            )
             return true
         } catch {
+            optionSubmissionGate.fail(requestID: request.id)
             await reportInputFailure(error)
             return false
         }
@@ -396,6 +453,9 @@ final class AgentLensViewModel {
     private var publisher: AgentLensSessionCoordinator.Publisher {
         { @MainActor [weak self] snapshot in
             guard let self else { return }
+            self.optionSubmissionGate.reconcile(
+                pendingRequestID: snapshot.pendingInteraction?.id
+            )
             if self.snapshot != snapshot {
                 self.timelineItems = snapshot.sessionTimelineItems
                 self.snapshot = snapshot
@@ -454,6 +514,7 @@ final class AgentLensViewModel {
         streamTask?.cancel()
         if let coordinator { await coordinator.stop() }
         if let inputQueue { await inputQueue.stop() }
+        optionSubmissionGate.reconcile(pendingRequestID: nil)
 
         resolution = next
         let coordinator = AgentLensSessionCoordinator()

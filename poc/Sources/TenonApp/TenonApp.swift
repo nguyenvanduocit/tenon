@@ -1,3 +1,4 @@
+// @domain: workspace-model
 import AppKit
 import Observation
 import SwiftUI
@@ -9,6 +10,9 @@ struct TenonApp: App {
     @NSApplicationDelegateAdaptor(AppLifecycleDelegate.self)
     private var appDelegate
 
+    /// The workspace window's stable scene identity.
+    static let mainWindowID = "main"
+
     @State private var composition: AppComposition?
     @State private var constructionError: String?
     @State private var isConstructing = false
@@ -18,7 +22,14 @@ struct TenonApp: App {
     }
 
     var body: some Scene {
-        WindowGroup("Tenon") {
+        // One window, declared as one window.
+        //
+        // Everything the workspace is made of is single-instance by construction: one
+        // `AppComposition`, one `SurfacePool` holding one surface per slot, and a Ghostty
+        // surface that hands back the same `NSView` to every caller. `Window` is the scene
+        // that matches: the File menu offers no second workspace, so no window can be
+        // furnished by taking the terminal view out of another one.
+        Window("Tenon", id: Self.mainWindowID) {
             if let composition {
                 ContentView(
                     host: composition.host,
@@ -89,6 +100,9 @@ struct TenonApp: App {
                     host: composition.host,
                     intentRuntime: composition.intentRuntime
                 )
+                CommandGroup(after: .appInfo) {
+                    DiagnosticsCommands(journal: composition.diagnosticsJournal)
+                }
             }
         }
 
@@ -344,6 +358,11 @@ final class AppComposition {
     let instanceChannel: AppInstanceChannel
     let router = DragRouter()
     let palette: CommandPaletteState
+    /// T-092: what the app records about its own health, and the watchdog that fills it.
+    /// Held here so the menu can export it and `performStart` can arm it.
+    let diagnosticsJournal: DiagnosticsJournal
+    @ObservationIgnored
+    private let diagnostics: DiagnosticsRuntime
     /// Which plugins this person has let handle a delegable contract. Nothing is granted
     /// by installing — not even for a plugin that ships with the app.
     let openHandlerApprovals: OpenHandlerApprovals
@@ -405,6 +424,11 @@ final class AppComposition {
         NSApplication.shared.setActivationPolicy(.regular)
 
         let paths = prepared.paths
+        // T-092: constructed before anything else can stall, so a freeze during startup is
+        // still recorded. Armed in `performStart`.
+        let diagnosticsJournal = DiagnosticsJournal(fileURL: paths.diagnosticsJournalFile)
+        self.diagnosticsJournal = diagnosticsJournal
+        self.diagnostics = DiagnosticsRuntime(journal: diagnosticsJournal)
         let pluginsRoot = paths.pluginInventoryRoot
         let catalogStore = WorkspaceCatalogStore(
             fileURL: paths.workspaceCatalogFile
@@ -950,6 +974,10 @@ private extension AppComposition {
     }
 
     func performStart() async {
+        // First, so the watchdog is already running while the rest of startup happens —
+        // plugin loading and catalog restore are exactly the kind of work that could wedge
+        // the main runloop, and a detector armed afterwards would miss it.
+        diagnostics.start()
         do {
             try Task.checkCancellation()
             try await intentRuntime.start()

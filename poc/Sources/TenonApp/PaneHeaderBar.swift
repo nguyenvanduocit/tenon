@@ -264,10 +264,11 @@ struct PaneHeaderItemView: View {
 
 /// The header's one editable control.
 ///
-/// It keeps its own draft and only accepts a pushed `value` while the field is NOT
-/// focused. Without that guard a publish landing mid-typing — a redirect, a status tick,
-/// any republish of the owning view — overwrites the characters the user is entering,
-/// which is a regression a browser address bar makes obvious within seconds.
+/// It keeps its own draft, and `EditableFieldDraft` decides who owns the characters in it: the
+/// person while the field is focused, the pane's own value the moment they leave. A publish
+/// landing mid-typing — a redirect, a status tick, any republish of the owning view — is
+/// therefore held rather than typed over, which is a difference a browser address bar makes
+/// obvious within seconds.
 private struct PaneHeaderTextFieldView: View {
     let itemID: String
     let value: String
@@ -275,11 +276,11 @@ private struct PaneHeaderTextFieldView: View {
     let isEnabled: Bool
     let perform: (PaneHeaderAction) -> Void
 
-    @State private var draft = ""
+    @State private var draft = EditableFieldDraft()
     @FocusState private var focused: Bool
 
     var body: some View {
-        TextField(placeholder, text: $draft)
+        TextField(placeholder, text: $draft.text)
             .textFieldStyle(.plain)
             .font(TenonTheme.interfaceFont(size: 11))
             .foregroundStyle(TenonTheme.text)
@@ -297,9 +298,14 @@ private struct PaneHeaderTextFieldView: View {
             )
             // A field COMMITS, it does not select: the owner hears about the text once,
             // when the user says so.
-            .onSubmit { perform(PaneHeaderAction(itemID: itemID, value: draft)) }
-            .onAppear { draft = value }
-            .onChange(of: value) { _, new in if !focused { draft = new } }
+            .onSubmit { perform(PaneHeaderAction(itemID: itemID, value: draft.text)) }
+            .onAppear { draft = EditableFieldDraft(value: value) }
+            .onChange(of: value) { _, new in
+                draft.externalValueChanged(to: new, isFocused: focused)
+            }
+            .onChange(of: focused) { _, isFocused in
+                draft.focusChanged(to: isFocused)
+            }
     }
 }
 

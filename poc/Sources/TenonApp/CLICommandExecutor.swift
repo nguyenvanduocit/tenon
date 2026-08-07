@@ -1,3 +1,4 @@
+// @domain: cli-control
 import AppKit
 import Foundation
 import TenonCore

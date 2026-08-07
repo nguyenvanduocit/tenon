@@ -300,16 +300,36 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             ],
             file: "PluginManifest.swift"
         )
+        let hostModels = try source("TenonCore/PluginHostModels.swift")
+        assertContains(
+            hostModels,
+            ["public struct PluginIntentPresentation"],
+            file: "PluginHostModels.swift"
+        )
+        // The projection moved out of the coordinator, so the anchors follow it: what a
+        // manifest's declared intent becomes, and the index built from it, are one pure
+        // transformation now — the host only decides the order and publishes the result.
+        let contributions = try source("TenonCore/PluginContributionProjection.swift")
+        assertContains(
+            contributions,
+            [
+                "PluginIntentPresentation.projected(",
+                "let keyBindingIndex = KeyBindingIndex(",
+                "reserved: KeyBindingIndex.shellReserved",
+            ],
+            file: "PluginContributionProjection.swift"
+        )
+        assertContains(
+            hostModels,
+            ["key: palette.key"],
+            file: "PluginHostModels.swift"
+        )
         assertContains(
             host,
             [
-                "public struct PluginIntentPresentation",
-                "let keyBindingRequests = nextIntentPresentations.compactMap",
-                "let nextKeyBindingIndex = KeyBindingIndex(",
-                "reserved: KeyBindingIndex.shellReserved",
-                "key: palette.key",
-                "intentPresentations = nextIntentPresentations",
-                "keyBindingIndex = nextKeyBindingIndex",
+                "PluginContributionProjection.make(",
+                "intentPresentations = contributions.intentPresentations",
+                "keyBindingIndex = contributions.keyBindingIndex",
             ],
             file: "PluginHost.swift"
         )
@@ -548,7 +568,10 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
     func testEveryLauncherSurfaceReusesOnePresentationAndCommandProjection() throws {
         let launcher = try source("TenonApp/LauncherMenu.swift")
         let titleBar = try source("TenonApp/ShellTitleBar.swift")
-        let canvas = try source("TenonApp/SpatialCanvasView.swift")
+        // The canvas is a folder now: the pure rule that decides where an empty-grid launcher
+        // is anchored lives beside the view that presents it, and this surface is both.
+        let canvas = try source("TenonApp/Canvas/SpatialInteraction.swift")
+            + source("TenonApp/Canvas/SpatialCanvasNSView.swift")
         let workspaceProvider = try source("TenonApp/WorkspaceIntentProvider.swift")
 
         assertContains(
@@ -625,7 +648,7 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "requestBestEmptyGridLauncher()",
                 "LauncherMenu(",
             ],
-            file: "SpatialCanvasView.swift"
+            file: "Canvas/*.swift"
         )
         let emptyGridLauncher = try sourceSlice(
             canvas,
@@ -641,7 +664,7 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "EmptyGridLauncherPlacement.invoke(",
                 "targetRect: targetRect",
             ],
-            file: "SpatialCanvasView.swift empty-grid launcher"
+            file: "Canvas empty-grid launcher"
         )
         let appRoot = packageRoot
             .appendingPathComponent("Sources")
@@ -1269,7 +1292,7 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         }
         XCTAssertEqual(
             routers.sorted(),
-            ["SpatialCanvasView.swift"],
+            ["SpatialCanvasNSView.swift"],
             "a header item id may be resolved back into a command at the router only"
         )
 

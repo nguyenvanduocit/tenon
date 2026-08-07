@@ -1,3 +1,4 @@
+// @domain: attention
 import AppKit
 import Foundation
 import TenonCore
@@ -58,6 +59,41 @@ enum PaneAttentionProjection {
         attention: [UUID: PaneActivity]
     ) -> Bool {
         tab.slots.contains { attention[$0.id]?.isUnseen == true }
+    }
+
+    /// What the dot means, in the words a person would use.
+    ///
+    /// The dot is the whole attention signal on three surfaces, and until this existed the
+    /// signal was carried entirely by hue: a supervisor using VoiceOver, or one of the ~4% of
+    /// people who cannot separate the red from the green, had no attention surface at all.
+    static func spokenState(for state: PaneActivityState) -> String {
+        switch state {
+        case .working: Shell.text("Working")
+        case .idle: Shell.text("Idle")
+        case .finishedUnseen: Shell.text("Finished, not yet seen")
+        case .seen: Shell.text("Finished")
+        case .exited: Shell.text("Shell exited")
+        }
+    }
+
+    /// The same vocabulary as a shape, for Differentiate Without Color.
+    ///
+    /// Each state gets a glyph that means what the state means rather than an arbitrary shape
+    /// code, so the fallback is readable without first learning it.
+    static func symbolName(for state: PaneActivityState) -> String {
+        switch state {
+        case .working: "circle.dotted"
+        case .idle: "circle"
+        case .finishedUnseen: "checkmark.circle.fill"
+        case .seen: "checkmark.circle"
+        case .exited: "xmark.circle.fill"
+        }
+    }
+
+    /// Whether the shell should draw the shape vocabulary instead of the colour one.
+    @MainActor
+    static var differentiatesWithoutColor: Bool {
+        NSWorkspace.shared.accessibilityDisplayShouldDifferentiateWithoutColor
     }
 
     /// One dot vocabulary for every surface: amber while output is still moving,

@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import AppKit
 import SwiftUI
 import TenonCore

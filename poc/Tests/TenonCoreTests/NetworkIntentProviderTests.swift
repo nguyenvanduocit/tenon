@@ -281,6 +281,82 @@ final class NetworkIntentProviderTests: XCTestCase {
         XCTAssertEqual(server.requestCount, 0)
     }
 
+    /// T-093. A resolver that never answers must cost the envelope, not the process.
+    ///
+    /// `getaddrinfo` blocks with its own patience and offers no interruption, so what has to be
+    /// bounded is the wait. A blocked lookup used to hold the intent for as long as the system
+    /// resolver felt like, well past a deadline the kernel had already promised the caller.
+    func testABlockedResolverEndsAtTheDeadlineRatherThanAtTheResolversPatience() async throws {
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let resolver = NetworkEndpointResolver { _ in
+            entered.signal()
+            // Stands in for a black-holed DNS server. Released in teardown so the fixture
+            // thread cannot outlive the test.
+            release.wait()
+            return [NetworkResolvedEndpoint(address: "93.184.216.34", isPublic: true)]
+        }
+        defer { release.signal() }
+
+        let started = ContinuousClock.now
+        let reply = try await invoke(
+            input: .object([
+                "url": .string("http://blocked.tenon.test/never"),
+                "method": .string("GET"),
+            ]),
+            bindings: try NetworkIntentProvider(resolver: resolver).bindings,
+            deadline: .now.advanced(by: .milliseconds(300))
+        )
+        let elapsed = started.duration(to: .now)
+
+        XCTAssertEqual(
+            entered.wait(timeout: .now()),
+            .success,
+            "precondition: the resolver must actually have been called"
+        )
+        try assertFailure(reply, code: "tenon.deadline-exceeded")
+        XCTAssertLessThan(
+            elapsed,
+            .seconds(5),
+            "the intent must end at its own deadline, not when the resolver gives up"
+        )
+    }
+
+    /// The other half of the same budget: resolution spends part of the envelope, so the
+    /// transport must be given what is left rather than the timeout computed before it.
+    func testTheTransportTimeoutIsRecomputedAfterResolution() async throws {
+        let server = try LoopbackHTTPServer()
+        defer { server.stop() }
+        let host = "slow-dns.tenon.test"
+        let resolver = NetworkEndpointResolver { _ in
+            Thread.sleep(forTimeInterval: 0.4)
+            return [NetworkResolvedEndpoint(address: "127.0.0.1", isPublic: false)]
+        }
+
+        let reply = try await invoke(
+            input: .object([
+                "url": .string(server.url(host: host, path: "/success")),
+                "method": .string("GET"),
+                // A timeout larger than what resolution will leave behind.
+                "timeoutMs": .integer(5_000),
+            ]),
+            bindings: try NetworkIntentProvider(resolver: resolver).bindings,
+            deadline: .now.advanced(by: .milliseconds(600)),
+            authorizedHost: AuthorizedNetworkHost(
+                requestedHost: host,
+                canonicalHost: host,
+                allowsPrivateEndpoints: true
+            )
+        )
+
+        // The request still fits in what is left, so it succeeds — the point is that it ran
+        // with the remaining budget instead of restarting the clock at 5s.
+        XCTAssertEqual(
+            try integer(try object(try successValue(reply))["status"]),
+            201
+        )
+    }
+
     func testAddressClassificationRejectsIPv4MappedPrivateIPv6() {
         XCTAssertFalse(
             SystemNetworkEndpointResolver.isPublicAddress(

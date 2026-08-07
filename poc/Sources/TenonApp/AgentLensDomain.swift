@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 
 enum AgentProvider: String, CaseIterable, Codable, Sendable {

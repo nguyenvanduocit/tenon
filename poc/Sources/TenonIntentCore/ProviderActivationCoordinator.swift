@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 /// Host-owned proof accompanying one plugin provider generation.

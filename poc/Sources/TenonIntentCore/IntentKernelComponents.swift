@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 
 /// Composition root for the independent kernel concerns and provider activation boundary.

@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Foundation
 
 /// A file an agent named in its prose: the path exactly as it was written, plus the line

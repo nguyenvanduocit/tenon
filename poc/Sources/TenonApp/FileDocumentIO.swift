@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import CoreGraphics
 import Foundation
 import ImageIO

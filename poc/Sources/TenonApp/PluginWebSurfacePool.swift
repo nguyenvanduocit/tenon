@@ -1,3 +1,4 @@
+// @domain: terminal-surface, plugin-contributions
 import AppKit
 import Foundation
 import Observation

@@ -1159,7 +1159,7 @@ final class PaneHeaderProjectionTests: XCTestCase {
     func testTheSnapshotsCloseControlMatchesTheCardsOwnGeometry() throws {
         let card = try String(
             contentsOf: packageRoot
-                .appendingPathComponent("Sources/TenonApp/SpatialCanvasView.swift"),
+                .appendingPathComponent("Sources/TenonApp/Canvas/SpatialSlotCardView.swift"),
             encoding: .utf8
         )
         let assignment = try XCTUnwrap(

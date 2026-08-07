@@ -104,6 +104,23 @@ with several published, the first in publish order wins.
   carries `menu`, `editing`/`placeholder`, `selected` and `path` — enough for the
   Files pane to be a full file manager without a single node (T-014, see
   `design-plugin-host-capabilities.md`).
+- **A row's list is the host's ONE list.** `items` are decoded into `TreeRowItem`, which is
+  also what host-native panes build in Swift — the Changes pane and the Files pane are drawn
+  by the same `TreeRowsView`. The type is named for its shape rather than its publisher
+  because both mint it; what keeps the boundary intact is that a plugin's rows arrive only
+  through this decoder, never as a native type reaching JavaScript (invariants 2 and 6).
+  Three fields serve the denser lists (T-085):
+
+  | Field | Meaning |
+  |---|---|
+  | `kind` | `"row"` (default) or `"sectionHeader"` — a heading over the rows beneath it, drawn small, tracked and muted, with no chevron, hover, menu or selection. A member of the row vocabulary so headings and rows can interleave in one scroll. |
+  | `detail` | Muted secondary text after the label — a containing directory, a timestamp. Gives up its width before the label does. |
+  | `accessory` | `{ text, tint }` at the trailing edge: a git status letter, a count. At most four characters, so the right-hand column stays a column a human can scan down. |
+
+  Both new fields are additive and fail-soft, like every other token field here: an
+  unrecognised `kind` or `tint` degrades to its default, and an empty or over-long
+  `accessory` costs the accessory alone. A malformed decoration never drops the row — a
+  row that vanishes is a file missing from a list someone is using to decide what to read.
 - **A view's chrome is `header`, and the pane draws it.** What a view has to say about
   itself — its state, its path, its controls — goes in the ONE chrome header its pane
   already draws, published as `header: { leading: [], trailing: [] }` beside `items` or

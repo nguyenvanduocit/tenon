@@ -165,9 +165,10 @@ final class AutomationSlotViewTests: XCTestCase {
         )
     }
 
-    func testDashboardKeepsUnavailablePluginSchedulesVisible() throws {
+    func testDashboardShowsOnlyEnabledPluginSchedules() throws {
         let active = try AutomationScheduleSpec(id: "active", cadence: .every(60))
         let disabled = try AutomationScheduleSpec(id: "disabled", cadence: .every(120))
+        let unloaded = try AutomationScheduleSpec(id: "unloaded", cadence: .every(180))
         let activePlugin = snapshot(
             id: "dev.example.active",
             title: "Active Plugin",
@@ -179,26 +180,49 @@ final class AutomationSlotViewTests: XCTestCase {
             schedules: [disabled],
             isEnabled: false
         )
+        let unloadedPlugin = snapshot(
+            id: "dev.example.unloaded",
+            title: "Unloaded Plugin",
+            schedules: [unloaded],
+            isLoaded: false
+        )
         let scheduler = AutomationScheduler(calendar: calendar)
         scheduler.reconcile(
-            [disabledPlugin, activePlugin],
+            [disabledPlugin, activePlugin, unloadedPlugin],
             now: Date(timeIntervalSince1970: 1_000)
         )
         let due = Date(timeIntervalSince1970: 1_060)
 
         let summaries = AutomationPanePresentation.summaries(
-            plugins: [disabledPlugin, activePlugin],
+            plugins: [disabledPlugin, activePlugin, unloadedPlugin],
             listings: scheduler.listings(),
             pausedScheduleKeys: [],
             records: []
         )
 
-        XCTAssertEqual(summaries.map { $0.scheduleID }, ["active", "disabled"])
+        XCTAssertEqual(
+            summaries.map(\.scheduleID),
+            ["active", "unloaded"],
+            "a disabled plugin contributes no automation surface at all"
+        )
         XCTAssertEqual(summaries.first?.nextDue, due)
-        XCTAssertEqual(summaries.last?.availability, .pluginDisabled)
+        XCTAssertEqual(summaries.last?.availability, .pluginUnavailable(nil))
         XCTAssertNil(
             summaries.last?.nextDue,
-            "an unavailable declaration remains visible without pretending it is armed"
+            "an enabled plugin that is not loaded stays visible without pretending it is armed"
+        )
+    }
+
+    func testEmptyDetailAsksForSchedulesFromTheSameEnabledRule() throws {
+        let source = try automationSlotViewSource()
+
+        XCTAssertFalse(
+            source.contains("host.plugins.flatMap(\\.automationSchedules)"),
+            "the empty state must reuse the summaries rule instead of counting every declaration"
+        )
+        XCTAssertTrue(
+            source.contains("hasSchedules: !summaries.isEmpty"),
+            "'no automations yet' follows exactly what the navigator can show"
         )
     }
 

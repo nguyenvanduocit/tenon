@@ -2,14 +2,19 @@ import Foundation
 @testable import TenonIntentCore
 import XCTest
 
-/// `.policy` means "policy decides", not "ask again every single time".
-///
-/// A caller that already holds standing consent for a contract runs without a prompt;
-/// one that does not is asked exactly once and the approval is remembered. `.always`
-/// keeps asking and remembers nothing, which is what makes it a different mode.
+/// `.policy` lets the user approve one wave, remember one caller/contract pair, or trust
+/// one caller for every policy-confirmed contract. `.always` keeps asking and remembers
+/// nothing, which is what makes it a different mode.
 final class CallerConsentTests: XCTestCase {
+    func testConfirmationDecisionInventoryIsClosed() {
+        XCTAssertEqual(
+            IntentConfirmationDecision.allCases,
+            [.allowOnce, .alwaysAllow, .alwaysAllowForCaller, .denied]
+        )
+    }
+
     func testStandingConsentSkipsTheConfirmationAuthorizer() async throws {
-        let confirmation = ConsentConfirmationProbe(decision: .approved)
+        let confirmation = ConsentConfirmationProbe(decision: .alwaysAllow)
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
             authorizer: confirmation
@@ -35,8 +40,8 @@ final class CallerConsentTests: XCTestCase {
         )
     }
 
-    func testPolicyApprovalIsRememberedSoTheUserIsAskedOnce() async throws {
-        let confirmation = ConsentConfirmationProbe(decision: .approved)
+    func testAlwaysAllowIsRememberedSoTheUserIsAskedOnce() async throws {
+        let confirmation = ConsentConfirmationProbe(decision: .alwaysAllow)
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
             authorizer: confirmation
@@ -56,9 +61,91 @@ final class CallerConsentTests: XCTestCase {
         XCTAssertTrue(hasConsent)
     }
 
+    func testAllowOnceApprovesOnlyTheCurrentWave() async throws {
+        let confirmation = ConsentConfirmationProbe(decision: .allowOnce)
+        let fixture = try await ConsentFixture.make(
+            confirmation: .policy,
+            authorizer: confirmation
+        )
+
+        let first = await fixture.send(value: 1)
+        let second = await fixture.send(value: 2)
+
+        XCTAssertEqual(try unwrapSuccess(first), .object(["echo": .integer(1)]))
+        XCTAssertEqual(try unwrapSuccess(second), .object(["echo": .integer(2)]))
+        let requestCount = await confirmation.requestCount()
+        XCTAssertEqual(requestCount, 2)
+        let hasContractConsent = await fixture.policy.hasStandingConsent(
+            contract: fixture.intentID,
+            caller: fixture.caller
+        )
+        let hasCallerWideConsent = await fixture.policy.hasStandingConsent(
+            for: fixture.caller
+        )
+        XCTAssertFalse(hasContractConsent)
+        XCTAssertFalse(hasCallerWideConsent)
+    }
+
+    func testAlwaysAllowForCallerCoversEveryPolicyContractForThatCaller() async throws {
+        let confirmation = ConsentConfirmationProbe(
+            decision: .alwaysAllowForCaller
+        )
+        let fixture = try await ConsentFixture.make(
+            confirmation: .policy,
+            authorizer: confirmation
+        )
+
+        _ = await fixture.send(value: 1)
+        let result = await fixture.send(value: 2)
+
+        XCTAssertEqual(try unwrapSuccess(result), .object(["echo": .integer(2)]))
+        let requestCount = await confirmation.requestCount()
+        XCTAssertEqual(requestCount, 1)
+        let hasCallerWideConsent = await fixture.policy.hasStandingConsent(
+            for: fixture.caller
+        )
+        XCTAssertTrue(hasCallerWideConsent)
+        let hasConsentForAnotherContract = await fixture.policy.hasStandingConsent(
+            contract: try IntentID("test.another.v1"),
+            caller: fixture.caller
+        )
+        XCTAssertTrue(hasConsentForAnotherContract)
+        let otherCaller = IntentPrincipal(
+            id: "plugin:dev.tenon.test:other",
+            kind: fixture.caller.kind,
+            sessionRevision: 1
+        )
+        let otherCallerHasConsent = await fixture.policy.hasStandingConsent(
+            contract: fixture.intentID,
+            caller: otherCaller
+        )
+        XCTAssertFalse(otherCallerHasConsent)
+    }
+
+    func testCallerWideConsentDoesNotBypassCapabilities() async throws {
+        let confirmation = ConsentConfirmationProbe(
+            decision: .alwaysAllowForCaller
+        )
+        let fixture = try await ConsentFixture.make(
+            confirmation: .policy,
+            authorizer: confirmation
+        )
+        _ = await fixture.send(value: 1)
+
+        try await fixture.policy.replaceGrants([], for: fixture.caller)
+        let denied = await fixture.send(value: 2)
+
+        let failure = try unwrapFailure(denied)
+        XCTAssertEqual(failure.error.code, .kernel(.denied))
+        let providerInvocationCount = await fixture.provider.invocationCount()
+        XCTAssertEqual(providerInvocationCount, 1)
+        let requestCount = await confirmation.requestCount()
+        XCTAssertEqual(requestCount, 1)
+    }
+
     func testConcurrentPolicyApprovalsShareOnePromptAndPersistOneGrant() async throws {
         let confirmation = ConsentConfirmationProbe(
-            decision: .approved,
+            decision: .alwaysAllow,
             suspendsRequests: true
         )
         let fixture = try await ConsentFixture.make(
@@ -89,7 +176,7 @@ final class CallerConsentTests: XCTestCase {
 
     func testCancellingConsentWaveCreatorKeepsFlightForRemainingWaiter() async throws {
         let confirmation = ConsentConfirmationProbe(
-            decision: .approved,
+            decision: .alwaysAllow,
             suspendsRequests: true
         )
         let fixture = try await ConsentFixture.make(
@@ -153,7 +240,7 @@ final class CallerConsentTests: XCTestCase {
 
     func testCancellingSoleConsentWaiterSettlesBeforeDecisionWithoutGrant() async throws {
         let confirmation = ConsentConfirmationProbe(
-            decision: .approved,
+            decision: .alwaysAllow,
             suspendsRequests: true
         )
         let fixture = try await ConsentFixture.make(
@@ -216,7 +303,7 @@ final class CallerConsentTests: XCTestCase {
     /// load the way a stopwatch can.
     func testUnansweredConfirmationExpiresAtTheCallersDeadline() async throws {
         let confirmation = ConsentConfirmationProbe(
-            decision: .approved,
+            decision: .alwaysAllow,
             suspendsRequests: true
         )
         let fixture = try await ConsentFixture.make(
@@ -281,7 +368,7 @@ final class CallerConsentTests: XCTestCase {
     /// dialog out from under the human who was reading it.
     func testExpiringWaiterKeepsThePromptForRemainingWaiter() async throws {
         let confirmation = ConsentConfirmationProbe(
-            decision: .approved,
+            decision: .alwaysAllow,
             suspendsRequests: true
         )
         let fixture = try await ConsentFixture.make(
@@ -342,7 +429,7 @@ final class CallerConsentTests: XCTestCase {
     }
 
     func testCancellingLastWaiterAfterApprovalCannotCommitStandingConsent() async throws {
-        let confirmation = ConsentConfirmationProbe(decision: .approved)
+        let confirmation = ConsentConfirmationProbe(decision: .alwaysAllow)
         let persistenceGate = ConsentPersistenceGate()
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
@@ -415,7 +502,7 @@ final class CallerConsentTests: XCTestCase {
 
     func testCancelledStaleConsentFlightCannotConsumeLaterRetryWave() async throws {
         let confirmation = ConsentConfirmationProbe(
-            decision: .approved,
+            decision: .alwaysAllow,
             suspendsRequests: true
         )
         let fixture = try await ConsentFixture.make(
@@ -542,7 +629,7 @@ final class CallerConsentTests: XCTestCase {
         )
         XCTAssertFalse(hasDeniedConsent)
 
-        await confirmation.setDecision(.approved)
+        await confirmation.setDecision(.alwaysAllow)
         let retry = Task {
             await fixture.send(value: 9)
         }
@@ -567,7 +654,7 @@ final class CallerConsentTests: XCTestCase {
     }
 
     func testAlwaysAsksEveryTimeAndRecordsNothing() async throws {
-        let confirmation = ConsentConfirmationProbe(decision: .approved)
+        let confirmation = ConsentConfirmationProbe(decision: .alwaysAllow)
         let fixture = try await ConsentFixture.make(
             confirmation: .always,
             authorizer: confirmation
@@ -589,12 +676,13 @@ final class CallerConsentTests: XCTestCase {
     func testWithdrawingACallerRevokesItsStandingConsent() async throws {
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
-            authorizer: ConsentConfirmationProbe(decision: .approved)
+            authorizer: ConsentConfirmationProbe(decision: .alwaysAllow)
         )
         try await fixture.policy.grantStandingConsent(
             contract: fixture.intentID,
             caller: fixture.caller
         )
+        try await fixture.policy.grantStandingConsent(for: fixture.caller)
 
         try await fixture.policy.revokeStandingConsents(for: fixture.caller)
 
@@ -603,12 +691,16 @@ final class CallerConsentTests: XCTestCase {
             caller: fixture.caller
         )
         XCTAssertFalse(hasConsent)
+        let hasCallerWideConsent = await fixture.policy.hasStandingConsent(
+            for: fixture.caller
+        )
+        XCTAssertFalse(hasCallerWideConsent)
     }
 
     /// Consent is installation-scoped: a replacement generation can observe a grant made by
     /// the old generation, and retiring that exact old principal must not revoke it.
     func testRetiringThePreviousGenerationKeepsTheLiveOnesConsent() async throws {
-        let confirmation = ConsentConfirmationProbe(decision: .approved)
+        let confirmation = ConsentConfirmationProbe(decision: .alwaysAllow)
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
             authorizer: confirmation
@@ -642,7 +734,7 @@ final class CallerConsentTests: XCTestCase {
     }
 
     func testConsentPersistenceFailureIsFailClosedBeforeProviderStart() async throws {
-        let confirmation = ConsentConfirmationProbe(decision: .approved)
+        let confirmation = ConsentConfirmationProbe(decision: .alwaysAllow)
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
             authorizer: confirmation,
@@ -676,7 +768,7 @@ final class CallerConsentTests: XCTestCase {
         let provider = ConsentProviderProbe(blockedValue: 1, gate: gate)
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
-            authorizer: ConsentConfirmationProbe(decision: .approved),
+            authorizer: ConsentConfirmationProbe(decision: .alwaysAllow),
             provider: provider
         )
         try await fixture.policy.grantStandingConsent(
@@ -711,7 +803,7 @@ final class CallerConsentTests: XCTestCase {
     func testConsentIsScopedToItsContract() async throws {
         let fixture = try await ConsentFixture.make(
             confirmation: .policy,
-            authorizer: ConsentConfirmationProbe(decision: .approved)
+            authorizer: ConsentConfirmationProbe(decision: .alwaysAllow)
         )
         try await fixture.policy.grantStandingConsent(
             contract: fixture.intentID,
@@ -1221,10 +1313,10 @@ private struct ConsentFixture: Sendable {
             confirmationAuthorizer: IntentConfirmationAuthorizer { request in
                 await probe.authorize(request)
             },
-            callerConsentPersistence: { key, fence in
+            callerConsentPersistence: { target, fence in
                 let persist: @Sendable () async throws -> Bool = {
                     try await policy.grantStandingConsent(
-                        for: key,
+                        for: target,
                         guardedBy: fence
                     )
                 }

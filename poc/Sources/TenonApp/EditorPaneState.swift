@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import Foundation
 
 /// Scroll offset, selection, and unsaved buffer of a file pane's editor, kept outside

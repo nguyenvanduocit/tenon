@@ -1,8 +1,9 @@
+// @domain: plugin-host
 import Foundation
 import TenonIntentCore
 
 struct PluginParsedViewBody: Sendable {
-    let items: [PluginRowItem]
+    let items: [TreeRowItem]
     let body: PluginViewNode?
     let header: PaneHeader
     let modal: PluginViewModal?
@@ -28,7 +29,7 @@ struct PluginParsedHeader: Sendable {
 }
 
 enum PluginRuntimeValueParsing {
-    static func rows(from value: IntentValue?) -> [PluginRowItem] {
+    static func rows(from value: IntentValue?) -> [TreeRowItem] {
         guard let values = value?.arrayValue else { return [] }
         return values.compactMap { row in
             guard let object = row.objectValue,
@@ -38,9 +39,13 @@ enum PluginRuntimeValueParsing {
                 return nil
             }
 
-            return PluginRowItem(
+            return TreeRowItem(
+                // Unrecognised is `.row`, like every other token field in this decoder: a
+                // typo in an adjective costs the adjective, never the row.
+                kind: TreeRowItem.Kind(rawValue: object["kind"]?.stringValue ?? "") ?? .row,
                 id: actionIdentifier(from: idValue),
                 label: label,
+                detail: object["detail"]?.stringValue,
                 depth: max(0, object["depth"]?.intValue ?? 0),
                 icon: object["icon"]?.stringValue,
                 expanded: object["expanded"]?.boolValue,
@@ -48,9 +53,23 @@ enum PluginRuntimeValueParsing {
                 editing: object["editing"]?.boolValue ?? false,
                 placeholder: object["placeholder"]?.stringValue,
                 selected: object["selected"]?.boolValue ?? false,
+                accessory: accessory(from: object["accessory"]),
                 path: object["path"]?.stringValue
             )
         }
+    }
+
+    /// A row's trailing token. `RowAccessory.init?` owns the bound, so an over-long or empty
+    /// one drops the accessory and keeps the row — the same fail-soft rule the header items
+    /// follow, for the same reason: an author's mistake about ONE decoration must not cost
+    /// the file name it was decorating.
+    private static func accessory(from value: IntentValue?) -> RowAccessory? {
+        guard let object = value?.objectValue,
+              let text = object["text"]?.stringValue
+        else {
+            return nil
+        }
+        return RowAccessory(text: text, tint: ColorToken(token: object["tint"]?.stringValue))
     }
 
     static func viewBody(from value: IntentValue) -> PluginParsedViewBody {

@@ -1,3 +1,4 @@
+// @domain: automation
 import Foundation
 
 /// T-061: the seed for pane-based pair-authoring of automations.

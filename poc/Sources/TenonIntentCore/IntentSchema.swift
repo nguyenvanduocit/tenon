@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 import JSONSchema
 

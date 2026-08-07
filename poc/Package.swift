@@ -12,13 +12,24 @@ let warningsAsErrors: [SwiftSetting] = [.unsafeFlags(["-warnings-as-errors"])]
 
 let package = Package(
     name: "Tenon",
+    // Declared so the app has a base language at all. Without it SwiftPM builds no resource
+    // bundle, `Text("…")` has nothing to look a key up in, and "translate this later" stays
+    // structurally impossible rather than merely undone.
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
+    // Two executables, and nothing else on offer.
+    //
+    // Tenon's extension surface is the JavaScript plugin boundary — declared intents,
+    // contributions, events — not its Swift modules. Publishing `TenonCore` and
+    // `TenonIntentCore` as libraries invited a dependency this project has never promised to
+    // keep working, and the same file already says the app is never a versioned SwiftPM
+    // dependency. The modules stay internal; `package` access is how a target inside this
+    // package reaches another (see `PluginHost`), and a Swift SDK would need its own SemVer,
+    // documented symbols and a compatibility baseline before it existed as a product.
     products: [
         .executable(name: "tenon", targets: ["TenonApp"]),
         // Thin Foundation-only client that drives the running app over its control socket.
         .executable(name: "tenon-cli", targets: ["TenonCLI"]),
-        .library(name: "TenonIntentCore", targets: ["TenonIntentCore"]),
-        .library(name: "TenonCore", targets: ["TenonCore"]),
     ],
     dependencies: [
         // The editor carries three source patches that are in no upstream release —
@@ -86,6 +97,10 @@ let package = Package(
                 // instead of warning that it is unhandled; see ShellTitleBar for how the
                 // mark is loaded, because SwiftPM does not run `actool`.
                 .process("Assets.xcassets"),
+                // Where every user-visible string resolves. SwiftUI's `Text("…")` is already a
+                // localization key; without a catalog to resolve it against, that was a
+                // promise with nothing behind it.
+                .process("Localizable.xcstrings"),
             ],
             swiftSettings: warningsAsErrors,
             linkerSettings: [

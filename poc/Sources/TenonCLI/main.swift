@@ -1,3 +1,4 @@
+// @domain: cli-control
 import Foundation
 import TenonIntentCore
 

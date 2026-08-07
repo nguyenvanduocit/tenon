@@ -1,3 +1,4 @@
+// @domain: intent-bus, workspace-model
 import Foundation
 import TenonCore
 import TenonIntentCore

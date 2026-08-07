@@ -1,3 +1,4 @@
+// @domain: attention
 import AppKit
 import Foundation
 import UserNotifications

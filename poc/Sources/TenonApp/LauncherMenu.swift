@@ -1,3 +1,4 @@
+// @domain: command-surface
 import AppKit
 import SwiftUI
 import TenonCore
@@ -224,6 +225,7 @@ struct LauncherMenu: View {
                 }
                 .padding(.vertical, LauncherListHeight.listPadding)
             }
+            .tenonScrollbarStyle()
             // Stated, not offered: a ScrollView handed a maxHeight inside a popover
             // greedily takes all of it, floating ten rows in a screen-tall sheet.
             .frame(height: LauncherListHeight.height(

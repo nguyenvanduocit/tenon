@@ -1,3 +1,4 @@
+// @domain: intent-bus
 import Foundation
 import Network
 import TenonIntentCore
@@ -83,7 +84,10 @@ private extension NetworkIntentProvider {
         let method: String
         let headers: [Header]
         let body: Data?
-        let timeout: TimeInterval
+        /// The transport's share of the envelope. Parsing computes it from the deadline, and
+        /// name resolution happens after parsing, so whoever starts the transport re-reads what
+        /// is actually left rather than spending the budget twice.
+        var timeout: TimeInterval
     }
 
     enum TransportOutcome: Sendable {
@@ -125,9 +129,11 @@ private extension NetworkIntentProvider {
                 )
             }
             try context.checkCancellation()
-            let endpoints = try await Task.detached(priority: Task.currentPriority) {
-                try resolver.resolve(request.host)
-            }.value
+            let endpoints = try await resolveEndpoints(
+                host: request.host,
+                deadline: envelope.deadline,
+                resolver: resolver
+            )
             guard !endpoints.isEmpty else {
                 return CoreIntentProviderSupport.failure(
                     code: codes.networkFailed,
@@ -143,11 +149,23 @@ private extension NetworkIntentProvider {
                     reason: "private-network-endpoint-denied"
                 )
             }
+            // Resolution has already spent part of the envelope. The transport gets what is
+            // left, not the budget that was computed before the name was even looked up.
+            var pinnedRequest = request
+            pinnedRequest.timeout = min(
+                request.timeout,
+                CoreIntentProviderSupport.remainingSeconds(until: envelope.deadline)
+            )
+            guard pinnedRequest.timeout > 0 else {
+                throw CoreIntentProviderExecutionError.deadlineExceeded
+            }
+            try context.checkCancellation()
+
             let transport = PinnedHTTPTransport(
                 maximumBodyBytes: maximumBodyBytes
             )
             let worker = Task.detached(priority: Task.currentPriority) {
-                await transport.perform(request, endpoints: endpoints)
+                await transport.perform(pinnedRequest, endpoints: endpoints)
             }
             let outcome = await withTaskCancellationHandler {
                 await worker.value
@@ -226,6 +244,51 @@ private extension NetworkIntentProvider {
             )
         }
     }
+
+    /// Name resolution the caller can stop waiting for.
+    ///
+    /// `getaddrinfo` is a blocking call with its own patience — tens of seconds on a black-holed
+    /// resolver — and no interruption API. So the wait is what gets bounded, not the syscall:
+    /// whichever comes first of the answer, the envelope's deadline and the caller's
+    /// cancellation ends this `await`. A thread may still be sitting in the resolver afterwards,
+    /// but its result lands in a settlement that has already closed, so nothing downstream
+    /// starts on a request the kernel has given up on.
+    static func resolveEndpoints(
+        host: String,
+        deadline: ContinuousClock.Instant,
+        resolver: NetworkEndpointResolver
+    ) async throws -> [NetworkResolvedEndpoint] {
+        let remaining = CoreIntentProviderSupport.remainingSeconds(until: deadline)
+        guard remaining > 0 else {
+            throw CoreIntentProviderExecutionError.deadlineExceeded
+        }
+
+        let resolution = NetworkResolution()
+        resolverQueue.async {
+            resolution.settle(Result { try resolver.resolve(host) })
+        }
+        resolverQueue.asyncAfter(deadline: .now() + remaining) {
+            resolution.settle(
+                .failure(CoreIntentProviderExecutionError.deadlineExceeded)
+            )
+        }
+
+        return try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { continuation in
+                resolution.attach(continuation)
+            }
+        } onCancel: {
+            resolution.settle(.failure(CancellationError()))
+        }
+    }
+
+    /// Blocking resolution stays off the cooperative pool, where a stuck thread costs the whole
+    /// runtime a worker rather than one lookup.
+    static let resolverQueue = DispatchQueue(
+        label: "dev.tenon.network-resolver",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
 
     static func request(from envelope: IntentEnvelope) throws -> Request {
         let input = try CoreIntentProviderSupport.object(envelope.input)
@@ -334,6 +397,57 @@ private extension NetworkIntentProvider {
             body: body,
             timeout: max(0.001, min(requested ?? remaining, remaining))
         )
+    }
+}
+
+/// A resolve that three things race to end: the resolver answering, the envelope's deadline,
+/// and the caller being cancelled. Exactly one of them resumes the continuation; the others
+/// find the settlement closed and drop their result.
+///
+/// The waiting/attached ordering matters because `onCancel` can run before the continuation is
+/// installed — a caller cancelled between starting the work and suspending would otherwise
+/// leak the continuation and hang forever.
+private final class NetworkResolution: @unchecked Sendable {
+    typealias Continuation = CheckedContinuation<[NetworkResolvedEndpoint], Error>
+
+    private enum State {
+        case waiting
+        case attached(Continuation)
+        case settled(Result<[NetworkResolvedEndpoint], Error>)
+        case finished
+    }
+
+    private let lock = NSLock()
+    private var state: State = .waiting
+
+    func attach(_ continuation: Continuation) {
+        lock.lock()
+        switch state {
+        case .waiting:
+            state = .attached(continuation)
+            lock.unlock()
+        case let .settled(result):
+            state = .finished
+            lock.unlock()
+            continuation.resume(with: result)
+        case .attached, .finished:
+            lock.unlock()
+        }
+    }
+
+    func settle(_ result: Result<[NetworkResolvedEndpoint], Error>) {
+        lock.lock()
+        switch state {
+        case .waiting:
+            state = .settled(result)
+            lock.unlock()
+        case let .attached(continuation):
+            state = .finished
+            lock.unlock()
+            continuation.resume(with: result)
+        case .settled, .finished:
+            lock.unlock()
+        }
     }
 }
 

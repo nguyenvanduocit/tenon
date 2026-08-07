@@ -56,6 +56,8 @@ one reviewed change.
 | [`design-plugin-settings.md`](design-plugin-settings.md) | declarative settings and browser settings | implemented |
 | [`design-plugin-views.md`](design-plugin-views.md) | native declarative view tree | implemented |
 | [`design-plugin-view-instances.md`](design-plugin-view-instances.md) | per-pane plugin view identity/lifecycle | implemented |
+| [`design-diagnostics.md`](design-diagnostics.md) | what the app records about its own health, and what it deliberately never records | implemented (T-092) |
+| [`design-pane-hosting.md`](design-pane-hosting.md) | a pane is sized by the canvas, never by its content | implemented (T-091) |
 
 “Implemented” means the described path exists and is covered by the repository's test
 layers. It does not claim the current dirty worktree is green; use command receipts from

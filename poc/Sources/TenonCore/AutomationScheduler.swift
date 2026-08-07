@@ -1,3 +1,4 @@
+// @domain: automation
 import Foundation
 import Observation
 import TenonIntentCore

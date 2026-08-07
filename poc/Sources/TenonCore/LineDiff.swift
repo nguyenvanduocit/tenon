@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import Foundation
 
 /// A single aligned line in a diff. `.context` lines exist on both sides (both

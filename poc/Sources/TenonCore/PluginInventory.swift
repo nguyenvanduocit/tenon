@@ -1,3 +1,4 @@
+// @domain: plugin-host
 import Foundation
 
 /// The host-owned trust provenance persisted with an installation identity.

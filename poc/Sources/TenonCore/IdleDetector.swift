@@ -1,3 +1,4 @@
+// @domain: attention
 import Foundation
 
 /// The pure rule behind `terminal.wait.v1` with `tui-idle`: a terminal screen

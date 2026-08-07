@@ -1,3 +1,4 @@
+// @domain: plugin-settings
 import Foundation
 import TenonIntentCore
 

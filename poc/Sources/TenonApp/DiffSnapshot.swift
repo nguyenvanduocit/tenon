@@ -1,3 +1,4 @@
+// @domain: editor-and-diff
 import AppKit
 import SwiftUI
 import TenonCore
@@ -81,14 +82,14 @@ enum DiffSnapshot {
     @MainActor
     private static func renderChanges(to path: String) {
         let staged = [
-            ChangeEntry(path: "Sources/TenonCore/LineDiff.swift", badge: "A", tint: .added, staged: true, untracked: false),
-            ChangeEntry(path: "Sources/TenonApp/DiffSlotView.swift", badge: "M", tint: .modified, staged: true, untracked: false),
+            ChangeEntry(path: "Sources/TenonCore/LineDiff.swift", badge: "A", staged: true, untracked: false),
+            ChangeEntry(path: "Sources/TenonApp/DiffSlotView.swift", badge: "M", staged: true, untracked: false),
         ]
         let changed = [
-            ChangeEntry(path: "plugins/git/main.js", badge: "M", tint: .modified, staged: false, untracked: false),
-            ChangeEntry(path: "Sources/TenonCore/PluginRuntime.swift", badge: "M", tint: .modified, staged: false, untracked: false),
-            ChangeEntry(path: "Sources/TenonApp/ChangesPanelView.swift", badge: "?", tint: .untracked, staged: false, untracked: true),
-            ChangeEntry(path: "docs/legacy-changes-view.md", badge: "D", tint: .removed, staged: false, untracked: false),
+            ChangeEntry(path: "plugins/git/main.js", badge: "M", staged: false, untracked: false),
+            ChangeEntry(path: "Sources/TenonCore/PluginRuntime.swift", badge: "M", staged: false, untracked: false),
+            ChangeEntry(path: "Sources/TenonApp/ChangesPanelView.swift", badge: "?", staged: false, untracked: true),
+            ChangeEntry(path: "docs/legacy-changes-view.md", badge: "D", staged: false, untracked: false),
         ]
         let model = ChangesModel(previewBranch: "main", staged: staged, changed: changed)
         let slot = WorkspaceSlot(

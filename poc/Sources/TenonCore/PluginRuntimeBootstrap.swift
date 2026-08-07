@@ -1,3 +1,4 @@
+// @domain: plugin-host
 enum PluginRuntimeBootstrap {
     static let source = #"""
     (() => {

@@ -186,6 +186,82 @@ function pathAfter(rec, n) {
   return "";
 }
 
+// Porcelain v2 is four record families in one NUL-delimited stream. Each family is read by
+// its own function so none of them is a branch of the others: a header line updates the
+// model, an entry line produces an entry, and only the caller knows the order.
+
+function parseBranchRecord(rec, m) {
+  if (rec.indexOf("# branch.oid ") === 0) {
+    m.hasHead = rec.slice(13) !== "(initial)";
+    return true;
+  }
+  if (rec.indexOf("# branch.head ") === 0) {
+    var head = rec.slice(14);
+    m.branch = head === "(detached)" ? "detached HEAD" : head;
+    return true;
+  }
+  if (rec.indexOf("# branch.upstream ") === 0) {
+    m.upstream = rec.slice(18);
+    return true;
+  }
+  if (rec.indexOf("# branch.ab ") === 0) {
+    var parts = rec.slice(12).split(" ");
+    for (var j = 0; j < parts.length; j++) {
+      if (parts[j][0] === "+") m.ahead = parseInt(parts[j].slice(1), 10) || 0;
+      if (parts[j][0] === "-") m.behind = parseInt(parts[j].slice(1), 10) || 0;
+    }
+    return true;
+  }
+  return false;
+}
+
+// Returns { entry, consumed } — a rename spends the record after it on its original path, so
+// the count of records this consumed is the parser's business and not the loop's guesswork.
+function parseEntryRecord(rec, next) {
+  if (rec[1] !== " ") return null;
+  if (rec[0] === "1") {
+    return {
+      entry: { path: pathAfter(rec, 8), staged: rec[2], unstaged: rec[3], conflict: false },
+      consumed: 1
+    };
+  }
+  if (rec[0] === "2") {
+    return {
+      entry: {
+        path: pathAfter(rec, 9),
+        staged: rec[2],
+        unstaged: rec[3],
+        origPath: next,
+        conflict: false
+      },
+      consumed: 2
+    };
+  }
+  if (rec[0] === "u") {
+    return {
+      entry: { path: pathAfter(rec, 10), staged: rec[2], unstaged: rec[3], conflict: true },
+      consumed: 1
+    };
+  }
+  if (rec[0] === "?") {
+    return {
+      entry: { path: rec.slice(2), staged: "?", unstaged: "?", conflict: false },
+      consumed: 1
+    };
+  }
+  return null;
+}
+
+// The three lists the panel draws. A conflict is never also staged or changed: it is the one
+// state where the answer is "resolve this first".
+function classifyEntries(entries, m) {
+  m.merge = entries.filter(function (e) { return e.conflict; });
+  m.staged = entries.filter(function (e) {
+    return !e.conflict && e.staged !== "." && e.staged !== "?";
+  });
+  m.changed = entries.filter(function (e) { return !e.conflict && e.unstaged !== "."; });
+}
+
 function parseStatus(out) {
   var recs = out.split(String.fromCharCode(0));
   var m = emptyModel();
@@ -194,35 +270,13 @@ function parseStatus(out) {
   for (var i = 0; i < recs.length; i++) {
     var rec = recs[i];
     if (!rec) continue;
-    if (rec.indexOf("# branch.oid ") === 0) {
-      m.hasHead = rec.slice(13) !== "(initial)";
-    } else if (rec.indexOf("# branch.head ") === 0) {
-      var head = rec.slice(14);
-      m.branch = head === "(detached)" ? "detached HEAD" : head;
-    } else if (rec.indexOf("# branch.upstream ") === 0) {
-      m.upstream = rec.slice(18);
-    } else if (rec.indexOf("# branch.ab ") === 0) {
-      var parts = rec.slice(12).split(" ");
-      for (var j = 0; j < parts.length; j++) {
-        if (parts[j][0] === "+") m.ahead = parseInt(parts[j].slice(1), 10) || 0;
-        if (parts[j][0] === "-") m.behind = parseInt(parts[j].slice(1), 10) || 0;
-      }
-    } else if (rec[0] === "1" && rec[1] === " ") {
-      entries.push({ path: pathAfter(rec, 8), staged: rec[2], unstaged: rec[3], conflict: false });
-    } else if (rec[0] === "2" && rec[1] === " ") {
-      // Rename/copy: destination in this record, original path is the next token.
-      var orig = recs[i + 1];
-      i++;
-      entries.push({ path: pathAfter(rec, 9), staged: rec[2], unstaged: rec[3], origPath: orig, conflict: false });
-    } else if (rec[0] === "u" && rec[1] === " ") {
-      entries.push({ path: pathAfter(rec, 10), staged: rec[2], unstaged: rec[3], conflict: true });
-    } else if (rec[0] === "?" && rec[1] === " ") {
-      entries.push({ path: rec.slice(2), staged: "?", unstaged: "?", conflict: false });
-    }
+    if (parseBranchRecord(rec, m)) continue;
+    var parsed = parseEntryRecord(rec, recs[i + 1]);
+    if (!parsed) continue;
+    entries.push(parsed.entry);
+    i += parsed.consumed - 1;
   }
-  m.merge = entries.filter(function (e) { return e.conflict; });
-  m.staged = entries.filter(function (e) { return !e.conflict && e.staged !== "." && e.staged !== "?"; });
-  m.changed = entries.filter(function (e) { return !e.conflict && e.unstaged !== "."; });
+  classifyEntries(entries, m);
   return m;
 }
 

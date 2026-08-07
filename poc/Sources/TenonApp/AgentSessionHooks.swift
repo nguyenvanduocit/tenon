@@ -1,3 +1,4 @@
+// @domain: agent-lens
 import Darwin
 import Foundation
 
@@ -326,6 +327,34 @@ enum AgentHookRequestDecoder {
             difference |= Int(leftByte ^ rightByte)
         }
         return difference == 0
+    }
+}
+
+/// Whether a hook event describes the session a pane has actually resolved.
+///
+/// A hook says what it is: which provider wrote it and which process group it came from. Both
+/// are written by the client, and the pane/surface token that got it this far proves only that
+/// it came from *this* PTY — not that it came from the agent running in it. The transcript
+/// discovery path already refuses a binding whose declared provider or process group disagrees
+/// with the live foreground process; live ingestion is the same question asked of a faster
+/// channel, and it deserves the same answer.
+///
+/// Before the pane has resolved anything there is nothing to disagree with, and dropping those
+/// events would silently lose the first seconds of every session — the surface token remains
+/// the binding there, as it always was.
+enum AgentHookAdmission {
+    static func admits(
+        _ event: AgentHookEvent,
+        resolution: AgentLensResolution?,
+        processGroupID: (UInt64) -> UInt64 = { pid in
+            let group = getpgid(Int32(pid))
+            return group > 0 ? UInt64(group) : pid
+        }
+    ) -> Bool {
+        guard let resolution else { return true }
+        guard resolution.provider == event.provider else { return false }
+        guard let declared = event.processGroupID else { return true }
+        return declared == processGroupID(resolution.foregroundPID)
     }
 }
 

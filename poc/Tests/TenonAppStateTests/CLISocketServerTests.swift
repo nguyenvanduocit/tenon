@@ -1,5 +1,6 @@
 import Foundation
 @testable import TenonApp
+import TenonIntentCore
 import XCTest
 
 /// T-051. The control socket's two rules, which have never had a test.
@@ -380,6 +381,109 @@ final class CLISocketServerTests: XCTestCase {
         )
     }
 
+    // MARK: - Request permits (T-093)
+
+    /// The cap is the app's whole physical exposure to `tenon-cli`, not its decode phase.
+    ///
+    /// The permit used to be released as soon as a request had been posted to the main actor,
+    /// while its descriptor and its pending intent reply were still very much alive. Valid slow
+    /// requests could therefore accumulate without limit behind a semaphore that read as free —
+    /// the flood this test refuses is the one that looked legitimate at every individual step.
+    func testTheRequestCapCoversTheReplyNotOnlyTheDecode() throws {
+        let path = try makePath()
+        let server = CLISocketServer(
+            overridingPath: path,
+            admissionGraceForTesting: 0.05,
+            requestLifetimeForTesting: 30
+        )
+        XCTAssertEqual(server.socketPath, path, "precondition: the server must hold the socket")
+
+        let cap = CLISocketServer.maximumConcurrentConnections
+        let pending = PendingCompletions()
+        let admitted = expectation(description: "every permit is taken")
+        admitted.expectedFulfillmentCount = cap
+        server.onRequest = { _, complete in
+            pending.store(complete)
+            admitted.fulfill()
+        }
+
+        var clients: [Int32] = []
+        for index in 0 ..< cap {
+            clients.append(try connectAndSend(to: path, id: "req-\(index)"))
+        }
+        wait(for: [admitted], timeout: 10)
+        XCTAssertEqual(
+            server.liveConnectionCount,
+            cap,
+            "each unanswered request must still hold its permit"
+        )
+
+        // The overflow client is answered rather than parked: refusing is what keeps the
+        // descriptor count bounded when every in-flight request is legitimate but slow.
+        let refused = try connectAndSend(to: path, id: "overflow")
+        let response = try readResponse(refused)
+        close(refused)
+        guard case let .failure(_, error) = response else {
+            return XCTFail("an over-cap request must fail, got \(String(describing: response))")
+        }
+        XCTAssertEqual(error.code, .busy)
+        XCTAssertEqual(
+            server.liveConnectionCount,
+            cap,
+            "a refused request must not consume a permit"
+        )
+
+        pending.completeAll(.ok(.object(["ok": .bool(true)])))
+        for client in clients {
+            let reply = try readResponse(client)
+            close(client)
+            guard case .success = reply else {
+                return XCTFail("an answered request must receive its result, got \(String(describing: reply))")
+            }
+        }
+        waitUntil("every permit is returned") { server.liveConnectionCount == 0 }
+
+        // And the channel is usable again, which is what makes the cap backpressure rather
+        // than a one-way ratchet.
+        let after = expectation(description: "a request is admitted again")
+        server.onRequest = { _, complete in
+            complete(.ok(.object([:])))
+            after.fulfill()
+        }
+        let reopened = try connectAndSend(to: path, id: "after")
+        wait(for: [after], timeout: 10)
+        close(reopened)
+    }
+
+    /// A handler that never answers must not retire a permit for the life of the process.
+    func testAnUnansweredRequestReturnsItsPermitAtTheLifetimeLimit() throws {
+        let path = try makePath()
+        let server = CLISocketServer(
+            overridingPath: path,
+            admissionGraceForTesting: 0.05,
+            requestLifetimeForTesting: 0.3
+        )
+        XCTAssertEqual(server.socketPath, path)
+
+        let abandoned = PendingCompletions()
+        let admitted = expectation(description: "the request reaches the handler")
+        server.onRequest = { _, complete in
+            abandoned.store(complete)
+            admitted.fulfill()
+        }
+
+        let client = try connectAndSend(to: path, id: "never-answered")
+        wait(for: [admitted], timeout: 10)
+
+        let response = try readResponse(client)
+        close(client)
+        guard case let .failure(_, error) = response else {
+            return XCTFail("an abandoned request must be settled, got \(String(describing: response))")
+        }
+        XCTAssertEqual(error.code, .internalError)
+        waitUntil("the abandoned permit is returned") { server.liveConnectionCount == 0 }
+    }
+
     // MARK: - Fixture
 
     /// Deliberately `/tmp` and deliberately short, not `FileManager.temporaryDirectory`.
@@ -411,6 +515,78 @@ final class CLISocketServerTests: XCTestCase {
             try? FileManager.default.removeItem(atPath: base)
         }
         return base
+    }
+
+    /// Connects a real client and writes one framed `ping`, then hands back the descriptor so
+    /// the test controls when — and whether — the reply is read.
+    private func connectAndSend(to path: String, id: String) throws -> Int32 {
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        XCTAssertGreaterThanOrEqual(fd, 0, "could not create a client socket")
+        var address = sockaddr_un()
+        address.sun_family = sa_family_t(AF_UNIX)
+        let bytes = Array(path.utf8)
+        XCTAssertLessThan(bytes.count, MemoryLayout.size(ofValue: address.sun_path))
+        withUnsafeMutablePointer(to: &address.sun_path) { storage in
+            storage.withMemoryRebound(to: CChar.self, capacity: bytes.count + 1) { destination in
+                for (index, byte) in bytes.enumerated() {
+                    destination[index] = CChar(bitPattern: byte)
+                }
+                destination[bytes.count] = 0
+            }
+        }
+        let size = socklen_t(MemoryLayout<sockaddr_un>.size)
+        let connected = withUnsafePointer(to: &address) { pointer in
+            pointer.withMemoryRebound(to: sockaddr.self, capacity: 1) {
+                Darwin.connect(fd, $0, size)
+            }
+        }
+        XCTAssertEqual(connected, 0, "client connect failed: \(String(cString: strerror(errno)))")
+
+        var payload = try CLIWireCodec.encodeRequest(CLIRequest(id: id, action: "ping"))
+        payload.append(0x0A)
+        payload.withUnsafeBytes { raw in
+            guard let base = raw.baseAddress else { return }
+            var offset = 0
+            while offset < payload.count {
+                let written = write(fd, base + offset, payload.count - offset)
+                if written <= 0 { break }
+                offset += written
+            }
+        }
+        return fd
+    }
+
+    private func readResponse(_ fd: Int32, timeout: TimeInterval = 10) throws -> CLIResponse? {
+        var deadline = timeval(tv_sec: Int(timeout), tv_usec: 0)
+        setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &deadline, socklen_t(MemoryLayout<timeval>.size))
+        var buffer = Data()
+        var chunk = [UInt8](repeating: 0, count: 4096)
+        while true {
+            let count = chunk.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+            if count <= 0 { break }
+            if let newline = chunk[0 ..< count].firstIndex(of: 0x0A) {
+                buffer.append(contentsOf: chunk[0 ..< newline])
+                break
+            }
+            buffer.append(contentsOf: chunk[0 ..< count])
+        }
+        guard !buffer.isEmpty else { return nil }
+        return CLIWireCodec.decodeResponse(buffer)
+    }
+
+    /// Pumps the main runloop, because the request path deliberately hops through the main actor
+    /// and a blocked test thread would be indistinguishable from the bug.
+    private func waitUntil(
+        _ description: String,
+        timeout: TimeInterval = 10,
+        _ condition: () -> Bool
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return }
+            RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTFail("timed out waiting for \(description)")
     }
 
     private func claimPath(for socketPath: String) -> String {
@@ -454,6 +630,26 @@ final class CLISocketServerTests: XCTestCase {
         }
         XCTAssertEqual(bound, 0, "fixture failed to bind: \(String(cString: strerror(errno)))")
         close(fd)
+    }
+}
+
+/// Holds the completions a test handler was given, so a request can be left deliberately
+/// unanswered — the state the permit has to survive.
+private final class PendingCompletions: @unchecked Sendable {
+    private let lock = NSLock()
+    private var completions: [(CLIResult) -> Void] = []
+
+    func store(_ completion: @escaping (CLIResult) -> Void) {
+        lock.withLock { completions.append(completion) }
+    }
+
+    func completeAll(_ result: CLIResult) {
+        let all = lock.withLock { () -> [(CLIResult) -> Void] in
+            let pending = completions
+            completions = []
+            return pending
+        }
+        for completion in all { completion(result) }
     }
 }
 

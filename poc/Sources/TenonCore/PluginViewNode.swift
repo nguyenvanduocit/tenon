@@ -1,3 +1,4 @@
+// @domain: plugin-contributions
 import Foundation
 
 /// A node in a plugin's declarative view-tree (`tenon.views.set(id, { body })`).
@@ -50,6 +51,80 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     case keyValue(label: String, value: String, tint: ColorToken)
     case progress(value: Double, tint: ColorToken)
     case field(label: String, children: [PluginViewNode])
+}
+
+public extension PluginViewNode {
+    /// The children a container node holds, empty for a leaf.
+    var children: [PluginViewNode] {
+        switch self {
+        case let .vstack(_, children),
+             let .hstack(_, children),
+             let .card(children),
+             let .scroll(_, children),
+             let .field(_, children):
+            children
+        case let .box(_, _, _, _, children):
+            children
+        case let .grid(_, _, children):
+            children
+        default:
+            []
+        }
+    }
+
+    /// What this node is, for a renderer that has to keep state attached to it across a
+    /// republish.
+    ///
+    /// A plugin rebuilds and resends its whole tree for any reason, and a renderer keyed by
+    /// position moves a field's draft — or a live web surface — onto whatever node inherits the
+    /// index when a sibling is inserted or the list is reordered. The nodes that carry state
+    /// already name themselves: a field through the action it submits, a web surface through
+    /// its id. A container inherits the identity of the stateful nodes underneath it, because
+    /// rebuilding the container would take its children's state with it.
+    ///
+    /// `nil` means the node holds nothing worth preserving, and its position is identity enough.
+    var stateIdentity: String? {
+        switch self {
+        case let .textfield(_, _, action):
+            "field:\(action)"
+        case let .webview(surfaceID):
+            "web:\(surfaceID)"
+        default:
+            {
+                let nested = children.compactMap(\.stateIdentity)
+                return nested.isEmpty ? nil : nested.joined(separator: "+")
+            }()
+        }
+    }
+}
+
+/// One sibling in a rendered run, with the identity SwiftUI should keep it under.
+public struct IdentifiedPluginViewNode: Identifiable, Equatable, Sendable {
+    public let id: String
+    public let node: PluginViewNode
+
+    public init(id: String, node: PluginViewNode) {
+        self.id = id
+        self.node = node
+    }
+
+    /// Identity for a run of siblings: authored where a node carries state, positional where it
+    /// does not. Two stateful siblings that authored the same identifier keep distinct identities
+    /// — a duplicate id is a plugin bug, and collapsing two live controls into one is a worse
+    /// answer to it than rendering both.
+    public static func identify(_ children: [PluginViewNode]) -> [IdentifiedPluginViewNode] {
+        var used: Set<String> = []
+        return children.enumerated().map { offset, node in
+            guard let authored = node.stateIdentity else {
+                return IdentifiedPluginViewNode(id: "position:\(offset)", node: node)
+            }
+            let candidate = used.insert(authored).inserted
+                ? authored
+                : "\(authored)@\(offset)"
+            used.insert(candidate)
+            return IdentifiedPluginViewNode(id: candidate, node: node)
+        }
+    }
 }
 
 /// Which way a `scroll` node lets its content overflow. An unknown or omitted token

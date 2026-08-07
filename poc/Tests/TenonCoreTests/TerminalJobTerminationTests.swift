@@ -116,6 +116,64 @@ final class TerminalJobTerminationTests: XCTestCase {
         )
     }
 
+    // MARK: - Whether a tab close needs confirmation
+
+    func testAnIdleShellDoesNotRequireCloseConfirmation() {
+        XCTAssertEqual(
+            TerminalJobTermination.inspection(
+                foregroundPIDs: [4908],
+                in: "  4908  4908 ttys004\n  4916  4908 ttys004"
+            ),
+            .idle,
+            "a login wrapper or helper in the shell's own group is still an idle terminal"
+        )
+    }
+
+    func testForegroundAndBackgroundJobsRequireCloseConfirmation() {
+        let table = """
+          4908  4908 ttys004
+          5050  5050 ttys004
+          5121  5121 ttys004
+        """
+
+        XCTAssertEqual(
+            TerminalJobTermination.inspection(foregroundPIDs: [5050], in: table),
+            .running,
+            "the foreground command shares the tty with its waiting shell"
+        )
+        XCTAssertEqual(
+            TerminalJobTermination.inspection(foregroundPIDs: [4908], in: table),
+            .running,
+            "a background job still belongs to the tab while the shell is foreground"
+        )
+    }
+
+    func testAnyBusyTerminalProtectsAMultiPaneTab() {
+        let table = """
+          4908  4908 ttys004
+          7001  7001 ttys009
+          7010  7010 ttys009
+        """
+
+        XCTAssertEqual(
+            TerminalJobTermination.inspection(
+                foregroundPIDs: [4908, 7010],
+                in: table
+            ),
+            .running
+        )
+    }
+
+    func testMissingProcessIdentityFailsSafeInsteadOfClaimingIdle() {
+        XCTAssertEqual(
+            TerminalJobTermination.inspection(
+                foregroundPIDs: [4908],
+                in: ""
+            ),
+            .unavailable
+        )
+    }
+
     // MARK: - What the terminator actually sends
 
     func testTheSweepHupsEveryGroupThenKillsWhatIsStillThere() async {
