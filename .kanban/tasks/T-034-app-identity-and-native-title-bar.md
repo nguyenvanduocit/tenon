@@ -18,18 +18,18 @@ can be committed with an author and acceptance criteria instead of arriving as m
 diff.
 
 Files carrying this slice:
-- `poc/Sources/TenonApp/WindowChrome.swift` — `mouseDownCanMoveWindow` → explicit
+- `Sources/TenonApp/WindowChrome.swift` — `mouseDownCanMoveWindow` → explicit
   `mouseDown` + `performDrag`, plus the double-click action
-- `poc/Sources/TenonApp/TenonTheme.swift` — `titleBarHeight` 46 → 36. ⚠️ `tabMinWidth` in
+- `Sources/TenonApp/TenonTheme.swift` — `titleBarHeight` 46 → 36. ⚠️ `tabMinWidth` in
   the same hunk belongs to **T-025**, not to this task
-- `poc/Sources/TenonApp/ShellTitleBar.swift` — `Image("TenonMark")`, chip height 32 → 26,
+- `Sources/TenonApp/ShellTitleBar.swift` — `Image("TenonMark")`, chip height 32 → 26,
   icon box 27 → 24. ⚠️ this file is currently held by the **T-022 defect fix**
   (session `46aca5a4`) — do not edit it here
-- NEW `poc/Design/AppIcon/` — `TenonAppIcon.svg`, `TenonAppIcon-Small.svg`,
+- NEW `Design/AppIcon/` — `TenonAppIcon.svg`, `TenonAppIcon-Small.svg`,
   `TenonAppIcon-1024.png`, `Tenon.icns` (sources, untracked)
-- NEW `poc/Sources/TenonApp/Assets.xcassets/` — `AppIcon.appiconset` (10 PNGs + Contents.json)
+- NEW `Sources/TenonApp/Assets.xcassets/` — `AppIcon.appiconset` (10 PNGs + Contents.json)
   and `TenonMark.imageset` (untracked)
-- NEW `poc/scripts/generate-app-icon.sh` — regenerates the appiconset from the SVG masters
+- NEW `scripts/generate-app-icon.sh` — regenerates the appiconset from the SVG masters
   via `sips` (untracked)
 
 ## Why / evidence
@@ -48,7 +48,7 @@ Files carrying this slice:
 
 ## Known defect — being fixed elsewhere, do not duplicate
 `ShellTitleBar.swift:69`'s `Image("TenonMark")` has **no bundle to load from under
-`swift run tenon`**: the asset catalog is untracked and `poc/Package.swift`'s `TenonApp`
+`swift run tenon`**: the asset catalog is untracked and `Package.swift`'s `TenonApp`
 target declares no `resources:`. SwiftPM does not run `actool`. The SF Symbol fallback was
 deleted in the same hunk, so the mark renders as a blank 14×14 gap on the documented dev
 launch path. This is **finding 4** of `.kanban/reports/review-landed.md` and is assigned to
@@ -61,7 +61,7 @@ the T-022 defect-fix worker (session `46aca5a4`), which owns `Package.swift` and
 - [x] Double-clicking an empty part performs the user's configured action, defaulting to
       zoom when `AppleActionOnDoubleClick` is unset
 - [x] The tab strip sits on the traffic lights' row rather than below it
-- [x] `poc/scripts/generate-app-icon.sh` regenerates every appiconset size from the SVG
+- [x] `scripts/generate-app-icon.sh` regenerates every appiconset size from the SVG
       masters, so the PNGs are derived artifacts and not hand-maintained
 - [x] The mark resolves under `swift run tenon` — **shipped by the T-022 fix**, verified
       2026-07-31 at `17bf0a6`: `Package.swift:84-89` declares `.process("Assets.xcassets")`
@@ -71,7 +71,7 @@ the T-022 defect-fix worker (session `46aca5a4`), which owns `Package.swift` and
       consumes it with an SF Symbol fallback, so the title bar cannot draw nothing
 - [x] The asset catalog is tracked in git, so the reference at `ShellTitleBar.swift:69` does
       not ship dangling for every other clone — **89 files** under
-      `poc/Sources/TenonApp/Assets.xcassets/` are tracked (`git ls-files`)
+      `Sources/TenonApp/Assets.xcassets/` are tracked (`git ls-files`)
 - [x] Committed with the rest of the pane/launcher changeset — working tree clean at
       `17bf0a6`, nothing from this task left unstaged
 

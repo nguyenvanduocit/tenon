@@ -15,10 +15,10 @@ tree, uncommitted like the rest of the shared checkout. `PluginWebSurfacePool.sw
 T-076's sole claim — its `WebSurface` region now carries the UA line, the `WKUIDelegate`
 conformance, and `popupTarget`.
 
-- `poc/Sources/TenonApp/WebUserAgent.swift` (new)
-- `poc/Sources/TenonApp/PluginWebSurfacePool.swift`
-- `poc/Tests/TenonAppStateTests/PluginWebSurfacePoolTests.swift`
-- `poc/Sources/TenonApp/FilePreviewSlotViews.swift` — comment only.
+- `Sources/TenonApp/WebUserAgent.swift` (new)
+- `Sources/TenonApp/PluginWebSurfacePool.swift`
+- `Tests/TenonAppStateTests/PluginWebSurfacePoolTests.swift`
+- `Sources/TenonApp/FilePreviewSlotViews.swift` — comment only.
 
 ## Evidence
 

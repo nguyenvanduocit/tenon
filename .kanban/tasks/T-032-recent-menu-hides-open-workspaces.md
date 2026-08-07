@@ -9,12 +9,12 @@
 session `1a79a1bf`
 
 Claimed files:
-- `poc/Sources/TenonCore/RecentWorkspaceStore.swift` — NEW `recent(excludingFolders:)` + `folderKey`
-- `poc/Sources/TenonCore/WorkspaceStore.swift` — NEW `openWorkspaceFolders` (declaration ~37,
+- `Sources/TenonCore/RecentWorkspaceStore.swift` — NEW `recent(excludingFolders:)` + `folderKey`
+- `Sources/TenonCore/WorkspaceStore.swift` — NEW `openWorkspaceFolders` (declaration ~37,
   one line in `init`, three lines at the end of `apply`, one private `folders(in:)`). Nothing
   else in this file — @d25d3c17 T-026's `duplicateSlot` is untouched.
-- `poc/Sources/TenonApp/WorkspaceSidebarView.swift` — the menu's filter + `openRecent`
-- `poc/Tests/TenonCoreTests/RecentWorkspaceStoreTests.swift` — append
+- `Sources/TenonApp/WorkspaceSidebarView.swift` — the menu's filter + `openRecent`
+- `Tests/TenonCoreTests/RecentWorkspaceStoreTests.swift` — append
 
 ## Criteria
 - [x] The recent list in the sidebar menu excludes every workspace currently in the catalog,

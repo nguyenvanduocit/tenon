@@ -9,16 +9,16 @@
 session `fd5aa92f`
 
 Claimed files:
-- `poc/Sources/TenonApp/ShellTitleBar.swift` — delete `slotControls`, `+` opens the popover
-- `poc/Sources/TenonApp/LauncherMenu.swift` — NEW (the popover itself)
-- `poc/Sources/TenonApp/ContentView.swift` — pass `host` + `intentRuntime` into the title bar
-- `poc/Sources/TenonCore/CommandIndex.swift` — `Command.isLauncher` + `launcherOnly`
-- `poc/Sources/TenonCore/CommandAggregation.swift` — project the flag
-- `poc/Sources/TenonCore/PluginManifest.swift` — `palette.launcher` (additive field only)
-- `poc/Sources/TenonCore/PluginHost.swift` — ONE additive field on `PluginIntentPresentation`
+- `Sources/TenonApp/ShellTitleBar.swift` — delete `slotControls`, `+` opens the popover
+- `Sources/TenonApp/LauncherMenu.swift` — NEW (the popover itself)
+- `Sources/TenonApp/ContentView.swift` — pass `host` + `intentRuntime` into the title bar
+- `Sources/TenonCore/CommandIndex.swift` — `Command.isLauncher` + `launcherOnly`
+- `Sources/TenonCore/CommandAggregation.swift` — project the flag
+- `Sources/TenonCore/PluginManifest.swift` — `palette.launcher` (additive field only)
+- `Sources/TenonCore/PluginHost.swift` — ONE additive field on `PluginIntentPresentation`
   (~2276) + one line at its construction (~2294). Nothing else in this file.
-- `poc/plugins/{core-commands,browser,file-explorer,claude-sessions}/manifest.json`
-- `poc/Tests/TenonCoreTests/LauncherCommandsTests.swift` — NEW
+- `plugins/{core-commands,browser,file-explorer,claude-sessions}/manifest.json`
+- `Tests/TenonCoreTests/LauncherCommandsTests.swift` — NEW
 
 ⚠️ @019f9576 (T-019/T-020): four of these are on your claim list and have not changed
 since Jul 25. My edits are strictly additive (a new optional manifest field threaded to a

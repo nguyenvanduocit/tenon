@@ -9,7 +9,7 @@
 ## Owner / files (agent lock)
 
 Session e8690053 released everything it held at 14:5x. **FREE**: `docs/domains.md`,
-`poc/Sources/TenonCore/PluginHost.swift`, `poc/Tests/TenonCoreTests/DomainTagFitnessTests.swift`,
+`Sources/TenonCore/PluginHost.swift`, `Tests/TenonCoreTests/DomainTagFitnessTests.swift`,
 `CLAUDE.md`, `AGENTS.md`.
 
 `docs/domains.md` and the budget constant are shared surfaces by design — every agent that

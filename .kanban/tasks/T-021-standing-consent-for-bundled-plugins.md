@@ -100,10 +100,10 @@ Kernel takeover session `core_contract_executor` — COMPLETE. Host/app/catalog 
 files were not edited by the takeover. Historical ownership trail follows.
 
 Historical files claimed by session `c7da3ffe`:
-- `poc/Sources/TenonIntentCore/IntentPolicy.swift` — allow-only standing-consent policy state.
-- `poc/Sources/TenonIntentCore/IntentDispatcher.swift` — confirmation modes and execution fences.
-- `poc/Tests/TenonIntentCoreTests/CallerConsentTests.swift` — NEW
-- `poc/Tests/TenonCoreTests/BundledPluginConsentTests.swift` — NEW
+- `Sources/TenonIntentCore/IntentPolicy.swift` — allow-only standing-consent policy state.
+- `Sources/TenonIntentCore/IntentDispatcher.swift` — confirmation modes and execution fences.
+- `Tests/TenonIntentCoreTests/CallerConsentTests.swift` — NEW
+- `Tests/TenonCoreTests/BundledPluginConsentTests.swift` — NEW
 
 Historical host handoff, now resolved by the host owner:
 

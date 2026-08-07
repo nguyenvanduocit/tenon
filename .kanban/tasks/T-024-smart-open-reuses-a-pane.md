@@ -10,18 +10,18 @@ directory is Xcode-only, so the provider test landed in `Tests/TenonAppStateTest
 is the SwiftPM target that links `TenonApp` and therefore the one `swift test` runs.
 
 Files changed:
-- `poc/Sources/TenonCore/Workspace.swift` — `SlotContent` pane-sharing rule (additive)
-- `poc/Sources/TenonCore/WorkspaceStore.swift` — `openContent` replaces `showDiff`
-- `poc/Sources/TenonCore/CoreIntentCatalog.swift` — new `workspace.content.open.v1`
-- `poc/Sources/TenonApp/WorkspaceIntentProvider.swift` — binding + provider method
-- `poc/Sources/TenonApp/ChangesPanelView.swift` — one call site (`showDiff` → `openContent`)
-- `poc/plugins/file-explorer/{main.js,manifest.json}` — click-to-open path
-- `poc/plugins/git/{main.js,manifest.json}` — diff open, so both adapters behave alike
-- `poc/Tests/TenonCoreTests/WorkspaceOpenContentTests.swift` — NEW, replaces
+- `Sources/TenonCore/Workspace.swift` — `SlotContent` pane-sharing rule (additive)
+- `Sources/TenonCore/WorkspaceStore.swift` — `openContent` replaces `showDiff`
+- `Sources/TenonCore/CoreIntentCatalog.swift` — new `workspace.content.open.v1`
+- `Sources/TenonApp/WorkspaceIntentProvider.swift` — binding + provider method
+- `Sources/TenonApp/ChangesPanelView.swift` — one call site (`showDiff` → `openContent`)
+- `plugins/file-explorer/{main.js,manifest.json}` — click-to-open path
+- `plugins/git/{main.js,manifest.json}` — diff open, so both adapters behave alike
+- `Tests/TenonCoreTests/WorkspaceOpenContentTests.swift` — NEW, replaces
   `WorkspaceDiffReuseTests.swift` (deleted)
-- `poc/Tests/TenonAppStateTests/WorkspaceIntentProviderTests.swift` — NEW
-- `poc/Tests/TenonCoreTests/CoreIntentCatalogTests.swift` — inventory 38 → 39
-- `poc/Tests/TenonCoreTests/FileExplorerPluginTests.swift` — routed-intent assertion
+- `Tests/TenonAppStateTests/WorkspaceIntentProviderTests.swift` — NEW
+- `Tests/TenonCoreTests/CoreIntentCatalogTests.swift` — inventory 38 → 39
+- `Tests/TenonCoreTests/FileExplorerPluginTests.swift` — routed-intent assertion
 - `docs/architecture-interaction-boundaries.md`, `docs/design-pane-slots.md` — inventory
 
 ## Why

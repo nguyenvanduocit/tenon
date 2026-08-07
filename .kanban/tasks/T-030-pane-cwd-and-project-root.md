@@ -12,7 +12,7 @@
 Settled by reading the pinned header and the existing action switch, before any design.
 
 - **Which API.** `GHOSTTY_ACTION_PWD`
-  (`poc/GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h:963`) carries
+  (`GhosttyKit.xcframework/macos-arm64_x86_64/Headers/ghostty.h:963`) carries
   `ghostty_action_pwd_s { const char* pwd; }` (`ghostty.h:720-722`), reachable as the
   `pwd` member of the action union (`ghostty.h:1012`). (HIGH — read from the pinned
   header this build links against.)
@@ -80,21 +80,21 @@ Consequences of landing on rung 2, which is why the rung matters:
 ## Owner / files (agent lock)
 session `a4af4e8c` — **LOCKS RELEASED.** Every file below is free again; the list stays as
 the record of what this task changed.
-- `poc/Sources/TenonCore/ProjectRoot.swift` — NEW, pure resolution rule
-- `poc/Tests/TenonCoreTests/ProjectRootTests.swift` — NEW
-- `poc/Sources/TenonApp/GhosttySurface.swift` — one `case GHOSTTY_ACTION_PWD` + one callback
-- `poc/Sources/TenonApp/SurfacePool.swift` — additive `cwds` registry beside `titles`
-- `poc/plugins/file-explorer/main.js`, `poc/plugins/git/main.js` — re-root on the event
-- `poc/Sources/TenonApp/TerminalSurface.swift` — `onPwdChange` on the protocol beside
+- `Sources/TenonCore/ProjectRoot.swift` — NEW, pure resolution rule
+- `Tests/TenonCoreTests/ProjectRootTests.swift` — NEW
+- `Sources/TenonApp/GhosttySurface.swift` — one `case GHOSTTY_ACTION_PWD` + one callback
+- `Sources/TenonApp/SurfacePool.swift` — additive `cwds` registry beside `titles`
+- `plugins/file-explorer/main.js`, `plugins/git/main.js` — re-root on the event
+- `Sources/TenonApp/TerminalSurface.swift` — `onPwdChange` on the protocol beside
   `onTitleChange`, with a no-op default so no existing conformer breaks. Added so the seam
   is not ghostty-only: the stub backend carries it too, which is what makes the pane
   directory rule assertable headlessly.
-- `poc/Sources/TenonApp/SpatialCanvasView.swift` — the pane header menu's directory section
+- `Sources/TenonApp/SpatialCanvasView.swift` — the pane header menu's directory section
   (both directories + AUTO/PINNED marker + the two pin actions). Released by @d25d3c17
   (T-026) and @dd2c89a8 (T-025); additive, one call inserted in `slotContextMenu`.
-- `poc/Tests/TenonAppStateTests/PaneDirectoryTests.swift` — NEW, the pool-level no-thrash
+- `Tests/TenonAppStateTests/PaneDirectoryTests.swift` — NEW, the pool-level no-thrash
   assertions (`TenonAppTests` is Xcode-only and never runs under `swift test`).
-- `poc/Tests/TenonCoreTests/PaneCwdSubscriptionTests.swift` — NEW, runtime proof that the
+- `Tests/TenonCoreTests/PaneCwdSubscriptionTests.swift` — NEW, runtime proof that the
   real shipped plugin JS registers the subscription. Deliberately a NEW file so it does not
   touch @3bf9127e's `ShippedPluginsTests.swift`.
 - `docs/architecture-interaction-boundaries.md` — one additive line in the EVENT inventory
@@ -102,10 +102,10 @@ the record of what this task changed.
 
 ✅ **The two additive inserts are APPLIED** — coordinator issued GO after @bac7c45f (T-033)
 reported `worker_done` and its slice was committed as `0796494`, leaving me the only writer:
-1. `poc/Sources/TenonCore/PluginHost.swift:1469` — `paneCwdChanged(_:slotID:)`, the
+1. `Sources/TenonCore/PluginHost.swift:1469` — `paneCwdChanged(_:slotID:)`, the
    `pane.cwd-changed` publisher, inserted after `terminalTitleChanged`. Re-anchored on
    surrounding code, not on the stale line numbers, and verified on disk after writing.
-2. `poc/Sources/TenonApp/TenonApp.swift:378` — `terminalSurfaces.onPaneDirectoryChange`,
+2. `Sources/TenonApp/TenonApp.swift:378` — `terminalSurfaces.onPaneDirectoryChange`,
    beside the existing `onTitleChange` wire. Verified on disk.
 
 The launcher slice's two uncommitted hunks in `PluginHost.swift` (`launcher: Bool` at :83,
@@ -116,12 +116,12 @@ The launcher slice's two uncommitted hunks in `PluginHost.swift` (`launcher: Boo
 callback wire in `surface(for:workspacePath:)`. No existing member's shape changes.
 
 Expected files:
-- `poc/Sources/TenonCore/ProjectRoot.swift` — NEW pure resolution rule
-- `poc/Sources/TenonApp/GhosttySurface.swift` — the cwd seam (probe first, see below)
-- `poc/Sources/TenonApp/SurfacePool.swift` — per-slot cwd, alongside `titles`
-- `poc/Sources/TenonCore/CoreIntentCatalog.swift` — a `pane.cwd-changed` EVENT / fact
-- `poc/plugins/file-explorer/main.js`, `poc/plugins/git/main.js` — re-root on it
-- `poc/Tests/TenonCoreTests/ProjectRootTests.swift` — NEW
+- `Sources/TenonCore/ProjectRoot.swift` — NEW pure resolution rule
+- `Sources/TenonApp/GhosttySurface.swift` — the cwd seam (probe first, see below)
+- `Sources/TenonApp/SurfacePool.swift` — per-slot cwd, alongside `titles`
+- `Sources/TenonCore/CoreIntentCatalog.swift` — a `pane.cwd-changed` EVENT / fact
+- `plugins/file-explorer/main.js`, `plugins/git/main.js` — re-root on it
+- `Tests/TenonCoreTests/ProjectRootTests.swift` — NEW
 
 ## Why / evidence
 - This is Tenon's own workflow: `CLAUDE.md` describes many agents on one tree, and the

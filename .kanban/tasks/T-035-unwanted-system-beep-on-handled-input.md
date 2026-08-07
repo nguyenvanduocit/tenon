@@ -56,7 +56,7 @@ already-handled input by construction. Every other view keeps NSResponder's defa
 unhandled input keeps its system feedback.
 
 **The complete set of controls on this event path**: `interpretKeyEvents` has exactly
-one call site in `poc/Sources` (this view). Surveyed the rest and each is clean by a
+one call site in `Sources` (this view). Surveyed the rest and each is clean by a
 different mechanism: `SpatialCanvasView.keyDown:349-354` consumes Escape only when a
 gesture cancels (early return) and otherwise correctly lets the event travel;
 `PaletteOverlay`/`LauncherMenu` use SwiftUI `.onKeyPress` returning `.handled`, a

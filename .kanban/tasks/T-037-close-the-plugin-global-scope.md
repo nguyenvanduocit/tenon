@@ -12,9 +12,9 @@ RELEASED 00:23 — done by Orca worker task_55a47a204dd8 (dispatch ctx_efe4d2bc7
 All files free.
 
 Expected files:
-- `poc/Sources/TenonCore/PluginRuntimeBootstrap.swift` — the deletion, next to the existing
+- `Sources/TenonCore/PluginRuntimeBootstrap.swift` — the deletion, next to the existing
   `delete globalThis.__tenonNativePost;`
-- `poc/Tests/TenonCoreTests/PluginBuiltinsTests.swift` — the scope-closure test, beside
+- `Tests/TenonCoreTests/PluginBuiltinsTests.swift` — the scope-closure test, beside
   `testRuntimeExportsOnlyTheClassifiedPublicSurface` at `:86`
 - `CLAUDE.md` — invariant 1 loses its "not yet enforced" clause once the test exists
 
@@ -24,11 +24,11 @@ independently by the PM before this task was filed.
 
 - A fresh `JSContext` exposes `console` — modern JavaScriptCore ships a global
   ConsoleObject. `PluginRuntime.swift:200` builds the context and nothing removes it.
-- `rg console poc/Sources/` returns **zero hits**. The deletion the invariant describes
+- `rg console Sources/` returns **zero hits**. The deletion the invariant describes
   does not exist anywhere in the target. The audit traces its loss to the runtime rewrite
   in `163c8bf`/`8620bc3`.
 - `testPluginsSeeOnlyTheTenonGlobal`, named in CLAUDE.md as the test that fails when
-  something leaks, **does not exist**. `rg` over `poc/Tests/` returns nothing.
+  something leaks, **does not exist**. `rg` over `Tests/` returns nothing.
 - The real surface test, `PluginBuiltinsTests.swift:86`
   `testRuntimeExportsOnlyTheClassifiedPublicSurface`, enumerates only the members of
   `tenon`. It never inspects `globalThis`, which is exactly why this regression survived a

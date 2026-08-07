@@ -21,7 +21,6 @@
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
-POC="$REPO_ROOT/poc"
 
 APP_DEST="${APP_DEST:-/Applications}"
 CONFIGURATION="${CONFIGURATION:-Release}"
@@ -34,8 +33,8 @@ if [[ "$ARCHS" =~ [[:space:]] ]]; then
 fi
 # One derived data path for every configuration, and the CLI compiles in the same
 # SwiftPM scratch as `swift build` — so the dependency graph is checked out once and
-# the module cache is kept once. See poc/scripts/prune-build-cache.sh.
-DERIVED_DATA="$POC/.build/xcode"           # inside the gitignored .build/
+# the module cache is kept once. See scripts/prune-build-cache.sh.
+DERIVED_DATA="$REPO_ROOT/.build/xcode"     # inside the gitignored .build/
 BUILT_APP_NAME="Tenon.app"
 APP_NAME="${INSTALL_APP_NAME:-Tenon.app}"
 DISPLAY_NAME="${INSTALL_DISPLAY_NAME:-Tenon}"
@@ -82,7 +81,7 @@ LAUNCH=0
 
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
 
-cd "$POC"
+cd "$REPO_ROOT"
 
 # --- 1. Toolchain preconditions ----------------------------------------------
 command -v xcodegen >/dev/null 2>&1 || {
@@ -136,7 +135,7 @@ xcodebuild \
     -scheme Tenon \
     -configuration "$CONFIGURATION" \
     -derivedDataPath "$DERIVED_DATA" \
-    -clonedSourcePackagesDirPath "$POC/.build" \
+    -clonedSourcePackagesDirPath "$REPO_ROOT/.build" \
     -destination "platform=macOS,arch=$ARCHS" \
     ARCHS="$ARCHS" \
     ONLY_ACTIVE_ARCH=YES \
@@ -239,7 +238,7 @@ if [ -d "$INTERMEDIATES" ]; then
     echo "freed $(du -sh "$INTERMEDIATES" | cut -f1) of intermediates"
     rm -rf "$INTERMEDIATES"
 fi
-echo "build cache now $(du -sh "$POC/.build" | cut -f1)"
+echo "build cache now $(du -sh "$REPO_ROOT/.build" | cut -f1)"
 
 if [ "$LAUNCH" -eq 1 ]; then
     step "Launching Tenon"

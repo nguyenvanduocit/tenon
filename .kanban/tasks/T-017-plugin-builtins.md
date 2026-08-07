@@ -11,15 +11,15 @@
 session 0c434576 — ACTIVE
 
 Mine (claiming):
-- `poc/Sources/TenonCore/PluginRuntime.swift` — NEW blocks only: `tenon.timers`, `tenon.path`,
+- `Sources/TenonCore/PluginRuntime.swift` — NEW blocks only: `tenon.timers`, `tenon.path`,
   `tenon.ui`; `process.exec` opts arg + `process.stream`; action payload in `parseRows`/`parseNode`
-- `poc/Sources/TenonCore/PluginHost.swift` — timer ownership/teardown, `UIRequest` plumbing
-- `poc/Sources/TenonCore/PluginViewNode.swift` — action payload type (String → JSON value)
-- `poc/Sources/TenonApp/BuiltInSlotViews.swift` — action payload call sites
-- `poc/Sources/TenonApp/TenonApp.swift` — `onUIRequest` wiring
-- `poc/Sources/TenonApp/PluginUIPrompt.swift` — NEW (pick/prompt/confirm overlay)
-- `poc/Tests/TenonCoreTests/PluginBuiltinsTests.swift` — NEW (all of the above)
-- `poc/plugins/git/main.js`, `poc/plugins/view-gallery/main.js`
+- `Sources/TenonCore/PluginHost.swift` — timer ownership/teardown, `UIRequest` plumbing
+- `Sources/TenonCore/PluginViewNode.swift` — action payload type (String → JSON value)
+- `Sources/TenonApp/BuiltInSlotViews.swift` — action payload call sites
+- `Sources/TenonApp/TenonApp.swift` — `onUIRequest` wiring
+- `Sources/TenonApp/PluginUIPrompt.swift` — NEW (pick/prompt/confirm overlay)
+- `Tests/TenonCoreTests/PluginBuiltinsTests.swift` — NEW (all of the above)
+- `plugins/git/main.js`, `plugins/view-gallery/main.js`
 - `docs/design-plugin-builtins.md` — NEW
 
 NOT touching (held by @3bf9127e T-015): `plugins/claude-sessions/**`, `PaneTarget.swift`,

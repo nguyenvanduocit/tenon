@@ -18,14 +18,14 @@ from raw primitives (`‹ › ⟳` glyph buttons + bare textfield, no toolbar co
 
 ## Owner / files (agent lock)
 session 4564041c — RELEASED (done, 297/297 green). Files below are free.
-- poc/Sources/TenonCore/PluginViewNode.swift (add `case browserBar`)
-- poc/Sources/TenonCore/PluginRuntime.swift — **parseNode switch + default log line only
+- Sources/TenonCore/PluginViewNode.swift (add `case browserBar`)
+- Sources/TenonCore/PluginRuntime.swift — **parseNode switch + default log line only
   (~873-887)**; DISTINCT from T-006's parseContentSpec (~745). Not touching that region.
-- poc/Sources/TenonApp/BuiltInSlotViews.swift — **PluginNodeView switch (~811) + new
+- Sources/TenonApp/BuiltInSlotViews.swift — **PluginNodeView switch (~811) + new
   BrowserBarView struct only**; not touching DiffSlotView (T-010) or the row renderer.
-- poc/plugins/browser/main.js (use browserBar)
-- poc/Tests/TenonCoreTests/PluginViewsTests.swift (add browserBar parse test)
-- poc/Tests/TenonCoreTests/ShippedPluginsTests.swift (browser chrome assert: hstack→browserBar)
+- plugins/browser/main.js (use browserBar)
+- Tests/TenonCoreTests/PluginViewsTests.swift (add browserBar parse test)
+- Tests/TenonCoreTests/ShippedPluginsTests.swift (browser chrome assert: hstack→browserBar)
 
 ## Criteria
 - [x] `PluginViewNode.browserBar(url:placeholder:)` added; pure value in TenonCore (invariant 3)

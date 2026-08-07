@@ -4,7 +4,7 @@
 
 - **priority**: high
 - **effort**: M
-- **owner**: DONE — term_3992d7fa-84c6-4274-87ab-5a15f3dc5be9 (Orca worker), lock RELEASED. Files touched: poc/plugins/{file-explorer,git,claude-sessions}/main.js, poc/Tests/TenonCoreTests/{WorkspaceScopedViewStateTests.swift (NEW), FileExplorerPluginTests.swift}, docs/design-plugin-view-instances.md. PluginHost.swift and all other Swift host code untouched.
+- **owner**: DONE — term_3992d7fa-84c6-4274-87ab-5a15f3dc5be9 (Orca worker), lock RELEASED. Files touched: plugins/{file-explorer,git,claude-sessions}/main.js, Tests/TenonCoreTests/{WorkspaceScopedViewStateTests.swift (NEW), FileExplorerPluginTests.swift}, docs/design-plugin-view-instances.md. PluginHost.swift and all other Swift host code untouched.
 
 ## Root cause (verified 2026-07-30)
 Not the shared runtime — that is by design and unchanged. Three shipped views rode that

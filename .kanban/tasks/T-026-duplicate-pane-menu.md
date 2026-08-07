@@ -9,13 +9,13 @@
 session `d25d3c17`
 
 Claimed files:
-- `poc/Sources/TenonCore/Workspace.swift` — NEW `duplicateSlot(_:)` + `addSlot` anchored
+- `Sources/TenonCore/Workspace.swift` — NEW `duplicateSlot(_:)` + `addSlot` anchored
   through one shared placement path. Nothing else in this file.
-- `poc/Sources/TenonCore/WorkspaceStore.swift` — one forwarding method
-- `poc/Sources/TenonApp/SpatialCanvasView.swift` — `slotContextMenu` items +
+- `Sources/TenonCore/WorkspaceStore.swift` — one forwarding method
+- `Sources/TenonApp/SpatialCanvasView.swift` — `slotContextMenu` items +
   delete `SlotTypeOption`
-- `poc/Tests/TenonCoreTests/WorkspaceDuplicateSlotTests.swift` — NEW
-- `poc/Tests/TenonAppTests/SpatialCanvasInteractionTests.swift` — menu assertions
+- `Tests/TenonCoreTests/WorkspaceDuplicateSlotTests.swift` — NEW
+- `Tests/TenonAppTests/SpatialCanvasInteractionTests.swift` — menu assertions
 
 ## Out of scope
 - No public `workspace.pane.duplicate.v1` intent. The pane header is same-owner host UI, so

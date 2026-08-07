@@ -1,5 +1,5 @@
 # T-043: Three test directories sit outside the evidence bar, and one has rotted
-> `poc/Tests/` holds six directories; `Package.swift` declares three test targets. The
+> `Tests/` holds six directories; `Package.swift` declares three test targets. The
 > difference is not documented anywhere, and the excluded `TenonAppTests` no longer compiles.
 
 - **priority**: high
@@ -10,14 +10,14 @@ session 247281cf — **DONE 03:3x, ALL LOCKS RELEASED.** Every file below is fre
 list stays as the record of what this task changed.
 
 Files changed:
-- `poc/Tests/TenonAppTests/{PluginWebSurfacePoolTests,SidebarResizeTests,SpatialCanvasInteractionTests}.swift`
-- `poc/Package.swift` (one `.testTarget`, if the files are repaired rather than retired)
+- `Tests/TenonAppTests/{PluginWebSurfacePoolTests,SidebarResizeTests,SpatialCanvasInteractionTests}.swift`
+- `Package.swift` (one `.testTarget`, if the files are repaired rather than retired)
 - `docs/tdd.md` and/or `CLAUDE.md` ▸ Verification (whichever states which runners cover what)
 
 ## Evidence (2026-07-31, at `17bf0a6`)
 
 `CLAUDE.md` ▸ Verification says *"`swift build` + `swift test` are the evidence bar"*. They
-do not reach everything under `poc/Tests/`:
+do not reach everything under `Tests/`:
 
 | directory | in `Package.swift` | in `Tenon.xcodeproj` |
 |---|---|---|
@@ -56,7 +56,7 @@ moved to `TenonAppStateTests/`, where `swift test` runs it, and extended with th
 ## Criteria
 - [x] Decide per file — **all four repaired, none deleted**; every rule they name is now
       asserted by a running test (breakdown under "What each file needed")
-- [x] Whatever survives is reached by `swift test`; `poc/Tests/TenonAppTests/` no longer
+- [x] Whatever survives is reached by `swift test`; `Tests/TenonAppTests/` no longer
       exists — the directory is removed and the name appears in no manifest
 - [x] Each repaired test is mutation-proven — table below. Two of my own replacements were
       **tautological on the first attempt** and are recorded as such
@@ -94,7 +94,7 @@ functional claim the comment makes.
 ## Mutation proofs
 
 Each mutation applied to the shipped source, suite run, source restored byte-identical
-(`git status` clean on `poc/Sources/` afterwards).
+(`git status` clean on `Sources/` afterwards).
 
 | # | Mutation | Named assertion that went red |
 |---|---|---|

@@ -1,16 +1,19 @@
-# Build artifacts
+# Build artifacts. Both trees live inside .build/ (SwiftPM and Xcode derived data
+# share one path); /build/ catches the stray Xcode tree that appears when a build
+# runs without -derivedDataPath. See scripts/prune-build-cache.sh.
 .build/
-poc/.build/
+/build/
 
-# Prebuilt GhosttyKit — downloaded by poc/scripts/setup-ghosttykit.sh, never committed.
+# Prebuilt GhosttyKit — downloaded by scripts/setup-ghosttykit.sh, never committed.
 # Only the script and GhosttyKit/module.modulemap are tracked (see CLAUDE.md).
-poc/GhosttyKit.xcframework/
-poc/GhosttyKit/ghostty.h
-poc/Resources/
+/GhosttyKit.xcframework/
+/GhosttyKit/ghostty.h
+/Resources/
 
-# Vendored reference repos — cloned external codebases studied during design
-# (each is its own git repo; ~672 MB). Not this project's source.
-refrerences/
+# Cloned external codebases studied during design (each is its own git repo;
+# ~672 MB). Read for reference; never this project's source. Distinct from
+# Vendor/, which is tracked and compiled into the app.
+references/
 
 # Agent / tooling runtime state
 .omc/

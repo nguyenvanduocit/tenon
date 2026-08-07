@@ -9,8 +9,8 @@
 ## Owner / files (agent lock)
 
 Released — session `fdb5e373`, 2026-08-07 12:3x. `docs/architecture-interaction-boundaries.md`,
-`poc/Tests/TenonCoreTests/DirectInventoryGateTests.swift`, and
-`poc/Tests/TenonIntentCoreTests/IntentKernelLatencyBudgetTests.swift` are FREE.
+`Tests/TenonCoreTests/DirectInventoryGateTests.swift`, and
+`Tests/TenonIntentCoreTests/IntentKernelLatencyBudgetTests.swift` are FREE.
 No `Sources/` file was touched.
 
 ## Classification
@@ -41,7 +41,7 @@ gate pins a per-entry length map as well as the count.
 
 **Unfalsifiable budget.** `rg -c budget docs/architecture-interaction-boundaries.md` → 1
 (the word appears once, in falsification criterion #7, with no number).
-`rg 'XCTMetric|self\.measure' poc/Tests/` → 0. The criterion cannot fail.
+`rg 'XCTMetric|self\.measure' Tests/` → 0. The criterion cannot fail.
 
 ## Criteria
 - [x] `#### Adding a DIRECT entry` records the measurement, the labelled-clause rule, the

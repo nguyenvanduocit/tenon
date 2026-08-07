@@ -10,11 +10,11 @@
 ## Owner / files (agent lock)
 
 Session `784166de` — RELEASED. Landed in:
-`poc/Sources/TenonApp/Canvas/*` (new folder, from `SpatialCanvasView.swift`),
-`poc/Sources/TenonCore/{PluginHost,PluginHostModels,PluginHostPersistence,PluginHostPolicy}.swift`,
-`poc/Sources/TenonIntentCore/{IntentIdempotencyTypes,IntentIdempotencyStore,IntentIdempotencySQLite}.swift`,
-`poc/Sources/TenonIntentCore/IntentDispatcher.swift`, `docs/domains.md`, `CLAUDE.md`,
-`poc/Package.swift`, and every source file under `poc/Sources/` (one `@domain:` line each).
+`Sources/TenonApp/Canvas/*` (new folder, from `SpatialCanvasView.swift`),
+`Sources/TenonCore/{PluginHost,PluginHostModels,PluginHostPersistence,PluginHostPolicy}.swift`,
+`Sources/TenonIntentCore/{IntentIdempotencyTypes,IntentIdempotencyStore,IntentIdempotencySQLite}.swift`,
+`Sources/TenonIntentCore/IntentDispatcher.swift`, `docs/domains.md`, `CLAUDE.md`,
+`Package.swift`, and every source file under `Sources/` (one `@domain:` line each).
 
 ## What moved
 

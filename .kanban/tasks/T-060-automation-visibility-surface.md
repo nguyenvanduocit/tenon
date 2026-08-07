@@ -11,14 +11,14 @@
 user-directed via /goal; third Doing entry past the WIP pair, same precedent as T-059 —
 zero file overlap with T-055 (CoreIntentCatalog/Filesystem/kanban) and T-059
 (SpatialCanvas*) locks.) Claimed while active:
-- poc/Sources/TenonCore/AutomationScheduler.swift
-- poc/Sources/TenonCore/AutomationRunHistory.swift (NEW)
-- poc/Sources/TenonCore/PluginHost.swift (automationFired + targeted emit return only)
-- poc/Sources/TenonApp/TenonApp.swift (wiring only)
-- poc/Sources/TenonApp/SettingsView.swift (Automation section)
-- poc/Tests/TenonCoreTests/AutomationSchedulerTests.swift
-- poc/Tests/TenonCoreTests/AutomationRunHistoryTests.swift (NEW)
-- poc/Tests/TenonCoreTests/AutomationEventDeliveryTests.swift
+- Sources/TenonCore/AutomationScheduler.swift
+- Sources/TenonCore/AutomationRunHistory.swift (NEW)
+- Sources/TenonCore/PluginHost.swift (automationFired + targeted emit return only)
+- Sources/TenonApp/TenonApp.swift (wiring only)
+- Sources/TenonApp/SettingsView.swift (Automation section)
+- Tests/TenonCoreTests/AutomationSchedulerTests.swift
+- Tests/TenonCoreTests/AutomationRunHistoryTests.swift (NEW)
+- Tests/TenonCoreTests/AutomationEventDeliveryTests.swift
 - docs/design-automations.md (non-goals lines this task retires)
 
 ## Rung walk (recorded before code, per criterion 1)

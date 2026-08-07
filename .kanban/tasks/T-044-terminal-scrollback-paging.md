@@ -10,24 +10,24 @@ session 247281cf — **DONE 03:5x, ALL LOCKS RELEASED.** Claimed 03:35 after the
 auto-dispatched in Doing since 03:20 with no owner and no file touched.
 
 Files changed (all free again):
-- NEW `poc/Sources/TenonCore/ScrollbackPaging.swift`
-- `poc/Sources/TenonCore/CoreIntentCatalog.swift` — the canonical contract, its two bounds,
+- NEW `Sources/TenonCore/ScrollbackPaging.swift`
+- `Sources/TenonCore/CoreIntentCatalog.swift` — the canonical contract, its two bounds,
   and the new name in the audience and lane switches
-- `poc/Sources/TenonApp/{TerminalSurface,GhosttySurface,SurfacePool,TerminalIntentProvider}.swift`
-- NEW `poc/Tests/TenonCoreTests/ScrollbackPagingTests.swift`;
-  `poc/Tests/TenonCoreTests/CoreIntentCatalogTests.swift`;
-  `poc/Tests/TenonAppStateTests/{TerminalIntentProviderTests,PluginWebSurfacePoolTests}.swift`
+- `Sources/TenonApp/{TerminalSurface,GhosttySurface,SurfacePool,TerminalIntentProvider}.swift`
+- NEW `Tests/TenonCoreTests/ScrollbackPagingTests.swift`;
+  `Tests/TenonCoreTests/CoreIntentCatalogTests.swift`;
+  `Tests/TenonAppStateTests/{TerminalIntentProviderTests,PluginWebSurfacePoolTests}.swift`
 - `docs/architecture-interaction-boundaries.md`
 
 Never opened: `PluginHost.swift`, `PluginManifest.swift`, `TenonApp.swift` and the new
 `Automation*.swift` — another session is mid-change in those.
 
 Files this task will change (read the board before claiming — these are hot):
-- `poc/Sources/TenonApp/TerminalIntentProvider.swift` (the read binding)
-- `poc/Sources/TenonApp/{GhosttySurface,TerminalSurface,SurfacePool}.swift` (a scrollback
+- `Sources/TenonApp/TerminalIntentProvider.swift` (the read binding)
+- `Sources/TenonApp/{GhosttySurface,TerminalSurface,SurfacePool}.swift` (a scrollback
   accessor beside `renderedText`)
-- `poc/Sources/TenonIntentCore/**` (the intent's canonical contract, if a new name is added)
-- `poc/Tests/TenonAppStateTests/TerminalIntentProviderTests.swift`
+- `Sources/TenonIntentCore/**` (the intent's canonical contract, if a new name is added)
+- `Tests/TenonAppStateTests/TerminalIntentProviderTests.swift`
 - `docs/architecture-interaction-boundaries.md` (classify BEFORE writing code)
 
 ## Provenance
@@ -39,7 +39,7 @@ shipped and is now asserted (T-009 criteria). Paging never did.
 - The only read intent is `terminal.viewport.read.v1`, and it answers
   `{paneID, text, exited, columns, rows}` from `TerminalSurface.renderedText` —
   documented at `TerminalSurface.swift:34` as *"the current visible screen as plain text"*.
-- No parameter anywhere names a cursor, offset, page or limit; nothing in `poc/Sources`
+- No parameter anywhere names a cursor, offset, page or limit; nothing in `Sources`
   reads scrollback beyond the viewport.
 - Ghostty exposes `read_cells` / `read_text` over a range, which is what T-009's
   feasibility note relied on — so the backend can answer this; only the Tenon-side contract
@@ -140,7 +140,7 @@ the wait verbs and the attention machine consume — one mechanism, not a second
 
 ## What landed
 
-`ScrollbackPaging` (`poc/Sources/TenonCore/ScrollbackPaging.swift`) is the whole rule, and
+`ScrollbackPaging` (`Sources/TenonCore/ScrollbackPaging.swift`) is the whole rule, and
 it is pure: `(totalRows, maxLines, cursor) -> .rows(Range, next:) | .invalidated`. It needs
 no terminal, no window and no run loop, which is the repo's fitness test for whether a rule
 is in the right layer. Everything else is edge work — `GhosttySurface.scrollbackLines` asks

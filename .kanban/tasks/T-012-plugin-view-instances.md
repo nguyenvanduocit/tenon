@@ -31,7 +31,7 @@ session 4564041c — RELEASED (done, 307/307 green + build complete). Files belo
 - Sources/TenonApp/BuiltInSlotViews.swift (PluginSlotView +slotID lookup; title by slotID; webSurface)
 - Sources/TenonApp/PluginWebSurfacePool.swift (remove(plugin,surfaceID); handle .dispose)
 - Sources/TenonApp/TenonApp.swift (wire .dispose → pool.remove)
-- poc/plugins/browser/main.js (instance-aware rewrite)
+- plugins/browser/main.js (instance-aware rewrite)
 - Tests: PluginViewsTests / new PluginViewInstanceTests / ShippedPluginsTests / WorkspaceTests
 
 ## Criteria

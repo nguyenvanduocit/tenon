@@ -8,17 +8,17 @@
 session 3bf9127e
 
 Free (mine, no overlap):
-- `poc/plugins/claude-sessions/**`
-- `poc/Sources/TenonCore/PaneTarget.swift`
-- `poc/Sources/TenonApp/SurfacePool.swift`
-- `poc/Tests/TenonCoreTests/PaneTargetTests.swift`
-- `poc/Tests/TenonCoreTests/ShippedPluginsTests.swift`
+- `plugins/claude-sessions/**`
+- `Sources/TenonCore/PaneTarget.swift`
+- `Sources/TenonApp/SurfacePool.swift`
+- `Tests/TenonCoreTests/PaneTargetTests.swift`
+- `Tests/TenonCoreTests/ShippedPluginsTests.swift`
 
 Landed with @d7f580dd's explicit GO on the board (append-only, no line overlap):
-- `poc/Sources/TenonCore/PluginHost.swift` — ONE new case at the END of `enum WorkspaceCommand`: `.runInTerminal(String)`
-- `poc/Sources/TenonCore/PluginRuntime.swift` — ~12 lines appended to the `tenon.terminal` block: `run(command)`, gated behind the EXISTING `terminal.write` (no new permission, no change to your `shell.open` work)
-- `poc/Sources/TenonApp/TenonApp.swift` — ONE new case in the existing `onWorkspaceCommand` switch
-- `poc/Tests/TenonCoreTests/PluginCapabilityTests.swift` — one blocked+allowed pair appended at the end
+- `Sources/TenonCore/PluginHost.swift` — ONE new case at the END of `enum WorkspaceCommand`: `.runInTerminal(String)`
+- `Sources/TenonCore/PluginRuntime.swift` — ~12 lines appended to the `tenon.terminal` block: `run(command)`, gated behind the EXISTING `terminal.write` (no new permission, no change to your `shell.open` work)
+- `Sources/TenonApp/TenonApp.swift` — ONE new case in the existing `onWorkspaceCommand` switch
+- `Tests/TenonCoreTests/PluginCapabilityTests.swift` — one blocked+allowed pair appended at the end
 
 ## Why
 `TenonApp.swift:99` routes `tenon.terminal.write` to `catalog.activeSlotID`. When a plugin

@@ -16,16 +16,16 @@ Untracked, needs `git add` on the next commit that includes this work — 13 new
 design record, verified against `git status --untracked-files=all`:
 
 ```
-poc/Sources/TenonCore/PaneHeader.swift          poc/Sources/TenonApp/PaneHeaderBar.swift
-poc/Sources/TenonCore/PaneHeaderItem.swift      poc/Sources/TenonApp/PaneHeaderCommand.swift
-                                                poc/Sources/TenonApp/PaneHeaderLayout.swift
-poc/Tests/TenonCoreTests/PaneHeaderTests.swift  poc/Sources/TenonApp/PaneHeaderProjection.swift
-poc/Tests/TenonCoreTests/PaneHeaderSchemaTests.swift
-poc/Tests/TenonAppStateTests/PaneHeaderLayoutTests.swift
-poc/Tests/TenonAppStateTests/PaneHeaderProjectionTests.swift
-poc/Tests/TenonAppStateTests/PaneHeaderStoreTests.swift
-poc/Tests/TenonAppStateTests/PluginPaneHeaderRouteTests.swift
-poc/Sources/TenonApp/PaneHeaderStore.swift      docs/design-pane-header.md
+Sources/TenonCore/PaneHeader.swift          Sources/TenonApp/PaneHeaderBar.swift
+Sources/TenonCore/PaneHeaderItem.swift      Sources/TenonApp/PaneHeaderCommand.swift
+                                                Sources/TenonApp/PaneHeaderLayout.swift
+Tests/TenonCoreTests/PaneHeaderTests.swift  Sources/TenonApp/PaneHeaderProjection.swift
+Tests/TenonCoreTests/PaneHeaderSchemaTests.swift
+Tests/TenonAppStateTests/PaneHeaderLayoutTests.swift
+Tests/TenonAppStateTests/PaneHeaderProjectionTests.swift
+Tests/TenonAppStateTests/PaneHeaderStoreTests.swift
+Tests/TenonAppStateTests/PluginPaneHeaderRouteTests.swift
+Sources/TenonApp/PaneHeaderStore.swift      docs/design-pane-header.md
 ```
 
 ⚠️ **Do not `git add -A`.** Several tasks have uncommitted work in this tree — T-071 in the two
@@ -48,8 +48,8 @@ T-071's uncommitted work in both files (+1213 / +160 lines) is backed up byte-id
 `scratchpad/t071-backup/` and **no `git checkout` will be run on them** — that would destroy the
 peer's work outright. If T-071 wakes up, restore from there and split the edits.
 
-Also claimed for the same round, user-directed: `poc/plugins/git/main.js` and
-`poc/plugins/claude-sessions/main.js` — they lost nothing in the migration (verified: zero
+Also claimed for the same round, user-directed: `plugins/git/main.js` and
+`plugins/claude-sessions/main.js` — they lost nothing in the migration (verified: zero
 `subtitle`/`actions` at HEAD) but gain headers now, which is new feature work rather than migration.
 
 ## Design
@@ -106,7 +106,7 @@ reintroducing what it forbids and watching it go red:
 
 Docs corrected in step 6: `design-plugin-host-capabilities.md` (its canonical author-facing
 `tenon.views.set` example publishes a `header`), `design-plugin-settings.md` (the browser's
-chrome), `poc/plugins/browser/main.js`'s comments, and `docs/README.md` (index row). A sweep of
+chrome), `plugins/browser/main.js`'s comments, and `docs/README.md` (index row). A sweep of
 the whole `docs/` tree for the superseded keys now returns nothing. `design-command-palette.md`'s
 `subtitle`/`actions` were checked and left alone: those are palette RESULT fields, a separate
 live API (`PluginRuntime.swift:1777`, `:1801`).

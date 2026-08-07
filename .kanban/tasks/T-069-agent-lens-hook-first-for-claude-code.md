@@ -6,17 +6,17 @@
 
 ## Owner / files (agent lock)
 Session 317fbcfc (started 2026-08-06 13:35):
-- `poc/Sources/TenonApp/AgentSessionHooks.swift`
-- `poc/Sources/TenonApp/AgentHookLensProjection.swift` (new)
-- `poc/Sources/TenonApp/AgentLensDecoders.swift`
-- `poc/Sources/TenonApp/AgentLensDomain.swift`
-- `poc/Sources/TenonApp/AgentLensSession.swift`
-- `poc/Sources/TenonApp/AgentLensSources.swift`
-- `poc/Sources/TenonApp/TenonApp.swift`
-- `poc/Tests/TenonAppStateTests/AgentLensTests.swift`
-- `poc/Tests/TenonAppStateTests/AgentHookLensProjectionTests.swift` (new)
+- `Sources/TenonApp/AgentSessionHooks.swift`
+- `Sources/TenonApp/AgentHookLensProjection.swift` (new)
+- `Sources/TenonApp/AgentLensDecoders.swift`
+- `Sources/TenonApp/AgentLensDomain.swift`
+- `Sources/TenonApp/AgentLensSession.swift`
+- `Sources/TenonApp/AgentLensSources.swift`
+- `Sources/TenonApp/TenonApp.swift`
+- `Tests/TenonAppStateTests/AgentLensTests.swift`
+- `Tests/TenonAppStateTests/AgentHookLensProjectionTests.swift` (new)
 
-- `poc/Sources/TenonApp/AgentLensView.swift` (claimed 14:3x, after T-068 finished and
+- `Sources/TenonApp/AgentLensView.swift` (claimed 14:3x, after T-068 finished and
   released it; session cbf0f2c6 moved on to T-070, which touches `AgentLensMarkdown.swift`
   only)
 

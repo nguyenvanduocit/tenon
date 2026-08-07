@@ -8,31 +8,31 @@
 
 Was session d7f580dd; every file below is free again.
 
-- `poc/Sources/TenonCore/PluginRuntime.swift`
-- `poc/Sources/TenonCore/PluginHost.swift`
-- `poc/Sources/TenonCore/PluginManifest.swift`
-- `poc/Sources/TenonCore/Workspace.swift` (SlotContent.files removal)
-- `poc/Sources/TenonApp/BuiltInSlotViews.swift`
-- `poc/Sources/TenonApp/EmptyStateCard.swift`
-- `poc/Sources/TenonApp/ShellTitleBar.swift`
-- `poc/Sources/TenonApp/SpatialCanvasView.swift`
-- `poc/Sources/TenonApp/TenonApp.swift` (host command wiring)
-- `poc/plugins/file-explorer/**`
-- `poc/plugins/core-commands/main.js` (Open Files verb moves to the plugin)
-- `poc/Tests/TenonCoreTests/PluginCapabilityTests.swift`
-- `poc/Tests/TenonCoreTests/PluginRowMenuTests.swift` (new)
-- `poc/Tests/TenonCoreTests/FileExplorerPluginTests.swift` (new)
-- `poc/Tests/TenonCoreTests/WorkspaceTests.swift` (`.files` → other content)
-- `poc/Tests/TenonCoreTests/CoreCommandsPluginTests.swift`
-- `poc/Tests/TenonCoreTests/WorkspaceContentCapabilityTests.swift`
-- `poc/Tests/TenonAppTests/SpatialCanvasInteractionTests.swift`
+- `Sources/TenonCore/PluginRuntime.swift`
+- `Sources/TenonCore/PluginHost.swift`
+- `Sources/TenonCore/PluginManifest.swift`
+- `Sources/TenonCore/Workspace.swift` (SlotContent.files removal)
+- `Sources/TenonApp/BuiltInSlotViews.swift`
+- `Sources/TenonApp/EmptyStateCard.swift`
+- `Sources/TenonApp/ShellTitleBar.swift`
+- `Sources/TenonApp/SpatialCanvasView.swift`
+- `Sources/TenonApp/TenonApp.swift` (host command wiring)
+- `plugins/file-explorer/**`
+- `plugins/core-commands/main.js` (Open Files verb moves to the plugin)
+- `Tests/TenonCoreTests/PluginCapabilityTests.swift`
+- `Tests/TenonCoreTests/PluginRowMenuTests.swift` (new)
+- `Tests/TenonCoreTests/FileExplorerPluginTests.swift` (new)
+- `Tests/TenonCoreTests/WorkspaceTests.swift` (`.files` → other content)
+- `Tests/TenonCoreTests/CoreCommandsPluginTests.swift`
+- `Tests/TenonCoreTests/WorkspaceContentCapabilityTests.swift`
+- `Tests/TenonAppTests/SpatialCanvasInteractionTests.swift`
 - `docs/design-plugin-host-capabilities.md` (new)
 
 ## Why
 
 The shipped Files pane is `FilesSlotView` — a flat `List` with a `‹ back` breadcrumb,
 `.skipsHiddenFiles`, no context menu, no rename, no create, no drag, and a stunted
-160px preview. kero's `FileTreePanel` (refrerences/kero/kero/RightSidebarView.swift:169)
+160px preview. kero's `FileTreePanel` (references/kero/kero/RightSidebarView.swift:169)
 is the bar: real tree, root header with reveal, full context menu, inline rename and
 inline new-file/folder, drag-out, selection follows the open file.
 

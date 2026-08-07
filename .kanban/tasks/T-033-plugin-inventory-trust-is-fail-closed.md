@@ -10,7 +10,7 @@
 
 ## Owner / files (agent lock)
 **LANDED 22:34 — LOCKS RELEASED.** session bac7c45f, claimed 22:11. `AppStatePaths.swift`,
-`TenonApp.swift`, `PluginHost.swift`, `poc/README.md` and `CLAUDE.md` are free. Not
+`TenonApp.swift`, `PluginHost.swift`, `docs/development.md` and `CLAUDE.md` are free. Not
 committed (the coordinator owns commits).
 
 What landed, in the three files:
@@ -26,11 +26,11 @@ What landed, in the three files:
 - `TenonApp.swift:189` — `authorization:` is now a ternary on `paths.trustsPluginInventory`.
 
 Locked files were (exact):
-- `poc/Sources/TenonCore/PluginHost.swift` — **line 430 only**
-- `poc/Sources/TenonApp/AppStatePaths.swift` — whole file (small)
-- `poc/Sources/TenonApp/TenonApp.swift` — **line 189 only**
-- `poc/README.md`, `CLAUDE.md` — the `TENON_PLUGINS_DIR` doc line
-- `poc/Tests/TenonAppTests/AppStatePathsTests.swift` — read-only (no edits; the tests are
+- `Sources/TenonCore/PluginHost.swift` — **line 430 only**
+- `Sources/TenonApp/AppStatePaths.swift` — whole file (small)
+- `Sources/TenonApp/TenonApp.swift` — **line 189 only**
+- `docs/development.md`, `CLAUDE.md` — the `TENON_PLUGINS_DIR` doc line
+- `Tests/TenonAppTests/AppStatePathsTests.swift` — read-only (no edits; the tests are
   the spec and stay as written)
 
 T-027 status at claim time: still in **Todo**, unclaimed. `AppStatePaths.swift` mtime
@@ -38,11 +38,11 @@ Jul 25 10:45, `TenonApp.swift` mtime Jul 25 21:05, both clean in `git status`, a
 `WorkspaceCatalogStore.swift` does not exist. No collision.
 
 Expected files:
-- `poc/Sources/TenonCore/PluginHost.swift` — line 430 only (Fix A). T-022 holds one hunk in
+- `Sources/TenonCore/PluginHost.swift` — line 430 only (Fix A). T-022 holds one hunk in
   this file (`launcher: Bool` on `PluginIntentPresentation`) ~1870 lines away.
-- `poc/Sources/TenonApp/AppStatePaths.swift` — NEW stored property + one branch in `resolve`
-- `poc/Sources/TenonApp/TenonApp.swift` — line 189 only, one ternary
-- `poc/README.md` + `CLAUDE.md` — the `TENON_PLUGINS_DIR` doc line gains the trust flag
+- `Sources/TenonApp/AppStatePaths.swift` — NEW stored property + one branch in `resolve`
+- `Sources/TenonApp/TenonApp.swift` — line 189 only, one ternary
+- `docs/development.md` + `CLAUDE.md` — the `TENON_PLUGINS_DIR` doc line gains the trust flag
 
 ⚠️ **T-027 (`restore-workspace-catalog-on-launch`, in `Doing`) names `AppStatePaths.swift`
 and `TenonApp.swift` in its plan.** As of 22:04 it had written neither (its
@@ -89,7 +89,7 @@ source that decides them is clean. **They were committed red and have been red e
       `testPluginHostDefaultsToUntrustedInventory`, all `passed` in the final full run
 - [x] The two vacuous siblings are made non-vacuous — after the fix they must be able to
       fail. Prove it: break the trust rule locally, watch them go red, restore.
-- [x] `poc/README.md` and `CLAUDE.md` document `TENON_TRUST_PLUGIN_INVENTORY` next to
+- [x] `docs/development.md` and `CLAUDE.md` document `TENON_TRUST_PLUGIN_INVENTORY` next to
       `TENON_PLUGINS_DIR`, since dev ergonomics change (`TENON_PLUGINS_DIR=/path swift run
       tenon` will now prompt without it)
 - [x] `swift build` exit 0 and `swift test` **653 tests / 0 failures** (the 595 in this

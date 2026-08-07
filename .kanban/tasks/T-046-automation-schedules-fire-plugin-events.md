@@ -9,17 +9,17 @@
 session f014e8e0 — ACTIVE, claimed 03:37.
 
 Files this task will change:
-- NEW `poc/Sources/TenonCore/AutomationSchedule.swift` (manifest block model + occurrence math)
-- NEW `poc/Sources/TenonCore/AutomationScheduler.swift` (host-side due computation, time as parameter)
-- `poc/Sources/TenonCore/PluginManifest.swift` (additive `automation` block)
-- `poc/Sources/TenonCore/PluginHost.swift` (additive: `PluginSnapshot.automationSchedules`,
+- NEW `Sources/TenonCore/AutomationSchedule.swift` (manifest block model + occurrence math)
+- NEW `Sources/TenonCore/AutomationScheduler.swift` (host-side due computation, time as parameter)
+- `Sources/TenonCore/PluginManifest.swift` (additive `automation` block)
+- `Sources/TenonCore/PluginHost.swift` (additive: `PluginSnapshot.automationSchedules`,
   `automationFired(_:)` targeted-emit helper — nowhere near T-044's terminal files)
-- `poc/Sources/TenonApp/TenonApp.swift` (composition: `startAutomationScheduling()`)
-- `poc/plugins/clock/manifest.json` + `poc/plugins/clock/main.js` (first consumer — replaces
+- `Sources/TenonApp/TenonApp.swift` (composition: `startAutomationScheduling()`)
+- `plugins/clock/manifest.json` + `plugins/clock/main.js` (first consumer — replaces
   its dead `"tick"` subscription that nothing ever emitted)
-- NEW `poc/Tests/TenonCoreTests/AutomationScheduleTests.swift`
-- NEW `poc/Tests/TenonCoreTests/AutomationSchedulerTests.swift`
-- NEW `poc/Tests/TenonCoreTests/AutomationEventDeliveryTests.swift`
+- NEW `Tests/TenonCoreTests/AutomationScheduleTests.swift`
+- NEW `Tests/TenonCoreTests/AutomationSchedulerTests.swift`
+- NEW `Tests/TenonCoreTests/AutomationEventDeliveryTests.swift`
 - NEW `docs/design-automations.md`
 - `docs/architecture-interaction-boundaries.md` — ⚠️ SHARED with T-044's claim. My edits are
   two additive bullets in the EVENT inventory (~:339) and CONTRIBUTION inventory (~:385),
@@ -33,7 +33,7 @@ Orca's automation unit is `if (one shell precheck exits 0) { paste one prompt st
 one TUI-agent PTY }` on an rrule/cron schedule — no steps, no conditionals, no data flow;
 precheck stdout is discarded; completion is inferred by heuristics; two divergent dispatch
 implementations (renderer hook vs headless closure); timezone stored but never used
-(evidence: refrerences/orca/src/shared/automations-types.ts, automation-schedules.ts:441-467,
+(evidence: references/orca/src/shared/automations-types.ts, automation-schedules.ts:441-467,
 useAutomationDispatchEvents.ts, main/index.ts:2067-2155).
 
 Tenon inverts the unit: the automation IS plugin JavaScript. Conditionals, chaining, and

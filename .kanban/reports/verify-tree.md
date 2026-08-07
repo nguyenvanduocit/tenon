@@ -6,13 +6,13 @@
 - **When**: 2026-07-30 ~20:02–20:06 +07
 - **Where**: `/Users/firegroup/projects/tenon`, branch `main`, HEAD `3c06770` ("Merge process resource monitor design")
 - **Tree**: 49 modified + 20 untracked + 1 deleted (`git status --porcelain` = 71 entries). Nothing committed since `3c06770`.
-- **Deleted file**: `poc/Tests/TenonCoreTests/WorkspaceDiffReuseTests.swift` (consistent with T-024, which deleted `showDiff`).
+- **Deleted file**: `Tests/TenonCoreTests/WorkspaceDiffReuseTests.swift` (consistent with T-024, which deleted `showDiff`).
 
 ---
 
 ## Build
 
-`cd poc && swift build`
+`swift build`
 
 **Exit code: 0.** `Build complete! (43.25s)`. Re-run for a clean exit code (no pipe): `BUILD_EXIT=0`.
 
@@ -20,20 +20,20 @@
 
 ```
 warning: 'poc': found 1 file(s) which are unhandled; explicitly declare them as resources or exclude from the target
-    /Users/firegroup/projects/tenon/poc/Sources/TenonApp/Assets.xcassets
+    /Users/firegroup/projects/tenon/Sources/TenonApp/Assets.xcassets
 warning: (arm64)  could not find symbol '_ImFontConfig_ImFontConfig' in object file '.../GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a(ext.o)'
 warning: (arm64)  could not find symbol '_ImGuiStyle_ImGuiStyle'  in object file '.../GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a(ext.o)'
 ```
 
 Notes:
-- The `Assets.xcassets` warning is **new and attributable**: `poc/Sources/TenonApp/Assets.xcassets/` is untracked (arrived with the app-icon work alongside `poc/scripts/generate-app-icon.sh`). SwiftPM does not process asset catalogs; the directory needs an explicit `.copy`/`.process` resource rule or an `exclude` in `Package.swift`, otherwise every `swift build` from now on prints it.
+- The `Assets.xcassets` warning is **new and attributable**: `Sources/TenonApp/Assets.xcassets/` is untracked (arrived with the app-icon work alongside `scripts/generate-app-icon.sh`). SwiftPM does not process asset catalogs; the directory needs an explicit `.copy`/`.process` resource rule or an `exclude` in `Package.swift`, otherwise every `swift build` from now on prints it.
 - The two `Im*` linker warnings are pre-existing vendored-GhosttyKit noise (dear-imgui symbols absent from the prebuilt static lib), unrelated to any in-flight task.
 
 ---
 
 ## Test totals
 
-`cd poc && swift test`
+`swift test`
 
 ```
 Test Suite 'TenonPackageTests.xctest' failed at 2026-07-30 20:05:01.598.
@@ -73,9 +73,9 @@ Trailer worth knowing: the run ends with `✔ Test run with 0 tests in 0 suites 
 
 | # | Suite | Method | File:line | Assertion (verbatim) |
 |---|---|---|---|---|
-| 1 | `TenonAppStateTests.AppStatePathsTests` | `testEnvironmentOverrideIsUntrustedForCopiedBundledPluginID` | `poc/Tests/TenonAppStateTests/AppStatePathsTests.swift:84` | `XCTAssertEqual failed: ("["process.exec.v1"]") is not equal to ("[]")` |
-| 2 | `TenonAppStateTests.AppStatePathsTests` | `testUnknownTrustFlagValueLeavesOverrideUntrusted` | `poc/Tests/TenonAppStateTests/AppStatePathsTests.swift:110` | `XCTAssertEqual failed: ("["process.exec.v1"]") is not equal to ("[]")` |
-| 3 | `TenonCoreTests.BundledPluginConsentTests` | `testPluginHostDefaultsToUntrustedInventory` | `poc/Tests/TenonCoreTests/BundledPluginConsentTests.swift:81` | `XCTAssertTrue failed - omitting inventory provenance must never seed standing consent` |
+| 1 | `TenonAppStateTests.AppStatePathsTests` | `testEnvironmentOverrideIsUntrustedForCopiedBundledPluginID` | `Tests/TenonAppStateTests/AppStatePathsTests.swift:84` | `XCTAssertEqual failed: ("["process.exec.v1"]") is not equal to ("[]")` |
+| 2 | `TenonAppStateTests.AppStatePathsTests` | `testUnknownTrustFlagValueLeavesOverrideUntrusted` | `Tests/TenonAppStateTests/AppStatePathsTests.swift:110` | `XCTAssertEqual failed: ("["process.exec.v1"]") is not equal to ("[]")` |
+| 3 | `TenonCoreTests.BundledPluginConsentTests` | `testPluginHostDefaultsToUntrustedInventory` | `Tests/TenonCoreTests/BundledPluginConsentTests.swift:81` | `XCTAssertTrue failed - omitting inventory provenance must never seed standing consent` |
 
 All three say the same thing in three places: **standing consent is being granted where the tests require it to be withheld.**
 
@@ -85,7 +85,7 @@ All three say the same thing in three places: **standing consent is being grante
 
 Grep of `.kanban/tasks/` + `.kanban/board.md` for the failing test file names:
 
-- `.kanban/tasks/T-021-standing-consent-for-bundled-plugins.md:101` — `poc/Tests/TenonCoreTests/BundledPluginConsentTests.swift — NEW`. **T-021 (session `c7da3ffe`) authored the file and owns the feature.**
+- `.kanban/tasks/T-021-standing-consent-for-bundled-plugins.md:101` — `Tests/TenonCoreTests/BundledPluginConsentTests.swift — NEW`. **T-021 (session `c7da3ffe`) authored the file and owns the feature.**
 - `AppStatePathsTests.swift` is named in no task's claim list. It is owned by the same feature (`grantsStandingConsent` provenance), so it belongs to T-021 by subject matter.
 - T-022, T-024, T-025 and T-027 each disclaim these 3 reds and attribute them to T-021.
 
@@ -94,10 +94,10 @@ Grep of `.kanban/tasks/` + `.kanban/board.md` for the failing test file names:
 1. Both failing test files are **tracked and clean** — `git status --porcelain` on them returns empty. No live agent has touched them.
 2. Both were added in commit **`de0de44`** ("Ship the bundled plugins and the tests that hold the boundary") — `git log --diff-filter=A`.
 3. The product code that decides their outcome is either untouched or irrelevant:
-   - `poc/Sources/TenonApp/AppStatePaths.swift` — **clean**, last modified in `8620bc3`, which is *older* than `de0de44`.
-   - `poc/Sources/TenonApp/TenonApp.swift` — **clean**.
-   - `poc/Sources/TenonCore/PluginHost.swift` — dirty, but the entire working-tree diff is 3 insertions / 1 deletion adding T-022's `launcher: Bool` to `PluginIntentPresentation`. Nothing consent-related.
-4. `git show HEAD:poc/Sources/TenonCore/PluginHost.swift` already has `authorization: PluginHostAuthorization = .bundledInventory` at line 429, and `git show HEAD:poc/Sources/TenonApp/AppStatePaths.swift` contains no trust concept at all.
+   - `Sources/TenonApp/AppStatePaths.swift` — **clean**, last modified in `8620bc3`, which is *older* than `de0de44`.
+   - `Sources/TenonApp/TenonApp.swift` — **clean**.
+   - `Sources/TenonCore/PluginHost.swift` — dirty, but the entire working-tree diff is 3 insertions / 1 deletion adding T-022's `launcher: Bool` to `PluginIntentPresentation`. Nothing consent-related.
+4. `git show HEAD:Sources/TenonCore/PluginHost.swift` already has `authorization: PluginHostAuthorization = .bundledInventory` at line 429, and `git show HEAD:Sources/TenonApp/AppStatePaths.swift` contains no trust concept at all.
 
 **Conclusion: these 3 tests were committed RED at `de0de44` and have been red ever since.** They are not caused by any of the five in-flight tasks, and reverting all uncommitted work would not fix them. T-022's board claim that it "reproduced them on a scratch copy with every line of mine reverted" is consistent with what I measured.
 
@@ -109,7 +109,7 @@ Grep of `.kanban/tasks/` + `.kanban/board.md` for the failing test file names:
 
 The product code contradicts *its own documented contract*, and the test agrees with the doc.
 
-- `poc/Sources/TenonCore/PluginHost.swift:183-187` — the struct's own doc comment and init default:
+- `Sources/TenonCore/PluginHost.swift:183-187` — the struct's own doc comment and init default:
   ```swift
   /// Standing consent defaults to `false` while `.bundledInventory` is `true`: a caller
   /// that forgets to decide gets prompts, never silent authority.
@@ -118,7 +118,7 @@ The product code contradicts *its own documented contract*, and the test agrees 
       grantsStandingConsent: @escaping StandingConsentDecision = { _, _ in false }
   )
   ```
-- `poc/Sources/TenonCore/PluginHost.swift:430` — the convenience init defeats it:
+- `Sources/TenonCore/PluginHost.swift:430` — the convenience init defeats it:
   ```swift
   authorization: PluginHostAuthorization = .bundledInventory,
   ```
@@ -135,11 +135,11 @@ These two tests specify inventory-trust provenance:
 - unless the developer opts in with `TENON_TRUST_PLUGIN_INVENTORY` set to exactly `"1"` (`"true"` must not count).
 
 **The feature does not exist.** Evidence:
-- `poc/Sources/TenonApp/AppStatePaths.swift` is 91 lines and has **no trust field**. `AppStatePaths` carries only `pluginInventoryRoot` and `stateRoot` (`:14-16`).
+- `Sources/TenonApp/AppStatePaths.swift` is 91 lines and has **no trust field**. `AppStatePaths` carries only `pluginInventoryRoot` and `stateRoot` (`:14-16`).
 - `rg TENON_TRUST_PLUGIN_INVENTORY Sources/ Tests/` hits **only the two tests** (`AppStatePathsTests.swift:93,105`). No source file ever reads it.
 - `AppStatePaths.resolve` (`:43-51`) will point `pluginInventoryRoot` at **any** directory named by `TENON_PLUGINS_DIR`.
-- `poc/Sources/TenonApp/TenonApp.swift:135` — `let pluginsRoot = paths.pluginInventoryRoot`
-- `poc/Sources/TenonApp/TenonApp.swift:189` — `authorization: .bundledInventory,` **unconditionally**.
+- `Sources/TenonApp/TenonApp.swift:135` — `let pluginsRoot = paths.pluginInventoryRoot`
+- `Sources/TenonApp/TenonApp.swift:189` — `authorization: .bundledInventory,` **unconditionally**.
 
 So today, `TENON_PLUGINS_DIR=/anywhere` makes an arbitrary user directory fully trusted as if it shipped in the app bundle. That is exactly what `PluginHost.swift:171-174` forbids in writing.
 
@@ -155,7 +155,7 @@ Net: of the 4 provenance tests, 2 fail and 2 give false green. **The trust axis 
 
 ### Fix A — one line, closes failure #3
 
-`poc/Sources/TenonCore/PluginHost.swift:430`
+`Sources/TenonCore/PluginHost.swift:430`
 
 ```diff
 -        authorization: PluginHostAuthorization = .bundledInventory,
@@ -178,9 +178,9 @@ Production is unaffected: `TenonApp.swift:189` names `.bundledInventory` explici
 
 The tests demand a capability that was never built, so the fix adds it:
 
-1. `poc/Sources/TenonApp/AppStatePaths.swift` — add `let trustsPluginInventory: Bool` to the struct (`:14-16`).
-2. `poc/Sources/TenonApp/AppStatePaths.swift:42-58,74` — compute it in `resolve`: `true` when the inventory came from `bundledPluginsRoot` (no env override), or when `environment["TENON_TRUST_PLUGIN_INVENTORY"] == "1"` (exact string — `"true"` must yield `false`, per `:105`); `false` otherwise. Pass it into the `AppStatePaths(...)` initializer.
-3. `poc/Sources/TenonApp/TenonApp.swift:189` —
+1. `Sources/TenonApp/AppStatePaths.swift` — add `let trustsPluginInventory: Bool` to the struct (`:14-16`).
+2. `Sources/TenonApp/AppStatePaths.swift:42-58,74` — compute it in `resolve`: `true` when the inventory came from `bundledPluginsRoot` (no env override), or when `environment["TENON_TRUST_PLUGIN_INVENTORY"] == "1"` (exact string — `"true"` must yield `false`, per `:105`); `false` otherwise. Pass it into the `AppStatePaths(...)` initializer.
+3. `Sources/TenonApp/TenonApp.swift:189` —
    ```swift
    authorization: paths.trustsPluginInventory
        ? .bundledInventory
@@ -189,7 +189,7 @@ The tests demand a capability that was never built, so the fix adds it:
 
 Smallest honest description: **one new stored property, one branch in `resolve`, one ternary at the call site.**
 
-⚠️ Fix B changes developer ergonomics: after it lands, `TENON_PLUGINS_DIR=/path swift run tenon` will prompt for `.policy` intents unless `TENON_TRUST_PLUGIN_INVENTORY=1` is also set. That is the tests' intent, and `poc/README.md` / `CLAUDE.md` document `TENON_PLUGINS_DIR` without it — whoever takes this should update that doc line in the same slice.
+⚠️ Fix B changes developer ergonomics: after it lands, `TENON_PLUGINS_DIR=/path swift run tenon` will prompt for `.policy` intents unless `TENON_TRUST_PLUGIN_INVENTORY=1` is also set. That is the tests' intent, and `docs/development.md` / `CLAUDE.md` document `TENON_PLUGINS_DIR` without it — whoever takes this should update that doc line in the same slice.
 
 **Sequencing**: Fix A and Fix B are independent and can land separately. Fix A is safe to land alone right now; it touches one line in a file whose only dirty hunk (T-022's `launcher` flag) is ~1870 lines away. Fix B touches `AppStatePaths.swift` + `TenonApp.swift`, both currently **clean and unclaimed** — but T-027 (`restore-workspace-catalog-on-launch`, Todo) names `AppStatePaths.swift` in its plan, so Fix B should land before T-027 starts or be coordinated with it.
 
@@ -197,9 +197,9 @@ Smallest honest description: **one new stored property, one branch in `resolve`,
 
 ## Test-target reachability
 
-**T-024's claim is VERIFIED TRUE.** `poc/Tests/TenonAppTests/` is not a SwiftPM target and never runs under `swift test`.
+**T-024's claim is VERIFIED TRUE.** `Tests/TenonAppTests/` is not a SwiftPM target and never runs under `swift test`.
 
-`poc/Package.swift:105-110` declares exactly three test targets:
+`Package.swift:105-110` declares exactly three test targets:
 
 ```swift
 .testTarget(name: "TenonIntentCoreTests", dependencies: ["TenonIntentCore"]),
@@ -207,7 +207,7 @@ Smallest honest description: **one new stored property, one branch in `resolve`,
 .testTarget(name: "TenonAppStateTests", dependencies: ["TenonApp"]),
 ```
 
-`poc/Tests/` holds **six** directories. The mapping:
+`Tests/` holds **six** directories. The mapping:
 
 | Directory | `swift test` | Xcode (`project.yml`) |
 |---|---|---|
@@ -231,7 +231,7 @@ It is not merely that `TenonAppTests` is Xcode-only. `TenonAppStateTests` is the
 
 ### Immediate consequence for work in flight
 
-`poc/Tests/TenonAppTests/SpatialCanvasInteractionTests.swift` is **modified** in the working tree and is claimed by **T-026** (still in `Doing`; its claim list names the file). Those edits are **not exercised by `swift test`** — they compile only under `xcodebuild`, which nobody has run this session (T-022 and T-023 both record that `xcodegen generate` was deliberately skipped because `project.pbxproj` is held dirty). T-026 must not cite a `swift test` total as evidence for its `SpatialCanvasInteractionTests.swift` changes.
+`Tests/TenonAppTests/SpatialCanvasInteractionTests.swift` is **modified** in the working tree and is claimed by **T-026** (still in `Doing`; its claim list names the file). Those edits are **not exercised by `swift test`** — they compile only under `xcodebuild`, which nobody has run this session (T-022 and T-023 both record that `xcodegen generate` was deliberately skipped because `project.pbxproj` is held dirty). T-026 must not cite a `swift test` total as evidence for its `SpatialCanvasInteractionTests.swift` changes.
 
 T-025 handled this correctly and is worth copying: it put its `press(region:clickCount:)` assertions in `Tests/TenonAppStateTests/SpatialCanvasGestureTests.swift` (reachable, 6 log hits) rather than in the Xcode-only file.
 

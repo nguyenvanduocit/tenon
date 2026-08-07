@@ -13,20 +13,20 @@ The accepted `PluginHost.swift` overlap with T-062 landed clean: this task's hun
 both far from T-062's consent/discovery territory, verified by reading the combined diff.
 
 Previously claimed:
-- poc/Sources/TenonCore/PluginViewNode.swift
-- poc/Sources/TenonCore/PluginRuntimeValueParsing.swift
-- poc/Sources/TenonCore/PluginRuntimeModels.swift
-- poc/Sources/TenonCore/PluginRuntime.swift (`setViewBody` + `ViewBody` only)
-- poc/Sources/TenonCore/PluginHost.swift (`PluginViewSection` + its one construction in
+- Sources/TenonCore/PluginViewNode.swift
+- Sources/TenonCore/PluginRuntimeValueParsing.swift
+- Sources/TenonCore/PluginRuntimeModels.swift
+- Sources/TenonCore/PluginRuntime.swift (`setViewBody` + `ViewBody` only)
+- Sources/TenonCore/PluginHost.swift (`PluginViewSection` + its one construction in
   `publish()` only — **accepted overlap with T-062**, whose hunks are consent/discovery)
-- poc/Sources/TenonApp/BuiltInSlotViews.swift
-- poc/Sources/TenonApp/PluginModalOverlay.swift (NEW)
-- poc/Sources/TenonApp/ContentView.swift (one `.overlay` line)
-- poc/Sources/TenonApp/PluginWebSurfacePool.swift (one `case .box` pattern)
-- poc/plugins/kanban/main.js, poc/plugins/kanban/manifest.json
-- poc/Tests/TenonCoreTests/PluginViewsTests.swift
-- poc/Tests/TenonCoreTests/KanbanPluginTests.swift
-- poc/Tests/TenonAppStateTests/PluginModalPresentationTests.swift (NEW)
+- Sources/TenonApp/BuiltInSlotViews.swift
+- Sources/TenonApp/PluginModalOverlay.swift (NEW)
+- Sources/TenonApp/ContentView.swift (one `.overlay` line)
+- Sources/TenonApp/PluginWebSurfacePool.swift (one `case .box` pattern)
+- plugins/kanban/main.js, plugins/kanban/manifest.json
+- Tests/TenonCoreTests/PluginViewsTests.swift
+- Tests/TenonCoreTests/KanbanPluginTests.swift
+- Tests/TenonAppStateTests/PluginModalPresentationTests.swift (NEW)
 - docs/design-plugin-views.md
 
 ## Decision

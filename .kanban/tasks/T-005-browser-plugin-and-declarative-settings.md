@@ -15,14 +15,14 @@ T-004 (session 8f863f56) owns `BuiltInSlotViews.swift`, `PluginRuntime.swift`,
 ## Owner / files (agent lock)
 session 537832b5 — RELEASED (all phases done, tree green 225/225). Files below are free.
 Historical claim:
-- poc/Sources/TenonCore/PluginManifest.swift (schema: select/options/group/icon/displayName)
-- poc/Sources/TenonCore/PluginRuntime.swift (web.view gate + tenon.web API)  ⚠️ T-004
-- poc/Sources/TenonCore/PluginHost.swift (web surface aggregation)           ⚠️ T-004
-- poc/Sources/TenonApp/SettingsView.swift (flat render, generic spec renderer)
-- poc/Sources/TenonApp/BuiltInSlotViews.swift (host-owned WKWebView surface)  ⚠️ T-004
-- poc/plugins/browser/ (new plugin: manifest + main.js)
+- Sources/TenonCore/PluginManifest.swift (schema: select/options/group/icon/displayName)
+- Sources/TenonCore/PluginRuntime.swift (web.view gate + tenon.web API)  ⚠️ T-004
+- Sources/TenonCore/PluginHost.swift (web surface aggregation)           ⚠️ T-004
+- Sources/TenonApp/SettingsView.swift (flat render, generic spec renderer)
+- Sources/TenonApp/BuiltInSlotViews.swift (host-owned WKWebView surface)  ⚠️ T-004
+- plugins/browser/ (new plugin: manifest + main.js)
 - delete: BrowserConfig.swift, SlotContent.browser, WebBrowserSlotView, BrowserSettingsDetail
-- poc/Tests/TenonCoreTests/ (schema + web.view capability pair + ShippedPlugins browser)
+- Tests/TenonCoreTests/ (schema + web.view capability pair + ShippedPlugins browser)
 
 ## Status
 - Phase 1 (schema) + Phase 2 (flat render) DONE + verified: 224/224.
@@ -39,7 +39,7 @@ Historical claim:
   - Increment 2 (App): `PluginWebSurfacePool` (new) + PluginSlotView binds webview node to
     it + TenonApp wires `onWebCommand`→pool + creates/injects pool. ⚠️ touches TenonApp.swift
     (T-006 phase-3 dirty) — coordinate/defer.
-  - Phase 4: `poc/plugins/browser/` (manifest web.view + settings; main.js chrome+nav).
+  - Phase 4: `plugins/browser/` (manifest web.view + settings; main.js chrome+nav).
   - Phase 5: delete SlotContent.browser/WebBrowserSlotView/BrowserConfig/BrowserSettingsDetail;
     DefaultPaneContent.browser + launcher → browser plugin pane; ShippedPlugins e2e.
 - GUI note: the actual web rendering/navigation is only verifiable by a human running the app.

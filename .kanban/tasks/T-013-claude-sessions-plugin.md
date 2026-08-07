@@ -23,8 +23,8 @@
 - [x] `swift test` green
 
 ## Outcome
-`swift test` 308/308 green, `swift build` clean. Files: `poc/plugins/claude-sessions/{manifest.json,main.js}`,
-`poc/Tests/TenonCoreTests/ShippedPluginsTests.swift`.
+`swift test` 308/308 green, `swift build` clean. Files: `plugins/claude-sessions/{manifest.json,main.js}`,
+`Tests/TenonCoreTests/ShippedPluginsTests.swift`.
 
 The one non-obvious finding: BSD `awk` in a UTF-8 locale aborts the entire run on the first byte it cannot
 decode (`towc: multibyte conversion failure`). Real transcripts carry pasted images and binary tool output, so

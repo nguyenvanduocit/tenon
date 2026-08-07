@@ -31,29 +31,29 @@
 - **RELEASED 2026-07-31 00:5x by Orca worker `task_a4f813d702ff`** — final slice complete,
   all 8 criteria ticked, verdict APPROVED at `e3c5435`
   (`.kanban/reports/t020-final-verification.md`). No file is claimed by this task now.
-  Uncommitted writes awaiting the coordinator: `poc/Package.swift` (the flag),
-  `poc/Sources/TenonCore/WorkspaceCatalogStore.swift` + 
-  `poc/Tests/TenonCoreTests/LauncherCommandsTests.swift` (one-word warning fixes),
+  Uncommitted writes awaiting the coordinator: `Package.swift` (the flag),
+  `Sources/TenonCore/WorkspaceCatalogStore.swift` + 
+  `Tests/TenonCoreTests/LauncherCommandsTests.swift` (one-word warning fixes),
   this task file, the report, board lines.
 - Historical record of the slice's claims below.
 - CLAIMED 2026-07-31 00:29 by Orca worker `task_a4f813d702ff` (dispatch `ctx_39a78acca18a`,
   terminal `term_05bb75aa-e4b0-45b8-a8ba-e84c4fc058c8`) — FINAL SLICE: last 3 criteria
   (fitness-gap verify, warnings-as-errors decision, independent verifier pass).
-- Files claimed for WRITE: `poc/Package.swift` (warnings-as-errors flag, applied LAST and
+- Files claimed for WRITE: `Package.swift` (warnings-as-errors flag, applied LAST and
   only if the tree is warning-free at that moment), this task file, NEW
   `.kanban/reports/t020-final-verification.md`, own board lines.
-- ADDED 00:38: `poc/Sources/TenonCore/WorkspaceCatalogStore.swift` line 557 ONLY — the
+- ADDED 00:38: `Sources/TenonCore/WorkspaceCatalogStore.swift` line 557 ONLY — the
   full-recompile warning sweep found the tree's single Swift warning there (redundant
   `await` on a sync same-actor call, committed in `05d0d46`; T-027 released 00:05,
   T-031's follow-up committed 00:32, so the file is free). One-word fix so the
   warnings-as-errors criterion can be enforced without breaking anyone.
-- ADDED 00:42: `poc/Tests/TenonCoreTests/LauncherCommandsTests.swift` line 103 ONLY —
+- ADDED 00:42: `Tests/TenonCoreTests/LauncherCommandsTests.swift` line 103 ONLY —
   the second full sweep (test targets included) found the one remaining Swift warning
   there (redundant `try` on non-throwing `PluginLoader.discover`, committed in
   `df15971`; T-022 done + released, not in T-006's claim). One-word fix for the same
   reason.
 - One temporary save/mutate/restore window on
-  `poc/Sources/TenonCore/PluginRuntimeBootstrap.swift` (free — T-037 released 00:23) to
+  `Sources/TenonCore/PluginRuntimeBootstrap.swift` (free — T-037 released 00:23) to
   prove the scope-closure test load-bearing; restored byte-identical, verified via git diff.
 - Everything else read-only. NOT touching T-006's files (CommandIndex, CommandAggregation,
   PluginHost, PluginRuntime, PaletteOverlay, LauncherMenu, plugins/**) nor T-031's
@@ -65,10 +65,10 @@ All three original defects were resolved by commit `8620bc3` and nobody had re-c
 since; per-item proof in `.kanban/reports/t020-boundary-audit.md` Part 1:
 - `docs/design-intent-bus.md:228-254` now states the full ordered ladder including the
   same-owner DIRECT ownership test and defers exact definitions to the normative law.
-- `poc/Sources/TenonApp/AppIntentRuntime.swift:19-24` is `palettePrincipal` (`.palette`),
+- `Sources/TenonApp/AppIntentRuntime.swift:19-24` is `palettePrincipal` (`.palette`),
   a lawful public-adapter principal with a production caller
   (`PaletteIntentInvoker.swift:77`); no generic app kind can exist
   (`InteractionBoundaryFitnessTests.swift:6-15`).
-- `poc/Sources/TenonApp/CLICommandExecutor.swift:18-78` is a thin control-plane adapter
+- `Sources/TenonApp/CLICommandExecutor.swift:18-78` is a thin control-plane adapter
   (ping/app.focus direct; list/describe/send via the kernel); the legacy duplicate verbs
   are fitness-pinned out (`CLIIntentBusBoundaryTests.swift:5-80`).

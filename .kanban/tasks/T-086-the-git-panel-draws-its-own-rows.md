@@ -8,7 +8,7 @@
 
 T-085 collapsed two of the three file lists onto one `TreeRowsView`. The third is the git
 panel, which builds its rows out of view-tree nodes — `card` + `hstack` + `badge` + `button`
-(`poc/plugins/git/main.js:366-380`, `sectionCard` at `:383`). It is the only list left that
+(`plugins/git/main.js:366-380`, `sectionCard` at `:383`). It is the only list left that
 answers "what does a right-click do" differently, and the only one whose rows cannot be
 dragged to a terminal.
 

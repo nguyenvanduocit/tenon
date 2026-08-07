@@ -10,15 +10,15 @@ session `a65c2304` — **LOCKS RELEASED**; every file below is free again. The l
 the record of what this task changed.
 
 Files changed:
-- NEW `poc/Sources/TenonCore/DiffRows.swift` — the pure flattening: `DiffRowID`, `DiffRow`,
+- NEW `Sources/TenonCore/DiffRows.swift` — the pure flattening: `DiffRowID`, `DiffRow`,
   `unified`/`split`, `paired`, `widestTexts`/`displayWidth`, `maxLineNumber`
-- `poc/Sources/TenonApp/DiffSlotView.swift` — `LazyVStack` + stable row identity, measured
+- `Sources/TenonApp/DiffSlotView.swift` — `LazyVStack` + stable row identity, measured
   column widths, and the two redundant diff passes removed
-- `poc/Sources/TenonCore/LineDiff.swift` — `stat(old:new:)` → `stat(_ hunks:)` only
-- NEW `poc/Tests/TenonCoreTests/DiffRowsTests.swift` — 20 tests
-- `poc/Tests/TenonCoreTests/LineDiffTests.swift` — the `stat` test follows the new
+- `Sources/TenonCore/LineDiff.swift` — `stat(old:new:)` → `stat(_ hunks:)` only
+- NEW `Tests/TenonCoreTests/DiffRowsTests.swift` — 20 tests
+- `Tests/TenonCoreTests/LineDiffTests.swift` — the `stat` test follows the new
   signature, plus one multi-hunk case
-- `poc/Sources/TenonApp/DiffSnapshot.swift` — the measurement instrument: the diff sides
+- `Sources/TenonApp/DiffSnapshot.swift` — the measurement instrument: the diff sides
   become overridable by file path (`TENON_DIFF_SNAPSHOT_OLD`/`_NEW`/`_SPLIT`) and the
   offscreen render reports its layout and capture time, which is how the before/after below
   was taken on the real view from a headless shell
@@ -53,7 +53,7 @@ Files changed:
 
 ## What landed
 
-`DiffRows` (`poc/Sources/TenonCore/DiffRows.swift:65`) is the pure rule: `unified(_:)` and
+`DiffRows` (`Sources/TenonCore/DiffRows.swift:65`) is the pure rule: `unified(_:)` and
 `split(_:)` flatten `[DiffHunk]` into one `[DiffRow]` — hunk header, unified line, or
 side-by-side pair — and `paired(_:)` moved out of the view so the run-alignment and its
 gaps are asserted without a window.

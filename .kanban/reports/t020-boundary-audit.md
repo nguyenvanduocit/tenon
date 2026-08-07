@@ -30,7 +30,7 @@ deleted." Measured today:
 - A fresh `JSContext` exposes `console` (`typeof console === "object"`, measured with
   `swift -e` against JavaScriptCore on this machine — modern JSC ships a global
   ConsoleObject).
-- No file under `poc/Sources/` contains the string `console` at all (rg over
+- No file under `Sources/` contains the string `console` at all (rg over
   `Sources/TenonCore/` and the whole target: zero hits), so nothing deletes it. The old
   deletion did not survive the runtime rewrite landed in `163c8bf`/`8620bc3`.
 - The surface fitness test enumerates only members **of `tenon`**
@@ -70,7 +70,7 @@ apply, verbatim:
 
 - `CLAUDE.md` invariant 1 names `testPluginsSeeOnlyTheTenonGlobal`; the Commands section
   offers `swift test --filter testEditingTheClockPluginOnDiskHotReloadsIt` as the
-  single-test example. Neither name exists anywhere under `poc/Tests/` (rg: zero hits).
+  single-test example. Neither name exists anywhere under `Tests/` (rg: zero hits).
 - Consequence: the documented single-test command runs **0 tests** for every agent that
   copies it, and the invariant points at an unfailable test — which is how Finding 1
   stayed invisible. Successor names to cite: `testRuntimeExportsOnlyTheClassifiedPublicSurface`
@@ -106,7 +106,7 @@ Every criterion the task file never ticked, answered with its enforcing artifact
 
 ### Explicitly out of scope, with owner
 
-- `poc/plugins/file-explorer|git|claude-sessions/main.js` are mid-edit by T-036 (instance
+- `plugins/file-explorer|git|claude-sessions/main.js` are mid-edit by T-036 (instance
   model adoption). My sweep audited the bytes on disk tonight; T-036's landing may change
   line numbers but its stated design (instance model + `workspace.state.v1` scoping,
   no new `tenon` member) is inside the law.
@@ -116,7 +116,7 @@ Every criterion the task file never ticked, answered with its enforcing artifact
 ### Side note grounded during verification
 
 The criterion "Swift 6 warnings-as-errors build" is not configured anywhere:
-`poc/Package.swift` sets only `swiftLanguageModes: [.v6]` (line 117) and no target carries
+`Package.swift` sets only `swiftLanguageModes: [.v6]` (line 117) and no target carries
 a treat-warnings-as-errors Swift setting. Today's builds pass with warnings (the known
 GhosttyKit ImGui symbol ones). Either configure it or reword the criterion — as written it
 can never be ticked honestly.

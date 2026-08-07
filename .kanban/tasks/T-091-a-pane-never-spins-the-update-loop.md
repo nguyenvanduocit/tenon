@@ -9,8 +9,8 @@
 ## Owner / files (agent lock)
 
 Session `efc4afbd` holds:
-`poc/Sources/TenonApp/SpatialCanvasView.swift`,
-`poc/Tests/TenonAppStateTests/PaneHostingSizingTests.swift` (new),
+`Sources/TenonApp/SpatialCanvasView.swift`,
+`Tests/TenonAppStateTests/PaneHostingSizingTests.swift` (new),
 `docs/design-pane-hosting.md` (new).
 
 NOT held: `AgentLensView.swift` (dirty from another agent's work — the fix must not
@@ -162,7 +162,7 @@ below is still what settles it.
 
 ### Runbook for the reproduction (needs a human at the GUI)
 
-1. `cd poc && swift run tenon`
+1. `swift run tenon`
 2. Open the 19:11 view set: a terminal pane, the **Automation** view, a plugin view
    (`dev.local.supremor-vault-sync/status` if installed, any plugin view otherwise), plus
    three transient panes.

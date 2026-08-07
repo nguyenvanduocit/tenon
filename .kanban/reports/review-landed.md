@@ -3,7 +3,7 @@
 Reviewed 2026-07-30, 20:02 → 22:10, against a working tree with **nothing committed since
 `3c06770`**. Read-only: no source, test, plugin, doc or kanban file was modified; no git
 write command was run; `swift build` / `swift test` were deliberately not run (another
-worker owns `poc/.build` this wave). Every finding below is grounded in a `file:line` on
+worker owns `.build` this wave). Every finding below is grounded in a `file:line` on
 disk or in `git diff`.
 
 **Headline: T-026 is safe on the mid-edit question, and blocked on a different one — its
@@ -45,13 +45,13 @@ question specifically, T-026 is clean.
 
 ### 2. BLOCKING for T-026 — its own criterion is asserted only in a target `swift test` never builds
 
-`poc/Package.swift` declares exactly three test targets:
+`Package.swift` declares exactly three test targets:
 
-- `poc/Package.swift:105` — `TenonIntentCoreTests`
-- `poc/Package.swift:106` — `TenonCoreTests`
-- `poc/Package.swift:110` — `TenonAppStateTests`
+- `Package.swift:105` — `TenonIntentCoreTests`
+- `Package.swift:106` — `TenonCoreTests`
+- `Package.swift:110` — `TenonAppStateTests`
 
-`poc/Tests/TenonAppTests/SpatialCanvasInteractionTests.swift` is in **none** of them. It is
+`Tests/TenonAppTests/SpatialCanvasInteractionTests.swift` is in **none** of them. It is
 Xcode-only. T-024's own task file already records this in bold
 (`.kanban/tasks/T-024-smart-open-reuses-a-pane.md:10-13`: "*that directory is Xcode-only,
 so the provider test landed in `Tests/TenonAppStateTests/`*"), and T-026 then put its menu
@@ -108,9 +108,9 @@ interleaves and the worse the skipping gets.
 ### 4. HIGH — T-022: `Image("TenonMark")` has no bundle to load from under `swift run tenon`
 
 `ShellTitleBar.swift:69` replaced `Image(systemName: "terminal.fill")` with the asset-catalog
-lookup `Image("TenonMark")`. The catalog is `poc/Sources/TenonApp/Assets.xcassets/TenonMark.imageset/`
-— **untracked** (`git status --porcelain` → `?? poc/Sources/TenonApp/Assets.xcassets/`).
-`poc/Package.swift`'s `TenonApp` target (`poc/Package.swift:58-93`) declares **no
+lookup `Image("TenonMark")`. The catalog is `Sources/TenonApp/Assets.xcassets/TenonMark.imageset/`
+— **untracked** (`git status --porcelain` → `?? Sources/TenonApp/Assets.xcassets/`).
+`Package.swift`'s `TenonApp` target (`Package.swift:58-93`) declares **no
 `resources:`**, and the board already records the precedent at `.kanban/board.md:22`
 (T-016): "*SwiftPM does NOT run `actool`*".
 
@@ -218,7 +218,7 @@ not just a missing human look.
   is a second gate; a no-op yields `isValid: false` so `applyResize` (`Workspace.swift:936-938`)
   emits nothing.
 - **Plugin manifest/JS drift:** file-explorer keeps `workspace.tab.create.v1` in `uses`
-  legitimately — `poc/plugins/file-explorer/main.js:304` still sends it via `call.send(…)`,
+  legitimately — `plugins/file-explorer/main.js:304` still sends it via `call.send(…)`,
   which `ShippedPluginsTests.swift:75-115`'s regex covers. I initially flagged this as a
   stale declaration and it is not one.
 
@@ -230,19 +230,19 @@ not just a missing human look.
 
 | file(s) | likely owner | note |
 |---|---|---|
-| `poc/Sources/TenonCore/RecentWorkspaceStore.swift`, `poc/Sources/TenonApp/WorkspaceSidebarView.swift`, `poc/Tests/TenonCoreTests/RecentWorkspaceStoreTests.swift` | **T-032 recent-menu, session `1a79a1bf`** | `.kanban/board.md:16`; LANDED. Renumbered T-027 → T-032 at ~22:08 because another session took T-027 for catalog restore |
+| `Sources/TenonCore/RecentWorkspaceStore.swift`, `Sources/TenonApp/WorkspaceSidebarView.swift`, `Tests/TenonCoreTests/RecentWorkspaceStoreTests.swift` | **T-032 recent-menu, session `1a79a1bf`** | `.kanban/board.md:16`; LANDED. Renumbered T-027 → T-032 at ~22:08 because another session took T-027 for catalog restore |
 | the `openWorkspaceFolders` block **inside** `WorkspaceStore.swift` (`:33-37`, `:47`, `:204-207`, `:210-212`) | **T-032, session `1a79a1bf`** | **cannot be separated** — `WorkspaceStore.swift` carries T-024 + T-025 + T-026 + T-032 in one file |
-| `?? poc/Sources/TenonCore/DiffRows.swift`, `?? poc/Tests/TenonCoreTests/DiffRowsTests.swift` | **T-028 diff rows** | appeared during this review (after 20:15); not present when the four slices were written |
-| `?? poc/Tests/TenonCoreTests/ProjectRootTests.swift` | **T-030 pane cwd / project root** | appeared during this review |
-| `poc/Sources/TenonApp/WindowChrome.swift` (`mouseDownCanMoveWindow` → manual `performDrag` + double-click zoom/minimise) | **unclaimed titlebar slice** | no task file, no board entry |
+| `?? Sources/TenonCore/DiffRows.swift`, `?? Tests/TenonCoreTests/DiffRowsTests.swift` | **T-028 diff rows** | appeared during this review (after 20:15); not present when the four slices were written |
+| `?? Tests/TenonCoreTests/ProjectRootTests.swift` | **T-030 pane cwd / project root** | appeared during this review |
+| `Sources/TenonApp/WindowChrome.swift` (`mouseDownCanMoveWindow` → manual `performDrag` + double-click zoom/minimise) | **unclaimed titlebar slice** | no task file, no board entry |
 | `TenonTheme.titleBarHeight 46 → 36` (`TenonTheme.swift:44-46`) | **unclaimed titlebar slice** | T-025 claims only `tabMinWidth` in this file |
 | `ShellTitleBar.swift` — `Image("TenonMark")`, chip height 32→26, icon 27→24 | **unclaimed titlebar slice** | T-022 claims this file only for "delete `slotControls`, `+` opens the popover" |
-| `?? poc/Sources/TenonApp/Assets.xcassets/`, `?? poc/Design/`, `?? poc/scripts/generate-app-icon.sh` | **unclaimed app-icon slice** | see finding 4 — the `Image("TenonMark")` reference is worthless without these |
-| `CLAUDE.md`, `README.md`, `poc/README.md`, `dev.sh`, `install.sh`, `?? poc/scripts/prune-build-cache.sh`, `docs/superpowers/specs/2026-07-30-process-resource-monitor-design.md` | **T-023 build cache, session `68979863`** | `.kanban/board.md:27`, already in `Done` |
-| `poc/project.yml` (deletes the `TenonCLI` Xcode target), `poc/Package.swift` (`TENON_CLI_IMPORTS_CORE_MODULE`) | **T-023** | compensated — `install.sh:129-130` still bundles `tenon-cli` into the app |
-| `poc/Tenon.xcodeproj/project.pbxproj` (−240 lines) | **T-023, regenerated** | ⚠️ both T-022 and T-023 state they *deliberately did not* run `xcodegen`. Someone did. Matches the `project.yml` TenonCLI removal. |
-| `poc/Vendor/TreeSitterTSX/Package.swift`, `poc/Vendor/TreeSitterTSX/README.md` | **T-016 editor stack, session `d7f580dd`** | still in `Doing` |
-| `poc/Sources/TenonCore/PluginHost.swift` | **mixed: T-022 + T-021** | T-022's one additive `launcher` field sits in a file T-021 also edited |
+| `?? Sources/TenonApp/Assets.xcassets/`, `?? Design/`, `?? scripts/generate-app-icon.sh` | **unclaimed app-icon slice** | see finding 4 — the `Image("TenonMark")` reference is worthless without these |
+| `CLAUDE.md`, `README.md`, `docs/development.md`, `dev.sh`, `install.sh`, `?? scripts/prune-build-cache.sh`, `docs/superpowers/specs/2026-07-30-process-resource-monitor-design.md` | **T-023 build cache, session `68979863`** | `.kanban/board.md:27`, already in `Done` |
+| `project.yml` (deletes the `TenonCLI` Xcode target), `Package.swift` (`TENON_CLI_IMPORTS_CORE_MODULE`) | **T-023** | compensated — `install.sh:129-130` still bundles `tenon-cli` into the app |
+| `Tenon.xcodeproj/project.pbxproj` (−240 lines) | **T-023, regenerated** | ⚠️ both T-022 and T-023 state they *deliberately did not* run `xcodegen`. Someone did. Matches the `project.yml` TenonCLI removal. |
+| `Vendor/TreeSitterTSX/Package.swift`, `Vendor/TreeSitterTSX/README.md` | **T-016 editor stack, session `d7f580dd`** | still in `Doing` |
+| `Sources/TenonCore/PluginHost.swift` | **mixed: T-022 + T-021** | T-022's one additive `launcher` field sits in a file T-021 also edited |
 | `.kanban/board.md` | **all sessions** | written at 20:03:19, during this review |
 | `?? .kanban/tasks/T-023, T-027, T-028, T-029, T-030, T-031, T-032, T-033` | **T-023 = `68979863`; T-032 = `1a79a1bf`; rest = the backlog author** | eight untracked task files, none belonging to the four slices. `T-033-plugin-inventory-trust-is-fail-closed.md` appeared during this review — it is the task for the 3 pre-existing T-021 reds every slice's evidence cites |
 | `?? .kanban/reports/` | **this review** | contains only `review-landed.md`, the single file this task was permitted to write |
@@ -260,7 +260,7 @@ not just a missing human look.
 
 ### How to sequence the commit
 
-`poc/Sources/TenonCore/WorkspaceStore.swift` and `poc/Sources/TenonCore/Workspace.swift`
+`Sources/TenonCore/WorkspaceStore.swift` and `Sources/TenonCore/Workspace.swift`
 each carry **T-024 + T-025 + T-026** interleaved, and `WorkspaceStore.swift` carries
 **T-032** on top. Per-slice staging of those two files is not possible without hand-splitting
 hunks. All four owning sessions have now released (`d25d3c17`, `dd2c89a8`, `fd5aa92f`,
@@ -269,7 +269,7 @@ hunks. All four owning sessions have now released (`d25d3c17`, `dd2c89a8`, `fd5a
 1. **Recommended — fix T-022 first, then commit all four slices plus T-032 as one changeset.**
    Findings 3 and 4 are both confined to `LauncherMenu.swift` / `ShellTitleBar.swift` +
    `Package.swift`, i.e. outside the two entangled core files. Fixing them costs far less
-   than unpicking the entanglement, and `poc/Sources/TenonApp/Assets.xcassets/` must be
+   than unpicking the entanglement, and `Sources/TenonApp/Assets.xcassets/` must be
    `git add`-ed explicitly or finding 4 ships broken.
 2. **Commit now and file findings 3–6 as follow-ups.** Defensible — none of them corrupt
    state, all four slices build — but the launcher ships with keyboard navigation that

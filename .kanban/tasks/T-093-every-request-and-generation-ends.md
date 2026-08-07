@@ -8,18 +8,18 @@
 
 ## Owner / files (agent lock)
 
-Session `784166de` — batch A of `reports/2026-08-07-swift-architecture-audit.html`:
+Session `784166de` — batch A of `docs/reports/2026-08-07-swift-architecture-audit.html`:
 
-`poc/Sources/TenonApp/CLISocketServer.swift`,
-`poc/Sources/TenonIntentCore/CLIProtocol.swift`,
-`poc/Sources/TenonApp/TenonApp.swift`,
-`poc/Sources/TenonApp/BuiltInSlotViews.swift`,
-`poc/Sources/TenonCore/NetworkIntentProvider.swift`,
-`poc/Sources/TenonCore/PluginRuntime.swift`,
-`poc/Sources/TenonCore/PluginHost.swift`,
-`poc/Tests/TenonAppStateTests/CLISocketServerTests.swift`,
-`poc/Tests/TenonCoreTests/PluginRuntimeShutdownTests.swift`,
-`poc/Tests/TenonCoreTests/PluginEventDeliveryTests.swift`.
+`Sources/TenonApp/CLISocketServer.swift`,
+`Sources/TenonIntentCore/CLIProtocol.swift`,
+`Sources/TenonApp/TenonApp.swift`,
+`Sources/TenonApp/BuiltInSlotViews.swift`,
+`Sources/TenonCore/NetworkIntentProvider.swift`,
+`Sources/TenonCore/PluginRuntime.swift`,
+`Sources/TenonCore/PluginHost.swift`,
+`Tests/TenonAppStateTests/CLISocketServerTests.swift`,
+`Tests/TenonCoreTests/PluginRuntimeShutdownTests.swift`,
+`Tests/TenonCoreTests/PluginEventDeliveryTests.swift`.
 
 ## Criteria
 

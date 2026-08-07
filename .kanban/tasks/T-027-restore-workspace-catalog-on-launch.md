@@ -9,9 +9,9 @@
 ## Owner / files (agent lock)
 RELEASED 2026-07-31 00:05 — task DONE by Orca worker
 `term_3491061c-7a27-48d0-89d6-9143d983add6` (dispatch `ctx_1f39d1f17063`). Files shipped
-(all free): NEW `poc/Sources/TenonCore/WorkspaceCatalogStore.swift`, NEW
-`poc/Tests/TenonCoreTests/WorkspaceCatalogPersistenceTests.swift`, NEW
-`poc/Tests/TenonAppStateTests/WorkspaceCatalogRelaunchTests.swift`, additive edits to
+(all free): NEW `Sources/TenonCore/WorkspaceCatalogStore.swift`, NEW
+`Tests/TenonCoreTests/WorkspaceCatalogPersistenceTests.swift`, NEW
+`Tests/TenonAppStateTests/WorkspaceCatalogRelaunchTests.swift`, additive edits to
 `AppStatePaths.swift` / `TenonApp.swift` / `SurfacePool.swift`. `Workspace.swift`,
 `WorkspaceStore.swift` and `DurableJSONFile.swift` untouched.
 
@@ -115,7 +115,7 @@ RELEASED 2026-07-31 00:05 — task DONE by Orca worker
 
 T-030 (pane cwd + project root) ships a per-pane **project-root pin** — the "Set Project
 Directory…" override — that currently lives in memory in `SurfacePool.pinnedRoots`
-(`poc/Sources/TenonApp/SurfacePool.swift`). It survives pane switches and dies with the
+(`Sources/TenonApp/SurfacePool.swift`). It survives pane switches and dies with the
 pane, but not a relaunch. Making it survive is one field in *your* schema, deliberately
 left to you rather than bolted on from T-030, so the workspace tree keeps exactly one
 persistence path (invariant 6).

@@ -15,15 +15,15 @@ Coordination: preserve T-021's standing-consent changes in `PluginHost.swift` an
 current responder/view boundaries.
 
 Claimed files:
-- `poc/Sources/TenonCore/KeyChord.swift` — NEW (parse / normalise / display)
-- `poc/Sources/TenonCore/KeyBindingIndex.swift` — NEW (aggregate + conflict rules)
-- `poc/Sources/TenonCore/PluginManifest.swift` — canonical `palette.key`
-- `poc/Sources/TenonCore/CommandIndex.swift` + `CommandAggregation.swift`
-- `poc/Sources/TenonCore/PluginHost.swift` — transactional binding projection
-- `poc/Sources/TenonApp/TenonApp.swift` — dynamic SwiftUI Commands
-- `poc/Sources/TenonApp/PaletteOverlay.swift` + shared palette invocation helper
-- `poc/Tests/TenonCoreTests/KeyChordTests.swift` — NEW
-- `poc/Tests/TenonCoreTests/KeyBindingIndexTests.swift` — NEW
+- `Sources/TenonCore/KeyChord.swift` — NEW (parse / normalise / display)
+- `Sources/TenonCore/KeyBindingIndex.swift` — NEW (aggregate + conflict rules)
+- `Sources/TenonCore/PluginManifest.swift` — canonical `palette.key`
+- `Sources/TenonCore/CommandIndex.swift` + `CommandAggregation.swift`
+- `Sources/TenonCore/PluginHost.swift` — transactional binding projection
+- `Sources/TenonApp/TenonApp.swift` — dynamic SwiftUI Commands
+- `Sources/TenonApp/PaletteOverlay.swift` + shared palette invocation helper
+- `Tests/TenonCoreTests/KeyChordTests.swift` — NEW
+- `Tests/TenonCoreTests/KeyBindingIndexTests.swift` — NEW
 - manifest, host lifecycle, invocation, and boundary-fitness tests
 - shipped plugin manifests that declare product keys
 

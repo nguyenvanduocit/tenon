@@ -13,10 +13,10 @@
 **RELEASED 02:0x — task done, every file below is FREE.** (Was: session 1d3e1340,
 user-directed; third Doing entry past the WIP pair, T-059/T-060 precedent — zero
 overlap with T-055 and T-059 locks.) Claimed while active:
-- poc/Sources/TenonApp/AutomationAuthoring.swift (NEW)
-- poc/Sources/TenonApp/SettingsView.swift
-- poc/Sources/TenonApp/TenonApp.swift (wiring only)
-- poc/Tests/TenonAppStateTests/AutomationAuthoringTests.swift (NEW)
+- Sources/TenonApp/AutomationAuthoring.swift (NEW)
+- Sources/TenonApp/SettingsView.swift
+- Sources/TenonApp/TenonApp.swift (wiring only)
+- Tests/TenonAppStateTests/AutomationAuthoringTests.swift (NEW)
 - docs/design-automations.md (one new section)
 
 ## Rung walk (recorded before code)

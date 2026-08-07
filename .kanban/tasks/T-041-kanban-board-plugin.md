@@ -6,9 +6,9 @@
 - **depends**: T-040
 
 ## Owner / files (agent lock)
-session 247281cf — **DONE 09:5x, ALL LOCKS RELEASED.** Files: NEW `poc/plugins/kanban/{main.js,manifest.json}`,
-NEW `poc/Tests/TenonCoreTests/KanbanPluginTests.swift`, and one line appended to the
-shipped-plugin roster in `poc/Tests/TenonCoreTests/ShippedPluginsTests.swift`.
+session 247281cf — **DONE 09:5x, ALL LOCKS RELEASED.** Files: NEW `plugins/kanban/{main.js,manifest.json}`,
+NEW `Tests/TenonCoreTests/KanbanPluginTests.swift`, and one line appended to the
+shipped-plugin roster in `Tests/TenonCoreTests/ShippedPluginsTests.swift`.
 
 ## Why
 Tenon là supervision layer; `.kanban/` đã là kênh điều phối giữa các agent trong repo này. Một pane kanban native-trong-Tenon biến board thành attention surface: thấy Backlog/Todo/Doing/Done, bấm Start → một agent nhận task trong PTY thật — đúng luồng "human directs, agent executes".
@@ -19,7 +19,7 @@ Tenon là supervision layer; `.kanban/` đã là kênh điều phối giữa cá
 - Parser phải fail-soft: dòng lệch format bị bỏ qua, không làm hỏng cả board.
 
 ## Design constraints
-- Plugin thuần JS trong `poc/plugins/kanban/`, chỉ dùng surface `tenon` công khai: đọc file qua intent fs đã có, `fs.watch` (RESOURCE) cho `.kanban/`, `views.register/set/onSelect` (CONTRIBUTION) cho UI, Start gửi intent T-040 chạy `claude` kèm prompt (vd "làm task T-NNN theo .kanban/tasks/T-NNN-slug.md, tuân thủ protocol trong CLAUDE.md").
+- Plugin thuần JS trong `plugins/kanban/`, chỉ dùng surface `tenon` công khai: đọc file qua intent fs đã có, `fs.watch` (RESOURCE) cho `.kanban/`, `views.register/set/onSelect` (CONTRIBUTION) cho UI, Start gửi intent T-040 chạy `claude` kèm prompt (vd "làm task T-NNN theo .kanban/tasks/T-NNN-slug.md, tuân thủ protocol trong CLAUDE.md").
 - **Instance model** (T-036): state key theo instanceID, board root resolve từ workspace SỞ HỮU pane — không module-global singleton.
 - **Chống leak** (invariant 10 — user nhấn mạnh):
   - Watcher `fs.watch` cancel khi view close / generation retire; hot reload không để watcher mồ côi (ShippedPluginsTests đã có pattern FSEvents thật để soi).

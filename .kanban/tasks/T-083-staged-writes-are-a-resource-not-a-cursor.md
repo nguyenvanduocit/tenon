@@ -13,7 +13,7 @@ The staged-write restore rests on a false premise. This task's repair lane recor
 removal of paged `filesystem.file.write.v1` as *"deleted outright by a lane in this batch"*.
 It was not. The deletion was already in the working tree before this batch's build phase
 began — measured at 11:15 on 2026-08-07 as `−333` lines in
-`poc/Sources/TenonCore/FilesystemIntentProvider.swift` and `−445` in its tests, alongside a
+`Sources/TenonCore/FilesystemIntentProvider.swift` and `−445` in its tests, alongside a
 `+161`-line edit to `docs/architecture-interaction-boundaries.md` writing the withdrawal
 into the law (*"It has no cursor, staging token, or host-owned state between requests"*).
 That is another session mid-task, and this batch undid both halves of its decision: it
@@ -32,11 +32,11 @@ or ratify it and close the question in the law. Until then this task is not done
 
 Session `fdb5e373` (repair lane) — **RELEASED 2026-08-07**. Every file below is free.
 
-`poc/Sources/TenonCore/CoreIntentCatalog.swift`,
-`poc/Sources/TenonCore/FilesystemIntentProvider.swift`,
-`poc/plugins/kanban/main.js`, `poc/plugins/claude-sessions/{main.js,manifest.json}`,
-`poc/plugins/file-explorer/{main.js,manifest.json}`,
-`poc/Tests/TenonCoreTests/{CoreIntentCatalogTests,FilesystemIntentProviderTests,KanbanPluginTests,FileExplorerPluginTests,WorkspaceScopedViewStateTests}.swift`,
+`Sources/TenonCore/CoreIntentCatalog.swift`,
+`Sources/TenonCore/FilesystemIntentProvider.swift`,
+`plugins/kanban/main.js`, `plugins/claude-sessions/{main.js,manifest.json}`,
+`plugins/file-explorer/{main.js,manifest.json}`,
+`Tests/TenonCoreTests/{CoreIntentCatalogTests,FilesystemIntentProviderTests,KanbanPluginTests,FileExplorerPluginTests,WorkspaceScopedViewStateTests}.swift`,
 `docs/architecture-interaction-boundaries.md`, `docs/design-plugin-host-capabilities.md`,
 `docs/plugin-migration-v0.2.md`.
 

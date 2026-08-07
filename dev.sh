@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# dev.sh — build and launch the Tenon PoC app.
+# dev.sh — build and launch the Tenon app.
 #
 # Opens a window, so it needs a GUI session. Any arguments are forwarded to the
 # app; environment overrides work too, e.g.:
@@ -8,7 +8,7 @@
 #   CLEAN=1 ./dev.sh                 # discard both build trees first (deps survive)
 set -euo pipefail
 
-cd "$(dirname "$0")/poc"
+cd "$(dirname "$0")"
 
 # Collect duplicate build trees before making more of them. Keeps this run's
 # incremental caches, so the edit-run loop stays seconds long.

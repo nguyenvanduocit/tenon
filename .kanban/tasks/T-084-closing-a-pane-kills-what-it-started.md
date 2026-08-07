@@ -6,12 +6,12 @@
 ## Owner / files (agent lock)
 **RELEASED 17:3x — all files below are FREE.** Session 921ed8e8 held them 17:0x–17:3x.
 
-- `poc/Sources/TenonCore/TerminalJobTermination.swift` (NEW)
-- `poc/Sources/TenonApp/TerminalSurface.swift`
-- `poc/Sources/TenonApp/SurfacePool.swift`
-- `poc/Sources/TenonApp/GhosttySurface.swift`
-- `poc/Tests/TenonCoreTests/TerminalJobTerminationTests.swift` (NEW)
-- `poc/Tests/TenonAppStateTests/SurfaceLifecycleTests.swift`
+- `Sources/TenonCore/TerminalJobTermination.swift` (NEW)
+- `Sources/TenonApp/TerminalSurface.swift`
+- `Sources/TenonApp/SurfacePool.swift`
+- `Sources/TenonApp/GhosttySurface.swift`
+- `Tests/TenonCoreTests/TerminalJobTerminationTests.swift` (NEW)
+- `Tests/TenonAppStateTests/SurfaceLifecycleTests.swift`
 - `docs/design-terminal-teardown.md` (NEW)
 - `docs/domains.md` (one new domain entry)
 
@@ -49,14 +49,14 @@ application code responsible for killing anything.
 
 ## How the reference terminals do it
 
-- **Kero** (`refrerences/kero/kero/TerminalSession.swift:126-183`) — kills actively rather than
+- **Kero** (`references/kero/kero/TerminalSession.swift:126-183`) — kills actively rather than
   through ARC: `terminate()` → clear callbacks → `signalTerminalJob(SIGHUP)` → `await 120ms`
   → `signalTerminalJob(SIGKILL)` → `surface.detach()`. Signals `{shellPid, foregroundPid}`,
   each as `kill(-pid)` then `kill(pid)`. Two comments are load-bearing: teardown "must not
   depend on a later SwiftUI reconciliation pass", and detaching before killing "can make a
   backend wait synchronously for a process that ignored SIGHUP". Still pid-guessing, so a
   `nohup` job in a third process group would survive there too.
-- **Orca** (`refrerences/orca/src/main/pty/posix-pty-process-groups.ts:89-130`) — asks the
+- **Orca** (`references/orca/src/main/pty/posix-pty-process-groups.ts:89-130`) — asks the
   kernel instead of guessing: `ps -p <root>` for the tty, `ps -t <tty>` for every process on
   it, then `killpg(SIGKILL)` on every distinct pgid, the root's group last. Guards: bail to a
   narrow kill when the app itself shares that tty (dev daemon launched from a terminal), and

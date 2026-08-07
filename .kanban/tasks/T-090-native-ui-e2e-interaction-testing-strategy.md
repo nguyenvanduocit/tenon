@@ -17,7 +17,7 @@ decision that tells a future feature author exactly where each kind of assertion
 - Hosted AppKit/SwiftUI interaction tests in `SpatialCanvasInteractionTests`: `NSWindow` / `NSHostingView`, synthetic `NSEvent`, first-responder assertions, context-menu construction, pointer routing, and drag lifecycle.
 - Offscreen rendering through `NSHostingView.cacheDisplay` in `DiffSnapshot.swift`, which produces images but is not yet a general visual-regression harness.
 - Existing Accessibility identifiers and values, including the documented XCUITest identity contract in `Tests/TenonUITests/README.md`.
-- The runner manifests and docs themselves: verify `Package.swift`, `project.yml`, the generated scheme, `poc/README.md`, and `docs/operations.md` agree about every test target and command; stale or unreachable tests count as a defect, not coverage.
+- The runner manifests and docs themselves: verify `Package.swift`, `project.yml`, the generated scheme, `docs/development.md`, and `docs/operations.md` agree about every test target and command; stale or unreachable tests count as a defect, not coverage.
 
 ## Techniques that must be compared
 1. Pure domain/state-machine and projection tests with Swift Testing versus XCTest.
@@ -70,7 +70,7 @@ the test still cannot prove:
 - [ ] Produce a feature-author routing guide: given an interaction rule, it selects the lowest valid layer and names when a hosted or black-box adapter receipt is mandatory.
 - [ ] Decide, with spike evidence, whether to adopt Swift Testing for new headless tests, a snapshot library, ViewInspector, Xcode test plans, automated Accessibility audits, and a GUI CI lane. “Do not adopt” is valid when its tradeoff is explicit.
 - [ ] Define a bounded Accessibility-identifier policy: host-owned stable identity only, semantic label/value/action kept separate, no plugin/contributor-controlled test selectors, and no production behavior gated on test IDs.
-- [ ] Update `docs/tdd.md`, `poc/Tests/TenonUITests/README.md`, and `docs/operations.md` with the accepted layer/runner/artifact contract; add focused implementation follow-ups for work intentionally not landed in this research task.
+- [ ] Update `docs/tdd.md`, `Tests/TenonUITests/README.md`, and `docs/operations.md` with the accepted layer/runner/artifact contract; add focused implementation follow-ups for work intentionally not landed in this research task.
 - [ ] Demonstrate the recommended commands from a clean generated Xcode project and from the fast SwiftPM path, preserving command output as the verification receipt.
 
 ## Primary starting sources

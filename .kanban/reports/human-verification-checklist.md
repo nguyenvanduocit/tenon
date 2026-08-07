@@ -85,7 +85,7 @@ check exit silently.
     is verified self-contained by the installer, and it runs from an unrelated directory —
     what a person still has to confirm is the button and the round trip. *(T-045)*
 
-14. **A real supervised fleet** — copy `poc/examples/fleet-review/` into `poc/plugins/`,
+14. **A real supervised fleet** — copy `examples/fleet-review/` into `plugins/`,
     restart, and run "Fleet Review" from the palette with a real `claude` on PATH. Three
     panes should appear and work *at the same time* — that concurrency is what the
     `terminalWait` lane change bought, and the headless test can only prove the intents

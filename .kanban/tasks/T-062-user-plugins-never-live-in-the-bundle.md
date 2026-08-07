@@ -14,15 +14,15 @@
 
 Held first by session 1d3e1340 (Aug 1, 08:3x–09:20, then silent), taken over and
 finished by session 1d6e81a8 (Aug 4, 12:5x–13:1x):
-- poc/Sources/TenonCore/PluginHost.swift
-- poc/Sources/TenonCore/PluginManifest.swift (discovery across roots only)
-- poc/Sources/TenonCore/PluginInventory.swift (NEW)
-- poc/Sources/TenonApp/AppStatePaths.swift
-- poc/Sources/TenonApp/TenonApp.swift (composition wiring only)
-- poc/Sources/TenonApp/AutomationAuthoring.swift
-- poc/Tests/TenonCoreTests/PluginInventoryTests.swift (NEW)
-- poc/Tests/TenonAppStateTests/AppStatePathsTests.swift
-- poc/Tests/TenonAppStateTests/AutomationAuthoringTests.swift
+- Sources/TenonCore/PluginHost.swift
+- Sources/TenonCore/PluginManifest.swift (discovery across roots only)
+- Sources/TenonCore/PluginInventory.swift (NEW)
+- Sources/TenonApp/AppStatePaths.swift
+- Sources/TenonApp/TenonApp.swift (composition wiring only)
+- Sources/TenonApp/AutomationAuthoring.swift
+- Tests/TenonCoreTests/PluginInventoryTests.swift (NEW)
+- Tests/TenonAppStateTests/AppStatePathsTests.swift
+- Tests/TenonAppStateTests/AutomationAuthoringTests.swift
 - docs/design-automations.md
 
 ## Evidence of the incident (measured, not inferred)

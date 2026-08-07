@@ -23,7 +23,7 @@ tool call, file edit, or hook event.
 - [ ] A growing live session can refresh the timeline without replacing a newer result with stale work; generation has explicit loading, progress, cancellation, failure, and retry states while Chat remains usable.
 - [ ] Empty, short, interrupted, and still-running sessions produce honest states—never invented milestones or a falsely completed outcome.
 - [ ] The AI-produced structure is validated and bounded before rendering, and malformed or oversized output fails visibly instead of becoming arbitrary UI.
-- [ ] Host-native Timeline UI follows `designs.md`, including Agent Lens density, semantic colors, keyboard access, VoiceOver labels, and narrow-pane behavior; no feature-local design tokens are introduced.
+- [ ] Host-native Timeline UI follows `docs/designs.md`, including Agent Lens density, semantic colors, keyboard access, VoiceOver labels, and narrow-pane behavior; no feature-local design tokens are introduced.
 - [ ] The generation lifecycle is classified under `docs/architecture-interaction-boundaries.md` before implementation. If it outlives its initial reply or streams multiple results, it uses the existing RESOURCE/STREAM/TASK path where applicable rather than inventing a finite capability API.
 - [ ] Headless tests prove milestone grouping, evidence anchoring, bounds, stale-result rejection, cancellation/error states, and that a transcript rendered as a raw event list does not satisfy the Timeline contract; visual verification covers representative long and narrow sessions.
 

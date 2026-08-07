@@ -9,9 +9,9 @@
 ## Owner / files (agent lock)
 session f014e8e0 — **SLICE 1 DONE 09:5x, ALL LOCKS RELEASED** (every file below is free). This slice ships the platform function;
 the real-provider e2e + shipped demo criteria stay open for a follow-up slice.
-- `poc/Sources/TenonCore/PluginRuntimeBootstrap.swift` (the `tenon.agents` member)
-- `poc/Tests/TenonCoreTests/PluginBuiltinsTests.swift` (surface pin list only)
-- NEW `poc/Tests/TenonCoreTests/AgentsRunTests.swift`
+- `Sources/TenonCore/PluginRuntimeBootstrap.swift` (the `tenon.agents` member)
+- `Tests/TenonCoreTests/PluginBuiltinsTests.swift` (surface pin list only)
+- NEW `Tests/TenonCoreTests/AgentsRunTests.swift`
 - `docs/architecture-interaction-boundaries.md` (one inventory-table row)
 - `CLAUDE.md` (vocabulary line) · `docs/design-automations.md` (§ Orchestration)
 
@@ -70,7 +70,7 @@ signals and scrollback evidence, and a human can take any pane over mid-run.
       mutation-proven by the `$(rm -rf /)` fixture) for `terminal.open.v1` commands (a prompt containing
       `'` or `$(...)` must not become shell injection into the user's PTY) — documented,
       with a helper if warranted.
-- [x] Shipped demo — `poc/examples/fleet-review/`, three reviewers in their own panes aggregated to one status line, loaded and run by `FleetReviewExampleTests` so it cannot rot. Visual half is checklist item 14.
+- [x] Shipped demo — `examples/fleet-review/`, three reviewers in their own panes aggregated to one status line, loaded and run by `FleetReviewExampleTests` so it cannot rot. Visual half is checklist item 14.
 - [x] `swift build` exit 0 + full `swift test` **869 / 0** (claim-time bar 838). RED-first on the kernel slice, red for the right reason, with mutation proofs recorded per slice.
 
 ## Notes
@@ -192,7 +192,7 @@ separate reviewer pass the change protocol demands, not an appendix to this card
   through a real kernel, real `PluginHost` and the real `TerminalIntentProvider`. Both agents
   complete in under a second. Only the terminal surface is stubbed. `TerminalReadCapabilityTests`
   guards defect 1 separately.
-- **Shipped demo: DONE.** `poc/examples/fleet-review/` — one palette command, three
+- **Shipped demo: DONE.** `examples/fleet-review/` — one palette command, three
   reviewers, each in its own pane, all supervised concurrently, aggregated to one status
   line. In `examples/` rather than `plugins/` on purpose: a demo that runs an agent CLI does
   not belong in every user's palette by default. `FleetReviewExampleTests` loads that exact

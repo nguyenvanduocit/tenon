@@ -8,11 +8,11 @@
 Session c2fc4dd9 (main).
 
 **Part A — DONE + verified (new files only, NO collision):**
-- poc/Sources/TenonCore/LineDiff.swift (NEW — pure Myers line-diff engine) ✓ 14 tests green
-- poc/Sources/TenonCore/DiffRequest.swift (NEW — DiffRequest/DiffSource value) ✓ 6 tests green
-- poc/Sources/TenonApp/DiffSlotView.swift (NEW — native SwiftUI diff renderer; unified+split, off-main git resolve, generation guard) ✓ compiled clean
-- poc/plugins/git/main.js + manifest.json (MY plugin — full rewrite to kero parity) ✓ node syntax OK; existing testGitPluginReportsBranchOfARealRepository stays compatible (⎇ branch ±n)
-- poc/Tests/TenonCoreTests/LineDiffTests.swift + DiffRequestTests.swift (NEW test files) ✓
+- Sources/TenonCore/LineDiff.swift (NEW — pure Myers line-diff engine) ✓ 14 tests green
+- Sources/TenonCore/DiffRequest.swift (NEW — DiffRequest/DiffSource value) ✓ 6 tests green
+- Sources/TenonApp/DiffSlotView.swift (NEW — native SwiftUI diff renderer; unified+split, off-main git resolve, generation guard) ✓ compiled clean
+- plugins/git/main.js + manifest.json (MY plugin — full rewrite to kero parity) ✓ node syntax OK; existing testGitPluginReportsBranchOfARealRepository stays compatible (⎇ branch ±n)
+- Tests/TenonCoreTests/LineDiffTests.swift + DiffRequestTests.swift (NEW test files) ✓
 
 **REALIGNED — align to the peer's existing content mechanism, do NOT invent a parallel API:**
 A live peer already shipped `tenon.workspace.newTab({type})` → `WorkspaceCommand.openTab(SlotContent)`
@@ -22,9 +22,9 @@ plugs into THIS, not a new `tenon.diff.*`. So `tenon.diff.open`/`tenon.views.ope
 are dropped; the git plugin calls `tenon.workspace.newTab({type:"diff", ...})`.
 
 **Part B — SHARED, land in ONE coordinated window with the owning session(s) (peers are LIVE):**
-- poc/Sources/TenonCore/Workspace.swift: `SlotContent += case diff(DiffRequest)` — not claimed, but the added case breaks every exhaustive `SlotContent` switch a peer is mid-editing.
-- poc/Sources/TenonCore/PluginRuntime.swift `parseContentSpec(_:)` (~745): add a `"diff"` branch → read `{repoPath, path, staged, untracked, origPath, title}` → `DiffRequest(source: .git(...))` → `.diff(req)`; add `"diff"` to the two `newTab`/`setContent` error strings. ⚠️ T-005/537832b5 actively edits this exact region.
-- poc/Sources/TenonApp/BuiltInSlotViews.swift: `.diff(let req): DiffSlotView(request: req)` in `BuiltInSlotContentView.body`; `SlotPresentation.title` → req.title; `.glyph` → "±". ⚠️ T-005 + T-008 claim this file.
+- Sources/TenonCore/Workspace.swift: `SlotContent += case diff(DiffRequest)` — not claimed, but the added case breaks every exhaustive `SlotContent` switch a peer is mid-editing.
+- Sources/TenonCore/PluginRuntime.swift `parseContentSpec(_:)` (~745): add a `"diff"` branch → read `{repoPath, path, staged, untracked, origPath, title}` → `DiffRequest(source: .git(...))` → `.diff(req)`; add `"diff"` to the two `newTab`/`setContent` error strings. ⚠️ T-005/537832b5 actively edits this exact region.
+- Sources/TenonApp/BuiltInSlotViews.swift: `.diff(let req): DiffSlotView(request: req)` in `BuiltInSlotContentView.body`; `SlotPresentation.title` → req.title; `.glyph` → "±". ⚠️ T-005 + T-008 claim this file.
 
 ## API contract (realigned, frozen)
 ```js

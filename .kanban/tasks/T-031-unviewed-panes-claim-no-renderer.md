@@ -13,16 +13,16 @@ All files below are free again. Pairs with T-027 (a restored tree is the case th
 this matter) and with the process-resource-monitor design under review.
 
 Files touched by this slice (no longer locked):
-- `poc/Sources/TenonApp/SurfacePool.swift` — the lifecycle rule (additive; T-027's pin
+- `Sources/TenonApp/SurfacePool.swift` — the lifecycle rule (additive; T-027's pin
   accessor + `onPinChange` and T-030's `directories` untouched in behaviour)
-- `poc/Sources/TenonApp/TerminalSurface.swift` — `sendText` joins the seam so the stub can
+- `Sources/TenonApp/TerminalSurface.swift` — `sendText` joins the seam so the stub can
   assert delivery headlessly (the T-030 `onPwdChange` precedent)
-- `poc/Sources/TenonApp/GhosttySurface.swift` — occlusion signal only; T-035's
+- `Sources/TenonApp/GhosttySurface.swift` — occlusion signal only; T-035's
   `doCommand(by:)` untouched
-- `poc/Sources/TenonApp/TenonApp.swift` — restore seeding + capture arguments
-- `poc/Sources/TenonCore/WorkspaceCatalogStore.swift` — additive DTO fields (`title`,
+- `Sources/TenonApp/TenonApp.swift` — restore seeding + capture arguments
+- `Sources/TenonCore/WorkspaceCatalogStore.swift` — additive DTO fields (`title`,
   `cwd` on `SlotRecord`), capture/restore threading
-- NEW `poc/Tests/TenonAppStateTests/SurfaceLifecycleTests.swift`
+- NEW `Tests/TenonAppStateTests/SurfaceLifecycleTests.swift`
 - task file + own board lines
 
 NOT touched: `SpatialCanvasView.swift` / `BuiltInSlotViews.swift` (free since T-016

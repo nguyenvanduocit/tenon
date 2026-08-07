@@ -11,14 +11,14 @@
 session 0c434576 — ACTIVE
 
 Mine (claiming):
-- `poc/Sources/TenonCore/PluginRuntime.swift` — NEW blocks: `tenon.fs.watch`, `tenon.commands.execute`,
+- `Sources/TenonCore/PluginRuntime.swift` — NEW blocks: `tenon.fs.watch`, `tenon.commands.execute`,
   `tenon.net`, `tenon.secrets`
-- `poc/Sources/TenonCore/PluginHost.swift` — command routing across plugins, watcher ownership
-- `poc/Sources/TenonCore/PluginManifest.swift` — `network.allow` allowlist + 2 new permissions
-- `poc/Sources/TenonCore/PathWatcher.swift` — NEW (FSEvents for an arbitrary path)
-- `poc/Sources/TenonCore/SecretStore.swift` — NEW (Keychain)
-- `poc/Tests/TenonCoreTests/PluginBuiltinsTests.swift` — mine from T-017
-- `poc/plugins/git/main.js`, `poc/plugins/file-explorer/main.js` (only if released by T-016)
+- `Sources/TenonCore/PluginHost.swift` — command routing across plugins, watcher ownership
+- `Sources/TenonCore/PluginManifest.swift` — `network.allow` allowlist + 2 new permissions
+- `Sources/TenonCore/PathWatcher.swift` — NEW (FSEvents for an arbitrary path)
+- `Sources/TenonCore/SecretStore.swift` — NEW (Keychain)
+- `Tests/TenonCoreTests/PluginBuiltinsTests.swift` — mine from T-017
+- `plugins/git/main.js`, `plugins/file-explorer/main.js` (only if released by T-016)
 
 NOT touching: anything held by T-015 (`claude-sessions/**`, `PaneTarget.swift`, `SurfacePool.swift`)
 or T-016 (`Package.swift`, `Vendor/**`, `SourceEditorView.swift`, `SyntaxHighlighting.swift`,

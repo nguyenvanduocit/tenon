@@ -17,10 +17,10 @@
   `docs/architecture-interaction-boundaries.md` (inventory + EVENT/CONTRIBUTION lists),
   repo `CLAUDE.md` (vocabulary list only). Never opened for writing despite the claim:
   `CommandIndex.swift`, `CommandAggregation.swift`, `PluginManifest.swift`,
-  `LauncherMenu.swift`, `poc/plugins/**`.
+  `LauncherMenu.swift`, `plugins/**`.
 - **Phase 1 COMPLETE** (session `4564041c`, 2026-07-24) — claim released, files stable:
-  - `poc/Sources/TenonCore/FuzzyMatch.swift`, `Frecency.swift`, `CommandIndex.swift`
-  - `poc/Tests/TenonCoreTests/FuzzyMatchTests.swift`, `FrecencyTests.swift`, `CommandIndexTests.swift`
+  - `Sources/TenonCore/FuzzyMatch.swift`, `Frecency.swift`, `CommandIndex.swift`
+  - `Tests/TenonCoreTests/FuzzyMatchTests.swift`, `FrecencyTests.swift`, `CommandIndexTests.swift`
   - `docs/design-command-palette.md`
   - Evidence: full suite 220/220 green (+21 new). Not committed (awaiting user).
 - Phase 2+ (touches PluginRuntime/PluginHost/ContentView/TenonApp/manifests) UNCLAIMED — coordinate before starting; those files are hot with T-002..T-005 work.

@@ -10,10 +10,10 @@
 session 247281cf — ACTIVE, claimed 03:57.
 
 Files this task will change:
-- `poc/Tenon.xcodeproj` (a copy-files build phase into `Contents/MacOS`) and/or
-  `poc/Package.swift` + `install.sh` / `dev.sh`, depending on which build produces the `.app`
-- `poc/Sources/TenonApp/CLICommandInstaller.swift` (only if resolution has to change)
-- `poc/Tests/TenonAppStateTests/**` for whatever of this is assertable headlessly
+- `Tenon.xcodeproj` (a copy-files build phase into `Contents/MacOS`) and/or
+  `Package.swift` + `install.sh` / `dev.sh`, depending on which build produces the `.app`
+- `Sources/TenonApp/CLICommandInstaller.swift` (only if resolution has to change)
+- `Tests/TenonAppStateTests/**` for whatever of this is assertable headlessly
 
 ## Provenance
 T-009's remaining follow-up, recorded there as *"bundle a self-contained tenon-cli inside
@@ -44,7 +44,7 @@ unsigned executable the OS would refuse.
 
 ## The gap that is real
 
-`poc/project.yml` declares **no** CLI target and **no** copy phase. Everything above is a
+`project.yml` declares **no** CLI target and **no** copy phase. Everything above is a
 step in `install.sh`. An app produced any other way — `xcodebuild` directly, Xcode's
 Product ▸ Archive, a future CI job — silently ships without the CLI, and
 `Settings ▸ CLI ▸ Install` degrades to *"No tenon-cli binary is available in this build to

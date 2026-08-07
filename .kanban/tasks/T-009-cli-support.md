@@ -10,23 +10,23 @@
 session 06fee824 — ACTIVE (user confirmed full scope Phase 0+1+2, 2026-07-24).
 
 **Phase 0 (NOW — pure TenonCore, zero collision, `swift test`-able even while TenonApp is red):**
-- poc/Sources/TenonCore/CLIProtocol.swift (envelope + newline-JSON framing + 1MB cap)
-- poc/Sources/TenonCore/CLIAction.swift (verb vocabulary + parser)
-- poc/Sources/TenonCore/CommandResolution.swift (command-id → PluginCommand, exact/bare/fuzzy)
-- poc/Sources/TenonCore/PaneTarget.swift (pane selector → validated terminal slot UUID)
-- poc/Tests/TenonCoreTests/{CLIProtocolTests,CLIActionParserTests,CommandResolutionTests,PaneTargetTests}.swift
+- Sources/TenonCore/CLIProtocol.swift (envelope + newline-JSON framing + 1MB cap)
+- Sources/TenonCore/CLIAction.swift (verb vocabulary + parser)
+- Sources/TenonCore/CommandResolution.swift (command-id → PluginCommand, exact/bare/fuzzy)
+- Sources/TenonCore/PaneTarget.swift (pane selector → validated terminal slot UUID)
+- Tests/TenonCoreTests/{CLIProtocolTests,CLIActionParserTests,CommandResolutionTests,PaneTargetTests}.swift
 
 **Phase 1 (after Phase 0 — new TenonApp files + additive edits to UNCLAIMED files):**
-- NEW: poc/Sources/TenonApp/{CLISocketServer,CLICommandExecutor,TerminalIdleWatcher,CLIStateSnapshot}.swift
-- NEW target: poc/Sources/TenonCLI/** + poc/Package.swift (add `tenon-cli` product/target)
-- EDIT (currently unclaimed): poc/Sources/TenonApp/{TerminalSurface,SurfacePool,GhosttySurface}.swift
-- EDIT (re-read board first — TenonApp.swift is hot): poc/Sources/TenonApp/TenonApp.swift (wire cliServer, pool closure)
+- NEW: Sources/TenonApp/{CLISocketServer,CLICommandExecutor,TerminalIdleWatcher,CLIStateSnapshot}.swift
+- NEW target: Sources/TenonCLI/** + Package.swift (add `tenon-cli` product/target)
+- EDIT (currently unclaimed): Sources/TenonApp/{TerminalSurface,SurfacePool,GhosttySurface}.swift
+- EDIT (re-read board first — TenonApp.swift is hot): Sources/TenonApp/TenonApp.swift (wire cliServer, pool closure)
 
 **Phase 2 (COORDINATION-GATED — blocked on T-005 releasing these):**
-- ⚠️ poc/Sources/TenonCore/PluginRuntime.swift — CLAIMED by T-005 (installAPI). Needs `workspace.control` +nextTab/prevTab/focusNextSlot/switchWorkspace. WAIT for release.
-- ⚠️ poc/Sources/TenonCore/PluginHost.swift — CLAIMED by T-005. Needs WorkspaceCommand +4 cases.
-- poc/Sources/TenonApp/TenonApp.swift — onWorkspaceCommand +4 arms.
-- poc/plugins/core-commands/main.js — +next-tab/prev-tab/focus-next-slot + dynamic switch-workspace.<uuid>.
+- ⚠️ Sources/TenonCore/PluginRuntime.swift — CLAIMED by T-005 (installAPI). Needs `workspace.control` +nextTab/prevTab/focusNextSlot/switchWorkspace. WAIT for release.
+- ⚠️ Sources/TenonCore/PluginHost.swift — CLAIMED by T-005. Needs WorkspaceCommand +4 cases.
+- Sources/TenonApp/TenonApp.swift — onWorkspaceCommand +4 arms.
+- plugins/core-commands/main.js — +next-tab/prev-tab/focus-next-slot + dynamic switch-workspace.<uuid>.
 - Tests: CoreCommandsPluginTests, ShippedPluginsTests, PluginCapabilityTests (blocked+allowed pairs).
 
 **Phase 3 (independent native spike):** `read --cursor` scrollback paging, push-idle, `wait --for command-finished` (OSC 133).
@@ -62,7 +62,7 @@ muxy (wire framing + security model), orca (agent-first verb UX). Feasibility de
 
 This task recorded *"`swift build` + `swift test` clean (298 green)"*. That number never
 included `TerminalIntentProviderTests` — the only tests of the CLI's terminal verbs — because
-`poc/Tests/TenonAppTests/` was never declared in `Package.swift` and `swift test` therefore
+`Tests/TenonAppTests/` was never declared in `Package.swift` and `swift test` therefore
 never built it. Three of its four files no longer compile at all.
 
 Fixed here: `TerminalIntentProviderTests.swift` moved to `TenonAppStateTests/`, where the

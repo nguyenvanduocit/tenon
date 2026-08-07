@@ -9,12 +9,12 @@
 ## Owner / files (agent lock)
 
 Session `784166de` — RELEASED. Landed in:
-`poc/Sources/TenonApp/{PluginModalOverlay,SettingsView,CLICommandInstaller,GitCommand,`
+`Sources/TenonApp/{PluginModalOverlay,SettingsView,CLICommandInstaller,GitCommand,`
 `PaneAttentionProjection,ShellTitleBar,SpatialCanvasView,AgentSessionHooks,AgentLensSession,`
 `WorkspaceSidebarView,WorkspaceStageView,QuickCommandViews,EmptyStateCard,AgentLensView}.swift`,
-`poc/Sources/TenonApp/ChangesPanelView.swift`, `poc/Sources/TenonApp/DiffSlotView.swift`,
-`poc/Sources/TenonCore/PluginViewNode.swift`, `designs.md`, `docs/domains.md`,
-`.github/workflows/macos-ci.yml`, `poc/Tests/TenonUITests/*`.
+`Sources/TenonApp/ChangesPanelView.swift`, `Sources/TenonApp/DiffSlotView.swift`,
+`Sources/TenonCore/PluginViewNode.swift`, `docs/designs.md`, `docs/domains.md`,
+`.github/workflows/macos-ci.yml`, `Tests/TenonUITests/*`.
 
 ## Criteria
 
@@ -27,7 +27,7 @@ Session `784166de` — RELEASED. Landed in:
 - [x] Icon-only shell controls carry an accessibility label; icons that sit beside their own
       label are hidden from the tree.
 - [x] Settings assigns no decorative colour identity to a feature or a plugin.
-- [x] `designs.md` and the pane-header contract agree on the header height (34 pt).
+- [x] `docs/designs.md` and the pane-header contract agree on the header height (34 pt).
 - [x] Stateful plugin nodes keep their identity across a republish that inserts or reorders
       siblings.
 - [x] One bounded `GitCommand`; the changed-file reader and the diff reader no longer carry two

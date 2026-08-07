@@ -5,7 +5,7 @@
 - **effort**: M
 
 ## Criteria
-- [ ] Host-native Settings exposes an optional default maximum width for newly created panes, following `designs.md` and the existing settings vocabulary instead of introducing feature-local tokens.
+- [ ] Host-native Settings exposes an optional default maximum width for newly created panes, following `docs/designs.md` and the existing settings vocabulary instead of introducing feature-local tokens.
 - [ ] The preference is validated, persisted, and restored across app launches; invalid or out-of-range values cannot create an unusable layout.
 - [ ] Initial pane sizing considers both available space and the configured limit: a new pane is never wider than the available layout permits or the user's maximum.
 - [ ] When the preference is unset or disabled, pane creation behaves exactly as it does today.

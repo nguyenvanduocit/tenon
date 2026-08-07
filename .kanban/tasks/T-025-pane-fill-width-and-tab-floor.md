@@ -10,15 +10,15 @@ session `dd2c89a8` — **LOCKS RELEASED**; every file below is free again. The l
 the record of what this task changed.
 
 Files changed:
-- `poc/Sources/TenonCore/SpatialLayout.swift` — NEW pure `fillWidth(_:slotID:)` only
-- `poc/Sources/TenonCore/Workspace.swift` — NEW `WorkspaceCatalog.fillSlotWidth(_:)` only
-- `poc/Sources/TenonCore/WorkspaceStore.swift` — one forwarding method
-- `poc/Sources/TenonApp/SpatialCanvasView.swift` — header double-click → `onFillWidth`
-- `poc/Sources/TenonApp/ShellTitleBar.swift` — `TabChip` minimum width (T-022 released this)
-- `poc/Sources/TenonApp/TenonTheme.swift` — `tabMinWidth` constant
-- `poc/Tests/TenonCoreTests/SpatialLayoutTests.swift` — append
-- `poc/Tests/TenonCoreTests/WorkspaceTests.swift` — append
-- `poc/Tests/TenonAppStateTests/SpatialCanvasGestureTests.swift` — NEW
+- `Sources/TenonCore/SpatialLayout.swift` — NEW pure `fillWidth(_:slotID:)` only
+- `Sources/TenonCore/Workspace.swift` — NEW `WorkspaceCatalog.fillSlotWidth(_:)` only
+- `Sources/TenonCore/WorkspaceStore.swift` — one forwarding method
+- `Sources/TenonApp/SpatialCanvasView.swift` — header double-click → `onFillWidth`
+- `Sources/TenonApp/ShellTitleBar.swift` — `TabChip` minimum width (T-022 released this)
+- `Sources/TenonApp/TenonTheme.swift` — `tabMinWidth` constant
+- `Tests/TenonCoreTests/SpatialLayoutTests.swift` — append
+- `Tests/TenonCoreTests/WorkspaceTests.swift` — append
+- `Tests/TenonAppStateTests/SpatialCanvasGestureTests.swift` — NEW
 - `docs/design-pane-slots.md` — fill-width operation, mutation, and the click-count rule
 
 ## Criteria

@@ -1,0 +1,249 @@
+// @domain: workspace-model
+import AppKit
+import SwiftUI
+import TenonCore
+
+/// The live accent colour for Tenon's chrome, swapped from the user's `AccentColor`
+/// preference at launch and whenever Settings changes it. Kept process-wide so
+/// `TenonTheme.amber` stays the single accent source every view already reads; the
+/// shell rebuilds its view tree on an accent change so the new colour propagates.
+enum ThemeRuntime {
+    @MainActor
+    private(set) static var accentNS = NSColor(
+        hex: AccentColor.amber.hex
+    )
+
+    @MainActor
+    static func setAccent(_ accent: AccentColor) {
+        accentNS = NSColor(hex: accent.hex)
+    }
+}
+
+enum TenonTheme {
+    static let ink = Color(nsColor: .tenonInk)
+    static let chrome = Color(nsColor: .tenonChrome)
+    static let chromeRaised = Color(nsColor: .tenonChromeRaised)
+    static let panel = Color(nsColor: .tenonPanel)
+    static let line = Color(nsColor: .tenonLine)
+    static let text = Color(nsColor: .tenonText)
+    static let muted = Color(nsColor: .tenonMuted)
+    /// The user's accent. Computed so a launch/Settings accent swap is reflected the
+    /// next time a view reads it (the shell forces that read by rebuilding on change).
+    @MainActor
+    static var amber: Color { Color(nsColor: .tenonAmber) }
+    static let inkNS = NSColor.tenonInk
+    static let chromeNS = NSColor.tenonChrome
+    static let chromeRaisedNS = NSColor.tenonChromeRaised
+    static let panelNS = NSColor.tenonPanel
+    static let lineNS = NSColor.tenonLine
+    static let textNS = NSColor.tenonText
+    static let mutedNS = NSColor.tenonMuted
+    @MainActor
+    static var amberNS: NSColor { .tenonAmber }
+
+    static let sidebarWidth: CGFloat = 232
+    // Kept close to the 28-pt band macOS lays the traffic lights out in, so the tab
+    // strip reads as one row with them instead of floating below their centre line.
+    static let titleBarHeight: CGFloat = 36
+    static let trafficLightInset: CGFloat = 78
+    // A tab chip's floor. A short title — "~/p/t/tenon" — would otherwise shrink the chip
+    // to a stub the pointer has to hunt for; the title's own cap keeps the ceiling.
+    static let tabMinWidth: CGFloat = 140
+    static let statusBarHeight: CGFloat = 24
+    // The one chrome header every pane draws. 34 leaves 24 points inside the header's
+    // 5-point insets — enough for a `.controlSize(.small)` segmented picker to sit clear
+    // of the 6-point north resize edge, which is what lets a pane's controls live here
+    // instead of in a second row inside its body.
+    static let slotHeaderHeight: CGFloat = 34
+    static let slotGutter: CGFloat = 8
+    static let slotCornerRadius: CGFloat = 7
+
+    static func interfaceFont(
+        size: CGFloat,
+        weight: Font.Weight = .regular
+    ) -> Font {
+        .system(size: size, weight: weight, design: .default)
+    }
+
+    static func utilityFont(
+        size: CGFloat,
+        weight: Font.Weight = .regular
+    ) -> Font {
+        .system(size: size, weight: weight, design: .monospaced)
+    }
+
+    static func interfaceNSFont(
+        size: CGFloat,
+        weight: NSFont.Weight = .regular
+    ) -> NSFont {
+        .systemFont(ofSize: size, weight: weight)
+    }
+
+    static func utilityNSFont(
+        size: CGFloat,
+        weight: NSFont.Weight = .regular
+    ) -> NSFont {
+        NSFont.monospacedSystemFont(ofSize: size, weight: weight)
+    }
+}
+
+/// The one scrollbar presentation used by host-native surfaces. AppKit continues to
+/// choose legacy versus overlay scrollers from the user's System Settings and pointing
+/// device; Tenon only opts into the smaller native control geometry its dense UI needs.
+@MainActor
+enum TenonScrollbarStyle {
+    static let controlSize: NSControl.ControlSize = .small
+
+    /// Returns whether applying the style changed either scroller. The guarded writes
+    /// keep SwiftUI updates from repeatedly asking AppKit to tile the scroll view.
+    @discardableResult
+    static func apply(to scrollView: NSScrollView) -> Bool {
+        var changed = false
+
+        if let verticalScroller = scrollView.verticalScroller,
+           verticalScroller.controlSize != controlSize
+        {
+            verticalScroller.controlSize = controlSize
+            changed = true
+        }
+
+        if let horizontalScroller = scrollView.horizontalScroller,
+           horizontalScroller.controlSize != controlSize
+        {
+            horizontalScroller.controlSize = controlSize
+            changed = true
+        }
+
+        if changed {
+            scrollView.tile()
+        }
+        return changed
+    }
+}
+
+extension View {
+    /// Applies Tenon's native scrollbar geometry to the `ScrollView`, `List`, or
+    /// `TextEditor` this modifier decorates. SwiftUI exposes indicator visibility but
+    /// not AppKit's scroller control size, so a zero-state probe performs that one
+    /// presentation-only bridge when the native view enters a window.
+    func tenonScrollbarStyle() -> some View {
+        background(TenonScrollbarConfigurator())
+    }
+}
+
+private struct TenonScrollbarConfigurator: NSViewRepresentable {
+    func makeNSView(context: Context) -> ProbeView {
+        ProbeView()
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.configureIfNeeded()
+    }
+
+    @MainActor
+    final class ProbeView: NSView {
+        private weak var configuredScrollView: NSScrollView?
+        private var configurationScheduled = false
+
+        override func viewDidMoveToSuperview() {
+            super.viewDidMoveToSuperview()
+            scheduleConfiguration()
+        }
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            if window == nil {
+                configuredScrollView = nil
+            }
+            scheduleConfiguration()
+        }
+
+        func configureIfNeeded() {
+            if let configuredScrollView,
+               configuredScrollView.window === window
+            {
+                TenonScrollbarStyle.apply(to: configuredScrollView)
+                return
+            }
+            scheduleConfiguration()
+        }
+
+        private func scheduleConfiguration() {
+            guard window != nil, !configurationScheduled else { return }
+            configurationScheduled = true
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                self.configurationScheduled = false
+                guard let scrollView = self.closestMatchingScrollView() else { return }
+                self.configuredScrollView = scrollView
+                TenonScrollbarStyle.apply(to: scrollView)
+            }
+        }
+
+        /// A SwiftUI background probe is a sibling of the native scroll view, not its
+        /// descendant. The closest ancestor containing a scroller is therefore the
+        /// narrowest safe search root; matching window-space frames disambiguates peers.
+        private func closestMatchingScrollView() -> NSScrollView? {
+            guard window != nil else { return nil }
+            let probeFrame = convert(bounds, to: nil)
+            var ancestor = superview
+
+            while let searchRoot = ancestor {
+                let candidates = Self.scrollViews(in: searchRoot)
+                if !candidates.isEmpty {
+                    return candidates.min { left, right in
+                        Self.frameDistance(left, from: probeFrame)
+                            < Self.frameDistance(right, from: probeFrame)
+                    }
+                }
+                ancestor = searchRoot.superview
+            }
+            return nil
+        }
+
+        private static func scrollViews(in root: NSView) -> [NSScrollView] {
+            var result: [NSScrollView] = []
+            if let scrollView = root as? NSScrollView {
+                result.append(scrollView)
+            }
+            for subview in root.subviews {
+                result.append(contentsOf: scrollViews(in: subview))
+            }
+            return result
+        }
+
+        private static func frameDistance(
+            _ scrollView: NSScrollView,
+            from target: NSRect
+        ) -> CGFloat {
+            let frame = scrollView.convert(scrollView.bounds, to: nil)
+            return abs(frame.minX - target.minX)
+                + abs(frame.minY - target.minY)
+                + abs(frame.width - target.width)
+                + abs(frame.height - target.height)
+        }
+    }
+}
+
+extension NSColor {
+    static let tenonInk = NSColor(hex: 0x090B0E)
+    static let tenonChrome = NSColor(hex: 0x111419)
+    static let tenonChromeRaised = NSColor(hex: 0x171B21)
+    static let tenonPanel = NSColor(hex: 0x0D1014)
+    static let tenonLine = NSColor(hex: 0x282E36)
+    static let tenonText = NSColor(hex: 0xE8EBEF)
+    static let tenonMuted = NSColor(hex: 0x8E96A2)
+    /// Reads the live accent so every existing `TenonTheme.amber*` reference follows
+    /// the user's chosen colour without any call site changing.
+    @MainActor
+    static var tenonAmber: NSColor { ThemeRuntime.accentNS }
+
+    convenience init(hex: UInt32, alpha: CGFloat = 1) {
+        self.init(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: alpha
+        )
+    }
+}

@@ -10,9 +10,9 @@ T-014 (the explorer needs somewhere to open a file into).
 ## Why
 
 kero opens a file tab into `SourceTextEditor` — STTextView with `STPluginNeon` for
-tree-sitter highlighting (`refrerences/kero/kero/SourceTextEditor.swift`,
+tree-sitter highlighting (`references/kero/kero/SourceTextEditor.swift`,
 `SyntaxHighlighting.swift`, `SyntaxHighlightPlugin.swift`, `FileViewerView.swift`;
-the STTextView fork itself is vendored at `refrerences/kero/Vendor/STTextView` with
+the STTextView fork itself is vendored at `references/kero/Vendor/STTextView` with
 `KERO_PATCHES.md` describing the patches). Tenon has no editor stack at all, so a
 click on a file currently does nothing but log.
 
@@ -28,7 +28,7 @@ click on a file currently does nothing but log.
 
 ## Notes from the build
 
-- STTextView is vendored at `poc/Vendor/STTextView` (kero's patched 2.3.11). SwiftPM
+- STTextView is vendored at `Vendor/STTextView` (kero's patched 2.3.11). SwiftPM
   warns `Conflicting identity for sttextview` because STTextView-Plugin-Neon also
   depends on the upstream repo; the local package wins by identity, which is exactly
   what we want (one STTextView, ours, with the patches). SwiftPM says this will become

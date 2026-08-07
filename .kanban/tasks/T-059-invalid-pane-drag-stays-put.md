@@ -8,8 +8,8 @@
 ## Owner / files (agent lock)
 Session caa656c9 (user-directed; filed straight to Doing past the ed76fd97 pair — no file
 overlap with T-054/T-055 locks). Claiming:
-- poc/Sources/TenonApp/SpatialCanvasView.swift
-- poc/Tests/TenonAppStateTests/SpatialCanvasInteractionTests.swift
+- Sources/TenonApp/SpatialCanvasView.swift
+- Tests/TenonAppStateTests/SpatialCanvasInteractionTests.swift
 
 ## Root cause
 `SpatialCanvasInteractionCoordinator.update` stores whatever transaction the pointer

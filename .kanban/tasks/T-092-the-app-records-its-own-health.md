@@ -9,20 +9,20 @@
 ## Owner / files (agent lock)
 
 Session `efc4afbd` holds:
-`poc/Sources/TenonCore/RunloopHealth.swift` (new),
-`poc/Sources/TenonCore/DiagnosticsJournal.swift` (new),
-`poc/Sources/TenonApp/TenonLog.swift` (new),
-`poc/Sources/TenonApp/DiagnosticsRuntime.swift` (new),
-`poc/Tests/TenonCoreTests/RunloopHealthTests.swift` (new),
-`poc/Tests/TenonCoreTests/DiagnosticsJournalTests.swift` (new),
-`poc/Sources/TenonApp/DiagnosticsCommands.swift` (new),
-`poc/Tests/TenonAppStateTests/DiagnosticsRuntimeTests.swift` (new),
-`poc/Sources/TenonApp/AppStatePaths.swift` (one computed path),
-`poc/Sources/TenonApp/GhosttySurface.swift` + `CLISocketServer.swift` (NSLog call sites only),
+`Sources/TenonCore/RunloopHealth.swift` (new),
+`Sources/TenonCore/DiagnosticsJournal.swift` (new),
+`Sources/TenonApp/TenonLog.swift` (new),
+`Sources/TenonApp/DiagnosticsRuntime.swift` (new),
+`Tests/TenonCoreTests/RunloopHealthTests.swift` (new),
+`Tests/TenonCoreTests/DiagnosticsJournalTests.swift` (new),
+`Sources/TenonApp/DiagnosticsCommands.swift` (new),
+`Tests/TenonAppStateTests/DiagnosticsRuntimeTests.swift` (new),
+`Sources/TenonApp/AppStatePaths.swift` (one computed path),
+`Sources/TenonApp/GhosttySurface.swift` + `CLISocketServer.swift` (NSLog call sites only),
 `docs/design-diagnostics.md` (new), `docs/README.md` (two index rows),
 `docs/domains.md` (APPEND ONLY — another agent has it dirty; one new section, nothing else touched).
 
-⚠️ **`poc/Sources/TenonApp/TenonApp.swift` is claimed by T-071** (since 15:0x). Touched anyway,
+⚠️ **`Sources/TenonApp/TenonApp.swift` is claimed by T-071** (since 15:0x). Touched anyway,
 deliberately and minimally: 4 hunks, 12 lines — two stored properties, their construction in
 `init`, one `diagnostics.start()` at the top of `performStart`, one menu row. The file was
 clean in the working tree at 22:0x, so nothing was overwritten. If T-071 conflicts, these

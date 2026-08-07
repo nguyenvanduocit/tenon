@@ -6,10 +6,10 @@
 
 ## Owner / files (agent lock)
 Session 60875de9 (main):
-- poc/Sources/TenonApp/EmptyStateCard.swift (NEW — shared launcher card)
-- poc/Sources/TenonApp/WorkspaceStageView.swift (EmptyTabCallToAction → thin wrapper over EmptyStateCard; move helper structs out)
-- poc/Sources/TenonApp/BuiltInSlotViews.swift (ONLY: BuiltInSlotContentView L7-40 add store/isActive params; EmptySlotView L1219-1231 rewrite). NOT touching T-005 regions (installAPI/tenon.web ~446/664, parseNode ~709, invokeViewSelect ~800, webCommand ~121-157).
-- poc/Sources/TenonApp/SpatialCanvasView.swift (slot-cell configure() ~927 + call site ~353: thread store + isActive into BuiltInSlotContentView; empty-slot cache-key includes isActive)
+- Sources/TenonApp/EmptyStateCard.swift (NEW — shared launcher card)
+- Sources/TenonApp/WorkspaceStageView.swift (EmptyTabCallToAction → thin wrapper over EmptyStateCard; move helper structs out)
+- Sources/TenonApp/BuiltInSlotViews.swift (ONLY: BuiltInSlotContentView L7-40 add store/isActive params; EmptySlotView L1219-1231 rewrite). NOT touching T-005 regions (installAPI/tenon.web ~446/664, parseNode ~709, invokeViewSelect ~800, webCommand ~121-157).
+- Sources/TenonApp/SpatialCanvasView.swift (slot-cell configure() ~927 + call site ~353: thread store + isActive into BuiltInSlotContentView; empty-slot cache-key includes isActive)
 
 ## Criteria
 - [x] Empty slot renders the same card as empty tab (icon badge, "empty" title, Add terminal, Open a view grid, Recently opened, cheatsheet)
@@ -18,7 +18,7 @@ Session 60875de9 (main):
 - [x] swift build clean, swift test green (225/225, 0 failures)
 
 ## Result
-- New: poc/Sources/TenonApp/EmptyStateCard.swift (shared launcher card).
+- New: Sources/TenonApp/EmptyStateCard.swift (shared launcher card).
 - WorkspaceStageView.swift: EmptyTabCallToAction → thin wrapper (onLaunch = addSlot).
 - BuiltInSlotViews.swift: EmptySlotView → EmptyStateCard (onLaunch = setSlotContent, fills in place); BuiltInSlotContentView gained store/isActive.
 - SpatialCanvasView.swift: threads store + isActive; empty-slot cache-key includes isActive so ↩ default-action rebinds on focus change.

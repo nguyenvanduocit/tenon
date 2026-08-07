@@ -10,7 +10,7 @@ Unclaimed.
 
 ## What happens
 
-`PluginRuntime.emitLog` (`poc/Sources/TenonCore/PluginRuntime.swift:1911`) does:
+`PluginRuntime.emitLog` (`Sources/TenonCore/PluginRuntime.swift:1911`) does:
 
 ```swift
 func emitLog(_ message: String) {

@@ -16,14 +16,14 @@ task_f3b0bcbc0314 / ctx_16c18958daa7). Every file below is free again:
 `docs/architecture-interaction-boundaries.md` DIRECT-inventory note. Not committed.
 
 Expected files:
-- `poc/Sources/TenonCore/PaneActivity.swift` — NEW pure state machine
-- `poc/Sources/TenonCore/IdleDetector.swift` — reuse as the idle rule
-- `poc/Sources/TenonApp/SurfacePool.swift` — feed `TerminalObservation` into the machine
-- `poc/Sources/TenonApp/ShellTitleBar.swift` — chip dot + count of panes needing attention
-- `poc/Sources/TenonApp/SpatialCanvasView.swift` — pane header dot
-- `poc/Sources/TenonApp/WorkspaceSidebarView.swift` — per-workspace rollup
+- `Sources/TenonCore/PaneActivity.swift` — NEW pure state machine
+- `Sources/TenonCore/IdleDetector.swift` — reuse as the idle rule
+- `Sources/TenonApp/SurfacePool.swift` — feed `TerminalObservation` into the machine
+- `Sources/TenonApp/ShellTitleBar.swift` — chip dot + count of panes needing attention
+- `Sources/TenonApp/SpatialCanvasView.swift` — pane header dot
+- `Sources/TenonApp/WorkspaceSidebarView.swift` — per-workspace rollup
 - NEW notification adapter in `TenonApp` (host-native, typed)
-- `poc/Tests/TenonCoreTests/PaneActivityTests.swift` — NEW
+- `Tests/TenonCoreTests/PaneActivityTests.swift` — NEW
 
 ## Why / evidence
 - VISION's second product test is directing scarce human attention. Today nothing on

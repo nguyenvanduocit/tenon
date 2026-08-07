@@ -1,5 +1,5 @@
 # T-023: One build cache, pruned before every run
-> `poc/.build` had grown to 7.0 GB because four build trees each checked out the
+> `.build` had grown to 7.0 GB because four build trees each checked out the
 > dependency graph and kept its own module cache. Collapse them to one, and prune
 > the duplicates before every `dev.sh` / `install.sh` run.
 - **priority**: high
@@ -7,7 +7,7 @@
 
 ## Owner / files (agent lock)
 RELEASED — session 68979863 is done with `install.sh`, `dev.sh`,
-`poc/scripts/prune-build-cache.sh`, `CLAUDE.md`, `README.md`, `poc/README.md`, and
+`scripts/prune-build-cache.sh`, `CLAUDE.md`, `README.md`, `docs/development.md`, and
 `docs/superpowers/specs/2026-07-30-process-resource-monitor-design.md`.
 
 `install.sh` was already dirty when this started (uncommitted `tenon-cli` bundling
@@ -16,7 +16,7 @@ mine are additive.
 
 ## Measured before
 ```
-poc/.build                     7.0 G
+.build                     7.0 G
   xcode                        1.9 G   README's xcodebuild derived data
   xcode-install                1.8 G   install.sh derived data
   arm64-apple-macosx           1.3 G   SwiftPM incremental (dev.sh)
@@ -39,7 +39,7 @@ three times (428 M + 394 M + …).
 
 ## Measured after
 ```
-poc/.build                     3.8 G   (3.3 G before the extra Release products landed)
+.build                     3.8 G   (3.3 G before the extra Release products landed)
   xcode                        1.6 G   Products (Debug+Release) 793 M + ModuleCache
   arm64-apple-macosx           1.3 G   SwiftPM debug + release
   checkouts + repositories     875 M   deps, ONE copy, read by both toolchains
