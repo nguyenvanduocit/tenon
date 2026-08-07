@@ -127,6 +127,7 @@ No generic app intent principal is needed.
 The current public inventory is:
 
 - `workspace.state.v1`;
+- `workspace.pane.owner.v1`;
 - `workspace.tab.create.v1`;
 - `workspace.pane.split.v1`;
 - `workspace.pane.focus.v1`;

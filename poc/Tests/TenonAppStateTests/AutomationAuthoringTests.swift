@@ -43,6 +43,14 @@ final class AutomationAuthoringTests: XCTestCase {
             "verification rides T-060's surface; the agent must be told to use it"
         )
         XCTAssertTrue(
+            prompt.contains("Automation view on the Canvas"),
+            "operational verification belongs in the dedicated Canvas view"
+        )
+        XCTAssertFalse(
+            prompt.contains("Settings > Automation"),
+            "Settings is configuration-only and must not be taught as the run surface"
+        )
+        XCTAssertTrue(
             prompt.contains("consent"),
             "the first privileged firing prompts the user; the agent must warn them"
         )

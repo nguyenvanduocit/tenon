@@ -39,17 +39,24 @@ enum CLICommandInstaller {
         FileManager.default.isExecutableFile(atPath: installedURL.path)
     }
 
-    /// Whether a binary is available to install from this build (nil `sourceURL` ⇒ Install is a no-op).
-    static var canInstall: Bool { sourceURL != nil }
+    /// The neutral command belongs to production. Staging panes already receive their bundled
+    /// CLI and channel socket through the terminal environment, but must not replace the global
+    /// command used by production.
+    static func canInstall(in instanceChannel: AppInstanceChannel) -> Bool {
+        instanceChannel == .production && sourceURL != nil
+    }
 
     enum InstallError: Error, CustomStringConvertible {
         case sourceNotFound
+        case productionOnly
         case failed(String)
 
         var description: String {
             switch self {
             case .sourceNotFound:
                 return "Could not find a tenon-cli binary to install from this build."
+            case .productionOnly:
+                return "Only production Tenon may replace the global tenon-cli command."
             case .failed(let detail):
                 return "Install failed: \(detail)"
             }
@@ -58,7 +65,10 @@ enum CLICommandInstaller {
 
     /// Copy `tenon-cli` into `~/.local/bin`, replacing any prior copy, and mark it executable.
     @discardableResult
-    static func install() throws -> URL {
+    static func install(in instanceChannel: AppInstanceChannel) throws -> URL {
+        guard instanceChannel == .production else {
+            throw InstallError.productionOnly
+        }
         guard let source = sourceURL else { throw InstallError.sourceNotFound }
         let fileManager = FileManager.default
         do {

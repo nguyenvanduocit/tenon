@@ -208,7 +208,7 @@ public struct PluginIntentManifest: Sendable, Equatable, Codable {
 public struct PluginIntentProvision: Sendable, Equatable, Codable {
     public static let allowedAudiences: Set<IntentAudience> = [
         .plugin,
-        .palette,
+        .user,
         .cli,
         .agent,
     ]
@@ -296,7 +296,7 @@ public struct PluginIntentProvision: Sendable, Equatable, Codable {
         else {
             throw PluginManifestError.partialIntentContract(name)
         }
-        if palette != nil, !audiences.contains(.palette) {
+        if palette != nil, !audiences.contains(.user) {
             throw PluginManifestError.paletteIntentMissingAudience(name)
         }
         if let unsupported = audiences
@@ -324,6 +324,10 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
     /// offers everything. Default `false`, so a destructive or navigational command
     /// never volunteers itself under a plus sign.
     public let launcher: Bool
+    /// Declares that this launcher command can occupy a pane supplied by its invocation
+    /// scope. Empty-grid launchers project only these entries because their click already
+    /// chose a destination; tab and split structure commands cannot satisfy that action.
+    public let fillsPane: Bool
 
     public init(
         category: String? = nil,
@@ -331,7 +335,8 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         keywords: [String] = [],
         key: String? = nil,
         when: String? = nil,
-        launcher: Bool = false
+        launcher: Bool = false,
+        fillsPane: Bool = false
     ) {
         self.category = category
         self.icon = icon
@@ -339,6 +344,7 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         self.key = key
         self.when = when
         self.launcher = launcher
+        self.fillsPane = fillsPane
     }
 
     private enum CodingKeys: String, CodingKey, CaseIterable {
@@ -348,6 +354,7 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         case key
         case when
         case launcher
+        case fillsPane
     }
 
     private struct AnyCodingKey: CodingKey {
@@ -398,6 +405,10 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
             Bool.self,
             forKey: .launcher
         ) ?? false
+        fillsPane = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .fillsPane
+        ) ?? false
     }
 
     public func encode(to encoder: any Encoder) throws {
@@ -411,6 +422,9 @@ public struct PluginPalettePresentation: Sendable, Equatable, Codable {
         try container.encodeIfPresent(when, forKey: .when)
         if launcher {
             try container.encode(launcher, forKey: .launcher)
+        }
+        if fillsPane {
+            try container.encode(fillsPane, forKey: .fillsPane)
         }
     }
 }

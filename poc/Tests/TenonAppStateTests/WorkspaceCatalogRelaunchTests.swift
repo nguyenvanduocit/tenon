@@ -41,7 +41,7 @@ final class WorkspaceCatalogRelaunchTests: XCTestCase {
         // First launch: grow the tree to two workspaces / three tabs / one split.
         // Contents are pinned to `.terminal` explicitly so the assertion does not
         // depend on this machine's preferences surviving the empty test inventory.
-        let first = try AppComposition(paths: makePaths())
+        let first = try await AppComposition.make(paths: makePaths())
         let firstWorkspaceID = first.store.catalog.activeWorkspaceID
         let initialSlotID = try XCTUnwrap(first.store.catalog.activeSlotID)
         first.store.setSlotContent(initialSlotID, .terminal)
@@ -63,7 +63,7 @@ final class WorkspaceCatalogRelaunchTests: XCTestCase {
         await first.stop()
 
         // Relaunch over the same state root.
-        let second = try AppComposition(paths: makePaths())
+        let second = try await AppComposition.make(paths: makePaths())
         addTeardownBlock { await second.stop() }
 
         XCTAssertEqual(second.store.catalog, treeAtQuit)

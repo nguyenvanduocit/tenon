@@ -62,14 +62,17 @@ final class RestoredPluginPanesTests: XCTestCase {
 
         func makePaths() throws -> AppStatePaths {
             try AppStatePaths.resolve(
-                environment: ["TENON_PLUGINS_DIR": inventoryRoot.path],
+                environment: [
+                    "TENON_PLUGINS_DIR": inventoryRoot.path,
+                    "TENON_TRUST_PLUGIN_INVENTORY": "1",
+                ],
                 applicationSupportDirectory: applicationSupport,
                 bundledPluginsRoot: nil
             )
         }
 
         // First session: a pane carries the plugin view; quitting persists the catalog.
-        let first = try AppComposition(paths: makePaths())
+        let first = try await AppComposition.make(paths: makePaths())
         let slotID = try XCTUnwrap(first.store.catalog.activeSlotID)
         first.store.setSlotContent(
             slotID,
@@ -81,7 +84,7 @@ final class RestoredPluginPanesTests: XCTestCase {
         await first.stop()
 
         // Relaunch: start() alone — no workspace mutation — must open the restored pane.
-        let second = try AppComposition(paths: makePaths())
+        let second = try await AppComposition.make(paths: makePaths())
         addTeardownBlock { await second.stop() }
         await second.start()
         XCTAssertTrue(

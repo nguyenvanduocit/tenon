@@ -10,6 +10,67 @@ struct PluginRuntimeResourceCounts: Sendable, Equatable {
     let watchers: Int
 }
 
+/// Owns finite host operations started by one plugin generation. Registration uses a
+/// pending marker so a very fast task cannot finish before its handle is published and
+/// leave a completed task retained forever.
+private final class PluginRuntimeTaskLedger: @unchecked Sendable {
+    private struct State {
+        var pending: Set<UUID> = []
+        var tasks: [UUID: Task<Void, Never>] = [:]
+    }
+
+    private let lock = OSAllocatedUnfairLock(initialState: State())
+    private let capacity: Int
+
+    init(capacity: Int) {
+        self.capacity = capacity
+    }
+
+    @discardableResult
+    func launch(
+        priority: TaskPriority? = nil,
+        operation: @escaping @Sendable () async -> Void
+    ) -> Bool {
+        let id = UUID()
+        guard lock.withLock({ state in
+            guard state.pending.count + state.tasks.count < capacity else {
+                return false
+            }
+            state.pending.insert(id)
+            return true
+        }) else { return false }
+
+        let task = Task.detached(priority: priority) { [weak self] in
+            await operation()
+            self?.complete(id)
+        }
+        lock.withLock { state in
+            if state.pending.remove(id) != nil {
+                state.tasks[id] = task
+            }
+        }
+        return true
+    }
+
+    func cancelAndDrain() async {
+        let owned = lock.withLock { state in
+            let tasks = Array(state.tasks.values)
+            state.pending.removeAll()
+            state.tasks.removeAll()
+            return tasks
+        }
+        for task in owned { task.cancel() }
+        for task in owned { await task.value }
+    }
+
+    private func complete(_ id: UUID) {
+        lock.withLock { state in
+            state.pending.remove(id)
+            state.tasks.removeValue(forKey: id)
+        }
+    }
+}
+
 /// One plugin runtime, isolated onto one long-lived operating-system thread.
 ///
 /// JavaScriptCore values never cross this actor boundary. The bridge copies JavaScript
@@ -31,8 +92,7 @@ public actor PluginRuntime {
     private struct ViewBody {
         let items: [PluginRowItem]
         let body: PluginViewNode?
-        let subtitle: String?
-        let actions: [ViewAction]
+        let header: PaneHeader
         let modal: PluginViewModal?
     }
 
@@ -106,6 +166,7 @@ public actor PluginRuntime {
     private static let maximumWatchers = 64
     private static let maximumBridgeMessagesPerDrain = 8_192
     private static let maximumPendingCallbacks = 256
+    private static let maximumOwnedHostTasks = 512
     private static let maximumPaletteProviders = 8
     private static let maximumPaletteResults = 50
     private static let maximumPaletteActions = 8
@@ -118,6 +179,9 @@ public actor PluginRuntime {
     private let callbackMailbox: PluginRuntimeCallbackMailbox
     private let invocationGate = PluginRuntimeInvocationGate()
     private let lifecycle = PluginRuntimeLifecycle()
+    private let hostTasks = PluginRuntimeTaskLedger(
+        capacity: maximumOwnedHostTasks
+    )
     private let stateEmitter: PluginRuntimeStateEmitter
     private let processRun: @Sendable (Process) throws -> Void
     private let watcherStart: @Sendable (PathWatcher) -> Bool
@@ -551,6 +615,11 @@ private extension PluginRuntime {
 
         stopOwnedResources()
 
+        // No generation-owned host effect may finish after retirement. Cancellation
+        // requests stop cooperative work; the join makes even a late result part of
+        // this generation's shutdown rather than the next generation's lifetime.
+        await hostTasks.cancelAndDrain()
+
         let pending = pendingProviderCalls
         pendingProviderCalls.removeAll()
         cancelAllNestedIntents()
@@ -946,9 +1015,21 @@ private extension PluginRuntime {
 
         let send = configuration.intents.send
         let callback = callbackMailbox
-        Task.detached {
+        let launched = hostTasks.launch(priority: Task.currentPriority) {
             let result = await send(request)
             callback.enqueue(.intentResult(token: token, result: result))
+        }
+        if !launched {
+            pendingOutboundIntentTokens.remove(token)
+            _ = try? callJavaScript(
+                "__tenonSettleIntent",
+                arguments: [
+                    token,
+                    PluginRuntimeValueParsing.foundationObject(
+                        from: Self.overloadedResultValue()
+                    ),
+                ]
+            )
         }
     }
 
@@ -981,10 +1062,11 @@ private extension PluginRuntime {
         pendingPublishedEvents += 1
         let publish = configuration.publishEvent
         let callback = callbackMailbox
-        Task.detached {
+        let launched = hostTasks.launch(priority: Task.currentPriority) {
             await publish(name, payload)
             callback.enqueue(.publishedEventSettled)
         }
+        if !launched { pendingPublishedEvents -= 1 }
     }
 
     func listIntents(_ object: [String: IntentValue]) {
@@ -999,9 +1081,13 @@ private extension PluginRuntime {
         pendingIntentListTokens.insert(token)
         let list = configuration.intents.list
         let callback = callbackMailbox
-        Task.detached {
+        let launched = hostTasks.launch(priority: Task.currentPriority) {
             let result = await list()
             callback.enqueue(.intentList(token: token, value: result))
+        }
+        if !launched {
+            pendingIntentListTokens.remove(token)
+            _ = try? callJavaScript("__tenonSettleList", arguments: [token, []])
         }
     }
 
@@ -1599,11 +1685,17 @@ private extension PluginRuntime {
             key = Self.singletonViewKey
         }
         let parsed = PluginRuntimeValueParsing.viewBody(from: specification)
+        // A header item the plugin wrote and the host could not draw is named in the plugin's
+        // OWN log, the way a rejected palette result already is. Silence would leave its author
+        // looking at a control that is simply not there, with nothing to read and no way to
+        // tell a typo from a bound.
+        for diagnostic in parsed.diagnostics {
+            emitLog("tenon.views.set(\(viewID)): \(diagnostic)")
+        }
         viewBodies[viewID, default: [:]][key] = ViewBody(
             items: parsed.items,
             body: parsed.body,
-            subtitle: parsed.subtitle,
-            actions: parsed.actions,
+            header: parsed.header,
             modal: parsed.modal
         )
         markStateChanged()
@@ -1775,27 +1867,25 @@ private extension PluginRuntime {
                             instanceID: instanceID,
                             instanced: true,
                             title: registration.title,
-                            subtitle: body.subtitle,
-                            actions: body.actions,
                             items: body.items,
                             body: body.body,
+                            header: body.header,
                             modal: body.modal
                         )
                     )
                 }
             } else {
                 let body = viewBodies[viewID]?[Self.singletonViewKey]
-                    ?? ViewBody(items: [], body: nil, subtitle: nil, actions: [], modal: nil)
+                    ?? ViewBody(items: [], body: nil, header: .empty, modal: nil)
                 result.append(
                     PluginViewInfo(
                         viewID: viewID,
                         instanceID: nil,
                         instanced: false,
                         title: registration.title,
-                        subtitle: body.subtitle,
-                        actions: body.actions,
                         items: body.items,
                         body: body.body,
+                        header: body.header,
                         modal: body.modal
                     )
                 )
@@ -1821,7 +1911,7 @@ private extension PluginRuntime {
     func emitLog(_ message: String) {
         let prefix = "[\(manifest.name)] "
         let sink = configuration.log
-        Task.detached {
+        _ = hostTasks.launch {
             await sink(prefix + message)
         }
     }

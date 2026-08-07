@@ -95,6 +95,34 @@ final class SpatialLayoutTests: XCTestCase {
         )
     }
 
+    func testBestEmptyRectContainingCellTargetsTheRegionThatWasClicked() {
+        let barrier = slot(a, 3, 0, 3, 12)
+
+        XCTAssertEqual(
+            SpatialLayout.bestEmptyRect(
+                in: [barrier],
+                containingColumn: 1,
+                row: 6
+            ),
+            GridRect(x: 0, y: 0, width: 3, height: 12)
+        )
+        XCTAssertEqual(
+            SpatialLayout.bestEmptyRect(
+                in: [barrier],
+                containingColumn: 9,
+                row: 6
+            ),
+            GridRect(x: 6, y: 0, width: 6, height: 12)
+        )
+        XCTAssertNil(
+            SpatialLayout.bestEmptyRect(
+                in: [barrier],
+                containingColumn: 4,
+                row: 6
+            )
+        )
+    }
+
     func testHorizontalSplitUsesCeilingForTheOriginalAndRemainderForTheNewSlot() {
         let original = [
             slot(a, 0, 0, 7, 12),
@@ -591,6 +619,31 @@ final class SpatialLayoutTests: XCTestCase {
             targetID: b,
             edge: .right
         ).isValid)
+    }
+
+    func testInsertBesideUsesOnlyTheDestinationLayoutAndRequestedEdge() throws {
+        let destination = [slot(b, 0, 0, 12, 12)]
+
+        let left = try XCTUnwrap(SpatialLayout.insertBeside(
+            destination,
+            newSlotID: a,
+            targetID: b,
+            edge: .left
+        ))
+
+        XCTAssertEqual(left.kind, .split)
+        XCTAssertEqual(left.baseline, destination)
+        XCTAssertEqual(left.proposal, [
+            slot(b, 6, 0, 6, 12),
+            slot(a, 0, 0, 6, 12),
+        ])
+        XCTAssertEqual(Set(left.affectedSlotIDs), Set([a, b]))
+        XCTAssertNil(SpatialLayout.insertBeside(
+            destination,
+            newSlotID: a,
+            targetID: UUID(),
+            edge: .right
+        ))
     }
 
     func testSwapExchangesGeometryWithoutChangingInputOrOrdering() {

@@ -1,6 +1,6 @@
 # Plugin runtime built-ins
 
-**Status:** normative surface reconciliation · **Date:** 2026-07-25
+**Status:** accepted and implemented · **Reviewed:** 2026-08-06
 **Boundary law:** [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md)
 
 ## Goal
@@ -15,6 +15,7 @@ law is exact; matching an existing namespace does not authorize a new method.
 | Surface | Mechanism |
 |---|---|
 | `tenon.apiVersion` | reserved immutable runtime metadata |
+| `tenon.agents` | DIRECT JavaScript composition over declared INTENT calls |
 | `tenon.intents` | INTENT adapter + provider/discovery control plane |
 | `tenon.settings` | SCOPED FACILITY |
 | `tenon.storage` | SCOPED FACILITY |
@@ -26,6 +27,7 @@ law is exact; matching an existing namespace does not authorize a new method.
 | `tenon.fs.watch` | RESOURCE |
 | `tenon.statusBar` | CONTRIBUTION |
 | `tenon.views` | CONTRIBUTION publication + EVENT callback subscription |
+| `tenon.palette` | CONTRIBUTION publication + EVENT callback subscription |
 
 Finite filesystem, process execution, workspace, terminal, browser, UI, secrets, network,
 clipboard, and OS operations are canonical intents.
@@ -90,9 +92,14 @@ tenon.intents.handle("dev.tenon.git.refresh.v1", async (input, call) => {
 
 The name MUST appear in `manifest.intents.provides`. Binding is valid only during staging,
 exactly once per provision. Static manifest declaration makes contracts discoverable before
-plugin evaluation. A provider MUST use `call.send` for nested requests so causal scope is
-preserved by default. Explicit retargeting is re-authorized under that provider/plugin
-principal's own grants; caller authority is never inherited.
+plugin evaluation.
+
+Any function that sends takes the sender as its last parameter, defaulting to
+`tenon.intents`, and sends with `await call.send(...)`. A provider passes its own `call`
+into every function it calls that sends, so nested requests preserve parent request,
+causal scope, the parent deadline, and cancellation by default. Explicit retargeting is
+re-authorized under that provider/plugin principal's own grants; caller authority is never
+inherited.
 
 ### Discovery
 
@@ -144,6 +151,29 @@ unsubscribe();
 Event names state facts. Event handlers do not return a result to the publisher. Runtime
 retirement removes all subscriptions. Sensitive event families remain policy-gated.
 
+A plugin may also publish facts on channels it owns. Publication and observation are
+separate manifest gates:
+
+```json
+{
+  "events": {
+    "publishes": ["board.changed"],
+    "observes": ["dev.example.board/board.changed"]
+  }
+}
+```
+
+```js
+tenon.events.emit("board.changed", { cardID: "42" });
+tenon.events.on("dev.example.board/board.changed", event => {
+  tenon.log("changed", event.cardID);
+});
+```
+
+Publishers declare a local channel name; the host prefixes it with the publisher's stable
+plugin ID. Observers declare the fully qualified `<pluginID>/<localName>` channel. Emit is
+fire-and-forget, bounded, and reveals neither delivery count nor listener identity.
+
 ## RESOURCE / STREAM / TASK
 
 ### Timers
@@ -173,7 +203,9 @@ run.cancel();
 
 `process.stream` uses the `process.exec` capability but has resource semantics: multiple
 outputs, explicit overflow, cancellation, and teardown. A collect-and-return process uses
-`process.exec.v1`.
+`process.exec.v1`. The current Foundation `Process` implementation terminates the leader;
+race-free descendant containment remains open until launch moves to an owned POSIX process
+group. Plugins must not use this resource for daemonizing process trees.
 
 ### Filesystem watch
 
@@ -224,6 +256,38 @@ tenon.statusBar.set("main");
 
 These publish declarative state. They do not imperatively mutate workspace, terminal,
 browser, filesystem, or OS state. Such mutations use intents.
+
+### Dynamic palette providers
+
+Static palette rows belong in an intent provision's manifest metadata. A dynamic provider
+uses the same contribution/event split:
+
+```js
+tenon.palette.registerProvider("branches", { title: "Branches" });
+tenon.palette.onQuery("branches", async ({ text, revision }) => {
+  const rows = await findBranches(text);
+  tenon.palette.setResults("branches", revision, rows);
+});
+```
+
+The query is an owner-scoped EVENT fact. Results are a revision-scoped CONTRIBUTION; the
+host drops stale revisions. Every result designates an intent provided by this plugin, so
+selection still enters the canonical intent dispatcher.
+
+## Agent composition helper
+
+`tenon.agents.run({ command, arguments, workingDirectory, timeoutMs }, sender =
+tenon.intents)` is a pure JavaScript composition of `terminal.open.v1`,
+`terminal.wait.v1`, `terminal.write.v1`, and `terminal.scrollback.read.v1`. All four
+underlying intents must appear in `manifest.intents.uses`; the helper grants no permission
+or caller identity of its own. It returns one finite result containing the pane identity
+and collected transcript.
+
+The sender follows the one rule every sending function follows. Passing the invoking
+`call` scopes the run to that invocation's pane, caps the entire run at that intent's
+deadline, and cancels it when the invoking command is cancelled — so a long supervised run
+started from a short-deadline command should omit the sender and keep its own budget. A
+sender that is not `tenon.intents` and not a handler's `call` is a `TypeError`.
 
 ## Canonical finite examples
 

@@ -15,6 +15,9 @@
 #   CONFIGURATION=Debug     # xcodebuild configuration (default Release)
 #   ARCHS=x86_64            # override the single arch (default: this machine's arch)
 #   CLEAN=1                 # discard both build trees first (dependencies survive)
+#   INSTALL_APP_NAME=...    # installed bundle name (default Tenon.app)
+#   INSTALL_DISPLAY_NAME=... # installed app name (default Tenon)
+#   INSTALL_BUNDLE_ID=...   # installed bundle identifier (default com.firegroup.tenon)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -33,8 +36,33 @@ fi
 # SwiftPM scratch as `swift build` — so the dependency graph is checked out once and
 # the module cache is kept once. See poc/scripts/prune-build-cache.sh.
 DERIVED_DATA="$POC/.build/xcode"           # inside the gitignored .build/
-APP_NAME="Tenon.app"
-BUNDLE_ID="com.firegroup.tenon"
+BUILT_APP_NAME="Tenon.app"
+APP_NAME="${INSTALL_APP_NAME:-Tenon.app}"
+DISPLAY_NAME="${INSTALL_DISPLAY_NAME:-Tenon}"
+BUNDLE_ID="${INSTALL_BUNDLE_ID:-com.firegroup.tenon}"
+
+case "$APP_NAME" in
+    */*)
+        echo "error: INSTALL_APP_NAME must be a bundle name, not a path" >&2
+        exit 1
+        ;;
+    *.app) ;;
+    *)
+        echo "error: INSTALL_APP_NAME must end in .app" >&2
+        exit 1
+        ;;
+esac
+if [ -z "$DISPLAY_NAME" ]; then
+    echo "error: INSTALL_DISPLAY_NAME must not be empty" >&2
+    exit 1
+fi
+case "$BUNDLE_ID" in
+    com.firegroup.tenon|com.firegroup.tenon.staging) ;;
+    *)
+        echo "error: INSTALL_BUNDLE_ID must be com.firegroup.tenon or com.firegroup.tenon.staging" >&2
+        exit 1
+        ;;
+esac
 
 case "$CONFIGURATION" in
     Release)
@@ -102,7 +130,7 @@ BUILT_CLI="$CLI_BIN_DIR/tenon-cli"
 }
 
 # --- 6. Build the app bundle -------------------------------------------------
-step "Building $APP_NAME ($CONFIGURATION, archs: $ARCHS)"
+step "Building $BUILT_APP_NAME ($CONFIGURATION, archs: $ARCHS)"
 xcodebuild \
     -project Tenon.xcodeproj \
     -scheme Tenon \
@@ -120,7 +148,7 @@ xcodebuild \
     DEVELOPMENT_TEAM="" \
     build
 
-BUILT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/$APP_NAME"
+BUILT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/$BUILT_APP_NAME"
 [ -d "$BUILT_APP" ] || {
     echo "error: build did not produce $BUILT_APP" >&2
     exit 1
@@ -132,16 +160,36 @@ install -m 755 "$BUILT_CLI" "$BUILT_APP/Contents/MacOS/tenon-cli"
 # --- 7. Replace the installed copy -------------------------------------------
 DEST_APP="$APP_DEST/$APP_NAME"
 
-step "Quitting any running Tenon"
-osascript -e "quit app \"Tenon\"" >/dev/null 2>&1 || true
+step "Quitting any running $DISPLAY_NAME"
+osascript -e "quit app id \"$BUNDLE_ID\"" >/dev/null 2>&1 || true
 # Give it a beat to release the bundle, then hard-kill leftovers.
-pkill -f "$APP_DEST/$APP_NAME/Contents/MacOS/Tenon" >/dev/null 2>&1 || true
+ps -axo pid=,comm= | while read -r pid executable_path; do
+    if [ "$executable_path" = "$DEST_APP/Contents/MacOS/Tenon" ]; then
+        kill "$pid" >/dev/null 2>&1 || true
+    fi
+done
 
 step "Installing to $DEST_APP (replacing old)"
 mkdir -p "$APP_DEST"
 rm -rf "$DEST_APP"
 # ditto preserves bundle metadata/symlinks more faithfully than cp -R.
 ditto "$BUILT_APP" "$DEST_APP"
+
+# A named install variant uses the exact same compiled artifact, but owns a distinct
+# LaunchServices identity. This is deliberately done on the installed copy: changing
+# the shared build product would poison a later normal install from the same cache.
+if [ "$APP_NAME" != "$BUILT_APP_NAME" ] || \
+   [ "$DISPLAY_NAME" != "Tenon" ] || \
+   [ "$BUNDLE_ID" != "com.firegroup.tenon" ]; then
+    INFO_PLIST="$DEST_APP/Contents/Info.plist"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$INFO_PLIST"
+    /usr/libexec/PlistBuddy -c "Set :CFBundleName $DISPLAY_NAME" "$INFO_PLIST"
+    if ! /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" \
+        "$INFO_PLIST" 2>/dev/null; then
+        /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $DISPLAY_NAME" \
+            "$INFO_PLIST"
+    fi
+fi
 
 # --- 8. Make it launchable (ad-hoc sign + clear quarantine) ------------------
 step "Signing (ad-hoc) and clearing quarantine"

@@ -13,6 +13,14 @@ private struct ResolvedDiff: Sendable {
     var binary = false
 }
 
+private struct DiffProjection: Sendable {
+    let hunks: [DiffHunk]
+    let stat: (added: Int, removed: Int)
+    let maxLineNumber: Int
+    let unifiedRows: [DiffRow]
+    let splitRows: [DiffRow]
+}
+
 /// Owns a diff pane's two sides. For an `.inline` request the text is already in
 /// hand; for a `.git` request it resolves both blobs off-main (a generation guard
 /// drops a stale load if the pane is asked to reload before the last finished). The
@@ -50,13 +58,10 @@ final class DiffContentModel {
     private var generation = 0
     private var task: Task<Void, Never>?
 
-    var fileName: String { request.fileName }
     var hasChanges: Bool { oldText != newText }
 
     init(request: DiffRequest) {
         self.request = request
-        // Resolve at construction so a diff starts loading before `onAppear`.
-        reload()
     }
 
     func reload(_ newRequest: DiffRequest? = nil) {
@@ -65,38 +70,72 @@ final class DiffContentModel {
         let gen = generation
         task?.cancel()
         error = nil
-
-        switch request.source {
-        case .inline(let old, let new):
-            oldText = old
-            newText = new
-            isBinary = false
-            isLoading = false
-            recompute()
-        case .git(let repoPath, let path, let staged, let untracked, let origPath):
-            isLoading = true
-            task = Task { [weak self] in
-                let resolved = await DiffGitLoader.load(
+        isLoading = true
+        let pendingRequest = request
+        task = Task { [weak self] in
+            let resolved: ResolvedDiff
+            switch pendingRequest.source {
+            case .inline(let old, let new):
+                resolved = ResolvedDiff(old: old, new: new)
+            case .git(let repoPath, let path, let staged, let untracked, let origPath):
+                resolved = await DiffGitLoader.load(
                     repoPath: repoPath, path: path,
                     staged: staged, untracked: untracked, origPath: origPath
                 )
-                guard let self, self.generation == gen else { return }
-                self.oldText = resolved.old
-                self.newText = resolved.new
-                self.error = resolved.error
-                self.isBinary = resolved.binary
-                self.isLoading = false
-                self.recompute()
             }
+            let projection = await Self.project(resolved)
+            guard !Task.isCancelled, let self, self.generation == gen else { return }
+            self.apply(resolved, projection: projection)
         }
     }
 
-    private func recompute() {
-        hunks = LineDiff.hunks(old: oldText, new: newText, context: 3)
-        stat = LineDiff.stat(hunks)
-        maxLineNumber = DiffRows.maxLineNumber(hunks)
-        unifiedRows = DiffRows.unified(hunks)
-        splitRows = DiffRows.split(hunks)
+    @concurrent
+    private static func project(_ resolved: ResolvedDiff) async -> Result<DiffProjection, LineDiffError> {
+        guard resolved.error == nil, !resolved.binary else {
+            return .success(DiffProjection(
+                hunks: [], stat: (0, 0), maxLineNumber: 1,
+                unifiedRows: [], splitRows: []
+            ))
+        }
+        do {
+            let hunks = try LineDiff.boundedHunks(
+                old: resolved.old,
+                new: resolved.new,
+                context: 3
+            )
+            return .success(DiffProjection(
+                hunks: hunks,
+                stat: LineDiff.stat(hunks),
+                maxLineNumber: DiffRows.maxLineNumber(hunks),
+                unifiedRows: DiffRows.unified(hunks),
+                splitRows: DiffRows.split(hunks)
+            ))
+        } catch {
+            return .failure(.tooComplex)
+        }
+    }
+
+    private func apply(
+        _ resolved: ResolvedDiff,
+        projection: Result<DiffProjection, LineDiffError>
+    ) {
+        oldText = resolved.old
+        newText = resolved.new
+        error = resolved.error
+        isBinary = resolved.binary
+        isLoading = false
+        guard case let .success(value) = projection else {
+            error = "Diff is too complex to render safely"
+            hunks = []
+            unifiedRows = []
+            splitRows = []
+            return
+        }
+        hunks = value.hunks
+        stat = value.stat
+        maxLineNumber = value.maxLineNumber
+        unifiedRows = value.unifiedRows
+        splitRows = value.splitRows
         unifiedTextWidth = Self.measure(DiffRows.widestTexts(unifiedRows, column: .unified))
         leftTextWidth = Self.measure(DiffRows.widestTexts(splitRows, column: .left))
         rightTextWidth = Self.measure(DiffRows.widestTexts(splitRows, column: .right))
@@ -151,7 +190,9 @@ private enum DiffGitLoader {
     private static func worktree(repo: String, path: String, into out: inout ResolvedDiff) -> String {
         let url = URL(fileURLWithPath: repo, isDirectory: true).appendingPathComponent(path)
         do {
-            let data = try Data(contentsOf: url)
+            let handle = try FileHandle(forReadingFrom: url)
+            defer { try? handle.close() }
+            let data = try handle.read(upToCount: maxBytes + 1) ?? Data()
             if data.count > maxBytes { out.error = "File is too large to diff"; return "" }
             return decode(data, into: &out)
         } catch {
@@ -191,20 +232,45 @@ private enum DiffGitLoader {
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            box.value = stdout.fileHandleForReading.readDataToEndOfFile()
+            while let chunk = try? stdout.fileHandleForReading.read(upToCount: 64 * 1_024),
+                  !chunk.isEmpty
+            {
+                if !box.append(chunk, limit: maxBytes) {
+                    process.terminate()
+                    break
+                }
+            }
             group.leave()
         }
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
-            _ = stderr.fileHandleForReading.readDataToEndOfFile()
+            while let chunk = try? stderr.fileHandleForReading.read(upToCount: 64 * 1_024),
+                  !chunk.isEmpty
+            {}
             group.leave()
         }
         process.waitUntilExit()
         group.wait()
-        return (process.terminationStatus, box.value)
+        return (process.terminationStatus, box.snapshot)
     }
 
-    private final class OutputBox: @unchecked Sendable { var value = Data() }
+    private final class OutputBox: @unchecked Sendable {
+        private let lock = NSLock()
+        private var value = Data()
+
+        var snapshot: Data { lock.withLock { value } }
+
+        func append(_ chunk: Data, limit: Int) -> Bool {
+            lock.withLock {
+                guard value.count + chunk.count <= limit else {
+                    value = Data(repeating: 0, count: limit + 1)
+                    return false
+                }
+                value.append(chunk)
+                return true
+            }
+        }
+    }
 }
 
 // MARK: - View
@@ -213,6 +279,59 @@ private enum DiffStyle: String, CaseIterable, Identifiable {
     case unified, split
     var id: String { rawValue }
     var label: String { self == .unified ? "Unified" : "Split" }
+}
+
+/// What the diff pane contributes to the ONE chrome header the card draws.
+///
+/// Pure, and deliberately outside the view: every rule a header has is a decision about the
+/// pane's own state, and once the items are chosen the drawing has no decisions left in it.
+/// Keeping the decision here is what lets it be swept headlessly, which is the fitness test
+/// `docs/tdd.md` sets for any rule that would otherwise only be checkable by looking at a
+/// window.
+///
+/// The style is taken as `isSplit` rather than as a `DiffStyle`, because `DiffStyle` is this
+/// pane's private state vocabulary and stays private — the same two-valued shape
+/// `DiffSlotView.init(startSplit:)` has always spoken. Both ends of the picker are still minted
+/// from `DiffStyle` itself, inside this function, so the values the router resolves cannot
+/// drift from the cases the view stores.
+enum DiffPaneHeader {
+    static func header(
+        isLoading: Bool,
+        hasChanges: Bool,
+        isBinary: Bool,
+        added: Int,
+        removed: Int,
+        isSplit: Bool
+    ) -> PaneHeader {
+        // Counts exist only once the diff has resolved to text that actually differs. A
+        // loading pane has not counted yet, a binary file has nothing countable, and an
+        // unchanged file's "+0 −0" only restates the "No changes" placeholder already filling
+        // the body.
+        let stats: [PaneHeaderItem] = !isLoading && hasChanges && !isBinary
+            ? [
+                .badge(id: "added", text: "+\(added)", tint: .green, tooltip: nil),
+                .badge(id: "removed", text: "−\(removed)", tint: .red, tooltip: nil),
+            ]
+            : []
+
+        return PaneHeader(
+            leading: stats,
+            // Never conditional: a diff can be read either way at any moment, including while
+            // it loads, so hiding the picker would make the pane briefly un-switchable for a
+            // reason no reader could see.
+            trailing: [
+                .segmented(
+                    id: PaneHeaderCommand.diffStyle.rawValue,
+                    segments: DiffStyle.allCases.compactMap {
+                        PaneHeaderSegment(value: $0.rawValue, label: $0.label)
+                    },
+                    selection: (isSplit ? DiffStyle.split : .unified).rawValue,
+                    isEnabled: true,
+                    accessibilityID: nil
+                ),
+            ]
+        )
+    }
 }
 
 /// The host's default diff view: a native, high-performance diff renderer any plugin
@@ -230,11 +349,27 @@ private enum DiffStyle: String, CaseIterable, Identifiable {
 /// line on one side never widens the other.
 struct DiffSlotView: View {
     private let request: DiffRequest
+    /// Which pane this is, so its header contribution can be told apart from every other
+    /// pane's in the one store the canvas reads.
+    private let slotID: UUID
+    /// Where the header goes UP. The already-projected value comes back DOWN through
+    /// `SpatialSlotCardView.configure`; this is the other half of that loop.
+    private let headerStore: PaneHeaderStore
     @State private var model: DiffContentModel
+    /// Unmoved: the pane still owns which style it is showing. Putting the picker in the
+    /// chrome moved pixels, not ownership — the store carries a value up and a typed command
+    /// back down, and this stays the only place the answer lives.
     @State private var style: DiffStyle
 
-    init(request: DiffRequest, startSplit: Bool = false) {
+    init(
+        request: DiffRequest,
+        slotID: UUID,
+        headerStore: PaneHeaderStore,
+        startSplit: Bool = false
+    ) {
         self.request = request
+        self.slotID = slotID
+        self.headerStore = headerStore
         _model = State(initialValue: DiffContentModel(request: request))
         _style = State(initialValue: startSplit ? .split : .unified)
     }
@@ -247,45 +382,47 @@ struct DiffSlotView: View {
     private static let rowHeight: CGFloat = 18
 
     var body: some View {
-        VStack(spacing: 0) {
-            controlBar
-            content
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(TenonTheme.panel)
-        // The model resolves at construction; a new request is the one thing that
-        // makes this pane diff again.
-        .onChange(of: request) { _, newRequest in model.reload(newRequest) }
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(TenonTheme.panel)
+            .task(id: request) { model.reload(request) }
+            // The picker in the chrome reports an item id; the router turns it back into a
+            // typed command and this is where the pane acts on it. The binding is captured
+            // rather than `self`, because the handler outlives the body evaluation that
+            // registered it.
+            .onAppear {
+                let selected = $style
+                headerStore.onCommand(for: slotID) { command, value in
+                    guard command == .diffStyle,
+                          let next = value.flatMap(DiffStyle.init(rawValue:))
+                    else { return }
+                    selected.wrappedValue = next
+                }
+            }
+            // Published from `.onChange`, never from `body`: writing to an observable during
+            // a view update is what makes SwiftUI re-enter, and the store's equality guard is
+            // a backstop for that mistake rather than a licence to make it. `initial: true`
+            // is the pane's first publish, so a diff that never changes still shows its
+            // picker.
+            .onChange(of: header, initial: true) { _, next in
+                headerStore.publish(next, for: slotID)
+            }
+            .onDisappear { headerStore.clear(for: slotID) }
     }
 
-    // MARK: control bar
-
-    private var controlBar: some View {
-        HStack(spacing: 8) {
-            Text(model.fileName)
-                .font(TenonTheme.utilityFont(size: 10, weight: .semibold))
-                .foregroundStyle(TenonTheme.text)
-                .lineLimit(1)
-                .truncationMode(.middle)
-            if !model.isLoading, model.hasChanges, !model.isBinary {
-                Text("+\(model.stat.added)").foregroundStyle(Self.addedFG)
-                Text("−\(model.stat.removed)").foregroundStyle(Self.removedFG)
-            }
-            Spacer(minLength: 8)
-            Picker("", selection: $style) {
-                ForEach(DiffStyle.allCases) { s in Text(s.label).tag(s) }
-            }
-            .pickerStyle(.segmented)
-            .controlSize(.small)
-            .fixedSize()
-            .labelsHidden()
-        }
-        .font(TenonTheme.utilityFont(size: 9))
-        .foregroundStyle(TenonTheme.muted)
-        .padding(.horizontal, 10)
-        .frame(height: 31)
-        .background(TenonTheme.chromeRaised)
-        .overlay(alignment: .bottom) { Rectangle().fill(TenonTheme.line).frame(height: 1) }
+    /// This pane's chrome contribution for its current state.
+    ///
+    /// Reading model state here registers the observation that makes the `.onChange` above
+    /// fire — the read is in the view graph, the write is not.
+    private var header: PaneHeader {
+        DiffPaneHeader.header(
+            isLoading: model.isLoading,
+            hasChanges: model.hasChanges,
+            isBinary: model.isBinary,
+            added: model.stat.added,
+            removed: model.stat.removed,
+            isSplit: style == .split
+        )
     }
 
     // MARK: content

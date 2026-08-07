@@ -377,7 +377,7 @@ final class PluginHostTests: XCTestCase {
 
         let palette = IntentPrincipal(
             id: "palette:runtime-failure-tests",
-            kind: .palette,
+            kind: .user,
             sessionRevision: 1
         )
         let catalogAfterFailure = await host.kernel.dispatcher.discover(
@@ -882,7 +882,7 @@ final class PluginHostTests: XCTestCase {
 
         let palette = IntentPrincipal(
             id: "palette:plugin-host-tests",
-            kind: .palette,
+            kind: .user,
             sessionRevision: 1
         )
         let catalog = await host.kernel.dispatcher.discover(
@@ -1013,6 +1013,64 @@ final class PluginHostTests: XCTestCase {
         XCTAssertEqual(newShutdownCount, 1)
         XCTAssertTrue(host.loadedPluginIDs.isEmpty)
     }
+
+    @MainActor
+    func testViewReconcileDrainsCatalogPublishedWhileAnOpenIsSuspended() async throws {
+        let root = try makeTemporaryRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let pluginID = PluginID("dev.test.view-reconcile")
+        try writePlugin(
+            root: root,
+            directoryName: "view-reconcile",
+            manifest: basicManifest(id: pluginID.rawValue)
+        )
+
+        let controller = FakeRuntimeController()
+        let host = try makeHost(root: root, controller: controller)
+        try await host.loadAll()
+        let runtime = try await controller.runtime(for: pluginID, index: 0)
+        let openGate = FakeStartGate()
+        await runtime.configureInstancedView("panel", openGate: openGate)
+
+        let firstStore = WorkspaceStore()
+        let firstSlotID = try XCTUnwrap(firstStore.catalog.activeSlotID)
+        let content = SlotContent.pluginView(
+            pluginID: pluginID,
+            viewID: "panel"
+        )
+        firstStore.setSlotContent(firstSlotID, content)
+
+        let latestStore = WorkspaceStore(catalog: firstStore.catalog)
+        latestStore.splitActiveSlot(.horizontal, content: content)
+        let expectedInstances = Set(
+            latestStore.catalog.pluginViewSlots.map {
+                PluginViewInstanceKey(
+                    viewID: $0.viewID,
+                    instanceID: $0.slotID.uuidString
+                )
+            }
+        )
+
+        let firstReconcile = Task { @MainActor in
+            await host.reconcileViewInstances(from: firstStore.catalog)
+        }
+        await waitUntil { await openGate.hasEntered }
+
+        // A second workspace mutation is allowed to arrive while the runtime is opening
+        // the first pane. The latest catalog must be drained by the active reconcile;
+        // requiring a third mutation is the user-visible "switch tabs to make it load" bug.
+        await host.reconcileViewInstances(from: latestStore.catalog)
+        await openGate.release()
+        await firstReconcile.value
+
+        let openedInstances = await runtime.openedViewInstances()
+        XCTAssertEqual(openedInstances, expectedInstances)
+        XCTAssertEqual(
+            Set(host.pluginViews.compactMap(\.instanceID)),
+            Set(expectedInstances.map(\.instanceID))
+        )
+        await host.shutdown()
+    }
 }
 
 private extension PluginHostTests {
@@ -1092,7 +1150,7 @@ private extension PluginHostTests {
               {
                 "name": "\(intent)",
                 "title": "Ping",
-                "audiences": ["plugin", "palette"],
+                "audiences": ["plugin", "user"],
                 "effects": {
                   "kind": "read",
                   "idempotency": "none",
@@ -1222,6 +1280,9 @@ private actor FakePluginRuntime: PluginHostRuntime {
     private var statusBarText: String?
     private var shutdownInvocationCount = 0
     private var emittedEvents: [String: [IntentValue]] = [:]
+    private var instancedViewIDs: Set<String> = []
+    private var openedViews: Set<PluginViewInstanceKey> = []
+    private var viewOpenGate: FakeStartGate?
 
     init(
         configuration: PluginRuntimeConfiguration,
@@ -1270,8 +1331,8 @@ private actor FakePluginRuntime: PluginHostRuntime {
         true
     }
 
-    func isViewInstanced(_: String) -> Bool {
-        false
+    func isViewInstanced(_ viewID: String) -> Bool {
+        instancedViewIDs.contains(viewID)
     }
 
     func emit(event: String, payload: IntentValue) throws {
@@ -1297,14 +1358,27 @@ private actor FakePluginRuntime: PluginHostRuntime {
     }
 
     func openViewInstance(
-        viewID _: String,
-        instanceID _: String
-    ) throws {}
+        viewID: String,
+        instanceID: String
+    ) async throws {
+        if let viewOpenGate {
+            await viewOpenGate.enterAndWait()
+        }
+        openedViews.insert(
+            PluginViewInstanceKey(viewID: viewID, instanceID: instanceID)
+        )
+        revision += 1
+    }
 
     func closeViewInstance(
-        viewID _: String,
-        instanceID _: String
-    ) throws {}
+        viewID: String,
+        instanceID: String
+    ) throws {
+        openedViews.remove(
+            PluginViewInstanceKey(viewID: viewID, instanceID: instanceID)
+        )
+        revision += 1
+    }
 
     func deliverPaletteQuery(
         text _: String,
@@ -1353,6 +1427,18 @@ private actor FakePluginRuntime: PluginHostRuntime {
         emittedEvents[event] ?? []
     }
 
+    func configureInstancedView(
+        _ viewID: String,
+        openGate: FakeStartGate?
+    ) {
+        instancedViewIDs.insert(viewID)
+        viewOpenGate = openGate
+    }
+
+    func openedViewInstances() -> Set<PluginViewInstanceKey> {
+        openedViews
+    }
+
     private func makeSnapshot(
         phase phaseOverride: PluginRuntimePhase? = nil
     ) -> PluginRuntimeSnapshot {
@@ -1361,8 +1447,21 @@ private actor FakePluginRuntime: PluginHostRuntime {
             manifest: manifest,
             phase: phaseOverride ?? phase,
             statusBarText: statusBarText,
-            views: [],
-            openViewInstances: [],
+            views: openedViews.sorted {
+                $0.instanceID < $1.instanceID
+            }.map {
+                PluginViewInfo(
+                    viewID: $0.viewID,
+                    instanceID: $0.instanceID,
+                    instanced: true,
+                    title: "Panel",
+                    items: [],
+                    body: nil
+                )
+            },
+            openViewInstances: openedViews.sorted {
+                $0.instanceID < $1.instanceID
+            },
             permissionViolations: [],
             runtimeThreadIdentifier: nil,
             pendingNestedIntentCount: 0,

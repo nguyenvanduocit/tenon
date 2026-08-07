@@ -101,6 +101,50 @@ The exact public `tenon` vocabulary is:
 Finite filesystem/process/workspace/terminal/browser/UI/secrets/network/clipboard/OS work
 has no handwritten plugin helper; it uses declared canonical intents.
 
+## Domain tags — the product ontology the code cannot derive
+
+**`docs/domains.md` is the only place a domain may be declared**, and
+`DomainTagFitnessTests` enforces every rule below. Read it before adding a source file or
+editing a tagged one.
+
+Every file under `poc/Sources/` carries one tag above its imports. A file over 400 lines
+(55 of 155 today, longest 3134) tags every `// MARK:` section too, on the MARK line:
+
+```swift
+// @domain: plugin-host, plugin-events
+// MARK: - Loading and hot reload  @domain: plugin-host
+```
+
+Why this layer exists at all: a call graph says who calls whom and a compiler keeps it
+honest, but nothing in the source says which *product* concern a file serves — that is a
+human judgement. And Swift hides even the technical half: files in one module see each other
+without imports, so `rg '^import ' Sources/TenonCore` names only external modules and 155
+files expose exactly one inter-module edge.
+
+Why it is a test and not a convention: unchecked metadata rots. Measured here, 31 of ~35
+populated `## Owner / files` blocks were stale against 2 tasks actually in `Doing` — ~89%,
+with the obligation stated plainly in this file the whole time. `// MARK:` is the unit for
+block tags precisely because it is *enumerable*; "a block" cannot be checked.
+
+Use the fewest domains that are true. **More than two on one file is a split candidate**,
+not a well-labelled file: those tag boundaries are the decomposition the file has not had.
+`PluginHost.swift` carries five and is the standing example.
+
+Retrieval is two steps, and the second is not optional:
+
+```
+1. rg -l '@domain:.*plugin-host'                          → starting set
+2. for each symbol that set touches: rg '\bSymbolName\b'   → the edges Swift hides
+```
+
+No check detects a domain a file *should* carry but does not — which is exactly the failure
+tagging exists to reduce. A tag narrows where to start; it never certifies completeness, and
+stopping at step 1 trades a silent omission for a confident one.
+
+Adding a domain means adding it to `docs/domains.md` with an Excludes line in the same change
+as the file that uses it; a declared domain matching no file fails the suite. Lower
+`untaggedFileBudget` whenever you tag a batch, never raise it.
+
 ## Invariants — tests enforce these; do not weaken them
 
 1. **Plugins see only the `tenon` global.** Nothing beyond `tenon`, the ECMAScript builtins, and the `__tenon*` host-call hooks may be reachable from plugin scope: `require`, `setTimeout` and `fetch` were never there, and the bootstrap deletes `console` — a plugin logging through it would reach os_log unattributed, around `tenon.log`'s per-plugin attribution. The `__tenon*` hooks are the host's call channel into the generation, non-configurable and non-writable; invoking one can only disturb the calling plugin's own generation (decision recorded in T-037). A new capability means a new member on `tenon`, never a new global. `testRuntimeExportsOnlyTheClassifiedPublicSurface` pins the members of `tenon`, and `testPluginGlobalScopeClosesToBuiltinsHostHooksAndTenon` pins `Object.getOwnPropertyNames(globalThis)` to exactly that closed set, so a new global — from a future JSC or from our own bootstrap — fails the suite.
@@ -158,6 +202,7 @@ Because several agents run in parallel on that one working tree:
 - **Release when done.** When your task leaves `Doing`, the claim is gone: clear its `Owner / files` list (or archive the task) so those files are free again, and update `.kanban/board.md` per the session-end step below.
 - **Moving a task is a delete plus an insert.** A task line lives in exactly one column. Adding your line to `Doing` without removing the one you left behind puts the same task in two columns, and the stale copy reads as free work — another agent will pick up what you are already doing. Grep the board for your task id after you move it; the answer must be `1`.
 - **Keep the shared test target compiling, even mid-red.** TDD here means a test that *fails*, not a test that fails to *build*. `poc/Tests/` is one target shared by every concurrent agent, so a test naming a type that does not exist yet takes `swift test` down for everyone and destroys their evidence, not just yours. Land the type and its empty or throwing members in the same edit as the test that names them, then let the assertions be the red.
+- **A new source file ships with its `@domain:` tag.** `DomainTagFitnessTests` ratchets on the untagged count, so an untagged new file turns the suite red for every concurrent agent — the fix is one line above the imports, and the rules are in `docs/domains.md`.
 
 Rule of thumb: the working tree is always live and shared, so read `.kanban/` before you write, keep it current while you work, and clear it when you finish.
 

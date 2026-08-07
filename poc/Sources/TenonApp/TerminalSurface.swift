@@ -42,6 +42,14 @@ protocol TerminalSurface: AnyObject {
     /// nothing and default to empty.
     var scrollbackLines: [String] { get }
 
+    /// Stop everything this pane started, because the pane is going away (T-084).
+    ///
+    /// Called exactly when the slot leaves the catalog, before the surface is released. It is a
+    /// seam and not a side effect of deallocation for the reason Kero writes into its own
+    /// teardown (`TerminalSession.swift:136-138`): a close must not depend on a later
+    /// reconciliation pass to happen at all. A backend with no processes keeps the no-op below.
+    func terminate()
+
     /// Whether the pane's child process has exited — feeds `tenon-cli pane.wait --for exit`.
     var processExited: Bool { get }
 
@@ -64,6 +72,7 @@ extension TerminalSurface {
 
     func focus() {}
     func sendText(_ text: String) {}
+    func terminate() {}
     var renderedText: String { "" }
     var scrollbackLines: [String] { [] }
     var processExited: Bool { false }
@@ -86,6 +95,13 @@ final class StubTerminalSurface: TerminalSurface {
     /// Everything delivered to the (nonexistent) PTY, in order — the lifecycle tests
     /// assert the first frame after materialization loses nothing that was queued.
     private(set) var sentText: [String] = []
+    /// The stub has no job tree, but it records the call so "closing a pane stops its work" is
+    /// assertable without a terminal — the same trick `sentText` plays for delivery.
+    private(set) var terminateCount = 0
+
+    func terminate() {
+        terminateCount += 1
+    }
 
     func focus() {
         focusCount += 1

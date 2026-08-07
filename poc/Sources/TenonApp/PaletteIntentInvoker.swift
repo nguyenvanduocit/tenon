@@ -96,7 +96,7 @@ enum PaletteIntentInvoker {
         return await runtime.send(
             intentID,
             input: input,
-            as: AppIntentRuntime.palettePrincipal,
+            as: AppIntentRuntime.userPrincipal,
             target: providerID,
             userGestureID: UUID()
         )
@@ -130,7 +130,7 @@ enum PaletteIntentInvoker {
     ) async -> IntentResult {
         return await runtime.send(
             invocation.target.intentID,
-            as: AppIntentRuntime.palettePrincipal,
+            as: AppIntentRuntime.userPrincipal,
             scope: InvocationScope(
                 workspaceID: scope.workspaceID,
                 paneID: scope.paneID,
@@ -157,7 +157,7 @@ enum PaletteIntentInvoker {
         }
         return await runtime.send(
             invocation.target.intentID,
-            as: AppIntentRuntime.palettePrincipal,
+            as: AppIntentRuntime.userPrincipal,
             target: invocation.providerID,
             userGestureID: invocation.userGestureID
         )

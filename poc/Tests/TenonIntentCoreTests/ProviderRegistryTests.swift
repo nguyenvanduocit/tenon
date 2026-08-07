@@ -3,6 +3,161 @@ import XCTest
 @testable import TenonIntentCore
 
 final class ProviderRegistryTests: XCTestCase {
+    /// Asking who would serve a contract must not cost the right to run them, or a host
+    /// can never branch on the person's choice without first taking authority over every
+    /// handler. See `docs/design-open-handlers.md`.
+    func testAskingWhoWouldServeReportsWhyAndHoldsNothing() async throws {
+        let intentID = try IntentID("file.open.v1")
+        let trusted = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.core")
+        )
+        let chosen = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.chosen")
+        )
+        let registry = ProviderRegistry()
+        try await registry.stage(trusted.candidate(generation: 1))
+        try await registry.activate(providerID: trusted.providerID, generation: 1)
+        try await registry.stage(chosen.candidate(generation: 1))
+        try await registry.activate(providerID: chosen.providerID, generation: 1)
+
+        let request = ProviderResolutionRequest(
+            intentID: intentID,
+            trustedDefault: trusted.providerID
+        )
+
+        let trustedDecision = await registry.resolutionDecision(request)
+        XCTAssertEqual(trustedDecision, .trustedDefault(trusted.providerID))
+        XCTAssertTrue(trustedDecision.isTrustedDefault)
+
+        try await registry.setConfiguredDefault(chosen.providerID, for: intentID)
+        let configuredDecision = await registry.resolutionDecision(request)
+        XCTAssertEqual(configuredDecision, .configuredDefault(chosen.providerID))
+        XCTAssertEqual(configuredDecision.providerID, chosen.providerID)
+
+        // Nothing was reserved and no lease exists, so the registry is exactly as it was.
+        let snapshot = await registry.snapshot()
+        XCTAssertTrue(snapshot.generations.allSatisfy { $0.selectionCount == 0 })
+        XCTAssertTrue(snapshot.generations.allSatisfy { $0.leaseCount == 0 })
+    }
+
+    /// Two handlers and no choice is a question for a person, not an error. The candidates
+    /// come back sorted so a chooser can present them in a stable order.
+    func testTwoEligibleHandlersAndNoChoiceAsksForOne() async throws {
+        let intentID = try IntentID("file.open.v1")
+        let first = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.alpha")
+        )
+        let second = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.beta")
+        )
+        let registry = ProviderRegistry()
+        try await registry.stage(first.candidate(generation: 1))
+        try await registry.activate(providerID: first.providerID, generation: 1)
+        try await registry.stage(second.candidate(generation: 1))
+        try await registry.activate(providerID: second.providerID, generation: 1)
+
+        let decision = await registry.resolutionDecision(.init(intentID: intentID))
+        XCTAssertEqual(decision, .needsChoice([first.providerID, second.providerID]))
+    }
+
+    /// The question and the dispatch must not be able to disagree — one is what the host
+    /// shows a person, the other is what actually runs.
+    func testTheQuestionAgreesWithTheDispatchOnEveryOutcome() async throws {
+        let intentID = try IntentID("file.open.v1")
+        let trusted = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.core")
+        )
+        let other = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.other")
+        )
+        let registry = ProviderRegistry()
+        try await registry.stage(trusted.candidate(generation: 1))
+        try await registry.activate(providerID: trusted.providerID, generation: 1)
+        try await registry.stage(other.candidate(generation: 1))
+        try await registry.activate(providerID: other.providerID, generation: 1)
+
+        let requests = [
+            ProviderResolutionRequest(intentID: intentID, trustedDefault: trusted.providerID),
+            ProviderResolutionRequest(intentID: intentID, explicitTarget: other.providerID),
+            ProviderResolutionRequest(intentID: intentID),
+        ]
+        for request in requests {
+            let decision = await registry.resolutionDecision(request)
+            if let expected = decision.providerID {
+                let held = try await registry.resolveAndAcquire(request)
+                XCTAssertEqual(held.providerID, expected)
+                await held.release()
+            } else {
+                do {
+                    let held = try await registry.resolveAndAcquire(request)
+                    await held.release()
+                    XCTFail("dispatch succeeded where the question refused: \(decision)")
+                } catch is ProviderResolutionError {
+                    // Agreed: neither path picks a provider.
+                }
+            }
+        }
+    }
+
+    /// An unhealthy handler is not an answer. Without this a person's chosen handler keeps
+    /// being reported after it has been quarantined, and the click lands nowhere.
+    func testAnUnhealthyChosenHandlerFallsBackToTheBuiltInOne() async throws {
+        let intentID = try IntentID("file.open.v1")
+        let trusted = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.core")
+        )
+        let chosen = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.chosen")
+        )
+        let registry = ProviderRegistry()
+        try await registry.stage(trusted.candidate(generation: 1))
+        try await registry.activate(providerID: trusted.providerID, generation: 1)
+        try await registry.stage(chosen.candidate(generation: 1))
+        try await registry.activate(providerID: chosen.providerID, generation: 1)
+        try await registry.setConfiguredDefault(chosen.providerID, for: intentID)
+
+        try await registry.setHealthy(
+            false,
+            providerID: chosen.providerID,
+            generation: 1
+        )
+
+        let decision = await registry.resolutionDecision(
+            .init(intentID: intentID, trustedDefault: trusted.providerID)
+        )
+        XCTAssertEqual(decision, .trustedDefault(trusted.providerID))
+    }
+
+    /// Naming a provider that cannot serve is its own answer, distinct from "nobody can".
+    func testNamingAnIneligibleProviderIsReportedAsSuch() async throws {
+        let intentID = try IntentID("file.open.v1")
+        let fixture = try Fixture(
+            intentID: intentID,
+            providerID: ProviderID("dev.tenon.core")
+        )
+        let registry = ProviderRegistry()
+        try await registry.stage(fixture.candidate(generation: 1))
+        try await registry.activate(providerID: fixture.providerID, generation: 1)
+
+        let absent = try ProviderID("dev.tenon.absent")
+        let absentDecision = await registry.resolutionDecision(
+            .init(intentID: intentID, explicitTarget: absent)
+        )
+        XCTAssertEqual(absentDecision, .targetUnavailable(absent))
+        let noProviderDecision = await registry.resolutionDecision(
+            .init(intentID: try IntentID("terminal.run.v1"))
+        )
+        XCTAssertEqual(noProviderDecision, .noProvider)
+    }
+
     func testFailedStagingLeavesActiveGenerationRoutable() async throws {
         let fixture = try Fixture()
         let registry = ProviderRegistry()

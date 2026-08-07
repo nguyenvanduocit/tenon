@@ -122,26 +122,31 @@ struct PaletteOverlay: View {
         let actions = display.actions(forSelection: selected)
         return VStack(alignment: .leading, spacing: 0) {
             ForEach(Array(actions.enumerated()), id: \.offset) { index, action in
-                Text(action.title)
-                    .font(TenonTheme.interfaceFont(size: 12))
-                    .foregroundStyle(TenonTheme.text)
-                    .lineLimit(1)
-                    .padding(.horizontal, 10)
-                    .frame(height: 26)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background {
-                        RoundedRectangle(cornerRadius: 5, style: .continuous)
-                            .fill(
-                                index == palette.actionSelection
-                                    ? TenonTheme.amber.opacity(0.16)
-                                    : .clear
-                            )
+                Button {
+                    palette.actionSelection = index
+                    runSelected()
+                } label: {
+                    Text(action.title)
+                        .font(TenonTheme.interfaceFont(size: 12))
+                        .foregroundStyle(TenonTheme.text)
+                        .lineLimit(1)
+                        .padding(.horizontal, 10)
+                        .frame(height: 26)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background {
+                            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                                .fill(
+                                    index == palette.actionSelection
+                                        ? TenonTheme.amber.opacity(0.16)
+                                        : .clear
+                                )
+                        }
+                        .contentShape(Rectangle())
                     }
-                    .contentShape(Rectangle())
-                    .onTapGesture {
-                        palette.actionSelection = index
-                        runSelected()
-                    }
+                    .buttonStyle(.plain)
+                    .accessibilityAddTraits(
+                        index == palette.actionSelection ? .isSelected : []
+                    )
                     .accessibilityIdentifier("tenon.palette.action.\(index)")
             }
         }
@@ -255,28 +260,34 @@ struct PaletteOverlay: View {
     ) -> some View {
         switch row {
         case let .command(match):
-            PaletteRow(match: match, isSelected: isSelected)
-                .contentShape(Rectangle())
-                .onTapGesture { run(match) }
+            Button { run(match) } label: {
+                PaletteRow(match: match, isSelected: isSelected)
+                    .contentShape(Rectangle())
+            }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(isSelected ? .isSelected : [])
                 .accessibilityIdentifier("tenon.palette.row.\(match.command.id)")
         case let .result(pluginID, result):
-            PaletteRow(
-                match: CommandMatch(
-                    command: Command(
-                        id: result.id,
-                        title: result.title,
-                        subtitle: result.subtitle,
-                        icon: result.icon
-                    ),
-                    score: 0,
-                    titleMatch: []
-                ),
-                isSelected: isSelected
-            )
-            .contentShape(Rectangle())
-            .onTapGesture {
+            Button {
                 run(intentID: result.intentID, input: result.input, pluginID: pluginID)
+            } label: {
+                PaletteRow(
+                    match: CommandMatch(
+                        command: Command(
+                            id: result.id,
+                            title: result.title,
+                            subtitle: result.subtitle,
+                            icon: result.icon
+                        ),
+                        score: 0,
+                        titleMatch: []
+                    ),
+                    isSelected: isSelected
+                )
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .accessibilityAddTraits(isSelected ? .isSelected : [])
             .accessibilityIdentifier(
                 "tenon.palette.result.\(pluginID.rawValue).\(result.id)"
             )

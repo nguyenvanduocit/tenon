@@ -1,11 +1,9 @@
 import Foundation
-#if TENON_CLI_IMPORTS_CORE_MODULE
-import TenonCore
-#endif
+import TenonIntentCore
 
-/// The transport half of `tenon-cli`: find the running app's control socket, send one request, read
-/// one response. Because Tenon is a singleton, discovery is trivial — the socket is the well-known
-/// path (or `$TENON_SOCKET_PATH` when running inside a Tenon pane, which points at the same file).
+/// The transport half of `tenon-cli`: find a running app's control socket, send one request, read
+/// one response. A neutral shell targets production's compatibility path; a Tenon pane inherits
+/// `$TENON_SOCKET_PATH` and therefore targets the production or staging instance that owns it.
 enum CLIClient {
     enum ClientError: Error, CustomStringConvertible {
         case notRunning(String)
@@ -33,6 +31,9 @@ enum CLIClient {
 
     static func send(_ request: CLIRequest) throws -> CLIResponse {
         let path = socketPath()
+        guard isSecureSocketPath(path) else {
+            throw ClientError.notRunning(path)
+        }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { throw ClientError.ioFailed("socket() failed") }
         defer { close(fd) }
@@ -54,7 +55,25 @@ enum CLIClient {
         return response
     }
 
-    // MARK: - POSIX glue (protocol lives in TenonCore; this is just target-local plumbing)
+    // MARK: - POSIX glue (protocol lives in TenonIntentCore; this is target-local plumbing)
+
+    private static func isSecureSocketPath(_ path: String) -> Bool {
+        let directory = (path as NSString).deletingLastPathComponent
+        var directoryInfo = stat()
+        guard lstat(directory, &directoryInfo) == 0,
+              directoryInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFDIR),
+              directoryInfo.st_uid == geteuid(),
+              directoryInfo.st_mode & mode_t(0o777) == mode_t(0o700)
+        else { return false }
+
+        var socketInfo = stat()
+        guard lstat(path, &socketInfo) == 0,
+              socketInfo.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK),
+              socketInfo.st_uid == geteuid(),
+              socketInfo.st_mode & mode_t(0o777) == mode_t(0o600)
+        else { return false }
+        return true
+    }
 
     private static func connectSocket(_ fd: Int32, to path: String) -> Int32 {
         var addr = sockaddr_un()

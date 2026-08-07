@@ -486,8 +486,18 @@ enum PluginRuntimeBootstrap {
       // `git checkout` of this shared file. The tests are the surviving specification;
       // @f014e8e0's own version supersedes this one if they still hold it.
       const agents = Object.freeze({
-        async run(request) {
+        // The sender is the last parameter and defaults to `tenon.intents`, exactly as
+        // every plugin function that sends is written. Passing the invoking `call` keeps
+        // the run on that invocation's workspace/pane scope, clamps it to the parent
+        // deadline, joins its causal chain, and cancels it with the invoking command.
+        async run(request, call = intents) {
           const source = request && typeof request === "object" ? request : {};
+          if (call === null || typeof call !== "object"
+              || typeof call.send !== "function") {
+            throw new TypeError(
+              "tenon.agents.run sender must be tenon.intents or the call passed to an intent handler"
+            );
+          }
           if (typeof source.command !== "string" || source.command.length === 0) {
             throw new TypeError(
               "tenon.agents.run requires { command: string, arguments?: [string], workingDirectory?: string, timeoutMs?: number }"
@@ -524,7 +534,7 @@ enum PluginRuntimeBootstrap {
           if (typeof source.workingDirectory === "string") {
             openInput.workingDirectory = source.workingDirectory;
           }
-          const opened = await intents.send("terminal.open.v1", openInput);
+          const opened = await call.send("terminal.open.v1", openInput);
           if (!opened.ok) return { ok: false, error: opened.error };
           const paneID = opened.value.paneID;
           const pane = { scope: { paneID } };
@@ -535,14 +545,14 @@ enum PluginRuntimeBootstrap {
             if (remaining <= 0) {
               return { ok: false, error: { code: "dev.tenon.agents.timeout" }, paneID };
             }
-            const waiting = intents.send("terminal.wait.v1", {
+            const waiting = call.send("terminal.wait.v1", {
               condition: "command-finished",
               timeoutMs: Math.max(1, Math.min(55000, remaining))
             }, pane);
             if (!sent) {
               sent = true;
               // The pane may still be materialising; `terminal.write.v1` queues for it.
-              const written = await intents.send(
+              const written = await call.send(
                 "terminal.write.v1",
                 { text: commandLine + "\n" },
                 pane
@@ -564,7 +574,7 @@ enum PluginRuntimeBootstrap {
           for (;;) {
             const readInput = {};
             if (cursor !== null) readInput.cursor = cursor;
-            const page = await intents.send(
+            const page = await call.send(
               "terminal.scrollback.read.v1",
               readInput,
               pane

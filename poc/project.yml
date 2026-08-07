@@ -9,6 +9,10 @@ options:
 settings:
   base:
     SWIFT_VERSION: "6.0"
+    # Keep Xcode's first-party targets aligned with Package.swift. Package dependencies
+    # retain their own warning policy; this setting is inherited only by targets below.
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: YES
+    OTHER_SWIFT_FLAGS: "$(inherited) -package-name poc"
     MACOSX_DEPLOYMENT_TARGET: "14.0"
 
 packages:

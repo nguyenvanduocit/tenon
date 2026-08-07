@@ -19,7 +19,7 @@
       {
         "name": "dev.tenon.core-commands.tab.new.v1",
         "title": "New Tab",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -28,16 +28,16 @@
       {
         "name": "dev.tenon.core-commands.terminal.new.v1",
         "title": "New Terminal",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "New", "icon": "terminal", "keywords": ["shell", "term", "console"], "launcher": true }
+        "palette": { "category": "New", "icon": "terminal", "keywords": ["shell", "term", "console"], "launcher": true, "fillsPane": true }
       },
       {
         "name": "dev.tenon.core-commands.pane.split-right.v1",
         "title": "Split Right",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -46,7 +46,7 @@
       {
         "name": "dev.tenon.core-commands.pane.split-down.v1",
         "title": "Split Down",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -55,7 +55,7 @@
       {
         "name": "dev.tenon.core-commands.pane.close.v1",
         "title": "Close Pane",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "destructive", "idempotency": "none", "confirmation": "policy", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -64,25 +64,34 @@
       {
         "name": "dev.tenon.core-commands.changes.open.v1",
         "title": "Open Changes",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "arrow.triangle.branch", "keywords": ["git", "diff", "status", "vcs"], "launcher": true }
+        "palette": { "category": "Open", "icon": "arrow.triangle.branch", "keywords": ["git", "diff", "status", "vcs"], "launcher": true, "fillsPane": true }
       },
       {
         "name": "dev.tenon.core-commands.docs.open.v1",
         "title": "Open Docs",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "book", "keywords": ["documentation", "readme", "help", "manual"], "launcher": true }
+        "palette": { "category": "Open", "icon": "book", "keywords": ["documentation", "readme", "help", "manual"], "launcher": true, "fillsPane": true }
+      },
+      {
+        "name": "dev.tenon.core-commands.automation.open.v1",
+        "title": "Open Automation",
+        "audiences": ["plugin", "user"],
+        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
+        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
+        "palette": { "category": "Open", "icon": "clock.arrow.circlepath", "keywords": ["automation", "schedule", "history", "run"], "launcher": true, "fillsPane": true }
       },
       {
         "name": "dev.tenon.core-commands.tab.next.v1",
         "title": "Next Tab",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -91,7 +100,7 @@
       {
         "name": "dev.tenon.core-commands.tab.previous.v1",
         "title": "Previous Tab",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -100,7 +109,7 @@
       {
         "name": "dev.tenon.core-commands.pane.focus-next.v1",
         "title": "Focus Next Pane",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -109,7 +118,7 @@
       {
         "name": "dev.tenon.core-commands.workspace.switch.v1",
         "title": "Switch Workspace…",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },

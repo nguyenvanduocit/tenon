@@ -11,11 +11,13 @@ struct EmptyStateCard: View {
     let title: String
     let subtitle: String
     let recents: [SlotContent]
+    let agentSuggestions: [AgentLaunchSuggestion]
     /// Bind the ↩ hint to the return key. Only one card can own the default
     /// action at a time, so an empty tab always claims it and an empty slot
     /// claims it only while it is the active pane.
     let isDefaultAction: Bool
     let onLaunch: (SlotContent) -> Void
+    let onLaunchAgent: (AgentLaunchSuggestion) -> Void
 
     /// Built-in views the launcher grid offers (terminal is the primary button above
     /// the grid). Browser opens the bundled browser plugin's pane.
@@ -30,6 +32,7 @@ struct EmptyStateCard: View {
             ),
             (.changes, "Changes"),
             (.docs, "Docs"),
+            (.automation, "Automation"),
             (
                 .pluginView(
                     pluginID: "dev.tenon.browser",
@@ -54,6 +57,10 @@ struct EmptyStateCard: View {
             }
 
             addTerminalButton
+
+            if !agentSuggestions.isEmpty {
+                agentLauncher
+            }
 
             launcher
 
@@ -138,6 +145,20 @@ struct EmptyStateCard: View {
         }
     }
 
+    private var agentLauncher: some View {
+        VStack(spacing: 6) {
+            SectionLabel("Start an agent")
+            VStack(spacing: 4) {
+                ForEach(agentSuggestions) { suggestion in
+                    AgentLaunchCardRow(
+                        suggestion: suggestion,
+                        action: { onLaunchAgent(suggestion) }
+                    )
+                }
+            }
+        }
+    }
+
     private var recentlyOpened: some View {
         VStack(spacing: 6) {
             SectionLabel("Recently opened")
@@ -170,11 +191,61 @@ struct EmptyStateCard: View {
         case .terminal: return "Terminal"
         case .changes: return "Changes"
         case .docs: return "Docs"
+        case .automation: return "Automation"
         case .file(let path): return (path as NSString).lastPathComponent
         case .pluginView(_, let viewID): return viewID
         case .diff(let request): return request.title
         case .empty: return "Empty"
         }
+    }
+}
+
+/// A detected agent stays visually quieter than the primary Terminal action. The learned
+/// option is always visible when it changes authority, so convenience never hides bypass.
+private struct AgentLaunchCardRow: View {
+    let suggestion: AgentLaunchSuggestion
+    let action: () -> Void
+
+    @State private var hovering = false
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 8) {
+                Image(systemName: suggestion.agent == .codex
+                      ? "sparkles"
+                      : "brain.head.profile")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(TenonTheme.amber.opacity(0.9))
+                    .frame(width: 16)
+                Text(suggestion.agent.label)
+                    .font(TenonTheme.interfaceFont(size: 12, weight: .medium))
+                    .foregroundStyle(hovering ? TenonTheme.text : TenonTheme.muted)
+                Spacer(minLength: 8)
+                if let habit = suggestion.habitDescription {
+                    Text(habit)
+                        .font(TenonTheme.utilityFont(size: 9, weight: .medium))
+                        .foregroundStyle(TenonTheme.muted.opacity(0.8))
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 10)
+            .frame(height: 32)
+            .frame(maxWidth: .infinity)
+            .background {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .fill(hovering ? TenonTheme.chromeRaised : TenonTheme.chrome.opacity(0.5))
+            }
+            .overlay {
+                RoundedRectangle(cornerRadius: 7, style: .continuous)
+                    .stroke(TenonTheme.line.opacity(hovering ? 1 : 0.6), lineWidth: 1)
+            }
+        }
+        .buttonStyle(.plain)
+        .onHover { hovering = $0 }
+        .animation(.easeOut(duration: 0.12), value: hovering)
+        .help("Launches \(suggestion.displayCommand)")
+        .accessibilityHint("Launches \(suggestion.displayCommand)")
+        .accessibilityIdentifier("empty-state-agent-\(suggestion.agent.rawValue)")
     }
 }
 

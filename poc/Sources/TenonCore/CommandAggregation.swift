@@ -13,7 +13,8 @@ public extension PluginIntentPresentation {
             keywords: keywords,
             key: assignedKey,
             when: when,
-            isLauncher: launcher
+            isLauncher: launcher,
+            fillsPane: fillsPane
         )
     }
 }

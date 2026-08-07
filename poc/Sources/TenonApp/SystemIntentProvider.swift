@@ -9,10 +9,14 @@ final class SystemIntentProvider {
         let pathNotFound: IntentErrorCode
         let externalOpenFailed: IntentErrorCode
         let clipboardUnavailable: IntentErrorCode
+        let invalidURL: IntentErrorCode
 
         init() throws {
             pathNotFound = .domain(
                 try IntentDomainErrorCode("dev.tenon.core.path-not-found")
+            )
+            invalidURL = .domain(
+                try IntentDomainErrorCode("dev.tenon.core.invalid-url")
             )
             externalOpenFailed = .domain(
                 try IntentDomainErrorCode(
@@ -51,6 +55,20 @@ final class SystemIntentProvider {
             ) { envelope, context in
                 try context.checkCancellation()
                 let reply = await self.open(
+                    envelope: envelope,
+                    context: context
+                )
+                try context.checkCancellation()
+                return reply
+            },
+            // The trusted default handler for an address. It is deliberately the plainest
+            // possible one — hand it to the system — so that removing every plugin leaves
+            // Tenon opening links exactly the way it always has.
+            IntentProviderBinding(
+                intentID: try CoreIntentName.urlOpen.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                let reply = await self.openAddress(
                     envelope: envelope,
                     context: context
                 )
@@ -131,6 +149,49 @@ private extension SystemIntentProvider {
         } catch {
             return AppIntentProviderSupport.invalidInput(
                 .missingOrInvalidField("path")
+            )
+        }
+    }
+
+    func openAddress(
+        envelope: IntentEnvelope,
+        context: IntentProviderContext
+    ) -> IntentProviderReply {
+        do {
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            let requested = try AppIntentProviderSupport.string("url", in: object)
+            guard let url = URL(string: requested),
+                  let scheme = url.scheme?.lowercased(),
+                  scheme == "http" || scheme == "https",
+                  let host = url.host,
+                  !host.isEmpty
+            else {
+                return AppIntentProviderSupport.failure(
+                    code: codes.invalidURL,
+                    reason: "not-an-absolute-web-address"
+                )
+            }
+            // The capability binding names `/url`, so policy has already decided this host
+            // is one the caller may reach. Asking again is the check that keeps a resolved
+            // grant from drifting from the value actually opened.
+            guard context.authorizedNetworkHost(for: host) != nil else {
+                return AppIntentProviderSupport.failure(
+                    code: codes.invalidURL,
+                    reason: "host-not-authorized"
+                )
+            }
+            guard NSWorkspace.shared.open(url) else {
+                return AppIntentProviderSupport.failure(
+                    code: codes.externalOpenFailed,
+                    reason: "workspace-open-refused"
+                )
+            }
+            return AppIntentProviderSupport.emptySuccess
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return AppIntentProviderSupport.invalidInput(
+                .missingOrInvalidField("url")
             )
         }
     }

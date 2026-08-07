@@ -186,4 +186,22 @@ final class WorkspaceOpenContentTests: XCTestCase {
         XCTAssertEqual(slots(store).count, before, "the same view is focused, not opened twice")
         XCTAssertEqual(store.catalog.activeSlotID, opened.id)
     }
+
+    func testOpeningAutomationTwiceReusesAndFocusesItsPane() throws {
+        let store = WorkspaceStore()
+        store.openContent(.automation)
+        let opened = try XCTUnwrap(
+            slots(store).first { $0.content == .automation }
+        )
+        let before = slots(store).count
+        let terminal = try XCTUnwrap(
+            slots(store).first { $0.content == .terminal }
+        )
+        store.focusSlot(terminal.id)
+
+        store.openContent(.automation)
+
+        XCTAssertEqual(slots(store).count, before)
+        XCTAssertEqual(store.catalog.activeSlotID, opened.id)
+    }
 }

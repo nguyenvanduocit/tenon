@@ -31,11 +31,15 @@ struct ImageSlotView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TenonTheme.panel)
         .task(id: path) {
+            let requestedPath = path
+            image = nil
+            failed = false
             // Off the main actor: a large image decodes for long enough to drop frames,
             // and a pane appearing is not a reason for the window to stutter.
             let loaded = await Task.detached(priority: .userInitiated) {
-                NSImage(contentsOfFile: path)
+                NSImage(contentsOfFile: requestedPath)
             }.value
+            guard !Task.isCancelled, requestedPath == path else { return }
             image = loaded
             failed = loaded == nil
         }
@@ -71,27 +75,40 @@ struct ImageSlotView: View {
 struct WebPreviewSlotView: NSViewRepresentable {
     let path: String
 
+    /// WebKit content blockers apply to subresources as well as navigation actions.
+    /// The preview may read local siblings, data URLs, and built-in about pages, but
+    /// never contacts a web/FTP endpoint merely because a local file references it.
+    static let localOnlyContentRules = """
+    [{"trigger":{"url-filter":"^(https?|ftp|ws|wss)://"},"action":{"type":"block"}}]
+    """
+
     func makeNSView(context: Context) -> WKWebView {
         let configuration = WKWebViewConfiguration()
+        // No `applicationNameForUserAgent` here, unlike the browser surface: this renderer
+        // makes no network request for any server to sniff. The content rules above block
+        // http/https subresources and JavaScript is off, so the stock User-Agent is never
+        // sent anywhere.
         configuration.defaultWebpagePreferences.allowsContentJavaScript = false
         configuration.websiteDataStore = .nonPersistent()
         let view = WKWebView(frame: .zero, configuration: configuration)
         view.navigationDelegate = context.coordinator
         view.setValue(false, forKey: "drawsBackground")
-        load(into: view)
+        context.coordinator.prepareLocalOnlyRules(for: view)
         return view
     }
 
     func updateNSView(_ view: WKWebView, context: Context) {
         guard context.coordinator.loadedPath != path else { return }
-        load(into: view)
+        context.coordinator.loadedPath = path
+        guard context.coordinator.rulesReady else { return }
+        Self.load(path: path, into: view)
     }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(path: path)
     }
 
-    private func load(into view: WKWebView) {
+    private static func load(path: String, into view: WKWebView) {
         let url = URL(fileURLWithPath: path)
         guard FileManager.default.fileExists(atPath: path) else {
             view.loadHTMLString(Self.unreadableHTML(path), baseURL: nil)
@@ -116,9 +133,31 @@ struct WebPreviewSlotView: NSViewRepresentable {
     @MainActor
     final class Coordinator: NSObject, WKNavigationDelegate {
         var loadedPath: String
+        var rulesReady = false
 
         init(path: String) {
             loadedPath = path
+        }
+
+        func prepareLocalOnlyRules(for view: WKWebView) {
+            WKContentRuleListStore.default().compileContentRuleList(
+                forIdentifier: "dev.tenon.local-html-preview.v1",
+                encodedContentRuleList: WebPreviewSlotView.localOnlyContentRules
+            ) { [weak self, weak view] ruleList, error in
+                DispatchQueue.main.async {
+                    guard let self, let view else { return }
+                    guard error == nil, let ruleList else {
+                        view.loadHTMLString(
+                            WebPreviewSlotView.unreadableHTML(self.loadedPath),
+                            baseURL: nil
+                        )
+                        return
+                    }
+                    view.configuration.userContentController.add(ruleList)
+                    self.rulesReady = true
+                    WebPreviewSlotView.load(path: self.loadedPath, into: view)
+                }
+            }
         }
 
         /// A preview renders one file. A link that would navigate elsewhere — including

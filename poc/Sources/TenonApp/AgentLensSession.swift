@@ -15,8 +15,17 @@ struct AgentLensInputTransport: Sendable {
 /// true across the inter-frame suspension, so actor reentrancy can append but can never
 /// interleave two bracketed-paste transactions.
 actor AgentLensInputQueue {
+    private enum Payload {
+        /// A message: pasted as one bracketed transaction, then submitted.
+        case text(String)
+        /// A single key the agent's own prompt is waiting on — the digit that picks an
+        /// option in a list. It is not text and must not be submitted: a stray return
+        /// would answer whatever the prompt had highlighted.
+        case keystroke(String)
+    }
+
     private struct Request {
-        let text: String
+        let payload: Payload
         let continuation: CheckedContinuation<Result<Void, AgentLensInputError>, Never>
     }
 
@@ -32,13 +41,23 @@ actor AgentLensInputQueue {
 
     func send(_ text: String) async throws {
         guard !text.isEmpty else { throw AgentLensInputError.empty }
+        try await enqueue(.text(text))
+    }
+
+    /// Answers a prompt the agent is already showing, in the alphabet that prompt reads.
+    func sendKeystroke(_ key: String) async throws {
+        guard !key.isEmpty else { throw AgentLensInputError.empty }
+        try await enqueue(.keystroke(key))
+    }
+
+    private func enqueue(_ payload: Payload) async throws {
         let result = await withCheckedContinuation {
             (continuation: CheckedContinuation<Result<Void, AgentLensInputError>, Never>) in
             guard !stopped else {
                 continuation.resume(returning: .failure(.cancelled))
                 return
             }
-            requests.append(Request(text: text, continuation: continuation))
+            requests.append(Request(payload: payload, continuation: continuation))
             startDrainIfNeeded()
         }
         try result.get()
@@ -66,7 +85,16 @@ actor AgentLensInputQueue {
     private func drain() async {
         while !Task.isCancelled, !stopped, !requests.isEmpty {
             let request = requests.removeFirst()
-            let safeText = request.text.replacingOccurrences(
+            guard case let .text(text) = request.payload else {
+                guard case let .keystroke(key) = request.payload else { continue }
+                request.continuation.resume(
+                    returning: await transport.sendFrame(key)
+                        ? .success(())
+                        : .failure(.foregroundProcessChanged)
+                )
+                continue
+            }
+            let safeText = text.replacingOccurrences(
                 of: "\u{1B}[201~",
                 with: ""
             )
@@ -191,9 +219,23 @@ final class AgentLensViewModel {
     let slotID: UUID
 
     private(set) var snapshot = AgentLensSnapshot.empty
+    private(set) var timelineItems: [AgentTimelineItem] = []
     private(set) var resolution: AgentLensResolution?
     private(set) var isSending = false
+    /// Which renderer the pane shows. Detecting an agent fills in the pane's chrome header and
+    /// leaves this alone: the pane is a live PTY someone is typing into, so the choice of
+    /// renderer stays with them.
     var mode: AgentLensMode = .terminal
+    var showsSplitView = false
+    /// Whether the context-and-evidence panel is open.
+    ///
+    /// Pane state rather than view state, because two readers write it: the chrome header's
+    /// toggle, which also has to READ it back to draw itself in the right position, and a
+    /// timeline row raising the inspector on its own evidence. A `@State` inside the body view
+    /// could serve only the second.
+    var showsInspector = false
+    /// Which fact the panel is showing evidence for, or nil for the session's own context.
+    var inspection: AgentLensInspection?
     var draft = ""
 
     @ObservationIgnored private weak var terminalPool: SurfacePool?
@@ -202,8 +244,8 @@ final class AgentLensViewModel {
     @ObservationIgnored private var streamTask: Task<Void, Never>?
     @ObservationIgnored private var coordinator: AgentLensSessionCoordinator?
     @ObservationIgnored private var inputQueue: AgentLensInputQueue?
-    @ObservationIgnored private var didAutoSwitch = false
     @ObservationIgnored private var consecutiveMisses = 0
+    @ObservationIgnored private var didAnnounceHookCapabilities = false
 
     init(slotID: UUID, terminalPool: SurfacePool, discovery: AgentLensDiscovery) {
         self.slotID = slotID
@@ -272,15 +314,92 @@ final class AgentLensViewModel {
                 evidence: evidence
             )
             await coordinator.apply(.diagnostic(diagnostic), publish: publisher)
-            mode = .terminal
         }
         isSending = false
+    }
+
+    /// A lifecycle hook fired inside this pane's own PTY. Claude Code writes its transcript
+    /// at turn boundaries, so this is the only account of a tool that is still running or a
+    /// question that is still waiting — the moment supervision is actually for.
+    func ingest(_ event: AgentHookEvent) {
+        guard event.paneID == slotID,
+              let coordinator,
+              let identity = terminalPool?.agentTerminalIdentity(for: slotID),
+              // A reused pane holds a new surface token, so a hook from the PTY that has
+              // already been replaced cannot describe the session shown here.
+              identity.surfaceToken == event.surfaceToken
+        else { return }
+
+        var events = AgentHookLensProjection.events(for: event, at: Date())
+        guard !events.isEmpty else { return }
+        if !didAnnounceHookCapabilities {
+            didAnnounceHookCapabilities = true
+            events.insert(
+                .capabilitiesGained(
+                    [.toolLifecycle, .questions, .approvals],
+                    evidence: .terminalInference("agent-hook:\(event.hookEventName)")
+                ),
+                at: 0
+            )
+        }
+        Task { [weak self] in
+            guard let self else { return }
+            for event in events {
+                await coordinator.apply(event, publish: self.publisher)
+            }
+        }
+    }
+
+    /// The option a person picked, sent in the alphabet the agent's own prompt reads.
+    ///
+    /// Claude Code renders a question as a numbered list and takes the digit as the choice,
+    /// so the answer is that keystroke — not the option's text, which would be typed into a
+    /// list that is not accepting text. Only the decision the agent is showing right now
+    /// can be answered: an earlier question in the same call is no longer on screen, and a
+    /// digit sent for it would land on whatever the agent is asking instead.
+    func answer(
+        _ request: AgentInteractionRequest,
+        with option: AgentInteractionOption
+    ) async -> Bool {
+        guard let inputQueue,
+              snapshot.pendingInteraction?.id == request.id,
+              let choice = request.options.firstIndex(where: { $0.id == option.id }),
+              choice < 9
+        else { return false }
+        isSending = true
+        defer { isSending = false }
+        do {
+            try await inputQueue.sendKeystroke(String(choice + 1))
+            return true
+        } catch {
+            await reportInputFailure(error)
+            return false
+        }
+    }
+
+    /// Says that input never reached the agent. The diagnostic carries a warning into the
+    /// pane's chrome header and the text stays in the composer; whether that is worth switching
+    /// to the raw terminal is the reader's call.
+    private func reportInputFailure(_ error: any Error) async {
+        guard let coordinator else { return }
+        let diagnostic = AgentLensDiagnostic(
+            id: "send-failed-\(UUID().uuidString)",
+            severity: .error,
+            message: (error as? AgentLensInputError) == .foregroundProcessChanged
+                ? "Agent is no longer the foreground process; input was not sent"
+                : "Input was cancelled before it reached the agent",
+            evidence: .terminalInference("terminal-slot:\(slotID.uuidString)")
+        )
+        await coordinator.apply(.diagnostic(diagnostic), publish: publisher)
     }
 
     private var publisher: AgentLensSessionCoordinator.Publisher {
         { @MainActor [weak self] snapshot in
             guard let self else { return }
-            if self.snapshot != snapshot { self.snapshot = snapshot }
+            if self.snapshot != snapshot {
+                self.timelineItems = snapshot.sessionTimelineItems
+                self.snapshot = snapshot
+            }
         }
     }
 
@@ -291,15 +410,8 @@ final class AgentLensViewModel {
                 if await sleepForDiscovery() { break }
                 continue
             }
-            if resolution?.foregroundPID == identity.foregroundPID,
-               resolution?.transcriptURL != nil,
-               resolution?.confidence == .exact
-            {
-                consecutiveMisses = 0
-                if await sleepForDiscovery() { break }
-                continue
-            }
-
+            // Keep polling even after an exact attachment: `/new` can replace the root
+            // Codex session without changing the foreground process group.
             let next = await discovery.resolve(identity)
             guard !Task.isCancelled else { break }
             if let next {
@@ -397,16 +509,30 @@ final class AgentLensViewModel {
             return
         }
 
-        if !didAutoSwitch {
-            didAutoSwitch = true
-            mode = .conversation
-        }
         let tailer = AgentTranscriptTailer()
         let stream = await tailer.events(fileURL: transcriptURL, provider: next.provider)
         streamTask = Task { [weak self] in
             guard let self else { return }
             await coordinator.consume(stream, seed: seed, publish: self.publisher)
         }
+    }
+}
+
+/// Where a provider lifecycle hook reaches the pane it came from.
+///
+/// The hook server is host-private and knows only a pane id; the lens pool knows which
+/// model owns that pane. Keeping the seam here means the composition root wires one line
+/// and neither side learns the other's internals.
+@MainActor
+enum AgentHookLensBus {
+    private(set) static weak var pool: AgentLensPool?
+
+    static func attach(_ pool: AgentLensPool) {
+        self.pool = pool
+    }
+
+    static func deliver(_ event: AgentHookEvent) {
+        pool?.ingest(event)
     }
 }
 
@@ -417,6 +543,11 @@ final class AgentLensPool {
 
     init(discovery: AgentLensDiscovery = AgentLensDiscovery()) {
         self.discovery = discovery
+        AgentHookLensBus.attach(self)
+    }
+
+    func ingest(_ event: AgentHookEvent) {
+        models[event.paneID]?.ingest(event)
     }
 
     func model(for slotID: UUID, terminalPool: SurfacePool) -> AgentLensViewModel {

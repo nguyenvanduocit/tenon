@@ -202,6 +202,26 @@ public enum SpatialLayout {
         in slots: [SpatialSlot],
         near activeSlotID: UUID?
     ) -> GridRect? {
+        bestEmptyRect(in: slots, near: activeSlotID, containing: nil)
+    }
+
+    /// The largest valid empty rectangle that contains the grid cell the user chose.
+    /// This is distinct from `bestEmptyRect(in:near:)`: an empty-grid click designates
+    /// its own region and must never jump to a larger hole elsewhere on the canvas.
+    public static func bestEmptyRect(
+        in slots: [SpatialSlot],
+        containingColumn column: Int,
+        row: Int
+    ) -> GridRect? {
+        guard column >= 0, column < columns, row >= 0, row < rows else { return nil }
+        return bestEmptyRect(in: slots, near: nil, containing: (column, row))
+    }
+
+    private static func bestEmptyRect(
+        in slots: [SpatialSlot],
+        near activeSlotID: UUID?,
+        containing requiredCell: (column: Int, row: Int)?
+    ) -> GridRect? {
         guard isValid(slots) else { return nil }
 
         let active = slots.first { $0.id == activeSlotID }?.rect
@@ -214,6 +234,14 @@ public enum SpatialLayout {
                 for height in minimumHeight...(rows - y) {
                     for width in minimumWidth...(columns - x) {
                         let rect = GridRect(x: x, y: y, width: width, height: height)
+                        if let requiredCell,
+                           !(requiredCell.column >= rect.x &&
+                             requiredCell.column < rect.x + rect.width &&
+                             requiredCell.row >= rect.y &&
+                             requiredCell.row < rect.y + rect.height)
+                        {
+                            continue
+                        }
                         guard !slots.contains(where: { rect.overlaps($0.rect) }) else { continue }
 
                         let centerDeltaX = active == nil ? 0 : x * 2 + width - activeCenterX
@@ -794,6 +822,59 @@ public enum SpatialLayout {
 
         return SpatialLayoutTransaction(
             kind: .move,
+            isValid: true,
+            baseline: slots,
+            proposal: proposal,
+            affectedSlotIDs: affectedSlotIDs
+        )
+    }
+
+    /// Inserts a pane that does not yet belong to this layout beside the named target.
+    /// This is the cross-tab counterpart to `moveBeside`: the destination canvas owns
+    /// the split geometry, while the workspace transaction owns detaching and reparenting
+    /// the pane itself.
+    public static func insertBeside(
+        _ slots: [SpatialSlot],
+        newSlotID: UUID,
+        targetID: UUID,
+        edge: SpatialDropEdge
+    ) -> SpatialLayoutTransaction? {
+        guard isValid(slots),
+              !slots.contains(where: { $0.id == newSlotID }),
+              slots.contains(where: { $0.id == targetID })
+        else { return nil }
+
+        let axis: SplitAxis = edge == .left || edge == .right
+            ? .horizontal
+            : .vertical
+        guard let split = split(
+            slots,
+            slotID: targetID,
+            newSlotID: newSlotID,
+            axis: axis
+        ) else { return nil }
+
+        var rects = Dictionary(
+            uniqueKeysWithValues: split.proposal.map { ($0.id, $0.rect) }
+        )
+        if edge == .left || edge == .top {
+            let insertedRect = rects[newSlotID]
+            rects[newSlotID] = rects[targetID]
+            rects[targetID] = insertedRect
+        }
+        let proposal = split.proposal.map { slot in
+            SpatialSlot(id: slot.id, rect: rects[slot.id] ?? slot.rect)
+        }
+        let affectedSlotIDs = proposal.compactMap { slot -> UUID? in
+            guard slot.id != newSlotID else { return slot.id }
+            return slots.first(where: { $0.id == slot.id })?.rect == slot.rect
+                ? nil
+                : slot.id
+        }
+        guard isValid(proposal) else { return nil }
+
+        return SpatialLayoutTransaction(
+            kind: .split,
             isValid: true,
             baseline: slots,
             proposal: proposal,

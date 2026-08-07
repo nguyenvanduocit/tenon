@@ -31,6 +31,9 @@ final class IntentMailboxTests: XCTestCase {
 
         let overlapped = await barrier.reachedFullStrength()
         let started = await barrier.arrived
+        // Always unblock accepted jobs before an assertion can fail. A serial-lane
+        // regression must report cleanly instead of hanging on its own barrier.
+        if !overlapped { await barrier.release() }
         XCTAssertTrue(
             overlapped,
             "only \(started) of 2 requests started — the lane is still serial"

@@ -1,6 +1,8 @@
 # The file editor
 
-*Landed in T-016. The file explorer (T-014) opens into this.*
+**Status:** implemented (T-016) · **Reviewed:** 2026-08-06
+
+The file explorer (T-014) opens into this.
 
 Interaction selection follows
 [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md).
@@ -72,11 +74,18 @@ the editor's own font is discarded. Colours change, typography does not.
 Editor chrome colours come from `TenonTheme`: panel background, `amber` caret, muted
 gutter.
 
-## Not done yet
+## State, external changes, and limits
 
-- **Editor state** (scroll offset, selection) does not survive a pane switch. kero hangs
-  it off its `FileTab` object; `SlotContent.file` is a pure value with nowhere to put it,
-  so this needs a per-slot store first — the same shape `SurfacePool` uses for terminals.
-- **External changes** are not watched. Edit a file in another editor and the pane keeps
-  the version it loaded.
-- Files over 8 MB are truncated rather than paged.
+`EditorPaneStateStore` keeps selection, scroll offset, unsaved text, saved-text identity,
+and conflict state per slot and file. That state survives view destruction during a pane or
+tab switch and is bounded by an LRU capacity. It is app-session state, not part of the
+persisted workspace catalog.
+
+Each readable text document owns a cancellable filesystem watch. A clean buffer reloads
+when disk content changes. A dirty buffer remains visible and is marked conflicted; saving
+then explicitly replaces the newer disk text. Save echoes and content-identical changes are
+ignored. The watch is replaced when the pane opens another file and cancelled when its
+document model dies.
+
+Files over 8 MB and non-UTF-8 text are refused with an unavailable state rather than loaded,
+truncated, or paged. Large-file paging remains outside the current editor contract.

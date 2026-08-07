@@ -89,6 +89,12 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     public var sidebarVisibleOnLaunch: Bool
     public var sidebarWidth: Double
     public var accent: AccentColor
+    /// Global host preference for scheduled automation delivery. Disabling it pauses
+    /// wall-clock firings without disabling or unloading the plugins that declared them.
+    public var automationSchedulesEnabled: Bool
+    /// Host-owned per-schedule pauses. The manifest still owns the declaration; this
+    /// preference only controls whether its scheduled firing is delivered automatically.
+    public var pausedAutomationSchedules: Set<AutomationScheduleKey>
 
     public init(
         newTabContent: DefaultPaneContent = .terminal,
@@ -96,7 +102,9 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         newWorkspaceContent: DefaultPaneContent = .terminal,
         sidebarVisibleOnLaunch: Bool = true,
         sidebarWidth: Double = 232,
-        accent: AccentColor = .amber
+        accent: AccentColor = .amber,
+        automationSchedulesEnabled: Bool = true,
+        pausedAutomationSchedules: Set<AutomationScheduleKey> = []
     ) {
         self.newTabContent = newTabContent
         self.newSplitContent = newSplitContent
@@ -104,6 +112,8 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         self.sidebarVisibleOnLaunch = sidebarVisibleOnLaunch
         self.sidebarWidth = sidebarWidth
         self.accent = accent
+        self.automationSchedulesEnabled = automationSchedulesEnabled
+        self.pausedAutomationSchedules = pausedAutomationSchedules
     }
 
     public init(from decoder: any Decoder) throws {
@@ -121,5 +131,13 @@ public struct AppPreferences: Equatable, Sendable, Codable {
             ?? defaults.sidebarWidth
         accent = try container.decodeIfPresent(AccentColor.self, forKey: .accent)
             ?? defaults.accent
+        automationSchedulesEnabled = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .automationSchedulesEnabled
+        ) ?? defaults.automationSchedulesEnabled
+        pausedAutomationSchedules = try container.decodeIfPresent(
+            Set<AutomationScheduleKey>.self,
+            forKey: .pausedAutomationSchedules
+        ) ?? defaults.pausedAutomationSchedules
     }
 }

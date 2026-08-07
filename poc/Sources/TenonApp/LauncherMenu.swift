@@ -3,22 +3,29 @@ import SwiftUI
 import TenonCore
 import TenonIntentCore
 
-/// The search-first launcher listing the creation verbs plugins declared with
-/// `palette.launcher`: the tab strip's `+` popover, a tab chip's right-click, and a
-/// right-click on empty spatial-grid space. It ranks through the same `CommandIndex`
-/// the palette does and shares its frecency, so every surface learns one set of habits
-/// and the shell keeps no ordering of its own. Adding an entry here is a `manifest.json`
-/// change.
+enum LauncherPurpose: Equatable {
+    case open
+    case fillEmptyGrid
+}
+
+/// The search-first launcher shared by the tab strip's `+`, a tab chip's right-click,
+/// and empty spatial-grid space. Plugin creation verbs still rank through the palette's
+/// `CommandIndex`; the small host-native agent section projects the machine-local
+/// suggestions detected once by the shell. Every anchor uses this one presentation.
 struct LauncherMenu: View {
     var host: PluginHost
     var intentRuntime: AppIntentRuntime
     /// Shared with ⌘⇧P: same frecency store, so a habit formed in one surface shows in
     /// the other. Its `query`/`selection` belong to the overlay and stay untouched here.
     var palette: CommandPaletteState
+    var agentSuggestions: [AgentLaunchSuggestion] = []
+    var launchAgent: ((AgentLaunchSuggestion) -> LauncherOutcome)? = nil
     /// How a chosen row is dispatched. `nil` inherits the focused pane through the shared
     /// invoker. Anchors with stronger placement meaning inject a send: the title-bar `+`
-    /// creates a tab, while a tab chip names the tab that was clicked.
-    var send: ((String) async -> IntentResult?)? = nil
+    /// creates a tab, a tab chip names the tab that was clicked, and an empty-grid
+    /// launcher scopes the command to its exact reserved rectangle.
+    var send: ((String) async -> LauncherOutcome)? = nil
+    var purpose: LauncherPurpose = .open
     let dismiss: () -> Void
 
     @State private var query = ""
@@ -31,8 +38,12 @@ struct LauncherMenu: View {
     /// rows, the highlight, ↓/↑, Enter) reads `displayed`, so no surface can disagree
     /// with another about what row N is.
     private var order: LauncherSections {
-        LauncherSections(
-            ranked: host.commandIndex.launcherOnly.rank(
+        let index = switch purpose {
+        case .open: host.commandIndex.launcherOnly
+        case .fillEmptyGrid: host.commandIndex.paneFillersOnly
+        }
+        return LauncherSections(
+            ranked: index.rank(
                 query: query,
                 frecency: palette.frecency,
                 now: Date()
@@ -41,9 +52,42 @@ struct LauncherMenu: View {
         )
     }
 
+    private var agentMatches: [(suggestion: AgentLaunchSuggestion, match: CommandMatch)] {
+        guard launchAgent != nil else { return [] }
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return agentSuggestions.compactMap { suggestion in
+            let titleMatch = query.isEmpty
+                ? FuzzyMatch(score: 0, matchedIndices: [])
+                : Fuzzy.match(query, in: suggestion.agent.label)
+            guard query.isEmpty
+                    || titleMatch != nil
+                    || Fuzzy.match(query, in: suggestion.displayCommand) != nil
+                    || suggestion.habitDescription.map({
+                        Fuzzy.match(query, in: $0) != nil
+                    }) == true
+            else { return nil }
+            let command = Command(
+                id: "host.agent.\(suggestion.agent.rawValue)",
+                title: suggestion.agent.label,
+                subtitle: suggestion.habitDescription,
+                icon: suggestion.agent == .codex ? "sparkles" : "brain.head.profile"
+            )
+            return (
+                suggestion,
+                CommandMatch(
+                    command: command,
+                    score: Double(titleMatch?.score ?? 0),
+                    titleMatch: titleMatch?.matchedIndices ?? []
+                )
+            )
+        }
+    }
+
     var body: some View {
         let order = self.order
-        let selected = order.displayed.isEmpty ? 0 : min(selection, order.displayed.count - 1)
+        let agents = agentMatches
+        let count = agents.count + order.displayed.count
+        let selected = count == 0 ? 0 : min(selection, count - 1)
 
         VStack(spacing: 0) {
             searchField
@@ -56,13 +100,13 @@ struct LauncherMenu: View {
                     .padding(.horizontal, 12)
                     .padding(.vertical, 5)
             }
-            results(order, selected: selected, ceiling: listCeiling)
+            results(agents: agents, order: order, selected: selected, ceiling: listCeiling)
         }
         .frame(width: 300)
         .background(TenonTheme.chromeRaised)
         .onAppear { searchFocused = true }
-        .onKeyPress(.downArrow) { move(1, in: order); return .handled }
-        .onKeyPress(.upArrow) { move(-1, in: order); return .handled }
+        .onKeyPress(.downArrow) { move(1, count: count); return .handled }
+        .onKeyPress(.upArrow) { move(-1, count: count); return .handled }
         .accessibilityIdentifier("tenon.launcher")
     }
 
@@ -72,7 +116,12 @@ struct LauncherMenu: View {
                 .font(.system(size: 10))
                 .frame(width: 15)
                 .foregroundStyle(TenonTheme.muted)
-            TextField("Open a terminal, view, or tool…", text: $query)
+            TextField(
+                purpose == .fillEmptyGrid
+                    ? "Fill this space…"
+                    : "Open a terminal, view, or tool…",
+                text: $query
+            )
                 .textFieldStyle(.plain)
                 .font(TenonTheme.interfaceFont(size: 12))
                 .foregroundStyle(TenonTheme.text)
@@ -111,13 +160,15 @@ struct LauncherMenu: View {
 
     @ViewBuilder
     private func results(
-        _ order: LauncherSections,
+        agents: [(suggestion: AgentLaunchSuggestion, match: CommandMatch)],
+        order: LauncherSections,
         selected: Int,
         ceiling: CGFloat
     ) -> some View {
-        if order.displayed.isEmpty {
+        let count = agents.count + order.displayed.count
+        if count == 0 {
             Text(query.isEmpty
-                 ? "No plugin offers anything to open yet."
+                 ? emptyMessage
                  : "No matches")
                 .font(TenonTheme.interfaceFont(size: 11))
                 .foregroundStyle(TenonTheme.muted)
@@ -127,24 +178,46 @@ struct LauncherMenu: View {
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(Array(order.sections.enumerated()), id: \.element.id) {
-                        sectionIndex, section in
-                        if sectionIndex > 0 {
-                            Rectangle()
-                                .fill(TenonTheme.line.opacity(0.6))
-                                .frame(height: LauncherListHeight.separatorRule)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, LauncherListHeight.separatorPadding)
-                        }
-                        ForEach(Array(section.matches.enumerated()), id: \.element.id) {
-                            rowIndex, match in
+                    ForEach(Array(agents.enumerated()), id: \.element.suggestion.id) {
+                        rowIndex, agent in
+                        Button {
+                            run(agent.suggestion)
+                        } label: {
                             PaletteRow(
-                                match: match,
-                                isSelected: section.startIndex + rowIndex == selected,
+                                match: agent.match,
+                                isSelected: rowIndex == selected,
                                 density: .compact
                             )
                             .contentShape(Rectangle())
-                            .onTapGesture { run(match) }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityHint("Launches \(agent.suggestion.displayCommand)")
+                        .accessibilityIdentifier(
+                            "tenon.launcher.agent.\(agent.suggestion.agent.rawValue)"
+                        )
+                    }
+                    if !agents.isEmpty, !order.sections.isEmpty {
+                        launcherSeparator
+                    }
+                    ForEach(Array(order.sections.enumerated()), id: \.element.id) {
+                        sectionIndex, section in
+                        if sectionIndex > 0 {
+                            launcherSeparator
+                        }
+                        ForEach(Array(section.matches.enumerated()), id: \.element.id) {
+                            rowIndex, match in
+                            Button {
+                                run(match)
+                            } label: {
+                                PaletteRow(
+                                    match: match,
+                                    isSelected: agents.count + section.startIndex + rowIndex
+                                        == selected,
+                                    density: .compact
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
                             .accessibilityIdentifier("tenon.launcher.row.\(match.command.id)")
                         }
                     }
@@ -154,25 +227,63 @@ struct LauncherMenu: View {
             // Stated, not offered: a ScrollView handed a maxHeight inside a popover
             // greedily takes all of it, floating ten rows in a screen-tall sheet.
             .frame(height: LauncherListHeight.height(
-                rows: order.displayed.count,
-                sections: order.sections.count,
+                rows: count,
+                sections: order.sections.count + (agents.isEmpty ? 0 : 1),
                 ceiling: ceiling
             ))
         }
     }
 
+    private var launcherSeparator: some View {
+        Rectangle()
+            .fill(TenonTheme.line.opacity(0.6))
+            .frame(height: LauncherListHeight.separatorRule)
+            .padding(.horizontal, 6)
+            .padding(.vertical, LauncherListHeight.separatorPadding)
+    }
+
+    private var emptyMessage: String {
+        switch purpose {
+        case .open: "No plugin offers anything to open yet."
+        case .fillEmptyGrid: "Nothing available can fill this space."
+        }
+    }
+
     /// ↓/↑ step through the rows as drawn, which after grouping is not the ranking.
-    private func move(_ delta: Int, in order: LauncherSections) {
-        guard !order.displayed.isEmpty else { return }
-        selection = min(max(selection + delta, 0), order.displayed.count - 1)
+    private func move(_ delta: Int, count: Int) {
+        guard count > 0 else { return }
+        selection = min(max(selection + delta, 0), count - 1)
     }
 
     /// Enter runs the highlighted row, resolved through the same displayed order the
     /// highlight was drawn from.
     private func runSelected() {
+        let agents = agentMatches
+        let total = agents.count + order.displayed.count
+        guard total > 0 else { return }
+        let selected = min(max(selection, 0), total - 1)
+        if agents.indices.contains(selected) {
+            run(agents[selected].suggestion)
+            return
+        }
         let displayed = order.displayed
         guard !displayed.isEmpty else { return }
-        run(displayed[min(max(selection, 0), displayed.count - 1)])
+        let commandIndex = selected - agents.count
+        guard displayed.indices.contains(commandIndex) else { return }
+        run(displayed[commandIndex])
+    }
+
+    private func run(_ suggestion: AgentLaunchSuggestion) {
+        guard !isRunning, let launchAgent else { return }
+        isRunning = true
+        errorMessage = nil
+        let outcome = launchAgent(suggestion)
+        if outcome.dismisses {
+            dismiss()
+        } else {
+            isRunning = false
+            errorMessage = outcome.errorMessage
+        }
     }
 
     /// Same path as the palette: the ranked presentation maps back to its plugin-owned
@@ -184,17 +295,18 @@ struct LauncherMenu: View {
         isRunning = true
         errorMessage = nil
         Task { @MainActor in
-            let result: IntentResult?
+            let outcome: LauncherOutcome
             if let send {
-                result = await send(match.command.id)
+                outcome = await send(match.command.id)
             } else {
-                result = await PaletteIntentInvoker.send(
-                    commandID: match.command.id,
-                    host: host,
-                    runtime: intentRuntime
+                outcome = LauncherOutcome(
+                    await PaletteIntentInvoker.send(
+                        commandID: match.command.id,
+                        host: host,
+                        runtime: intentRuntime
+                    )
                 )
             }
-            let outcome = LauncherOutcome(result)
             if outcome.recordsFrecency {
                 palette.record(match.command.id)
             }

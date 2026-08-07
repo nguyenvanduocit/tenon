@@ -3,6 +3,7 @@ import Foundation
 
 struct AgentTerminalIdentity: Equatable, Sendable {
     let slotID: UUID
+    let surfaceToken: UUID
     let foregroundPID: UInt64
     let cwd: URL
     let title: String
@@ -16,6 +17,7 @@ enum AgentResolutionConfidence: String, Sendable {
 
 struct AgentLensResolution: Equatable, Sendable {
     let provider: AgentProvider
+    let sessionID: String?
     let foregroundPID: UInt64
     let transcriptURL: URL?
     let confidence: AgentResolutionConfidence
@@ -31,23 +33,72 @@ struct AgentLensResolution: Equatable, Sendable {
 /// is explicitly marked inferred, never silently promoted to exact identity.
 actor AgentLensDiscovery {
     private let homeDirectory: URL
+    private let codexSessionsRoot: URL
     private let fileManager: FileManager
+    private let sessionRegistry: AgentSessionRegistry
+    private let codexHookDegradation: String?
+    private let claudeHookDegradation: String?
+    private let processProvider: (@Sendable (UInt64) -> AgentProvider?)?
+    private let processGroupProvider: (@Sendable (UInt64) -> UInt64?)?
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        sessionRegistry: AgentSessionRegistry? = nil,
+        codexSessionsRoot: URL? = nil,
+        codexHookDegradation: String? = nil,
+        claudeHookDegradation: String? = nil,
+        processProvider: (@Sendable (UInt64) -> AgentProvider?)? = nil,
+        processGroupProvider: (@Sendable (UInt64) -> UInt64?)? = nil
     ) {
+        let resolvedCodexSessionsRoot = (codexSessionsRoot ?? homeDirectory
+            .appendingPathComponent(".codex/sessions", isDirectory: true))
+            .standardizedFileURL
         self.homeDirectory = homeDirectory.standardizedFileURL
+        self.codexSessionsRoot = resolvedCodexSessionsRoot
         self.fileManager = fileManager
+        self.sessionRegistry = sessionRegistry ?? AgentSessionRegistry(
+            allowedTranscriptRoots: [
+                resolvedCodexSessionsRoot,
+                homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true),
+            ]
+        )
+        self.processProvider = processProvider
+        self.processGroupProvider = processGroupProvider
+        self.codexHookDegradation = codexHookDegradation
+        self.claudeHookDegradation = claudeHookDegradation
     }
 
-    func resolve(_ identity: AgentTerminalIdentity) -> AgentLensResolution? {
-        guard let provider = provider(for: identity.foregroundPID) else { return nil }
+    func resolve(_ identity: AgentTerminalIdentity) async -> AgentLensResolution? {
+        guard let provider = processProvider?(identity.foregroundPID)
+            ?? provider(for: identity.foregroundPID)
+        else { return nil }
         let roots = transcriptRoots(for: provider, cwd: identity.cwd)
 
-        if let exact = openTranscript(for: identity.foregroundPID, under: roots) {
+        if let binding = await sessionRegistry.binding(
+            paneID: identity.slotID,
+            surfaceToken: identity.surfaceToken
+        ), binding.provider == provider,
+           binding.processGroupID == nil ||
+               binding.processGroupID == processGroupID(for: identity.foregroundPID),
+           let transcript = validate(binding.transcriptURL, under: roots)
+        {
             return AgentLensResolution(
                 provider: provider,
+                sessionID: binding.sessionID,
+                foregroundPID: identity.foregroundPID,
+                transcriptURL: transcript,
+                confidence: .exact,
+                detail: "Transcript was reported by the root \(provider.displayName) session for this terminal"
+            )
+        }
+
+        if provider != .codex,
+           let exact = openTranscript(for: identity.foregroundPID, under: roots)
+        {
+            return AgentLensResolution(
+                provider: provider,
+                sessionID: nil,
                 foregroundPID: identity.foregroundPID,
                 transcriptURL: exact,
                 confidence: .exact,
@@ -55,23 +106,28 @@ actor AgentLensDiscovery {
             )
         }
 
-        if let inferred = recentTranscript(for: provider, roots: roots, cwd: identity.cwd) {
-            return AgentLensResolution(
-                provider: provider,
-                foregroundPID: identity.foregroundPID,
-                transcriptURL: inferred,
-                confidence: .inferred,
-                detail: "Matched the newest transcript for this working directory"
-            )
-        }
-
+        // Codex commonly has a Node foreground process and a native child with several
+        // transcript FDs. Cwd + mtime cannot distinguish concurrent sessions, so Codex
+        // stays process-only until its root hook reports the exact resource.
         return AgentLensResolution(
             provider: provider,
+            sessionID: nil,
             foregroundPID: identity.foregroundPID,
             transcriptURL: nil,
             confidence: .processOnly,
-            detail: "Agent detected; semantic transcript is not available yet"
+            detail: processOnlyDetail(for: provider)
         )
+    }
+
+    private func processOnlyDetail(for provider: AgentProvider) -> String {
+        let degradation = switch provider {
+        case .claude: claudeHookDegradation
+        case .codex: codexHookDegradation
+        }
+        if let degradation {
+            return "\(provider.displayName) detected, but its Tenon hook is unavailable: \(degradation)"
+        }
+        return "\(provider.displayName) detected; waiting for its terminal-bound hook"
     }
 
     private func provider(for pid: UInt64) -> AgentProvider? {
@@ -85,6 +141,12 @@ actor AgentLensDiscovery {
             return .codex
         }
         return nil
+    }
+
+    private func processGroupID(for pid: UInt64) -> UInt64 {
+        if let supplied = processGroupProvider?(pid) { return supplied }
+        let value = getpgid(Int32(pid))
+        return value > 0 ? UInt64(value) : pid
     }
 
     private static func containsExecutable(_ name: String, in value: String) -> Bool {
@@ -118,9 +180,7 @@ actor AgentLensDiscovery {
                     .appendingPathComponent(slug, isDirectory: true),
             ]
         case .codex:
-            return [
-                homeDirectory.appendingPathComponent(".codex/sessions", isDirectory: true),
-            ]
+            return [codexSessionsRoot]
         }
     }
 
@@ -145,59 +205,6 @@ actor AgentLensDiscovery {
             if let validated = validate(candidate, under: roots) { return validated }
         }
         return nil
-    }
-
-    private func recentTranscript(
-        for provider: AgentProvider,
-        roots: [URL],
-        cwd: URL
-    ) -> URL? {
-        let cutoff = Date().addingTimeInterval(-12 * 60 * 60)
-        var candidates: [(url: URL, modified: Date)] = []
-        for root in roots {
-            guard let enumerator = fileManager.enumerator(
-                at: root,
-                includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { continue }
-            var visited = 0
-            while let url = enumerator.nextObject() as? URL, visited < 2_000 {
-                visited += 1
-                guard url.pathExtension == "jsonl",
-                      let values = try? url.resourceValues(
-                          forKeys: [.contentModificationDateKey, .isRegularFileKey]
-                      ),
-                      values.isRegularFile == true,
-                      let modified = values.contentModificationDate,
-                      modified >= cutoff,
-                      validate(url, under: roots) != nil
-                else { continue }
-                if provider == .codex && !codexTranscript(url, matches: cwd) { continue }
-                candidates.append((url, modified))
-            }
-        }
-        return candidates.max(by: { $0.modified < $1.modified })?.url
-    }
-
-    private func codexTranscript(_ url: URL, matches cwd: URL) -> Bool {
-        guard let handle = try? FileHandle(forReadingFrom: url) else { return false }
-        defer { try? handle.close() }
-        let prefix = try? handle.read(upToCount: 128 << 10)
-        guard let data = prefix ?? nil,
-              let text = String(data: data, encoding: .utf8)
-        else { return false }
-        let expected = cwd.standardizedFileURL.path
-        for line in text.split(separator: "\n", omittingEmptySubsequences: true).prefix(24) {
-            guard let data = String(line).data(using: .utf8),
-                  let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
-            else { continue }
-            let payload = record["payload"] as? [String: Any]
-            let candidate = payload?["cwd"] as? String ?? record["cwd"] as? String
-            if URL(fileURLWithPath: candidate ?? "").standardizedFileURL.path == expected {
-                return true
-            }
-        }
-        return false
     }
 
     private func validate(_ candidate: URL, under roots: [URL]) -> URL? {
@@ -350,8 +357,16 @@ actor AgentTranscriptTailer {
 
         while !Task.isCancelled {
             do {
-                let values = try fileURL.resourceValues(forKeys: [.fileSizeKey])
-                let size = UInt64(values.fileSize ?? 0)
+                // URL resource values are cached on the URL instance, so polling
+                // `.fileSizeKey` there freezes at the attachment-time transcript size.
+                // FileManager performs a fresh stat and observes provider appends.
+                let attributes = try FileManager.default.attributesOfItem(
+                    atPath: fileURL.path
+                )
+                guard let fileSize = attributes[.size] as? NSNumber else {
+                    throw CocoaError(.fileReadUnknown)
+                }
+                let size = fileSize.uint64Value
                 didReportMissing = false
 
                 if offset == 0 && size > Self.initialWindowBytes {

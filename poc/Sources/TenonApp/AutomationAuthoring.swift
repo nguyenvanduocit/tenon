@@ -66,8 +66,8 @@ enum AutomationAuthoring {
         setTimeout (use tenon.timers.*). Log with tenon.log(...).
 
         ## Verify with the user (do not skip)
-        1. After saving, ask the user to open Settings > Automation: the schedule \
-        must appear there with its next firing.
+        1. After saving, ask the user to open the Automation view on the Canvas: the \
+        schedule must appear there with its next firing.
         2. Ask them to press "Run Now": the handler runs with trigger "manual" and \
         the run appears under Recent runs with its delivery outcome.
         3. If the script uses privileged intents (process.exec.v1, filesystem \

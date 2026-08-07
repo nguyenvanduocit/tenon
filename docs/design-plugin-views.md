@@ -30,7 +30,7 @@ typed nodes that the host renders recursively as native SwiftUI, themed from
   not a feature request.
 - **Tier 2 — opinionated components** (pretty + consistent by default, composed
   from tier 1): `card`, `badge`, `button`, plus the status/dashboard set `stat`,
-  `keyValue`, `progress`, `field`, and `browserBar` (a native browser toolbar).
+  `keyValue`, `progress`, and `field`.
   Added as real needs appear, never faster than that.
 
 Field/token reference for the current set:
@@ -44,7 +44,6 @@ Field/token reference for the current set:
 | `keyValue` | `label`, `value`, `tint?` |
 | `progress` | `value` (clamped 0…1), `tint?` |
 | `field` | `label`, `children[]` |
-| `browserBar` | `url?`, `placeholder?` — a native back/forward/reload + address toolbar; emits fixed actions `back`/`forward`/`reload` (no value) and `go` (the typed text) to `onSelect`, so the plugin keeps all navigation logic |
 
 Style is expressed with **enum tokens, not free CSS**, so every plugin stays
 visually consistent and an LLM needs no taste: `color`/`tint` ∈
@@ -102,10 +101,21 @@ with several published, the first in publish order wins.
   intents from the callback.
 - **One shape everywhere.** `views.set` takes either `body` (a node tree) or
   `items` (rows). `body` wins when present. Rows are not the poor cousin: a row
-  carries `menu`, `editing`/`placeholder`, `selected` and `path`, and the view
-  itself carries `subtitle` + header `actions` — enough for the Files pane to be a
-  full file manager without a single node (T-014, see
+  carries `menu`, `editing`/`placeholder`, `selected` and `path` — enough for the
+  Files pane to be a full file manager without a single node (T-014, see
   `design-plugin-host-capabilities.md`).
+- **A view's chrome is `header`, and the pane draws it.** What a view has to say about
+  itself — its state, its path, its controls — goes in the ONE chrome header its pane
+  already draws, published as `header: { leading: [], trailing: [] }` beside `items` or
+  `body`. It reaches a rows pane and a body pane alike. A flat, non-recursive vocabulary
+  of ten items (`dot`, `label`, `badge`, `image`, `spinner`, `iconButton`, `toggle`,
+  `segmented`, `menu`, `textfield`) keeps the states a 34-point strip cannot express
+  unrepresentable rather than silently dropped, and it is why no plugin needs a chrome
+  bar of its own: three `iconButton`s and a flexible `textfield` are a browser toolbar.
+  A missing required field costs that one item its place and names it in the plugin's
+  log; an unknown token degrades to its default; `accessibilityID` is host-only and is
+  never read from plugin JSON. Omitting `header` clears the previous one, the way
+  omitting `modal` closes a sheet.
 - **Actions reuse the select handler.** A `button`'s structured `action` value is delivered
   to the view's existing `onSelect` handler, as is a row's action/id. No new API
   surface — a button click, a row click, a row's context-menu pick (the menu id

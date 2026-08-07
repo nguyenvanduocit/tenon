@@ -1,6 +1,6 @@
 # The intent bus — one invocation plane with explicit contracts
 
-**Status:** accepted kernel design; implementation in progress · **Date:** 2026-07-25
+**Status:** accepted and implemented; hard runtime isolation remains open · **Reviewed:** 2026-08-06
 **Scope:** interactions already classified as **INTENT** by
 [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md)
 
@@ -19,10 +19,11 @@ that motivated the intent kernel. They are not current or proposed APIs:
 | `CLIAction` | 9-case Swift enum over a socket | external processes | shell only |
 | `PluginCommand` | palette entries | user | plugins only |
 
-The cost of that fragmentation is measurable. Adding `tenon.terminal.run` — **one** verb —
-required edits in three files at three layers: a new member in `PluginRuntime.installAPI`,
-a new case in `WorkspaceCommand`, a new case in the shell's `switch`. Nothing about that
-verb is knowable by the core in advance, yet the core must name it.
+The cost of that fragmentation was measurable. Adding the former terminal-run helper —
+**one** verb — required edits in three files at three layers: a new member in
+`PluginRuntime.installAPI`, a new case in `WorkspaceCommand`, and a new case in the shell's
+`switch`. Nothing about that verb was knowable by the core in advance, yet the core had to
+name it.
 
 Three consequences, each a direct contradiction of a VISION principle:
 
@@ -32,10 +33,10 @@ Three consequences, each a direct contradiction of a VISION principle:
 2. **Plugins cannot talk to each other.** `git` cannot ask `file-explorer` to reveal a
    path; it can only ask the host. Every plugin↔plugin interaction has to be laundered
    through a core verb somebody has to write first.
-3. **Shared execution is not yet a shared contract.** `CLIAction.runCommand` already
-   converges CLI and palette execution through `PluginHost.invoke`, but the surrounding
-   discovery, schema, authorization, lifecycle, and error contracts are still declared on
-   separate surfaces. The bridge proves convergence is useful; it does not finish it.
+3. **Shared execution was not a shared contract.** `CLIAction.runCommand` converged CLI and
+   palette execution through `PluginHost.invoke`, but discovery, schema, authorization,
+   lifecycle, and errors remained on separate surfaces. The shipped kernel supersedes both
+   paths with canonical intent contracts.
 
 ## Goal
 
@@ -330,9 +331,11 @@ const available = await tenon.intents.list();
 
 `handle()` may bind only a name the manifest declared and only while its runtime is
 staging. A late or duplicate bind is a load error. The catalog is usable before the
-plugin runs; a handler makes one declared provider ready. Nested requests from a handler
-MUST use `call.send` so parent request, cancellation, trace, and causal scope are preserved.
-Top-level `tenon.intents.send` starts a root plugin request.
+plugin runs; a handler makes one declared provider ready. Any function that sends takes
+the sender as its last parameter, defaulting to `tenon.intents`; a handler passes its own
+`call` into every function it calls that sends, so nested requests preserve parent
+request, cancellation, trace, and causal scope. Top-level `tenon.intents.send` starts a
+root plugin request.
 
 ### Manifest shape
 
@@ -349,7 +352,7 @@ Top-level `tenon.intents.send` starts a root plugin request.
         "name": "dev.tenon.git.stage.v1",
         "title": "Stage files",
         "description": "Stage workspace files in Git.",
-        "audiences": ["plugin", "palette", "cli", "agent"],
+        "audiences": ["plugin", "user", "cli", "agent"],
         "effects": {
           "kind": "write",
           "idempotency": "keyed",
@@ -543,7 +546,7 @@ Every contract has exactly one owner:
 | contract class | owner | provider rule | normal use |
 | --- | --- | --- | --- |
 | `sealed` | core catalog | Core only; typed provider adapter after all gates | Closed canonical fixed-host intents such as filesystem, terminal, workspace, and process |
-| `open` | core catalog | Built-in trusted default plus user-approved alternatives | `file.open.v1` is the only current open core contract |
+| `open` | core catalog | Built-in trusted default plus user-approved alternatives | `file.open.v1`, `url.open.v1` |
 | `plugin-owned` | one stable `PluginID` | Owning plugin only in v1 | Plugin-specific domain operations |
 
 The normative boundary law owns the exact core inventory. An illustrative provider class
@@ -573,6 +576,7 @@ version from day one:
 ```text
 terminal.run.v1
 file.open.v1
+url.open.v1
 dev.tenon.git.stage.v1
 ```
 
@@ -658,8 +662,9 @@ request. Headless plugin/CLI/MCP callers receive the same explicit error.
 
 ### Authority, effects, and confused deputies
 
-The current ten coarse permissions remain the enforcement base while argument-scoped
-grants evolve in the same `PolicyEngine`. Intent names do not replace permissions:
+The ten coarse permissions remain the enforcement base while the same `PolicyEngine`
+enforces contract, argument, network-host, and caller-scope rules. Intent names do not
+replace permissions:
 
 - `uses` answers **what the plugin intends to call**.
 - capability grants answer **what authority the user gave it**.
@@ -873,8 +878,9 @@ Initial Release-build fitness targets — **targets, not measured claims**:
 | Queue overload burst | bounded memory; explicit rejections; no UI stall |
 | Discovery from cached catalog | independent of plugin activation |
 
-The prototype must record direct-closure and current handwritten-bridge baselines. If a
-target is unrealistic, the number changes with evidence; validation, authority, and
+Release-performance receipts must record sealed Swift, JavaScript-provider, overload, and
+cached-discovery measurements. The table remains a target until such a receipt is attached;
+if a target is unrealistic, the number changes with evidence. Validation, authority, and
 boundedness do not get removed to make a benchmark green.
 
 ### Observability and debugging
@@ -1154,21 +1160,24 @@ Falsification criteria:
    executor protects responsiveness, but a CPU loop cannot be safely preempted and the
    plugin shares the host address space. Production-grade untrusted plugins require a
    runtime with interrupts/memory limits or an XPC/helper-process boundary.
-2. **HIGH — current manifest identity is only a decoded name.** Stable `PluginID`,
-   collision rejection, and namespace ownership must land before open providers.
-3. **HIGH — current hot reload tears down before replacement succeeds.** Generation staging
-   and leases are prerequisites, not follow-up optimization.
-4. **MEDIUM — current coarse permissions lack path/argument scope and runtime consent.**
-   The bus must preserve the single gate while policy grows; broad grants remain broad.
-5. **MEDIUM — schema governance can become bureaucracy.** One owner, generated artifacts,
+2. **MEDIUM — coarse capability grants remain broad.** Contract, argument, network-host,
+   caller-scope, and interactive-consent checks are implemented, but a granted capability
+   is not an OS sandbox and cannot constrain arbitrary in-process JavaScript execution.
+3. **MEDIUM — schema governance can become bureaucracy.** One owner, generated artifacts,
    compatibility automation, and few broad core contracts keep the cost proportional.
-6. **MEDIUM — exact queue/payload/performance budgets are not measured yet.** The prototype
-   must benchmark them; the bounded-policy shape is settled, the constants are tunable.
-7. **MEDIUM — plugin↔plugin calls create real ecosystem coupling.** Versions, ownership,
+4. **MEDIUM — performance targets lack a durable release receipt.** Queue and payload
+   bounds are implemented and mutation-tested; the p95 targets above still require a
+   recorded Release-build benchmark on supported hardware.
+5. **MEDIUM — plugin↔plugin calls create real ecosystem coupling.** Versions, ownership,
    deprecation metadata, and conformance tests reduce it; they cannot make public contracts
    free.
-8. **LOW — chooser UX may become desirable later.** It remains an adapter over explicit
+6. **LOW — chooser UX may become desirable later.** It remains an adapter over explicit
    ambiguity, so adding it does not change kernel resolution.
+
+Resolved implementation prerequisites retained in the tests: stable installation-backed
+`PluginID`, duplicate/namespace rejection, staged hot reload, atomic generation swap,
+leases and bounded drain, declared caller uses/providers, policy confirmation, and closed
+execution lanes.
 
 ### Readiness verdict
 
@@ -1176,12 +1185,14 @@ Falsification criteria:
 implementation because its core contracts contradicted each other and omitted identity,
 lifecycle, outcome, and backpressure semantics.
 
-**HIGH:** this revised architecture is ready for the `terminal.run.v1` falsification
-prototype.
+**HIGH:** the intent kernel and its plugin, palette, CLI, and agent adapters are implemented.
+The former handwritten finite-capability and command paths are deleted and architecture
+fitness tests hold the closed inventories.
 
-**MEDIUM:** it is production-ready only after the fitness suite passes and the runtime
-isolation decision proves how synchronous runaway plugin code is terminated. A green unit
-test suite alone does not answer that.
+**MEDIUM:** the interaction model is ready for continued pre-alpha use, not for executing
+untrusted plugins as if sandboxed. Production readiness still requires a hard runtime
+isolation/termination decision and recorded release-performance evidence. A green unit test
+suite alone does not answer either question.
 
 ---
 

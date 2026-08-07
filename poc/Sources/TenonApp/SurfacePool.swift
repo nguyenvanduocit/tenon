@@ -51,8 +51,9 @@ final class SurfacePool {
     let backendName: String
     /// Builds a surface for a slot. The slot `UUID` is passed so the backend can export it as
     /// `TENON_PANE_ID`, letting an agent running inside the pane target itself over the CLI.
-    @ObservationIgnored private let makeSurface: (UUID, URL) -> TerminalSurface
+    @ObservationIgnored private let makeSurface: (UUID, UUID, URL) -> TerminalSurface
     @ObservationIgnored private var surfaces: [UUID: TerminalSurface] = [:]
+    @ObservationIgnored private var surfaceTokens: [UUID: UUID] = [:]
     /// Text aimed at a slot whose surface does not exist yet. A tab opened this very click
     /// builds its surface on the next SwiftUI render, so `terminal.run.v1` would otherwise
     /// write into nothing; the text waits here and flushes the moment the surface is built.
@@ -62,7 +63,15 @@ final class SurfacePool {
         makeSurface: @escaping (UUID, URL) -> TerminalSurface
     ) {
         self.backendName = backendName
-        self.makeSurface = makeSurface
+        self.makeSurface = { slotID, _, directory in makeSurface(slotID, directory) }
+    }
+
+    init(
+        backendName: String,
+        makeSurfaceWithIdentity: @escaping (UUID, UUID, URL) -> TerminalSurface
+    ) {
+        self.backendName = backendName
+        makeSurface = makeSurfaceWithIdentity
     }
 
     /// T-031: calling this IS the "pane became visible" signal. The shell's render path
@@ -77,7 +86,9 @@ final class SurfacePool {
         // the quit (seeded below without a surface); everything else starts in its
         // workspace. Nothing resurrects a dead process or replays history.
         let spawnDirectory = directories[slotID]?.cwd ?? workspacePath
-        let surface = makeSurface(slotID, spawnDirectory)
+        let surfaceToken = UUID()
+        let surface = makeSurface(slotID, surfaceToken, spawnDirectory)
+        surfaceTokens[slotID] = surfaceToken
         // Seed from the directory the shell is actually starting in, so a pane reports a
         // project root immediately — before any OSC 7 arrives, and even where the bundle
         // ships no shell integration to emit one.
@@ -271,6 +282,7 @@ final class SurfacePool {
     /// inventing an agent session from a title or stale transcript alone.
     func agentTerminalIdentity(for slotID: UUID) -> AgentTerminalIdentity? {
         guard let surface = surfaces[slotID],
+              let surfaceToken = surfaceTokens[slotID],
               !surface.processExited,
               let foregroundPID = surface.foregroundPID,
               foregroundPID > 0,
@@ -278,6 +290,7 @@ final class SurfacePool {
         else { return nil }
         return AgentTerminalIdentity(
             slotID: slotID,
+            surfaceToken: surfaceToken,
             foregroundPID: foregroundPID,
             cwd: cwd,
             title: titles[slotID] ?? ""
@@ -326,9 +339,16 @@ final class SurfacePool {
 
     /// Drop surfaces only when their slots leave the entire catalog. Inactive
     /// workspaces keep their shells alive.
+    ///
+    /// T-084: dropping the surface is where the pane's job tree is stopped, and the order is
+    /// deliberate — `terminate()` runs while the surface can still name its own processes, and
+    /// only then is it released. Because the removal happens in the same pass, a repeated
+    /// catalog sync cannot signal the same pane twice.
     func retainOnly(_ slotIDs: Set<UUID>) {
         for key in surfaces.keys where !slotIDs.contains(key) {
+            surfaces[key]?.terminate()
             surfaces.removeValue(forKey: key)
+            surfaceTokens.removeValue(forKey: key)
             titles.removeValue(forKey: key)
             directories.removeValue(forKey: key)
         }

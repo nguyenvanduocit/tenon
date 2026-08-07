@@ -333,6 +333,60 @@ final class AutomationSchedulerTests: XCTestCase {
         )
     }
 
+    func testPausedScheduleSkipsScheduledDeliveryButKeepsAdvancing() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        let spec = try every60()
+        let key = AutomationScheduleKey(
+            pluginID: "dev.test.a",
+            scheduleID: spec.id
+        )
+        scheduler.reconcile(
+            [snapshot(id: key.pluginID, schedules: [spec])],
+            now: t0
+        )
+        scheduler.setPausedScheduleKeys([key])
+
+        XCTAssertEqual(
+            scheduler.tick(now: t0.addingTimeInterval(60)),
+            [],
+            "a paused schedule advances without delivering"
+        )
+        XCTAssertEqual(
+            scheduler.listings().map(\.nextDue),
+            [t0.addingTimeInterval(120)]
+        )
+
+        scheduler.setPausedScheduleKeys([])
+        XCTAssertEqual(
+            scheduler.tick(now: t0.addingTimeInterval(120)).map(\.scheduledFor),
+            [t0.addingTimeInterval(120)],
+            "resume starts at the live phase and never catches up the skipped event"
+        )
+    }
+
+    func testManualFiringRemainsAvailableWhileScheduleIsPaused() throws {
+        let scheduler = AutomationScheduler(calendar: saigon)
+        let spec = try every60()
+        let key = AutomationScheduleKey(
+            pluginID: "dev.test.a",
+            scheduleID: spec.id
+        )
+        scheduler.reconcile(
+            [snapshot(id: key.pluginID, schedules: [spec])],
+            now: t0
+        )
+        scheduler.setPausedScheduleKeys([key])
+
+        XCTAssertEqual(
+            scheduler.manualFiring(
+                pluginID: key.pluginID,
+                scheduleID: key.scheduleID,
+                now: t0.addingTimeInterval(10)
+            )?.trigger,
+            .manual
+        )
+    }
+
     func testRecordedRunsSurviveReconcile() throws {
         let scheduler = AutomationScheduler(calendar: saigon)
         scheduler.reconcile(
@@ -362,21 +416,14 @@ final class AutomationSchedulerTests: XCTestCase {
             now: t0.addingTimeInterval(90)
         )
 
-        XCTAssertEqual(
-            scheduler.runHistory.records,
-            [
-                AutomationRunRecord(
-                    pluginID: "dev.test.a",
-                    scheduleID: "tick",
-                    scheduledFor: t0.addingTimeInterval(60),
-                    firedAt: t0.addingTimeInterval(61),
-                    trigger: .scheduled,
-                    late: false,
-                    delivered: true
-                ),
-            ],
-            "reconcile realigns schedules; it must never touch the run history"
-        )
+        let record = try XCTUnwrap(scheduler.runHistory.records.only)
+        XCTAssertEqual(record.pluginID, "dev.test.a")
+        XCTAssertEqual(record.scheduleID, "tick")
+        XCTAssertEqual(record.scheduledFor, t0.addingTimeInterval(60))
+        XCTAssertEqual(record.firedAt, t0.addingTimeInterval(61))
+        XCTAssertEqual(record.trigger, .scheduled)
+        XCTAssertFalse(record.late)
+        XCTAssertTrue(record.delivered)
     }
 
     // MARK: - Helpers
@@ -432,4 +479,8 @@ final class AutomationSchedulerTests: XCTestCase {
             )
         )!
     }
+}
+
+private extension Collection {
+    var only: Element? { count == 1 ? first : nil }
 }

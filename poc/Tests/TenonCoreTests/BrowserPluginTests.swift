@@ -82,45 +82,48 @@ final class BrowserPluginTests: XCTestCase {
         var snapshot = await runtime.snapshot()
         let view = try XCTUnwrap(snapshot.views.first)
         XCTAssertEqual(view.instanceID, "pane-a")
+        // The whole body is the web surface: navigation lives in the pane's ONE chrome
+        // header now, so the ~36 points the old in-body bar cost went back to the page.
+        XCTAssertEqual(view.body, .webview(surfaceID: "pane-a"))
         XCTAssertEqual(
-            view.body,
-            .vstack(
-                spacing: 0,
-                children: [
-                    .browserBar(
-                        url: "https://duckduckgo.com",
-                        placeholder: "Search or enter website"
-                    ),
-                    .webview(surfaceID: "pane-a"),
-                ]
-            )
+            view.header.leading.map(\.id),
+            ["back", "forward", "reload"],
+            "the same three navigation ids, drawn by the host from a published value"
+        )
+        XCTAssertEqual(
+            view.header.trailing,
+            [
+                .textfield(
+                    id: "go",
+                    value: "https://duckduckgo.com",
+                    placeholder: "Search or enter website",
+                    flex: true,
+                    isEnabled: true,
+                    accessibilityID: nil
+                ),
+            ]
         )
 
-        let navigated = try await runtime.invokeViewSelect(
+        // A field COMMITS rather than selects. The address arrives once, when the user says
+        // so — which is the split that keeps a redirect landing mid-typing from being
+        // indistinguishable from the address the user is still entering.
+        let navigated = try await runtime.invokeViewSubmit(
             viewID: "browser",
             instanceID: "pane-a",
             itemID: "go",
-            value: .string("example.com")
+            text: "example.com"
         )
         XCTAssertTrue(navigated)
         let navigationSettled = await eventually {
-            guard case let .vstack(_, children) = await runtime.snapshot()
-                .views.first?.body,
-                case let .browserBar(url, _) = children.first
-            else {
-                return false
-            }
-            return url == "https://example.com"
+            await Self.address(of: runtime.snapshot().views.first) == "https://example.com"
         }
         XCTAssertTrue(navigationSettled)
         snapshot = await runtime.snapshot()
-        guard case let .vstack(_, children) = snapshot.views.first?.body,
-              case let .browserBar(url, _) = children.first
-        else {
+        guard let address = Self.address(of: snapshot.views.first) else {
             _ = await runtime.shutdown()
-            return XCTFail("expected browser bar after navigation")
+            return XCTFail("expected the address field in the pane's chrome header")
         }
-        XCTAssertEqual(url, "https://example.com")
+        XCTAssertEqual(address, "https://example.com")
 
         for action in ["back", "forward", "reload"] {
             let invoked = try await runtime.invokeViewSelect(
@@ -160,6 +163,99 @@ final class BrowserPluginTests: XCTestCase {
         _ = await runtime.shutdown()
     }
 
+    /// An opener names where it wants to go before the pane it will go in exists. Without
+    /// this the browser can only ever show its home page, so nothing outside it can hand
+    /// it an address — the gap that keeps a chosen handler from being usable at all.
+    func testAnOpenerCanNameTheAddressTheNewPaneLandsOn() async throws {
+        let manifest = try loadManifest()
+        let provision = try XCTUnwrap(
+            manifest.intents.provides.first {
+                $0.name.rawValue == "dev.tenon.browser.open.v1"
+            }
+        )
+        // Optional, so the palette entry that supplies no input still opens the home page.
+        XCTAssertNil(provision.inputSchema?.objectValue?["required"])
+
+        let bridge = BrowserIntentBridge()
+        let runtime = try makeRuntime(manifest: manifest, bridge: bridge)
+        let started = try await runtime.start()
+        let intentID = try IntentID("dev.tenon.browser.open.v1")
+        let binding = try XCTUnwrap(
+            started.bindings.first { $0.intentID == intentID }
+        )
+
+        let reply = try await binding.invoke(
+            envelope: makeEnvelope(
+                intentID: intentID,
+                input: .object(["url": .string("https://tenon.dev/docs")])
+            ),
+            context: IntentProviderContext(
+                requestID: UUID(),
+                nestedSend: { request in await bridge.send(request) }
+            )
+        )
+        XCTAssertEqual(reply, .success(.object([:])))
+
+        try await runtime.openViewInstance(viewID: "browser", instanceID: "pane-a")
+
+        let landed = await eventually {
+            await bridge.topLevelRequests().contains {
+                $0.intentID.rawValue == "browser.surface.load.v1"
+                    && $0.input.objectValue?["url"]?.stringValue
+                    == "https://tenon.dev/docs"
+            }
+        }
+        XCTAssertTrue(landed, "the new pane never loaded the address it was opened for")
+
+        guard let address = Self.address(of: await runtime.snapshot().views.first) else {
+            _ = await runtime.shutdown()
+            return XCTFail("expected the address field in the pane's chrome header")
+        }
+        XCTAssertEqual(address, "https://tenon.dev/docs")
+        _ = await runtime.shutdown()
+    }
+
+    /// A refused open must not redirect the next one. The parked address is one-shot.
+    func testARefusedOpenDoesNotRedirectTheNextPane() async throws {
+        let bridge = BrowserIntentBridge(failNestedRequests: true)
+        let runtime = try makeRuntime(manifest: try loadManifest(), bridge: bridge)
+        let started = try await runtime.start()
+        let intentID = try IntentID("dev.tenon.browser.open.v1")
+        let binding = try XCTUnwrap(
+            started.bindings.first { $0.intentID == intentID }
+        )
+
+        _ = try await binding.invoke(
+            envelope: makeEnvelope(
+                intentID: intentID,
+                input: .object(["url": .string("https://tenon.dev/docs")])
+            ),
+            context: IntentProviderContext(
+                requestID: UUID(),
+                nestedSend: { request in await bridge.send(request) }
+            )
+        )
+
+        try await runtime.openViewInstance(viewID: "browser", instanceID: "pane-a")
+
+        let showedHome = await eventually {
+            await Self.address(of: runtime.snapshot().views.first)
+                == "https://duckduckgo.com"
+        }
+        XCTAssertTrue(showedHome, "a refused open leaked its address into the next pane")
+        _ = await runtime.shutdown()
+    }
+
+    /// The address this pane is showing, read off the `go` field the browser publishes into
+    /// its pane's chrome header. Looked up by id rather than by position, because where in
+    /// the strip the host ends up drawing it is the host's business.
+    private static func address(of view: PluginViewInfo?) -> String? {
+        guard case let .textfield(_, value, _, _, _, _) = view?.header.item(id: "go") else {
+            return nil
+        }
+        return value
+    }
+
     private func loadManifest() throws -> PluginManifest {
         try JSONDecoder().decode(
             PluginManifest.self,
@@ -194,16 +290,19 @@ final class BrowserPluginTests: XCTestCase {
         )
     }
 
-    private func makeEnvelope(intentID: IntentID) -> IntentEnvelope {
+    private func makeEnvelope(
+        intentID: IntentID,
+        input: IntentValue = .object([:])
+    ) -> IntentEnvelope {
         IntentEnvelope(
             requestID: UUID(),
             traceID: UUID(),
             parentRequestID: nil,
             name: intentID,
-            input: .object([:]),
+            input: input,
             caller: IntentPrincipal(
                 id: "tests",
-                kind: .palette,
+                kind: .user,
                 sessionRevision: 1
             ),
             scope: InvocationScope(),
@@ -230,6 +329,11 @@ final class BrowserPluginTests: XCTestCase {
 private actor BrowserIntentBridge {
     private var topLevel: [PluginIntentSendRequest] = []
     private var nested: [IntentProviderSendRequest] = []
+    private let failNestedRequests: Bool
+
+    init(failNestedRequests: Bool = false) {
+        self.failNestedRequests = failNestedRequests
+    }
 
     func send(_ request: PluginIntentSendRequest) -> IntentResult {
         topLevel.append(request)
@@ -238,7 +342,7 @@ private actor BrowserIntentBridge {
 
     func send(_ request: IntentProviderSendRequest) -> IntentResult {
         nested.append(request)
-        return success()
+        return failNestedRequests ? refusal() : success()
     }
 
     func topLevelRequests() -> [PluginIntentSendRequest] {
@@ -254,6 +358,20 @@ private actor BrowserIntentBridge {
             value: .object([:]),
             requestID: UUID(),
             providerID: try! ProviderID("dev.tenon.tests")
+        )
+    }
+
+    private func refusal() -> IntentResult {
+        .failure(
+            error: IntentError(
+                code: .kernel(.providerUnavailable),
+                details: nil,
+                retryable: false,
+                retryAfterMilliseconds: nil,
+                outcome: .notStarted
+            ),
+            requestID: UUID(),
+            providerID: nil
         )
     }
 }

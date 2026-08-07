@@ -5,19 +5,36 @@ var VIEW = "browser";
 var PLUGIN_ID = "dev.tenon.browser";
 var home = tenon.settings.get("homeURL") || "https://duckduckgo.com";
 var panes = {};
+// The address the next pane should land on. An opener names where it wants to go before
+// the pane exists, so the request is parked here and the first onOpen consumes it. It is
+// cleared whether the open succeeds or fails, so a refused open never redirects the next
+// one.
+var pendingAddress = null;
 
 function render(instanceID) {
   var pane = panes[instanceID];
   if (!pane) return;
+  // Back/forward/reload and the address field go in the pane's ONE chrome header, beside
+  // the pane's name. Three `iconButton`s and a flexible `textfield` are a browser toolbar,
+  // so every point of the pane below the 34-point strip belongs to the web surface.
   tenon.views.set(VIEW, {
-    body: {
-      type: "vstack",
-      spacing: 0,
-      children: [
-        { type: "browserBar", url: pane.address },
-        { type: "webview", surfaceID: instanceID }
+    header: {
+      leading: [
+        { type: "iconButton", id: "back", systemName: "chevron.left", tooltip: "Back" },
+        { type: "iconButton", id: "forward", systemName: "chevron.right", tooltip: "Forward" },
+        { type: "iconButton", id: "reload", systemName: "arrow.clockwise", tooltip: "Reload" }
+      ],
+      trailing: [
+        {
+          type: "textfield",
+          id: "go",
+          value: pane.address,
+          flex: true,
+          placeholder: "Search or enter website"
+        }
       ]
-    }
+    },
+    body: { type: "webview", surfaceID: instanceID }
   }, instanceID);
 }
 
@@ -47,7 +64,8 @@ async function navigate(instanceID, input) {
 
 tenon.views.register(VIEW, { title: "Browser", instanced: true });
 
-tenon.intents.handle("dev.tenon.browser.open.v1", async function (_, call) {
+tenon.intents.handle("dev.tenon.browser.open.v1", async function (input, call) {
+  pendingAddress = resolve(input && input.url);
   var result = await call.send("workspace.content.open.v1", {
     content: {
       kind: "plugin",
@@ -55,30 +73,36 @@ tenon.intents.handle("dev.tenon.browser.open.v1", async function (_, call) {
       viewID: VIEW
     }
   });
-  if (!result.ok) throw new Error(result.error.code);
+  if (!result.ok) {
+    pendingAddress = null;
+    throw new Error(result.error.code);
+  }
   return {};
 });
 
 tenon.views.onOpen(VIEW, async function (instanceID) {
-  panes[instanceID] = { address: home };
+  var address = pendingAddress || home;
+  pendingAddress = null;
+  panes[instanceID] = { address: address };
   render(instanceID);
   var result = await tenon.intents.send(
     "browser.surface.load.v1",
-    { surfaceID: instanceID, url: home }
+    { surfaceID: instanceID, url: address }
   );
-  if (!result.ok) tenon.log("browser: home load failed: " + result.error.code);
+  if (!result.ok) tenon.log("browser: initial load failed: " + result.error.code);
 });
 
 tenon.views.onClose(VIEW, function (instanceID) {
   delete panes[instanceID];
 });
 
-tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
-  if (action === "go") {
-    await navigate(instanceID, value);
-    return;
-  }
+// The address field is a header `textfield`, and a field COMMITS rather than selects: the
+// plugin hears the typed address once, when the user says so.
+tenon.views.onSubmit(VIEW, async function (action, text, instanceID) {
+  if (action === "go") await navigate(instanceID, text);
+});
 
+tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
   var name = null;
   if (action === "back") name = "browser.surface.back.v1";
   if (action === "forward") name = "browser.surface.forward.v1";

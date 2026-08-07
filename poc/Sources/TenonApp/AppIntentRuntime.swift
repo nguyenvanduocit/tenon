@@ -11,14 +11,19 @@ enum AppIntentRuntimeError: Error, Sendable, Equatable {
 
 /// The app composition root for the invocation kernel and its trusted core provider.
 ///
-/// Construction is synchronous so `PluginHost` can receive the one shared kernel.
-/// `start()` performs catalog compilation and atomic provider activation once, and
-/// concurrent callers join the same in-flight task.
+/// The shared kernel is prepared off `MainActor` before construction. `start()` performs
+/// catalog compilation and atomic provider activation once, and concurrent callers join
+/// the same in-flight task.
 @MainActor
 final class AppIntentRuntime {
-    static let palettePrincipal = IntentPrincipal(
-        id: "palette:tenon",
-        kind: .palette,
+    /// A person acting, now, in this window. The palette, the launcher, a rebindable
+    /// product keybinding, and any other host surface that carries an accepted gesture are
+    /// surfaces of this one principal rather than principals of their own — which is why no
+    /// separate identity has to be minted for built-in UI.
+    /// See `docs/design-open-handlers.md`.
+    static let userPrincipal = IntentPrincipal(
+        id: "user:tenon",
+        kind: .user,
         sessionRevision: 1
     )
 
@@ -39,27 +44,13 @@ final class AppIntentRuntime {
     private var lifecycleRevision: UInt64 = 0
 
     init(
-        stateRoot: URL,
+        kernel: IntentKernelComponents,
         workspaceStore: WorkspaceStore,
         terminalSurfaces: SurfacePool,
         webSurfaces: PluginWebSurfacePool,
         userInterface: PluginUIState
     ) throws {
-        try FileManager.default.createDirectory(
-            at: stateRoot,
-            withIntermediateDirectories: true
-        )
-        let persistence = try IntentSQLiteIdempotencyPersistence(
-            url: stateRoot.appendingPathComponent(
-                "intent-idempotency.sqlite3",
-                isDirectory: false
-            )
-        )
-        kernel = try IntentKernelComponents(
-            persistence: persistence,
-            confirmationAuthorizer: userInterface
-                .confirmationAuthorizer()
-        )
+        self.kernel = kernel
         self.workspaceStore = workspaceStore
         catalog = CoreIntentCatalog(components: kernel)
 
@@ -97,6 +88,30 @@ final class AppIntentRuntime {
             ).bindings()
         )
         bindings = collected
+    }
+
+    /// Opens and prepares durable kernel state away from the UI executor. The returned
+    /// components are `Sendable`; the non-Sendable SQLite connection is consumed by the
+    /// kernel's idempotency actor before this value crosses back to `MainActor`.
+    @concurrent
+    static func prepareKernel(
+        stateRoot: URL,
+        confirmationAuthorizer: IntentConfirmationAuthorizer
+    ) async throws -> IntentKernelComponents {
+        try FileManager.default.createDirectory(
+            at: stateRoot,
+            withIntermediateDirectories: true
+        )
+        let persistence = try IntentSQLiteIdempotencyPersistence(
+            url: stateRoot.appendingPathComponent(
+                "intent-idempotency.sqlite3",
+                isDirectory: false
+            )
+        )
+        return try IntentKernelComponents(
+            persistence: persistence,
+            confirmationAuthorizer: confirmationAuthorizer
+        )
     }
 
     func start() async throws {
@@ -349,6 +364,9 @@ private extension AppIntentRuntime {
             let network: NetworkGrantScope = [
                 "network",
                 "web.view",
+                // `shell.open` covers addresses as well as paths, so its grant has to
+                // carry a network scope or `url.open.v1` resolves to no authorized host.
+                "shell.open",
             ].contains(capability.rawValue) ? .all : .none
             return CapabilityGrant(
                 capability: capability,
@@ -365,5 +383,6 @@ private extension AppIntentRuntime {
             grants,
             for: Self.cliPrincipal
         )
+
     }
 }

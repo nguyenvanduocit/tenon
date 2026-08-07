@@ -6,6 +6,7 @@ import TenonCore
 /// `TenonCore` (`CommandIndex`); this shell object only holds what's on screen and
 /// records which command was picked. Frecency survives relaunch in a dot-file.
 @Observable
+@MainActor
 final class CommandPaletteState {
     var isPresented = false
     var query = ""

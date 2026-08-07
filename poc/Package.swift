@@ -117,10 +117,8 @@ let package = Package(
         // builds and ships independently of the terminal stack.
         .executableTarget(
             name: "TenonCLI",
-            dependencies: ["TenonIntentCore", "TenonCore"],
-            swiftSettings: [
-                .define("TENON_CLI_IMPORTS_CORE_MODULE"),
-            ] + warningsAsErrors
+            dependencies: ["TenonIntentCore"],
+            swiftSettings: warningsAsErrors
         ),
 
         .testTarget(

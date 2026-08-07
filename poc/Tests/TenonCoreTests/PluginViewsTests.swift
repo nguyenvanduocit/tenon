@@ -10,8 +10,12 @@ final class PluginViewsTests: XCTestCase {
             tenon.views.register("panel", { title: "Panel" });
             tenon.views.set("panel", {
               title: "Panel",
-              subtitle: "native",
-              actions: [{ id: "refresh", icon: "arrow.clockwise" }],
+              header: {
+                leading: [{ type: "label", id: "source", text: "native" }],
+                trailing: [
+                  { type: "iconButton", id: "refresh", systemName: "arrow.clockwise" }
+                ]
+              },
               body: {
                 type: "vstack",
                 spacing: 8,
@@ -28,8 +32,35 @@ final class PluginViewsTests: XCTestCase {
         let snapshot = await runtime.snapshot()
         let view = try XCTUnwrap(snapshot.views.first)
         XCTAssertEqual(view.title, "Panel")
-        XCTAssertEqual(view.subtitle, "native")
-        XCTAssertEqual(view.actions.map(\.id), ["refresh"])
+        // A view that publishes a `body` carries its header too. The pane's own chrome is
+        // where its name, its state and its controls go, so the two halves of one
+        // contribution arrive together instead of the body silently swallowing the rest.
+        XCTAssertEqual(
+            view.header.leading,
+            [
+                .label(
+                    id: "source",
+                    text: "native",
+                    weight: .regular,
+                    color: .default,
+                    truncation: .tail,
+                    tooltip: nil
+                ),
+            ]
+        )
+        XCTAssertEqual(
+            view.header.trailing,
+            [
+                .iconButton(
+                    id: "refresh",
+                    systemName: "arrow.clockwise",
+                    tint: .default,
+                    isEnabled: true,
+                    tooltip: nil,
+                    accessibilityID: nil
+                ),
+            ]
+        )
         XCTAssertEqual(
             view.body,
             .vstack(

@@ -54,9 +54,11 @@ final class RecentStoreTests: XCTestCase {
         let store = RecentStore(fileURL: file)
         store.record(.pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree"))
         store.record(.pluginView(pluginID: "dev.tenon.browser", viewID: "browser"))
+        store.record(.automation)
 
         let reloaded = RecentStore(fileURL: file)
         XCTAssertEqual(reloaded.recent, store.recent)
+        XCTAssertEqual(reloaded.recent.first, .automation)
     }
 
     func testClearEmptiesAndPersists() {

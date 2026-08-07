@@ -68,7 +68,7 @@ final class IntentEnvelopeTests: XCTestCase {
         let pairs: [(IntentPrincipal.Kind, IntentAudience)] = [
             (.core, .core),
             (.plugin, .plugin),
-            (.palette, .palette),
+            (.user, .user),
             (.cli, .cli),
             (.agent, .agent),
         ]

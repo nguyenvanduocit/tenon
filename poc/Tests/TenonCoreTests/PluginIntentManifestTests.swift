@@ -65,7 +65,7 @@ final class PluginIntentManifestTests: XCTestCase {
                   {
                     "name": "dev.tenon.git.refresh.v1",
                     "title": "Git: Refresh",
-                    "audiences": ["plugin", "palette"],
+                    "audiences": ["plugin", "user"],
                     "effects": {
                       "kind": "read",
                       "idempotency": "none",
@@ -101,7 +101,7 @@ final class PluginIntentManifestTests: XCTestCase {
         )
         XCTAssertEqual(declaration.owner, .plugin(PluginID("dev.tenon.git")))
         XCTAssertEqual(declaration.contractClass, .pluginOwned)
-        XCTAssertEqual(declaration.audiences, [.plugin, .palette])
+        XCTAssertEqual(declaration.audiences, [.plugin, .user])
         XCTAssertEqual(
             manifest.intents.provides[1].palette?.key,
             "cmd+shift+r"
@@ -251,7 +251,7 @@ final class PluginIntentManifestTests: XCTestCase {
             try decode(
                 completeContractJSON(
                     name: "dev.tenon.git.refresh.v1",
-                    audiences: ["plugin", "palette"],
+                    audiences: ["plugin", "user"],
                     palette:
                         #","palette":{"binding":"cmd+r"}"#
                 )
@@ -274,7 +274,7 @@ final class PluginIntentManifestTests: XCTestCase {
             try decode(
                 completeContractJSON(
                     name: "dev.tenon.git.refresh.v1",
-                    audiences: ["plugin", "palette"],
+                    audiences: ["plugin", "user"],
                     palette:
                         #","palette":{"shortcut":"cmd+r"}"#
                 )
@@ -295,7 +295,7 @@ final class PluginIntentManifestTests: XCTestCase {
     func testPluginProvisionAudienceBoundaryIsExactAndRejectsCore() throws {
         XCTAssertEqual(
             PluginIntentProvision.allowedAudiences,
-            [.plugin, .palette, .cli, .agent]
+            [.plugin, .user, .cli, .agent]
         )
 
         let intent = try IntentID("dev.tenon.git.refresh.v1")

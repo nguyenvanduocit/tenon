@@ -3,7 +3,11 @@ import Foundation
 public enum IntentAudience: String, Sendable, Codable, CaseIterable {
     case core
     case plugin
-    case palette
+    /// A person acting through a host surface — the palette, the launcher, a rebindable
+    /// product keybinding, a click on something the host rendered. These are surfaces of
+    /// one principal rather than a principal each, which is why built-in UI needs no
+    /// identity of its own. See `docs/design-open-handlers.md`.
+    case user
     case cli
     case agent
 }
@@ -12,7 +16,7 @@ public struct IntentPrincipal: Sendable, Equatable, Hashable, Codable {
     public enum Kind: String, Sendable, Codable, CaseIterable {
         case core
         case plugin
-        case palette
+        case user
         case cli
         case agent
     }
@@ -28,7 +32,7 @@ public struct IntentPrincipal: Sendable, Equatable, Hashable, Codable {
         switch kind {
         case .core: .core
         case .plugin: .plugin
-        case .palette: .palette
+        case .user: .user
         case .cli: .cli
         case .agent: .agent
         }

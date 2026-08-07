@@ -1,7 +1,7 @@
 import Foundation
-import TenonIntentCore
 import XCTest
 @testable import TenonCore
+@testable import TenonIntentCore
 
 /// T-048: `tenon.agents.run` — the platform `agent()` for AI-authored automations.
 ///
@@ -235,20 +235,190 @@ final class AgentsRunTests: XCTestCase {
         XCTAssertTrue(recorded.isEmpty)
     }
 
+    func testAgentsRunRejectsANonSenderArgument() async throws {
+        let bridge = ScriptedIntentBridge()
+        let result = try await runFixture(
+            bridge: bridge,
+            request: #"{ command: "claude" }"#,
+            sender: "null"
+        )
+        let thrown = try XCTUnwrap(result["threw"] as? String)
+        XCTAssertTrue(
+            thrown.contains("sender"),
+            "the error must name the sender argument: \(thrown)"
+        )
+        let recorded = await bridge.recorded
+        XCTAssertTrue(
+            recorded.isEmpty,
+            "a malformed sender must stop the composition before it opens a pane"
+        )
+    }
+
+    /// The sender is opt-in, and it MUST stay opt-in: `agents.run` called with no sender
+    /// starts a root plugin request under the ambient scope, on its own 600s budget
+    /// rather than the invoking intent's deadline. Green before and after the sender
+    /// parameter existed — this fence is what keeps the default from flipping silently.
+    func testAgentsRunWithoutASenderStillUsesTheTopLevelBridge() async throws {
+        let bridge = ScriptedIntentBridge()
+        await bridge.script("terminal.open.v1", [(try Self.openSuccess(), 0)])
+        await bridge.script("terminal.wait.v1", [(try Self.waitSuccess(met: true), 0)])
+        await bridge.script(
+            "terminal.scrollback.read.v1",
+            [(try Self.page(text: "x", cursor: nil), 0)]
+        )
+        let intentID = try IntentID("dev.tenon.agents-tests.run.v1")
+        let runtime = try makeRuntime(
+            bridge: bridge,
+            provides: [intentID],
+            source: """
+            tenon.intents.handle(
+              "\(intentID.rawValue)",
+              async function (input, call) {
+                await tenon.agents.run(
+                  { command: "echo", arguments: ["x"], timeoutMs: 6000 }
+                );
+                return {};
+              }
+            );
+            """
+        )
+        let started = try await runtime.start()
+        let binding = try XCTUnwrap(started.bindings.first { $0.intentID == intentID })
+        let recorder = NestedSendRecorder(responses: [:])
+        let envelope = makeProviderEnvelope(intentID: intentID)
+        let reply = try await binding.invoke(
+            envelope: envelope,
+            context: IntentProviderContext(
+                requestID: envelope.requestID,
+                nestedSend: { request in await recorder.response(for: request) }
+            )
+        )
+        _ = await runtime.shutdown()
+
+        let topLevel = await bridge.recorded.map(\.intentID)
+        let nested = await recorder.intentNames()
+
+        XCTAssertEqual(reply, .success(.object([:])))
+        // `agents.run` starts the wait WITHOUT awaiting it and only then writes the command,
+        // so the wait's baseline precedes the run — see PluginRuntimeBootstrap's
+        // "Opening with the command loses every short run". Those two sends are concurrent
+        // by design, and which of them reaches the bridge first is a scheduling accident.
+        // Assert the rule this test is named for — every send took the top-level path — plus
+        // the two orderings the composition really does guarantee.
+        XCTAssertEqual(
+            Set(topLevel),
+            [
+                "terminal.open.v1",
+                "terminal.wait.v1",
+                "terminal.write.v1",
+                "terminal.scrollback.read.v1",
+            ],
+            "omitting the sender must keep the run on the top-level intent path"
+        )
+        XCTAssertEqual(topLevel.count, 4, "each composed intent is sent exactly once")
+        XCTAssertEqual(
+            topLevel.first,
+            "terminal.open.v1",
+            "the pane must exist before anything is scoped to it"
+        )
+        XCTAssertEqual(
+            topLevel.last,
+            "terminal.scrollback.read.v1",
+            "the transcript is read only after the run has settled"
+        )
+        XCTAssertEqual(
+            nested,
+            [],
+            "nothing may reach the invoking call's nested channel when no sender is given"
+        )
+    }
+
+    /// Passing the invoking `call` into `agents.run` is what buys the invocation's
+    /// workspace/pane targeting, the parent deadline, causal parentage, and cancellation
+    /// linkage — none of which an options bag can carry.
+    func testAgentsRunUsesTheProvidingCallWhenGivenIt() async throws {
+        let bridge = ScriptedIntentBridge()
+        let intentID = try IntentID("dev.tenon.agents-tests.run.v1")
+        let runtime = try makeRuntime(
+            bridge: bridge,
+            provides: [intentID],
+            source: """
+            tenon.intents.handle(
+              "\(intentID.rawValue)",
+              async function (input, call) {
+                await tenon.agents.run(
+                  { command: "echo", arguments: ["x"], timeoutMs: 6000 },
+                  call
+                );
+                return {};
+              }
+            );
+            """
+        )
+        let started = try await runtime.start()
+        let binding = try XCTUnwrap(started.bindings.first { $0.intentID == intentID })
+        let recorder = NestedSendRecorder(responses: [
+            "terminal.open.v1": try Self.openSuccess(),
+            "terminal.wait.v1": try Self.waitSuccess(met: true),
+            "terminal.write.v1": .success(
+                value: .object([:]),
+                requestID: UUID(),
+                providerID: try ProviderID("dev.tenon.core")
+            ),
+            "terminal.scrollback.read.v1": try Self.page(text: "x", cursor: nil),
+        ])
+        let envelope = makeProviderEnvelope(intentID: intentID)
+        let reply = try await binding.invoke(
+            envelope: envelope,
+            context: IntentProviderContext(
+                requestID: envelope.requestID,
+                nestedSend: { request in await recorder.response(for: request) }
+            )
+        )
+        _ = await runtime.shutdown()
+
+        let nested = await recorder.intentNames()
+        let scopes = await recorder.paneScopes()
+        let topLevel = await bridge.recorded.map(\.intentID)
+
+        XCTAssertEqual(reply, .success(.object([:])))
+        XCTAssertEqual(
+            nested,
+            [
+                "terminal.open.v1",
+                "terminal.wait.v1",
+                "terminal.write.v1",
+                "terminal.scrollback.read.v1",
+            ],
+            "every step of the run must ride the invoking call's nested channel"
+        )
+        XCTAssertEqual(
+            scopes,
+            [nil, Self.paneID, Self.paneID, Self.paneID],
+            "open creates the pane; every step after it is scoped to that pane"
+        )
+        XCTAssertTrue(
+            topLevel.isEmpty,
+            "a run given a sender must send nothing as a root plugin request"
+        )
+    }
+
     // MARK: - Fixture
 
     /// Evaluates one `tenon.agents.run` call in a real runtime against the scripted
     /// bridge and decodes the JSON the fixture publishes through its status bar.
     private func runFixture(
         bridge: ScriptedIntentBridge,
-        request: String
+        request: String,
+        sender: String? = nil
     ) async throws -> [String: Any] {
+        let arguments = sender.map { "\(request), \($0)" } ?? request
         let runtime = try makeRuntime(
             bridge: bridge,
             source: """
             (async function () {
               try {
-                var result = await tenon.agents.run(\(request));
+                var result = await tenon.agents.run(\(arguments));
                 tenon.statusBar.set(JSON.stringify(result));
               } catch (error) {
                 tenon.statusBar.set(JSON.stringify({ threw: error.message }));
@@ -271,8 +441,30 @@ final class AgentsRunTests: XCTestCase {
         return try XCTUnwrap(object as? [String: Any])
     }
 
+    /// An envelope for invoking a fixture's own provider binding directly. The suite
+    /// cannot borrow `CoreCommandsPluginTests`' equivalent — that one is fileprivate.
+    private func makeProviderEnvelope(intentID: IntentID) -> IntentEnvelope {
+        IntentEnvelope(
+            requestID: UUID(),
+            traceID: UUID(),
+            parentRequestID: nil,
+            name: intentID,
+            input: .object([:]),
+            caller: IntentPrincipal(
+                id: "tests",
+                kind: .user,
+                sessionRevision: 1
+            ),
+            scope: InvocationScope(),
+            deadline: .now.advanced(by: .seconds(30)),
+            target: nil,
+            idempotencyKey: nil
+        )
+    }
+
     private func makeRuntime(
         bridge: ScriptedIntentBridge,
+        provides: [IntentID] = [],
         source: String
     ) throws -> PluginRuntime {
         let directory = FileManager.default.temporaryDirectory
@@ -295,7 +487,10 @@ final class AgentsRunTests: XCTestCase {
         let manifest = try PluginManifest(
             id: "dev.tenon.agents-tests",
             name: "agents-tests",
-            version: "1"
+            version: "1",
+            intents: PluginIntentManifest(
+                provides: provides.map { PluginIntentProvision(name: $0) }
+            )
         )
         return try PluginRuntime(
             configuration: PluginRuntimeConfiguration(
@@ -366,6 +561,42 @@ final class AgentsRunTests: XCTestCase {
             requestID: UUID(),
             providerID: nil
         )
+    }
+}
+
+/// The nested channel of one provider invocation: records every request and answers it
+/// from a keyed table. It MUST answer — an unanswered nested send leaves `agents.run`
+/// awaiting forever and hangs the whole suite.
+private actor NestedSendRecorder {
+    private var requests: [IntentProviderSendRequest] = []
+    private let responses: [String: IntentResult]
+
+    init(responses: [String: IntentResult]) {
+        self.responses = responses
+    }
+
+    func response(for request: IntentProviderSendRequest) -> IntentResult {
+        requests.append(request)
+        return responses[request.intentID.rawValue]
+            ?? .failure(
+                error: IntentError(
+                    code: .kernel(.providerUnavailable),
+                    details: nil,
+                    retryable: false,
+                    retryAfterMilliseconds: nil,
+                    outcome: .notStarted
+                ),
+                requestID: UUID(),
+                providerID: nil
+            )
+    }
+
+    func intentNames() -> [String] {
+        requests.map(\.intentID.rawValue)
+    }
+
+    func paneScopes() -> [String?] {
+        requests.map { $0.scopeOverride?.paneID?.uuidString }
     }
 }
 

@@ -77,7 +77,7 @@ precedent):
   kept without its persistence machinery).
 - Payload: `{ scheduleId, scheduledFor: ISO-8601, late: Bool, trigger }`. `late` is
   set when the firing ran more than 2 minutes behind its instant. `trigger` is
-  `"scheduled"` from the tick loop and `"manual"` from the settings surface's Run Now
+  `"scheduled"` from the tick loop and `"manual"` from the Automation Canvas view's Run Now
   (T-060) — one event, one emit site, distinguishable only by this value.
 - Reconcile rides `PluginHost.onPluginLifecycleChanged` — load, hot reload,
   enable/disable, uninstall. An unchanged spec keeps its phase across reloads; a
@@ -167,9 +167,9 @@ tenon.events.on("automation.fired", async function () {
 });
 ```
 
-`tenon.agents.run({ command, arguments?, workingDirectory?, timeoutMs? })` →
-`{ ok: true, value: { paneID, transcript } }` or `{ ok: false, error, paneID? }`.
-Semantics, each mutation-proven in `AgentsRunTests`:
+`tenon.agents.run({ command, arguments?, workingDirectory?, timeoutMs? }, sender =
+tenon.intents)` → `{ ok: true, value: { paneID, transcript } }` or
+`{ ok: false, error, paneID? }`. Semantics, each mutation-proven in `AgentsRunTests`:
 
 - **arguments are POSIX-single-quoted per token** — a prompt containing `'`, `$()`,
   or backticks can never become shell syntax in the user's PTY;
@@ -183,7 +183,12 @@ Semantics, each mutation-proven in `AgentsRunTests`:
   (default 10 min) and fails typed (`dev.tenon.agents.timeout`) without reading;
 - pages the transcript via `terminal.scrollback.read.v1` cursor-chained; a resize
   mid-walk (`invalidated`) restarts the walk once clean, twice fails typed
-  (`dev.tenon.agents.scrollback-unstable`).
+  (`dev.tenon.agents.scrollback-unstable`);
+- the optional trailing `sender` is the one sender shape every sending function uses.
+  Passing a handler's `call` scopes the run to that invocation's pane, caps the whole run
+  at that intent's deadline instead of `timeoutMs`, and cancels it with the invoking
+  command; omitting it keeps the run's own budget under the ambient scope. Anything that
+  is neither `tenon.intents` nor a handler's `call` is a `TypeError`.
 
 Manifest for such an automation declares exactly what it uses — `terminal.write`
 permission plus `uses: ["terminal.open.v1","terminal.wait.v1","terminal.scrollback.read.v1"]`
@@ -192,27 +197,55 @@ rejected packaging (a broker plugin providing `agent.run` as a plugin-owned inte
 would have executed under the broker's grants — authority laundering — and is
 recorded in T-048.
 
-## The visibility surface (T-060)
+## The operations surface (T-060, moved to Canvas)
 
-Settings ▸ Automation is where a human sees that automations exist at all — before
-it, a schedule lived only in a manifest and in its side effects.
+Automation has a host-native Canvas control center. It is operational workspace content,
+alongside Changes and Docs, rather than a settings form: a person can keep what runs next,
+what needs attention, and the exact delivery evidence visible next to the terminals they
+supervise. Settings ▸ Automation contains configuration only. Its global **Enable scheduled
+automations** preference is persisted, defaults on when an older preferences document lacks
+the field, and pauses scheduled delivery without disabling or unloading the plugins that
+declared schedules. An explicit Run Now remains a user-directed manual firing.
 
-- **Schedules**: every armed schedule of every loaded, enabled plugin — owning
-  plugin, cadence, and the live next-due instant — read DIRECT from
-  `AutomationScheduler` state (same owner, invariant 6). Zero new `tenon` members;
-  the plugin boundary is not involved in display.
+Opening the pane from an empty host-native Canvas target is same-owner **DIRECT** workspace
+placement. Its discoverable launcher/palette entry is plugin-owned presentation metadata
+(a **CONTRIBUTION**); accepting that user row invokes the finite
+`dev.tenon.core-commands.automation.open.v1` **INTENT**, whose provider delegates through
+the existing `workspace.tab.create.v1` INTENT adapter. There is no new core intent and no
+new public `tenon` member.
+
+- **Situation summary**: active schedule count, the next eligible event, schedules needing
+  attention, and an honest `delivered/attempted` ratio over the bounded recent-evidence
+  buffer. Delivered means only that a live plugin generation accepted `automation.fired`;
+  the host never calls that business success.
+- **Schedule navigator**: every manifest declaration remains visible, including declarations
+  owned by a disabled, unloaded, or failed plugin. Search and `All / Attention / Paused`
+  filters narrow a stable `(pluginID, scheduleID)` list. Selecting a row opens one inspector
+  instead of repeating all metadata in a flat log.
+- **Inspector**: cadence, live next-due instant, grace, plugin identity, exact schedule id,
+  availability reason, and the selected schedule's bounded delivery activity. This is read
+  DIRECT from `PluginHost`, `AutomationScheduler`, and `AutomationRunHistory` state (same
+  owner, invariant 6). Zero new `tenon` members; the plugin boundary is not involved in
+  display.
 - **Run Now**: mints a manual firing (`AutomationScheduler.manualFiring`) and
   delivers it through `PluginHost.automationFired`, the same single emit site the
   tick loop uses; the plugin sees the ordinary `automation.fired` with
   `trigger: "manual"`. A manual run never shifts the schedule's phase — `nextDue`
   is untouched.
+- **Pause / Resume one schedule**: a host-owned preference keyed by `(pluginID, scheduleID)`.
+  While paused, due occurrences advance without delivery, so resume never replays skipped
+  work. The manifest declaration remains visible and manual Run Now remains available.
+  The preference survives hot reload, temporary plugin disable, and app relaunch; it grants
+  no plugin authority. Owner-scoped policy epochs invalidate an in-flight batch only for the
+  changed schedule; global enablement changes still invalidate the remainder of the batch.
 - **Run history**: a bounded, newest-first buffer (`AutomationRunHistory`, capacity
   128, invariant 10) recorded at the one place firings are delivered, so history
   cannot disagree with delivery. Each row carries exactly the facts the plugin
   received — schedule, scheduled instant, trigger, lateness — plus the host-side
   delivery outcome (a live, subscribed generation took the event, or it dropped).
-  Reconcile never touches it: history survives hot reloads of the plugin it
-  describes. A deep link from a row into a per-plugin log surface waits on such a
+  Reconcile never touches it: recent evidence survives hot reloads of the plugin it
+  describes. UI copy says `Recent` rather than claiming evicted records are still part of a
+  whole-session total. A deep link from a row into a per-plugin log surface waits on such a
   surface existing.
 
 ## Recorded non-goals (follow-ups)
@@ -324,7 +357,7 @@ unique.
 
 ## Creating one with an agent (T-061)
 
-Settings ▸ Automation ▸ **Create with AI…** opens a fresh terminal tab whose shell
+Automation Canvas ▸ **Create with AI…** opens a fresh terminal tab whose shell
 starts in the writable user inventory and types one command: `claude` with a
 host-authored guide as a single POSIX-quoted argument (`AutomationAuthoring`, pure and
 pinned headless).

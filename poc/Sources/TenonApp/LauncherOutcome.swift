@@ -2,6 +2,135 @@ import Foundation
 import TenonCore
 import TenonIntentCore
 
+/// Runs a pane-filling launcher choice against the exact empty grid rectangle the user
+/// clicked. The temporary empty pane supplies the scope both `workspace.content.open.v1`
+/// and tab-creating content commands need, and is removed without reflow if the command
+/// fails or does not honor its `fillsPane` declaration.
+@MainActor
+enum EmptyGridLauncherPlacement {
+    enum Claim: Equatable {
+        case notReserved
+        case consumed
+        case invalidated
+    }
+
+    private struct ReservationKey: Hashable {
+        let paneID: UUID
+        let userGestureID: UUID
+    }
+
+    private struct Reservation {
+        let workspaceID: UUID
+        let tabID: UUID
+        let rect: GridRect
+        var wasConsumed = false
+    }
+
+    private static var reservations: [ReservationKey: Reservation] = [:]
+
+    static func invoke(
+        in store: WorkspaceStore,
+        targetRect: GridRect,
+        userGestureID: UUID = UUID(),
+        send: (InvocationScope) async -> IntentResult?
+    ) async -> LauncherOutcome {
+        let workspaceID = store.catalog.activeWorkspaceID
+        guard let tabID = store.catalog.activeTab?.id else { return .targetUnavailable }
+        let previousSlotID = store.catalog.activeSlotID
+        guard let paneID = store.addSlot(content: .empty, at: targetRect) else {
+            return .targetUnavailable
+        }
+
+        let key = ReservationKey(paneID: paneID, userGestureID: userGestureID)
+        reservations[key] = Reservation(
+            workspaceID: workspaceID,
+            tabID: tabID,
+            rect: targetRect
+        )
+        defer { reservations[key] = nil }
+
+        let result = await send(InvocationScope(
+            workspaceID: workspaceID,
+            paneID: paneID,
+            userGestureID: userGestureID
+        ))
+        let placedContent = store.catalog.slot(id: paneID)?.content
+        if placedContent != nil, placedContent != .empty {
+            return LauncherOutcome(result)
+        }
+
+        store.discardEmptySlot(paneID, restoringFocusTo: previousSlotID)
+        guard store.catalog.slot(id: paneID) == nil else { return .targetUnavailable }
+        guard case .success = result else { return LauncherOutcome(result) }
+        return .targetNotFilled
+    }
+
+    /// A pane-filling command that implements itself through `workspace.tab.create.v1`
+    /// claims the reserved pane instead of opening a tab. Correlation uses both the
+    /// pane scope and host-minted gesture identity, matching the title-bar reservation.
+    static func consumeReservedTabCreation(
+        scope: InvocationScope,
+        content: SlotContent?,
+        store: WorkspaceStore
+    ) -> Claim {
+        guard let paneID = scope.paneID,
+              let userGestureID = scope.userGestureID
+        else { return .notReserved }
+        let key = ReservationKey(paneID: paneID, userGestureID: userGestureID)
+        guard var reservation = reservations[key] else { return .notReserved }
+        guard reservation.wasConsumed == false,
+              scope.workspaceID.map({ $0 == reservation.workspaceID }) ?? true,
+              let tab = store.catalog.workspaces
+                .first(where: { $0.id == reservation.workspaceID })?
+                .tabs.first(where: { $0.id == reservation.tabID }),
+              let slot = tab.slots.first(where: { $0.id == paneID }),
+              slot.content == .empty,
+              slot.rect == reservation.rect
+        else { return .invalidated }
+
+        let resolvedContent = content ?? store.newTabContentProvider()
+        store.setSlotContent(paneID, resolvedContent)
+        guard store.catalog.slot(id: paneID)?.content == resolvedContent else {
+            return .invalidated
+        }
+        reservation.wasConsumed = true
+        reservations[key] = reservation
+        return .consumed
+    }
+
+    /// Claims `workspace.content.open.v1` without selecting the reservation's tab or
+    /// workspace. A provider may answer after the person has navigated elsewhere; pane
+    /// identity is sufficient to place the content and must not steal that newer focus.
+    static func consumeReservedContentOpen(
+        scope: InvocationScope,
+        content: SlotContent,
+        store: WorkspaceStore
+    ) -> Claim {
+        guard let paneID = scope.paneID,
+              let userGestureID = scope.userGestureID
+        else { return .notReserved }
+        let key = ReservationKey(paneID: paneID, userGestureID: userGestureID)
+        guard var reservation = reservations[key] else { return .notReserved }
+        guard reservation.wasConsumed == false,
+              scope.workspaceID.map({ $0 == reservation.workspaceID }) ?? true,
+              let tab = store.catalog.workspaces
+                .first(where: { $0.id == reservation.workspaceID })?
+                .tabs.first(where: { $0.id == reservation.tabID }),
+              let slot = tab.slots.first(where: { $0.id == paneID }),
+              slot.content == .empty,
+              slot.rect == reservation.rect
+        else { return .invalidated }
+
+        store.setSlotContent(paneID, content)
+        guard store.catalog.slot(id: paneID)?.content == content else {
+            return .invalidated
+        }
+        reservation.wasConsumed = true
+        reservations[key] = reservation
+        return .consumed
+    }
+}
+
 /// Runs a title-bar `+` choice against a fresh tab while keeping the chosen intent as
 /// the only public operation.
 ///
@@ -151,8 +280,14 @@ enum LauncherOutcome: Equatable {
     case ran
     /// The intent vanished between ranking and the click (its plugin unloaded).
     case unavailable
+    /// A detected local agent disappeared or stopped being executable before the click.
+    case agentUnavailable
     /// The provider answered with an error, reported in place; the launcher stays open.
     case failed(code: String)
+    /// The clicked grid region changed before the launcher could reserve it.
+    case targetUnavailable
+    /// A command declared itself pane-filling but completed without occupying the target.
+    case targetNotFilled
 
     init(_ result: IntentResult?) {
         switch result {
@@ -176,7 +311,10 @@ enum LauncherOutcome: Equatable {
         switch self {
         case .ran: nil
         case .unavailable: "Intent is no longer available."
+        case .agentUnavailable: "This agent is no longer available."
         case .failed(let code): code
+        case .targetUnavailable: "This space is no longer available."
+        case .targetNotFilled: "This item could not fill this space."
         }
     }
 }

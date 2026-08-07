@@ -1,155 +1,392 @@
+import AppKit
 import SwiftUI
+import TenonCore
+
+/// What the pane's renderer picker offers, as ONE value.
+///
+/// The pane itself holds two properties — which single renderer it shows, and whether it is
+/// showing both — because those are two independent facts about the same PTY. The picker is the
+/// one place a person names a *combination* of them, so the combination gets a name here rather
+/// than a second discriminator on the model. `PaneHeaderCommand.agentLensPresentation` relays
+/// this enum's raw value and nothing else, which is what keeps the built-in half typed.
+enum AgentLensPresentation: String, CaseIterable {
+    case session
+    case terminal
+    case split
+
+    /// What the pane is showing right now. Split wins over whichever single renderer was last
+    /// chosen, because it is the thing on screen.
+    init(mode: AgentLensMode, showsSplitView: Bool) {
+        if showsSplitView {
+            self = .split
+        } else {
+            self = mode == .session ? .session : .terminal
+        }
+    }
+
+    /// The single renderer this presentation asks for, or nil when it asks for both.
+    ///
+    /// Picking split deliberately leaves `mode` alone: it is still the renderer the pane
+    /// returns to when split is turned off, and overwriting it here would silently discard the
+    /// person's last answer.
+    var mode: AgentLensMode? {
+        switch self {
+        case .session: .session
+        case .terminal: .terminal
+        case .split: nil
+        }
+    }
+
+    var showsSplitView: Bool { self == .split }
+
+    /// The picker option this presentation draws as.
+    ///
+    /// Split is the one option with no word of its own — it names a layout rather than a
+    /// renderer, and "Split" beside "Session" and "Terminal" reads as a third renderer. Both
+    /// readers that an icon leaves without text are written for explicitly rather than left to
+    /// `PaneHeaderSegment`'s fallback: the pointer gets `tooltip`, VoiceOver gets
+    /// `accessibilityLabel`.
+    ///
+    /// They are deliberately not the same string. A spoken name stands in for a segment's
+    /// visible label and is bounded like one — `PaneHeaderSegment.maximumLabelLength`, 32 — so
+    /// the explanatory sentence would arrive at VoiceOver as "side by sid". The short name is
+    /// the whole name; the hover text, bounded at a tooltip's 1024, is the sentence.
+    var segment: PaneHeaderSegment? {
+        switch self {
+        case .session:
+            PaneHeaderSegment(value: rawValue, label: AgentLensMode.session.title)
+        case .terminal:
+            PaneHeaderSegment(value: rawValue, label: AgentLensMode.terminal.title)
+        case .split:
+            PaneHeaderSegment(
+                value: rawValue,
+                systemName: "rectangle.split.2x1",
+                accessibilityLabel: "Session beside Terminal",
+                tooltip: "Session and Terminal side by side"
+            )
+        }
+    }
+}
+
+/// What the Agent Lens pane contributes to the ONE chrome header its card draws.
+///
+/// Pure, and deliberately outside the view: which provider, which status, whether there is
+/// anything wrong and which renderer is showing are all decisions about the pane's own state,
+/// and once the items are chosen the drawing has no decisions left in it. Keeping the decision
+/// here is what lets it be swept headlessly, which is the fitness test `docs/tdd.md` sets for
+/// any rule that would otherwise only be checkable by looking at a window.
+enum AgentLensPaneHeader {
+    static func header(
+        isAgentDetected: Bool,
+        provider: AgentProvider?,
+        status: AgentLensStatus,
+        currentAction: String,
+        hasDiagnostics: Bool,
+        presentation: AgentLensPresentation,
+        showsInspector: Bool
+    ) -> PaneHeader {
+        // A terminal pane with no agent in it is a terminal pane. There is no provider to
+        // name, no status to report and no second renderer to offer, so it keeps the bare
+        // chrome every pane starts with — which is also the receipt that a shell pane pays
+        // nothing for a feature it is not using.
+        guard isAgentDetected else { return .empty }
+
+        var leading: [PaneHeaderItem] = [
+            // What the agent is doing right now is the one thing in this strip that is not
+            // already written on it, so it hangs off the two items that are about status.
+            .dot(id: "state", tint: tint(for: status), tooltip: currentAction),
+            .label(
+                id: "provider",
+                text: provider?.displayName ?? "Agent",
+                weight: .semibold,
+                color: .text,
+                truncation: .tail,
+                tooltip: nil
+            ),
+            .label(
+                id: "status",
+                text: status.title,
+                weight: .regular,
+                color: .muted,
+                truncation: .tail,
+                tooltip: currentAction
+            ),
+        ]
+        if hasDiagnostics {
+            leading.append(
+                .image(
+                    id: "diagnostics",
+                    systemName: "exclamationmark.triangle.fill",
+                    tint: .amber,
+                    tooltip: "Agent Lens has diagnostics"
+                )
+            )
+        }
+
+        return PaneHeader(
+            leading: leading,
+            trailing: [
+                .segmented(
+                    id: PaneHeaderCommand.agentLensPresentation.rawValue,
+                    segments: AgentLensPresentation.allCases.compactMap(\.segment),
+                    selection: presentation.rawValue,
+                    isEnabled: true,
+                    // An XCUITest anchor is host identity, not contributor data: a plugin
+                    // cannot mint one, and a host-native producer must, or the anchor the
+                    // in-body picker carried is lost in the move into chrome.
+                    accessibilityID: "tenon.agentLens.mode"
+                ),
+                .toggle(
+                    id: PaneHeaderCommand.agentLensInspector.rawValue,
+                    systemName: "sidebar.right",
+                    // The item's own CURRENT state, not the next one; the pane flips it.
+                    isOn: showsInspector,
+                    isEnabled: true,
+                    tooltip: showsInspector
+                        ? "Hide context and evidence"
+                        : "Show context and evidence",
+                    accessibilityID: nil
+                ),
+            ]
+        )
+    }
+
+    /// The status dot's colour, in the header's own token space rather than as a `Color`.
+    ///
+    /// Every other item in the strip resolves its colour through `ViewTokenPalette`, so a pane
+    /// mixing its own greens would be the one thing in the chrome able to disagree with the
+    /// rest of it about what green means.
+    ///
+    /// Running, waiting and degraded all collapse onto amber because they are all "look here"
+    /// rather than "this is over", and amber is the chrome's one attention colour. The label
+    /// beside the dot is what tells them apart.
+    private static func tint(for status: AgentLensStatus) -> ColorToken {
+        switch status {
+        case .completed: .green
+        case .failed: .red
+        case .running, .waitingForUser, .degraded: .amber
+        case .ready, .detecting, .unavailable: .muted
+        }
+    }
+}
 
 /// A semantic projection mounted in the terminal pane that owns the live PTY. Switching
 /// modes only replaces the renderer: `SurfacePool` continues to own the same surface,
 /// process, scrollback, and working directory until the workspace slot itself closes.
 struct AgentLensSlotView: View {
     let terminal: AnyView
+    let focusTerminal: @MainActor @Sendable () -> Void
     @Bindable var model: AgentLensViewModel
+    /// The workspace a written path is read against. A path only becomes a link while it
+    /// resolves to a file that is really there.
+    var workspaceRoot: URL?
+    /// Opens the file a cited path names. Agent Lens is host-native UI over the host-owned
+    /// file pane, so this is the typed workspace call, not a public boundary.
+    var openFile: (@MainActor @Sendable (String) -> Void)?
+    /// Where this pane's contribution to the card's ONE chrome header goes UP. The already
+    /// projected value comes back DOWN through `SpatialSlotCardView.configure`; this is the
+    /// other half of that loop.
+    var headerStore: PaneHeaderStore
 
     var body: some View {
         VStack(spacing: 0) {
-            if model.isAgentDetected {
-                AgentLensModeBar(
-                    provider: model.snapshot.provider,
-                    status: model.snapshot.status,
-                    mode: $model.mode,
-                    hasDiagnostics: !model.snapshot.diagnostics.isEmpty
-                )
-                Divider().overlay(TenonTheme.line)
-            }
-
-            Group {
-                if !model.isAgentDetected || model.mode == .terminal {
+            if !model.isAgentDetected {
+                terminal
+            } else if model.showsSplitView {
+                HSplitView {
+                    session
+                        .frame(minWidth: 320)
                     terminal
-                } else if model.mode == .conversation {
-                    AgentConversationView(model: model)
-                } else {
-                    AgentActivityView(snapshot: model.snapshot)
+                        .frame(minWidth: 280)
+                }
+                .accessibilityIdentifier("tenon.agentLens.splitView")
+            } else if model.mode == .terminal {
+                terminal
+            } else {
+                session
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(TenonTheme.ink)
+        // The inspector is a panel inside the body, because a `PaneHeader` is a bounded value
+        // and cannot carry an `AgentLensSnapshot`: the evidence stays where the data already
+        // is, and the toggle in the chrome only says whether the panel is open.
+        .overlay(alignment: .topTrailing) { inspector }
+        .environment(\.openURL, OpenURLAction { url in
+            // A cited file opens in the workspace; everything else keeps the system
+            // behaviour a link in prose already had.
+            guard url.isFileURL, let openFile else { return .systemAction }
+            openFile(url.path)
+            return .handled
+        })
+        .onChange(of: model.mode) { _, mode in
+            guard mode == .terminal else { return }
+            // The segmented control is the first responder when the user switches
+            // renderers. Wait until the live Ghostty view is back in the hierarchy,
+            // then return keyboard ownership to the PTY.
+            DispatchQueue.main.async(execute: focusTerminal)
+        }
+        .onChange(of: model.showsSplitView) { _, showsSplitView in
+            guard !showsSplitView, model.mode == .terminal else { return }
+            DispatchQueue.main.async(execute: focusTerminal)
+        }
+        .task {
+            model.start()
+            // The controls in the chrome report an item id; the router turns it back into a
+            // typed command and this is where the pane acts on it. `model` is what the
+            // handler closes over, and it outlives every re-root the canvas hands this view.
+            headerStore.onCommand(for: model.slotID) { [model] command, value in
+                switch command {
+                case .agentLensPresentation:
+                    guard let next = value.flatMap(AgentLensPresentation.init(rawValue:)) else {
+                        return
+                    }
+                    if let mode = next.mode { model.mode = mode }
+                    model.showsSplitView = next.showsSplitView
+                case .agentLensInspector:
+                    // Opening the panel from the chrome shows the session's own context, not
+                    // whichever timeline row was inspected last — that selection belongs to the
+                    // row that made it.
+                    model.inspection = nil
+                    model.showsInspector.toggle()
+                case .diffStyle, .changesLayout, .changesRefresh:
+                    return
                 }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            headerStore.publish(header, for: model.slotID)
         }
-        .background(TenonTheme.ink)
-        .task { model.start() }
+        // Published from `.onChange`, never from `body`: writing to an observable during a view
+        // update is what makes SwiftUI re-enter, and the store's equality guard is a backstop
+        // for that mistake rather than a licence to make it. Reading `header` here is what
+        // registers the observation that makes this fire.
+        .onChange(of: header) { _, next in
+            headerStore.publish(next, for: model.slotID)
+        }
+        .onDisappear { headerStore.clear(for: model.slotID) }
         .accessibilityIdentifier("tenon.agentLens.slot")
     }
-}
 
-private struct AgentLensModeBar: View {
-    let provider: AgentProvider?
-    let status: AgentLensStatus
-    @Binding var mode: AgentLensMode
-    let hasDiagnostics: Bool
+    /// This pane's chrome contribution for its current state.
+    private var header: PaneHeader {
+        AgentLensPaneHeader.header(
+            isAgentDetected: model.isAgentDetected,
+            provider: model.snapshot.provider,
+            status: model.snapshot.status,
+            currentAction: model.snapshot.currentActionSummary,
+            hasDiagnostics: !model.snapshot.diagnostics.isEmpty,
+            presentation: AgentLensPresentation(
+                mode: model.mode,
+                showsSplitView: model.showsSplitView
+            ),
+            showsInspector: model.showsInspector
+        )
+    }
 
-    var body: some View {
-        HStack(spacing: 8) {
-            HStack(spacing: 5) {
-                Circle()
-                    .fill(statusColor)
-                    .frame(width: 6, height: 6)
+    /// The context-and-evidence panel, layered over the pane it belongs to.
+    ///
+    /// The scrim is the panel's dismiss: a click anywhere outside it puts it away. It is drawn
+    /// rather than left clear so the body dims behind it and the panel reads as layered over
+    /// the pane instead of pasted into it.
+    @ViewBuilder private var inspector: some View {
+        if model.showsInspector {
+            ZStack(alignment: .topTrailing) {
+                Rectangle()
+                    .fill(TenonTheme.ink.opacity(0.35))
+                    .onTapGesture { model.showsInspector = false }
                     .accessibilityHidden(true)
-                Text(provider?.displayName ?? "Agent")
-                    .font(.caption.weight(.semibold))
-                Text(status.title)
-                    .font(.caption)
-                    .foregroundStyle(TenonTheme.muted)
-                if hasDiagnostics {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .font(.caption2)
-                        .foregroundStyle(.yellow)
-                        .accessibilityLabel("Agent Lens has diagnostics")
-                }
-            }
-            .accessibilityElement(children: .combine)
 
-            Spacer(minLength: 4)
-
-            Picker("Agent Lens view", selection: $mode) {
-                ForEach(AgentLensMode.allCases) { item in
-                    Text(item.title).tag(item)
-                }
+                AgentLensInspector(snapshot: model.snapshot, inspection: model.inspection)
+                    .frame(maxWidth: 420, maxHeight: .infinity)
+                    .overlay(alignment: .leading) {
+                        Divider().overlay(TenonTheme.line)
+                    }
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .frame(maxWidth: 310)
-            .accessibilityIdentifier("tenon.agentLens.mode")
         }
-        .padding(.horizontal, 10)
-        .frame(minHeight: 34)
-        .background(TenonTheme.chrome)
     }
 
-    private var statusColor: Color {
-        switch status {
-        case .ready, .completed: .green
-        case .running: TenonTheme.amber
-        case .waitingForUser: .yellow
-        case .failed: .red
-        case .degraded: .orange
-        case .detecting, .unavailable: TenonTheme.muted
+    private var session: some View {
+        AgentSessionView(
+            model: model,
+            openTerminal: openTerminal,
+            fileLinks: fileLinks
+        )
+    }
+
+    private var fileLinks: AgentFileLinks {
+        guard openFile != nil, let workspaceRoot else { return .none }
+        return AgentFileLinks(root: workspaceRoot)
+    }
+
+    private func openTerminal() {
+        model.mode = .terminal
+        if model.showsSplitView {
+            DispatchQueue.main.async(execute: focusTerminal)
         }
     }
 }
 
-private struct AgentConversationView: View {
+private struct AgentSessionView: View {
     @Bindable var model: AgentLensViewModel
+    let openTerminal: () -> Void
+    let fileLinks: AgentFileLinks
+
     @State private var isPinnedToBottom = true
     @State private var unseenUpdates = 0
     @State private var lastRevision = 0
     @FocusState private var composerFocused: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bottomID = "agent-lens-bottom"
 
     var body: some View {
         VStack(spacing: 0) {
-            transcript
+            timeline
             Divider().overlay(TenonTheme.line)
             composer
         }
         .background(TenonTheme.ink)
+        .onChange(of: model.snapshot.pendingInteraction?.id) { _, requestID in
+            guard requestID != nil else { return }
+            composerFocused = true
+        }
+        .accessibilityIdentifier("tenon.agentLens.session")
     }
 
-    private var transcript: some View {
+    private var timeline: some View {
         ScrollViewReader { proxy in
             ZStack(alignment: .bottomTrailing) {
                 ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
+                        AgentHookSetupNotice(provider: model.snapshot.provider)
+
                         if model.snapshot.earlierHistoryAvailable {
                             AgentLensNotice(
                                 icon: "clock.arrow.circlepath",
-                                text: "Showing a bounded recent window; earlier transcript history remains on disk."
+                                text: "Showing recent history. Earlier evidence remains available in the transcript."
                             )
+                            .padding(.bottom, 8)
                         }
 
-                        if model.snapshot.messages.isEmpty &&
-                            model.snapshot.tools.isEmpty &&
-                            model.snapshot.interactions.isEmpty {
+                        if model.timelineItems.isEmpty {
                             AgentLensEmptyProjection(status: model.snapshot.status)
                         }
 
-                        ForEach(model.snapshot.messages) { message in
-                            AgentMessageRow(message: message)
-                                .id(message.id)
+                        ForEach(model.timelineItems) { item in
+                            AgentTimelineRow(
+                                item: item,
+                                inspect: inspect,
+                                chooseOption: chooseOption,
+                                openTerminal: openTerminal,
+                                fileLinks: fileLinks
+                            )
+                                .id(item.id)
                         }
 
-                        ForEach(model.snapshot.tools) { tool in
-                            AgentToolRow(tool: tool)
-                                .id("tool-\(tool.id)")
-                        }
-
-                        ForEach(model.snapshot.interactions) { request in
-                            AgentInteractionRow(request: request)
-                                .id("interaction-\(request.id)")
-                        }
-
-                        ForEach(model.snapshot.diagnostics) { diagnostic in
-                            AgentDiagnosticRow(diagnostic: diagnostic)
-                                .id("diagnostic-\(diagnostic.id)")
-                        }
-
+                        // Keep the breathing room inside the target so its bottom edge is
+                        // also the real end of the scroll content. Parent bottom padding
+                        // would leave scrollTo(bottomID) one inset short of the true bottom.
                         Color.clear
-                            .frame(height: 1)
+                            .frame(height: 12)
                             .id(bottomID)
                             .onAppear {
                                 isPinnedToBottom = true
@@ -157,15 +394,20 @@ private struct AgentConversationView: View {
                             }
                             .onDisappear { isPinnedToBottom = false }
                     }
-                    .padding(14)
-                    .frame(maxWidth: 820, alignment: .leading)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 12)
+                    .frame(maxWidth: 860, alignment: .leading)
                     .frame(maxWidth: .infinity, alignment: .center)
                 }
 
                 if unseenUpdates > 0 {
                     Button {
-                        withAnimation(.easeOut(duration: 0.16)) {
+                        if reduceMotion {
                             proxy.scrollTo(bottomID, anchor: .bottom)
+                        } else {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                proxy.scrollTo(bottomID, anchor: .bottom)
+                            }
                         }
                         unseenUpdates = 0
                     } label: {
@@ -179,13 +421,19 @@ private struct AgentConversationView: View {
             }
             .onAppear {
                 lastRevision = model.snapshot.renderRevision
-                proxy.scrollTo(bottomID, anchor: .bottom)
+                DispatchQueue.main.async {
+                    proxy.scrollTo(bottomID, anchor: .bottom)
+                }
             }
             .onChange(of: model.snapshot.renderRevision) { oldRevision, newRevision in
                 guard newRevision != oldRevision, newRevision != lastRevision else { return }
                 lastRevision = newRevision
                 if isPinnedToBottom {
-                    proxy.scrollTo(bottomID, anchor: .bottom)
+                    // The revision arrives before the new row has completed layout.
+                    // Scroll on the next main-loop turn using the new bottom geometry.
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(bottomID, anchor: .bottom)
+                    }
                 } else {
                     unseenUpdates += 1
                 }
@@ -194,317 +442,660 @@ private struct AgentConversationView: View {
     }
 
     private var composer: some View {
-        HStack(alignment: .bottom, spacing: 8) {
-            TextField("Message the foreground agent", text: $model.draft, axis: .vertical)
+        VStack(alignment: .leading, spacing: 6) {
+            if let request = model.snapshot.pendingInteraction, !request.options.isEmpty {
+                ScrollView(.horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(request.options) { option in
+                            Button { chooseOption(request, option) } label: {
+                                Text(option.label).lineLimit(1)
+                            }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help(option.detail.isEmpty ? "Use this answer" : option.detail)
+                        }
+                    }
+                }
+                .scrollIndicators(.hidden)
+                .accessibilityLabel("Suggested answers")
+            }
+
+            TextField(composerPlaceholder, text: $model.draft, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...6)
                 .focused($composerFocused)
                 .padding(.horizontal, 10)
-                .padding(.vertical, 8)
-                .background(TenonTheme.panel, in: RoundedRectangle(cornerRadius: 7))
+                .padding(.vertical, 7)
+                .background(TenonTheme.panel, in: .rect(cornerRadius: 6))
                 .overlay {
-                    RoundedRectangle(cornerRadius: 7)
+                    RoundedRectangle(cornerRadius: 6)
                         .stroke(composerFocused ? TenonTheme.amber : TenonTheme.line)
                 }
-                .onSubmit {
+                .onSubmit(of: .text) {
                     guard model.canSend else { return }
                     Task { await model.sendDraft() }
                 }
-                .accessibilityHint("Input is sent only if the detected agent is still the terminal foreground process")
-
-            Button {
-                Task { await model.sendDraft() }
-            } label: {
-                if model.isSending {
-                    ProgressView().controlSize(.small)
-                } else {
-                    Image(systemName: "arrow.up")
-                }
-            }
-            .buttonStyle(.borderedProminent)
-            .controlSize(.large)
-            .disabled(!model.canSend)
-            .accessibilityLabel("Send to agent")
-            .accessibilityIdentifier("tenon.agentLens.send")
+                .onExitCommand { composerFocused = false }
+                .accessibilityHint("Input is sent only while the detected agent remains the terminal foreground process")
         }
         .padding(10)
         .background(TenonTheme.chrome)
     }
-}
 
-private struct AgentActivityView: View {
-    let snapshot: AgentLensSnapshot
-
-    var body: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if snapshot.activities.isEmpty {
-                    AgentLensEmptyProjection(status: snapshot.status)
-                        .padding(14)
-                }
-                ForEach(snapshot.activities) { activity in
-                    AgentActivityRow(activity: activity)
-                }
-            }
-            .frame(maxWidth: 820, alignment: .leading)
-            .frame(maxWidth: .infinity, alignment: .center)
+    private var composerPlaceholder: String {
+        switch model.snapshot.status {
+        case .waitingForUser: "Type your decision or answer"
+        case .running: "Add direction without leaving the session"
+        case .completed: "Send a follow-up"
+        default: "Message the foreground agent"
         }
-        .background(TenonTheme.ink)
-        .accessibilityIdentifier("tenon.agentLens.activity")
+    }
+
+    /// A timeline row raising the inspector on its own evidence. This is the second reader of
+    /// that state — the chrome toggle is the first — and it is why the two properties live on
+    /// the model rather than in this view's `@State`.
+    private func inspect(_ next: AgentLensInspection) {
+        model.inspection = next
+        model.showsInspector = true
+    }
+
+    /// The agent is showing a numbered list and reading keystrokes, so answering is sending
+    /// the key for that option. When the decision is no longer the one on screen the answer
+    /// would land somewhere else entirely, so it falls back to the composer and the person
+    /// stays in control of what gets sent.
+    private func chooseOption(_ request: AgentInteractionRequest, _ option: AgentInteractionOption) {
+        Task {
+            guard await model.answer(request, with: option) == false else { return }
+            model.draft = option.label
+            composerFocused = true
+        }
     }
 }
 
-private struct AgentMessageRow: View {
+private struct AgentTimelineRow: View {
+    let item: AgentTimelineItem
+    let inspect: (AgentLensInspection) -> Void
+    let chooseOption: (AgentInteractionRequest, AgentInteractionOption) -> Void
+    let openTerminal: () -> Void
+    let fileLinks: AgentFileLinks
+
+    @ViewBuilder var body: some View {
+        switch item.content {
+        case .message(let message):
+            AgentSpineMessageRow(
+                message: message,
+                occurredAt: item.occurredAt,
+                inspect: { inspect(.message(message)) },
+                fileLinks: fileLinks
+            )
+        case .tools(let group):
+            AgentSpineToolRow(
+                group: group,
+                occurredAt: item.occurredAt
+            )
+        case .interaction(let request):
+            AgentSpineInteractionRow(
+                request: request,
+                occurredAt: item.occurredAt,
+                inspect: { inspect(.interaction(request)) },
+                chooseOption: chooseOption,
+                openTerminal: openTerminal
+            )
+        case .diagnostic(let diagnostic):
+            AgentSpineDiagnosticRow(
+                diagnostic: diagnostic,
+                occurredAt: item.occurredAt,
+                inspect: { inspect(.diagnostic(diagnostic)) }
+            )
+        }
+    }
+}
+
+private struct AgentSpineChrome<Content: View>: View {
+    let evidence: AgentEvidence
+    let tint: Color
+    let active: Bool
+    let inspect: () -> Void
+    let content: Content
+
+    init(
+        evidence: AgentEvidence,
+        tint: Color,
+        active: Bool,
+        inspect: @escaping () -> Void,
+        @ViewBuilder content: () -> Content
+    ) {
+        self.evidence = evidence
+        self.tint = tint
+        self.active = active
+        self.inspect = inspect
+        self.content = content()
+    }
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 8) {
+            ZStack(alignment: .top) {
+                Canvas { context, size in
+                    var path = Path()
+                    path.move(to: CGPoint(x: size.width / 2, y: 0))
+                    path.addLine(to: CGPoint(x: size.width / 2, y: size.height))
+                    context.stroke(
+                        path,
+                        with: .color((active ? tint : TenonTheme.line).opacity(active ? 0.58 : 0.72)),
+                        style: StrokeStyle(lineWidth: 1, dash: active ? [2, 3] : [])
+                    )
+                }
+
+                Button(action: inspect) {
+                    ZStack {
+                        Circle()
+                            .strokeBorder(tickTint, lineWidth: 1.25)
+                            .frame(width: 8, height: 8)
+                        if evidence.authority == .observed {
+                            Circle().fill(tickTint).frame(width: 4, height: 4)
+                        }
+                    }
+                    .frame(width: 18, height: 18)
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .help(evidence.helpText)
+                .accessibilityLabel(evidence.helpText)
+            }
+            .frame(width: 18)
+            .frame(maxHeight: .infinity)
+
+            content.frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(.vertical, 5)
+    }
+
+    private var tickTint: Color {
+        evidence.freshness == .current ? tint : .orange
+    }
+}
+
+private struct AgentSpineTag: View {
+    let title: String
+    var tint = TenonTheme.muted
+
+    var body: some View {
+        Text(title.uppercased())
+            .font(TenonTheme.utilityFont(size: 9.5, weight: .semibold))
+            .tracking(0.6)
+            .foregroundStyle(tint)
+            .fixedSize()
+    }
+}
+
+private struct AgentSpineMessageRow: View {
     let message: AgentLensMessage
+    let occurredAt: Date
+    let inspect: () -> Void
+    let fileLinks: AgentFileLinks
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 6) {
-                Image(systemName: roleIcon)
-                    .foregroundStyle(roleColor)
-                    .accessibilityHidden(true)
-                Text(roleTitle)
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(roleColor)
-                if message.isStreaming {
-                    ProgressView().controlSize(.mini)
-                        .accessibilityLabel("Streaming")
-                }
-                Spacer()
-                AgentEvidenceBadge(evidence: message.evidence)
-            }
-
-            if message.role == .reasoning {
-                DisclosureGroup("Reasoning") {
-                    Text(message.text)
-                        .textSelection(.enabled)
-                        .font(.body)
-                        .foregroundStyle(TenonTheme.muted)
-                        .padding(.top, 4)
-                }
-            } else {
-                Text(message.text)
-                    .textSelection(.enabled)
-                    .font(.body)
-                    .foregroundStyle(TenonTheme.text)
-            }
-        }
-        .padding(10)
-        .background(messageBackground, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8).stroke(TenonTheme.line.opacity(0.8))
-        }
-        .accessibilityElement(children: .contain)
-    }
-
-    private var roleTitle: String {
-        switch message.role {
-        case .user: "You"
-        case .assistant: "Assistant"
-        case .reasoning: "Reasoning"
-        case .system: "System"
-        }
-    }
-
-    private var roleIcon: String {
-        switch message.role {
-        case .user: "person.fill"
-        case .assistant: "sparkles"
-        case .reasoning: "brain"
-        case .system: "info.circle"
-        }
-    }
-
-    private var roleColor: Color {
-        message.role == .user ? TenonTheme.amber : TenonTheme.muted
-    }
-
-    private var messageBackground: Color {
-        message.role == .user ? TenonTheme.amber.opacity(0.07) : TenonTheme.panel
-    }
-}
-
-private struct AgentToolRow: View {
-    let tool: AgentToolRun
     @State private var expanded = false
 
     var body: some View {
-        DisclosureGroup(isExpanded: $expanded) {
-            if !tool.detail.isEmpty {
-                Text(tool.detail)
-                    .font(.system(.caption, design: .monospaced))
-                    .foregroundStyle(TenonTheme.muted)
-                    .textSelection(.enabled)
-                    .padding(.top, 6)
-            }
-            AgentEvidenceBadge(evidence: tool.evidence)
-                .padding(.top, 4)
-        } label: {
-            HStack(spacing: 7) {
-                Image(systemName: toolIcon)
-                    .foregroundStyle(toolColor)
-                    .accessibilityHidden(true)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(tool.name).font(.caption.weight(.semibold))
-                    if !tool.summary.isEmpty {
-                        Text(tool.summary)
-                            .font(.caption)
+        AgentSpineChrome(
+            evidence: message.evidence,
+            tint: railTint,
+            active: message.isStreaming,
+            inspect: inspect
+        ) {
+            VStack(alignment: .leading, spacing: 5) {
+                HStack(spacing: 6) {
+                    AgentSpineTag(title: message.role.timelineTitle, tint: railTint)
+                    if message.role == .reasoning {
+                        Text(expanded ? "Expanded" : "Collapsed")
+                            .font(.caption2)
                             .foregroundStyle(TenonTheme.muted)
-                            .lineLimit(2)
                     }
-                }
-                Spacer()
-                Text(tool.state.rawValue.capitalized)
-                    .font(.caption2.weight(.medium))
-                    .foregroundStyle(toolColor)
-            }
-        }
-        .padding(10)
-        .background(TenonTheme.panel, in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(TenonTheme.line) }
-    }
-
-    private var toolIcon: String {
-        switch tool.state {
-        case .running: "gearshape.2"
-        case .succeeded: "checkmark.circle.fill"
-        case .failed: "xmark.circle.fill"
-        case .declined: "nosign"
-        }
-    }
-
-    private var toolColor: Color {
-        switch tool.state {
-        case .running: TenonTheme.amber
-        case .succeeded: .green
-        case .failed: .red
-        case .declined: TenonTheme.muted
-        }
-    }
-}
-
-private struct AgentInteractionRow: View {
-    let request: AgentInteractionRequest
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Label(
-                request.kind == .approval ? "Approval requested" : "Question",
-                systemImage: request.kind == .approval ? "hand.raised.fill" : "questionmark.circle.fill"
-            )
-            .font(.caption.weight(.semibold))
-            .foregroundStyle(request.state == .pending ? Color.yellow : TenonTheme.muted)
-            Text(request.title).font(.body.weight(.medium))
-            if !request.detail.isEmpty {
-                Text(request.detail)
-                    .font(.caption)
-                    .foregroundStyle(TenonTheme.muted)
-                    .textSelection(.enabled)
-            }
-            if request.state == .pending {
-                Text("Respond in Terminal")
-                    .font(.caption2.weight(.semibold))
-                    .foregroundStyle(TenonTheme.amber)
-            }
-            AgentEvidenceBadge(evidence: request.evidence)
-        }
-        .padding(10)
-        .background(Color.yellow.opacity(0.06), in: RoundedRectangle(cornerRadius: 8))
-        .overlay { RoundedRectangle(cornerRadius: 8).stroke(Color.yellow.opacity(0.35)) }
-    }
-}
-
-private struct AgentDiagnosticRow: View {
-    let diagnostic: AgentLensDiagnostic
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 7) {
-            Image(systemName: diagnostic.severity == .error
-                ? "xmark.octagon.fill"
-                : "exclamationmark.triangle.fill")
-                .foregroundStyle(diagnostic.severity == .error ? Color.red : Color.yellow)
-                .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 4) {
-                Text(diagnostic.message).font(.caption)
-                AgentEvidenceBadge(evidence: diagnostic.evidence)
-            }
-        }
-        .padding(9)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .background(TenonTheme.chrome, in: RoundedRectangle(cornerRadius: 7))
-        .accessibilityElement(children: .combine)
-    }
-}
-
-private struct AgentActivityRow: View {
-    let activity: AgentLensActivity
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 10) {
-            VStack(spacing: 0) {
-                Circle().fill(kindColor).frame(width: 8, height: 8)
-                Rectangle().fill(TenonTheme.line).frame(width: 1).frame(minHeight: 42)
-            }
-            .accessibilityHidden(true)
-
-            VStack(alignment: .leading, spacing: 3) {
-                HStack {
-                    Text(activity.title).font(.caption.weight(.semibold))
+                    if message.isStreaming {
+                        Text("LIVE")
+                            .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
+                            .foregroundStyle(TenonTheme.amber)
+                            .accessibilityLabel("Streaming")
+                    }
                     Spacer()
-                    Text(activity.occurredAt, style: .time)
-                        .font(.caption2)
+                    Text(occurredAt, style: .time)
+                        .font(TenonTheme.utilityFont(size: 9.5))
                         .foregroundStyle(TenonTheme.muted)
                 }
-                if !activity.detail.isEmpty {
-                    Text(activity.detail)
+
+                if message.role == .reasoning {
+                    reasoning
+                } else {
+                    messageBody
+                }
+            }
+            .contextMenu {
+                Button("Copy text") { copyAgentLensText(message.text) }
+                Button("Inspect evidence", action: inspect)
+            }
+        }
+        .accessibilityElement(children: .contain)
+        .accessibilityValue("\(message.evidence.authority.rawValue), \(message.isStreaming ? "streaming" : "complete")")
+    }
+
+    private var reasoning: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            Button { expanded.toggle() } label: {
+                HStack(alignment: .firstTextBaseline, spacing: 5) {
+                    Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                        .font(.caption2)
+                    Text(expanded ? "Reasoning trace" : compactPreview)
+                        .font(.caption)
+                        .lineLimit(expanded ? 1 : 2)
+                }
+                .foregroundStyle(TenonTheme.muted)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .contentShape(.rect)
+            }
+            .buttonStyle(.plain)
+            .accessibilityHint(expanded ? "Collapses reasoning" : "Expands reasoning")
+
+            if expanded {
+                AgentMarkdownText(
+                    source: message.text,
+                    textStyle: .callout,
+                    tint: TenonTheme.muted,
+                    fileLinks: fileLinks
+                )
+            }
+        }
+    }
+
+    /// A message renders whole. Length is not a reason to hide what an agent said: the
+    /// reader scrolls past what they do not need, and never has to ask for the rest.
+    private var messageBody: some View {
+        AgentMarkdownText(
+            source: message.text,
+            weight: message.role == .user ? .medium : .regular,
+            caret: message.isStreaming,
+            fileLinks: fileLinks
+        )
+    }
+
+    private var railTint: Color {
+        message.role == .user || message.isStreaming ? TenonTheme.amber : TenonTheme.muted
+    }
+
+    private var compactPreview: String {
+        message.text
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+    }
+
+}
+
+private struct AgentSpineToolRow: View {
+    let group: AgentTimelineToolGroup
+    let occurredAt: Date
+
+    var body: some View {
+        HStack(spacing: 8) {
+            ProgressView()
+                .controlSize(.small)
+                .tint(TenonTheme.amber)
+                .frame(width: 18, height: 18)
+                .accessibilityHidden(true)
+            AgentSpineTag(title: group.kind.timelineTitle, tint: TenonTheme.amber)
+            Text(group.tools.last?.name ?? group.title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TenonTheme.text)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Text("Running")
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(TenonTheme.amber)
+            Text(occurredAt, style: .time)
+                .font(TenonTheme.utilityFont(size: 9.5))
+                .foregroundStyle(TenonTheme.muted)
+        }
+        .padding(.vertical, 7)
+        .help("Open Terminal to inspect execution details")
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(group.kind.timelineTitle), \(group.tools.last?.name ?? group.title), running")
+    }
+}
+
+private struct AgentSpineInteractionRow: View {
+    let request: AgentInteractionRequest
+    let occurredAt: Date
+    let inspect: () -> Void
+    let chooseOption: (AgentInteractionRequest, AgentInteractionOption) -> Void
+    let openTerminal: () -> Void
+
+    var body: some View {
+        AgentSpineChrome(
+            evidence: request.evidence,
+            tint: request.state == .pending ? TenonTheme.amber : TenonTheme.muted,
+            active: request.state == .pending,
+            inspect: inspect
+        ) {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    AgentSpineTag(
+                        title: request.kind == .approval ? "Approval" : "Question",
+                        tint: request.state == .pending ? TenonTheme.amber : TenonTheme.muted
+                    )
+                    Text(request.state.displayTitle)
+                        .font(.caption2)
+                        .foregroundStyle(TenonTheme.muted)
+                    Spacer()
+                    Text(occurredAt, style: .time)
+                        .font(TenonTheme.utilityFont(size: 9.5))
+                        .foregroundStyle(TenonTheme.muted)
+                }
+                Text(request.title).font(.callout.weight(.medium))
+                if !request.detail.isEmpty {
+                    Text(request.detail)
                         .font(.caption)
                         .foregroundStyle(TenonTheme.muted)
                         .textSelection(.enabled)
                 }
-                AgentEvidenceBadge(evidence: activity.evidence)
+                if request.state == .pending {
+                    pendingControls
+                }
             }
-            .padding(.bottom, 10)
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 12)
+        .accessibilityElement(children: .contain)
+        .accessibilityValue("\(request.state.displayTitle), \(request.evidence.authority.rawValue)")
     }
 
-    private var kindColor: Color {
-        switch activity.kind {
-        case .lifecycle: .blue
-        case .message: TenonTheme.amber
-        case .tool: .green
-        case .interaction: .yellow
-        case .diagnostic: .orange
+    @ViewBuilder private var pendingControls: some View {
+        if request.options.isEmpty {
+            Button(request.kind == .approval ? "Review in Terminal" : "Answer in Terminal") {
+                openTerminal()
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+        } else {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(request.options) { option in
+                        Button(option.label) { chooseOption(request, option) }
+                            .buttonStyle(.bordered)
+                            .controlSize(.small)
+                            .help(option.detail.isEmpty ? "Use this answer" : option.detail)
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
         }
     }
 }
 
-private struct AgentEvidenceBadge: View {
+/// Says so when the agent's Tenon hook is not installed, and offers the one step that fixes
+/// it. Without the hook a Claude Code session still shows its transcript, but everything
+/// that happens *during* a turn — the tool running now, the question waiting now — is
+/// invisible, and that gap is the whole reason to watch a session instead of a log.
+private struct AgentHookSetupNotice: View {
+    let provider: AgentProvider?
+
+    @State private var status = AgentHookInstallStatus.shared
+    @State private var isRetrying = false
+
+    var body: some View {
+        if let reason = status.failureReason(for: provider), let provider {
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 6) {
+                    Image(systemName: "bolt.badge.clock")
+                        .foregroundStyle(.orange)
+                        .accessibilityHidden(true)
+                    Text("Live session updates are off")
+                        .font(.caption.weight(.semibold))
+                }
+                Text(
+                    """
+                    \(provider.displayName)'s Tenon hook is not installed, so this pane sees \
+                    a turn only after it ends. Reason: \(reason)
+                    """
+                )
+                .font(.caption)
+                .foregroundStyle(TenonTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
+                HStack(spacing: 8) {
+                    Button(isRetrying ? "Setting up…" : "Set up hook") {
+                        isRetrying = true
+                        status.retry(provider: provider)
+                        isRetrying = false
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                    .disabled(isRetrying || !status.canRetry(provider))
+                    Text("Restart the \(provider.displayName) session afterwards")
+                        .font(.caption2)
+                        .foregroundStyle(TenonTheme.muted)
+                }
+            }
+            .padding(10)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .background(TenonTheme.panel, in: .rect(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6).stroke(TenonTheme.line)
+            }
+            .padding(.bottom, 8)
+            .accessibilityIdentifier("tenon.agentLens.hookSetup")
+        }
+    }
+}
+
+private struct AgentSpineDiagnosticRow: View {
+    let diagnostic: AgentLensDiagnostic
+    let occurredAt: Date
+    let inspect: () -> Void
+
+    var body: some View {
+        AgentSpineChrome(
+            evidence: diagnostic.evidence,
+            tint: severityTint,
+            active: false,
+            inspect: inspect
+        ) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                AgentSpineTag(
+                    title: diagnostic.severity == .error ? "Error" : "Warning",
+                    tint: severityTint
+                )
+                Text(diagnostic.message)
+                    .font(.caption)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+                Text(occurredAt, style: .time)
+                    .font(TenonTheme.utilityFont(size: 9.5))
+                    .foregroundStyle(TenonTheme.muted)
+            }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    /// An error resolves the same red the chrome header's `.red` token resolves, so the rail in
+    /// the timeline and the dot in the strip cannot drift apart about what failure looks like.
+    private var severityTint: Color {
+        diagnostic.severity == .error
+            ? ViewTokenPalette.color(.red, style: .caption)
+            : .orange
+    }
+}
+
+func copyAgentLensText(_ value: String) {
+    let pasteboard = NSPasteboard.general
+    pasteboard.clearContents()
+    pasteboard.setString(value, forType: .string)
+}
+
+private struct AgentLensInspector: View {
+    let snapshot: AgentLensSnapshot
+    let inspection: AgentLensInspection?
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 16) {
+                if let inspection {
+                    selectedEvidence(inspection)
+                    Divider().overlay(TenonTheme.line)
+                }
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Session Context")
+                        .font(.headline)
+                    Text("Instructions shape agent behavior but stay outside the execution timeline.")
+                        .font(.caption)
+                        .foregroundStyle(TenonTheme.muted)
+                }
+
+                AgentContextOverview(messages: snapshot.contextMessages)
+
+                if snapshot.contextMessages.isEmpty {
+                    ContentUnavailableView(
+                        "No Context Messages",
+                        systemImage: "slider.horizontal.3",
+                        description: Text("No system, developer, project, or skill instructions were projected.")
+                    )
+                } else {
+                    ForEach(snapshot.contextMessages) { message in
+                        AgentContextInspectorRow(message: message)
+                    }
+                }
+            }
+            .padding(14)
+        }
+        .background(TenonTheme.chrome)
+        .accessibilityIdentifier("tenon.agentLens.inspector")
+    }
+
+    private func selectedEvidence(_ item: AgentLensInspection) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text(item.category.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(TenonTheme.amber)
+                Spacer()
+                Text(item.evidence.capturedAt, style: .time)
+                    .font(.caption2)
+                    .foregroundStyle(TenonTheme.muted)
+            }
+            Text(item.title)
+                .font(.headline)
+            if !item.detail.isEmpty {
+                Text(item.detail)
+                    .font(.caption)
+                    .foregroundStyle(TenonTheme.muted)
+                    .textSelection(.enabled)
+            }
+            AgentEvidenceDetails(evidence: item.evidence)
+        }
+    }
+}
+
+private struct AgentContextOverview: View {
+    let messages: [AgentLensMessage]
+
+    var body: some View {
+        Grid(alignment: .leading, horizontalSpacing: 18, verticalSpacing: 7) {
+            GridRow {
+                count("System", role: .system)
+                count("Developer", role: .developer)
+            }
+            GridRow {
+                count("Project", kind: .instruction, role: .user)
+                count("Skills", kind: .skill)
+            }
+        }
+        .padding(10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TenonTheme.panel, in: .rect(cornerRadius: 8))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func count(
+        _ title: String,
+        kind: AgentMessageKind? = nil,
+        role: AgentMessageRole? = nil
+    ) -> some View {
+        let value = messages.filter { message in
+            (kind == nil || message.kind == kind) && (role == nil || message.role == role)
+        }.count
+        return HStack(spacing: 6) {
+            Text("\(value)")
+                .font(.caption.monospacedDigit().weight(.semibold))
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(TenonTheme.muted)
+        }
+    }
+}
+
+private struct AgentContextInspectorRow: View {
+    let message: AgentLensMessage
+    @State private var expanded = false
+
+    var body: some View {
+        DisclosureGroup(isExpanded: $expanded) {
+            VStack(alignment: .leading, spacing: 8) {
+                Text(message.text)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                AgentEvidenceDetails(evidence: message.evidence)
+            }
+            .padding(.top, 6)
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: message.contextIcon)
+                    .font(.caption2)
+                    .foregroundStyle(TenonTheme.muted)
+                    .accessibilityHidden(true)
+                Text(message.contextTitle)
+                    .font(.caption.weight(.semibold))
+                Text("·")
+                    .foregroundStyle(TenonTheme.muted)
+                Text(message.contextSummary)
+                    .font(.caption2)
+                    .foregroundStyle(TenonTheme.muted)
+                    .lineLimit(1)
+            }
+        }
+        .padding(.vertical, 2)
+        .accessibilityHint("Expands the full context message and evidence")
+    }
+}
+
+private struct AgentEvidenceDetails: View {
     let evidence: AgentEvidence
 
     var body: some View {
-        HStack(spacing: 4) {
-            Image(systemName: evidence.authority == .observed ? "checkmark.shield" : "doc.text.magnifyingglass")
-                .accessibilityHidden(true)
+        VStack(alignment: .leading, spacing: 6) {
+            evidenceRow("Authority", evidence.authority.rawValue.capitalized)
+            evidenceRow("Source", evidence.source.displayTitle)
+            evidenceRow("Freshness", evidence.freshness.displayTitle)
+            evidenceRow("Location", evidence.location)
+            if let offset = evidence.byteOffset {
+                evidenceRow("Offset", "byte \(offset)")
+            }
+            if !evidence.fingerprint.isEmpty {
+                evidenceRow("Fingerprint", evidence.fingerprint)
+            }
+        }
+        .padding(9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TenonTheme.panel, in: .rect(cornerRadius: 7))
+    }
+
+    private func evidenceRow(_ label: String, _ value: String) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             Text(label)
-                .lineLimit(1)
+                .font(.caption2.weight(.medium))
+                .foregroundStyle(TenonTheme.muted)
+                .frame(width: 62, alignment: .leading)
+            Text(value)
+                .font(.caption2)
+                .textSelection(.enabled)
+                .lineLimit(label == "Location" ? 3 : 1)
                 .truncationMode(.middle)
         }
-        .font(.caption2)
-        .foregroundStyle(evidence.freshness == .current ? TenonTheme.muted : Color.orange)
-        .help(helpText)
-        .accessibilityLabel(helpText)
-    }
-
-    private var label: String {
-        let source = evidence.source.rawValue
-        return evidence.freshness == .current ? source : "\(source) · \(evidence.freshness.rawValue)"
-    }
-
-    private var helpText: String {
-        let offset = evidence.byteOffset.map { " at byte \($0)" } ?? ""
-        return "\(evidence.authority.rawValue.capitalized) evidence from \(evidence.location)\(offset)"
     }
 }
 
@@ -518,7 +1109,7 @@ private struct AgentLensNotice: View {
             .foregroundStyle(TenonTheme.muted)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(TenonTheme.chrome, in: RoundedRectangle(cornerRadius: 7))
+            .background(TenonTheme.chrome, in: .rect(cornerRadius: 7))
     }
 }
 
@@ -526,19 +1117,164 @@ private struct AgentLensEmptyProjection: View {
     let status: AgentLensStatus
 
     var body: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "text.bubble")
-                .font(.title2)
-                .foregroundStyle(TenonTheme.muted)
-                .accessibilityHidden(true)
-            Text(status.title).font(.headline)
-            Text("Agent Lens is waiting for semantic output. The terminal remains available at all times.")
-                .font(.caption)
-                .foregroundStyle(TenonTheme.muted)
-                .multilineTextAlignment(.center)
-        }
+        ContentUnavailableView(
+            status.title,
+            systemImage: "scope",
+            description: Text("Waiting for semantic output. The live terminal remains available at all times.")
+        )
         .frame(maxWidth: .infinity)
         .padding(24)
         .accessibilityElement(children: .combine)
+    }
+}
+
+/// One inspected fact and the evidence behind it. Held by `AgentLensViewModel` rather than by a
+/// view, because two readers raise it: a timeline row picking its own evidence, and the chrome
+/// toggle that opens the panel on the session's context.
+@MainActor
+struct AgentLensInspection: Identifiable, Equatable {
+    let id: String
+    let category: String
+    let title: String
+    let detail: String
+    let evidence: AgentEvidence
+
+    static func message(_ message: AgentLensMessage) -> Self {
+        Self(
+            id: "message-\(message.id)",
+            category: message.role.timelineTitle,
+            title: message.role.timelineTitle,
+            detail: message.text,
+            evidence: message.evidence
+        )
+    }
+
+    static func interaction(_ request: AgentInteractionRequest) -> Self {
+        Self(
+            id: "interaction-\(request.id)",
+            category: request.kind == .approval ? "Approval" : "Question",
+            title: request.title,
+            detail: request.detail,
+            evidence: request.evidence
+        )
+    }
+
+    static func diagnostic(_ diagnostic: AgentLensDiagnostic) -> Self {
+        Self(
+            id: "diagnostic-\(diagnostic.id)",
+            category: "Diagnostic",
+            title: diagnostic.severity.rawValue.capitalized,
+            detail: diagnostic.message,
+            evidence: diagnostic.evidence
+        )
+    }
+}
+
+@MainActor
+private extension AgentMessageRole {
+    var timelineTitle: String {
+        switch self {
+        case .user: "You"
+        case .assistant: "Assistant"
+        case .reasoning: "Reasoning"
+        case .system: "System"
+        case .developer: "Developer"
+        }
+    }
+
+    var timelineIcon: String {
+        switch self {
+        case .user: "person.fill"
+        case .assistant: "sparkles"
+        case .reasoning: "brain"
+        case .system: "gearshape.fill"
+        case .developer: "wrench.and.screwdriver.fill"
+        }
+    }
+
+}
+
+@MainActor
+private extension AgentToolKind {
+    var timelineTitle: String {
+        switch self {
+        case .generic: "Tool"
+        case .command: "Command"
+        case .fileChange: "File"
+        case .fileRead: "Read"
+        case .search: "Search"
+        case .webSearch: "Web"
+        case .plan: "Plan"
+        case .skill: "Skill"
+        case .subagent: "Subagent"
+        case .question: "Question"
+        }
+    }
+
+}
+
+private extension AgentInteractionState {
+    var displayTitle: String {
+        switch self {
+        case .pending: "Needs input"
+        case .answered: "Answered"
+        case .expired: "Expired"
+        }
+    }
+}
+
+private extension AgentEvidenceSource {
+    var displayTitle: String {
+        switch self {
+        case .transcript: "Transcript"
+        case .nativeProtocol: "Native protocol"
+        case .providerHook: "Provider hook"
+        case .terminalInput: "Terminal input"
+        case .terminalInference: "Terminal observation"
+        }
+    }
+}
+
+private extension AgentEvidenceFreshness {
+    var displayTitle: String {
+        switch self {
+        case .current: "Current"
+        case .stale: "Stale"
+        case .sourceMissing: "Source missing"
+        case .gap: "Incomplete"
+        }
+    }
+}
+
+private extension AgentEvidence {
+    var helpText: String {
+        let offset = byteOffset.map { " at byte \($0)" } ?? ""
+        return "\(authority.rawValue.capitalized) evidence from \(location)\(offset)"
+    }
+}
+
+@MainActor
+private extension AgentLensMessage {
+    var contextTitle: String {
+        if kind == .skill { return "Skill" }
+        if kind == .instruction, role == .user { return "Project" }
+        return role.timelineTitle
+    }
+
+    var contextIcon: String {
+        if kind == .skill { return "book.closed.fill" }
+        if kind == .instruction, role == .user { return "doc.text.fill" }
+        return role.timelineIcon
+    }
+
+    var contextSummary: String {
+        if kind == .skill { return "Injected skill catalog and workflow instructions" }
+        return switch role {
+        case .system: "System instructions"
+        case .developer: "Developer instructions"
+        case .user: "Injected AGENTS.md project instructions"
+        case .assistant: "Assistant context"
+        case .reasoning: "Reasoning context"
+        }
     }
 }

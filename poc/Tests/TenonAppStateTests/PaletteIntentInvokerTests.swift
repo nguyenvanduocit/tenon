@@ -52,14 +52,17 @@ final class PaletteIntentInvokerTests: XCTestCase {
         )
 
         let paths = try AppStatePaths.resolve(
-            environment: ["TENON_PLUGINS_DIR": inventory.path],
+            environment: [
+                "TENON_PLUGINS_DIR": inventory.path,
+                "TENON_TRUST_PLUGIN_INVENTORY": "1",
+            ],
             applicationSupportDirectory: root.appendingPathComponent(
                 "Application Support",
                 isDirectory: true
             ),
             bundledPluginsRoot: nil
         )
-        let composition = try AppComposition(paths: paths)
+        let composition = try await AppComposition.make(paths: paths)
         addTeardownBlock {
             await composition.stop()
         }
@@ -159,7 +162,7 @@ final class PaletteIntentInvokerTests: XCTestCase {
             "provides": [{
               "name": "\(intentID.rawValue)",
               "title": "Run",
-              "audiences": ["plugin", "palette"],
+              "audiences": ["plugin", "user"],
               "effects": {
                 "kind": "read",
                 "idempotency": "none",

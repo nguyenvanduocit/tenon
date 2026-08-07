@@ -35,14 +35,6 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     /// A host-owned `WKWebView` surface keyed by `surfaceID`; the plugin drives it
     /// through `browser.surface.*.v1` intents and never touches the web type.
     case webview(surfaceID: String)
-    /// A browser chrome bar — a native toolbar (back/forward/reload buttons + an
-    /// address field) the host renders pretty and consistent by default, so a plugin
-    /// gets Safari-grade chrome without hand-assembling primitives. Presentation only:
-    /// it emits the fixed action ids `back`/`forward`/`reload` (no value) and `go`
-    /// (carrying the typed address) to the view's `onSelect`, exactly like a `button`
-    /// or `textfield`. The plugin drives `browser.surface.*.v1` and owns URL
-    /// resolution; the host component remains presentation-only.
-    case browserBar(url: String, placeholder: String)
     case image(systemName: String)
     case spacer
     case divider

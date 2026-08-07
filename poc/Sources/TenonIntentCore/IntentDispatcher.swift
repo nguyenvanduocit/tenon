@@ -566,7 +566,7 @@ public actor IntentDispatcher {
         }
 
         let callerConsentRequirement: CallerConsentRequirement
-        switch contract.effects.confirmation {
+        switch Self.effectiveConfirmation(contract: contract, caller: envelope.caller) {
         case .never:
             callerConsentRequirement = .notRequired
             await telemetry.markConfirmation(
@@ -1027,6 +1027,30 @@ public actor IntentDispatcher {
             result: result,
             providerID: lease.providerID
         )
+    }
+
+    /// The confirmation a contract actually demands from this caller.
+    ///
+    /// `.policy` means standing consent: the person answers once for a caller and a
+    /// contract, and the answer is remembered. That is the right shape when the authority
+    /// being granted is the *kind* of operation — may this plugin write to the terminal.
+    /// It is the wrong shape for a delegable (`open`-class) contract asked by an agent,
+    /// because there the danger is the payload rather than the kind, and an agent's payload
+    /// can be written by whatever it just read. One approval would otherwise become
+    /// permission to open anything, forever, from any page the agent is pointed at.
+    ///
+    /// Pure, so the rule is asserted without a kernel. See `docs/design-open-handlers.md`.
+    static func effectiveConfirmation(
+        contract: IntentContract,
+        caller: IntentPrincipal
+    ) -> IntentConfirmation {
+        guard contract.effects.confirmation == .policy,
+              caller.audience == .agent,
+              contract.contractClass == .open
+        else {
+            return contract.effects.confirmation
+        }
+        return .always
     }
 
     private func resolveCallerConsent(

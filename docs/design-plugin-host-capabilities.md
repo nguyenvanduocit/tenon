@@ -71,7 +71,7 @@ currently require a sensitive capability grant. Clipboard read does not exist.
 
 Canonical operations:
 
-- `filesystem.directory.list.v1`;
+- `filesystem.directory.list.v2`;
 - `filesystem.file.read.v1`;
 - `filesystem.path.exists.v1`;
 - `filesystem.file.write.v1`;
@@ -89,6 +89,13 @@ Rules:
 - inline contents are bounded; larger bodies use resource handles;
 - filesystem work runs off `MainActor`;
 - errors use the declared domain vocabulary and never silently no-op.
+
+`filesystem.directory.list.v2` replies with `path` — the resolved absolute directory the
+host opened, which is what a caller joins child names onto — and `entries` of `{name,
+isDirectory}`. That is the whole entry by default. Sending `includeMetadata: true` adds
+`sizeBytes` and `modifiedAt` (ISO-8601 UTC) to every entry, each `null` when that entry's
+metadata could not be read; leave the flag off and the two keys are simply absent. The flag
+costs one `stat` per entry, so a caller rendering names alone should not set it.
 
 Path string manipulation is `tenon.path.*` pure DIRECT code. It provides no filesystem
 authority.
@@ -111,8 +118,15 @@ Rows and view trees are CONTRIBUTIONS:
 ```js
 tenon.views.set("tree", {
   title: "Files",
-  subtitle: repo,
-  actions: [{ id: "refresh", icon: "arrow.clockwise", tooltip: "Refresh" }],
+  header: {
+    leading: [
+      { type: "label", id: "root", text: repo, color: "muted", truncation: "head" }
+    ],
+    trailing: [
+      { type: "iconButton", id: "refresh", systemName: "arrow.clockwise",
+        tooltip: "Refresh" }
+    ]
+  },
   items: [{
     id: "opaque-row-id",
     label: "README.md",
@@ -133,6 +147,12 @@ owner-scoped contribution callbacks. The plugin then sends the appropriate canon
 `id` is opaque plugin identity. `path` is explicit drag/file metadata; the host MUST NOT
 guess that a row ID is a path.
 
+`header` is what the view says about itself — its state, its path, its controls — placed
+in the ONE chrome header its pane already draws, and is the reason a contributor needs no
+chrome bar of its own. It reaches a rows pane and a `body` pane alike; the host owns
+decoding, bounds, measurement, folding, drawing, and hit testing.
+[`design-pane-header.md`](design-pane-header.md) owns the schema and the item vocabulary.
+
 Inline edit commits use `onSubmit`; selection/menu/header actions use `onSelect`. Keeping
 the two fact shapes separate prevents typed text from being confused with an action ID.
 
@@ -140,7 +160,8 @@ the two fact shapes separate prevents typed text from being confused with an act
 
 Collected process execution uses `process.exec.v1`. Live output uses
 `tenon.process.stream`, whose bounded resource protocol defines stdout/stderr chunks,
-overflow, exit, cancellation, and generation teardown.
+overflow, exit, cancellation, and generation teardown. Its current Foundation `Process`
+backend is leader-scoped, so process-tree containment is not yet a guaranteed property.
 
 Filesystem change observation uses `tenon.fs.watch`, whose bounded resource protocol
 defines event delivery, overflow, cancellation, and generation teardown.

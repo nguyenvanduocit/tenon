@@ -13,7 +13,7 @@
   ],
   "intents": {
     "uses": [
-      "filesystem.directory.list.v1",
+      "filesystem.directory.list.v2",
       "filesystem.directory.create.v1",
       "filesystem.file.create.v1",
       "filesystem.path.move.v1",
@@ -23,6 +23,7 @@
       "clipboard.write.v1",
       "terminal.write.v1",
       "workspace.state.v1",
+      "workspace.pane.owner.v1",
       "workspace.content.open.v1",
       "workspace.pane.split.v1",
       "workspace.pane.content.set.v1"
@@ -31,16 +32,16 @@
       {
         "name": "dev.tenon.file-explorer.open.v1",
         "title": "Files: Open",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "folder", "keywords": ["files", "tree", "explorer"], "launcher": true }
+        "palette": { "category": "Open", "icon": "folder", "keywords": ["files", "tree", "explorer"], "launcher": true, "fillsPane": true }
       },
       {
         "name": "dev.tenon.file-explorer.cd-root.v1",
         "title": "Files: cd to Root",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "policy", "external": true },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -49,7 +50,7 @@
       {
         "name": "dev.tenon.file-explorer.reveal-root.v1",
         "title": "Files: Reveal Root in Finder",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "policy", "external": true },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -58,7 +59,7 @@
       {
         "name": "dev.tenon.file-explorer.refresh.v1",
         "title": "Files: Refresh",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "read", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
@@ -67,7 +68,7 @@
       {
         "name": "dev.tenon.file-explorer.collapse-all.v1",
         "title": "Files: Collapse All",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },

@@ -4,6 +4,13 @@ import TenonIntentCore
 import XCTest
 
 final class CoreIntentCatalogTests: XCTestCase {
+    /// The contracts whose handler a person may re-point, and therefore the only ones
+    /// built-in UI may reach. See `docs/design-open-handlers.md`.
+    private let openContractNames: Set<String> = [
+        "file.open.v1",
+        "url.open.v1",
+    ]
+
     func testConcurrentInstallCompilesIntoAuthoritativeKernelExactlyOnce() async throws {
         let components = try makeKernel()
         let loader = CoreIntentCatalog(components: components)
@@ -31,10 +38,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 41, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 41)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 41)
-        XCTAssertEqual(compiled.dispatchRules.count, 41)
+        XCTAssertEqual(revisions, Array(repeating: 43, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 43)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 43)
+        XCTAssertEqual(compiled.dispatchRules.count, 43)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -58,8 +65,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 41)
-        XCTAssertEqual(actualNames.count, 41)
+        XCTAssertEqual(Set(actualNames).count, 43)
+        XCTAssertEqual(actualNames.count, 43)
 
         let forbiddenFragments = [
             "tenon.",
@@ -81,11 +88,48 @@ final class CoreIntentCatalogTests: XCTestCase {
             "switchWorkspace",
         ]
         for name in actualNames {
-            XCTAssertTrue(name.hasSuffix(".v1"), name)
+            // Every contract ends in an explicit major version, and not always `.v1`:
+            // a change the same major cannot carry mints the next one instead of
+            // mutating a shape callers already bind (`docs/design-intent-bus.md`).
+            let version = name.split(separator: ".").last.map(String.init) ?? ""
+            XCTAssertTrue(
+                version.first == "v" && UInt(version.dropFirst()) != nil,
+                name
+            )
             for fragment in forbiddenFragments {
                 XCTAssertFalse(name.contains(fragment), "\(name) contains \(fragment)")
             }
         }
+    }
+
+    /// The directory listing gained a required `path` output, an `includeMetadata` input,
+    /// and `sizeBytes`/`modifiedAt` entry fields. Every one of those objects is closed, so
+    /// `docs/design-intent-bus.md` ("Add any top-level input/output field to a closed
+    /// object — same major? no") makes the change breaking, and a breaking change mints the
+    /// next major. This pins the mint: the old id must not resolve, and the new shape must
+    /// live behind the new one.
+    func testTheDirectoryListingShapeChangeMintedANewMajorInsteadOfMutatingV1() throws {
+        XCTAssertNil(CoreIntentName(rawValue: "filesystem.directory.list.v1"))
+        XCTAssertEqual(
+            CoreIntentName.filesystemDirectoryList.rawValue,
+            "filesystem.directory.list.v2"
+        )
+
+        let definition = try XCTUnwrap(
+            try CoreIntentCatalog.definitions().first {
+                $0.declaration.name.rawValue == "filesystem.directory.list.v2"
+            }
+        )
+        let input = try XCTUnwrap(definition.declaration.inputSchema.objectValue)
+        let output = try XCTUnwrap(definition.declaration.outputSchema.objectValue)
+        XCTAssertNotNil(
+            input["properties"]?.objectValue?["includeMetadata"]
+        )
+        XCTAssertNotNil(output["properties"]?.objectValue?["path"])
+        let entry = output["properties"]?.objectValue?["entries"]?
+            .objectValue?["items"]?.objectValue?["properties"]?.objectValue
+        XCTAssertNotNil(entry?["sizeBytes"])
+        XCTAssertNotNil(entry?["modifiedAt"])
     }
 
     func testEverySchemaHasTheExactTopLevelShapeAndClosedObjectBoundaries() throws {
@@ -362,6 +406,47 @@ final class CoreIntentCatalogTests: XCTestCase {
         )
     }
 
+    /// The pane→workspace edge is a question a plugin asks, not a join it re-derives from
+    /// a paginated snapshot. The contract takes exactly the pane and answers with exactly
+    /// the owner: total, unpaginated, single-valued.
+    func testWorkspacePaneOwnerContractDeclaresPaneInputAndOwnerOutput()
+        async throws
+    {
+        let compiled = try await CoreIntentCatalog(
+            components: makeKernel()
+        ).install()
+        let owner = try contract(.workspacePaneOwner, in: compiled)
+
+        let paneID = UUID()
+        let workspaceID = UUID()
+        let tabID = UUID()
+
+        XCTAssertTrue(
+            try owner.validateInput(
+                .object(["paneID": .string(paneID.uuidString)])
+            ).isValid
+        )
+        XCTAssertFalse(try owner.validateInput(.object([:])).isValid)
+
+        XCTAssertTrue(
+            try owner.validateOutput(
+                .object([
+                    "workspaceID": .string(workspaceID.uuidString),
+                    "workspacePath": .string("/repo"),
+                    "tabID": .string(tabID.uuidString),
+                ])
+            ).isValid
+        )
+        XCTAssertFalse(
+            try owner.validateOutput(
+                .object([
+                    "workspaceID": .string(workspaceID.uuidString),
+                    "tabID": .string(tabID.uuidString),
+                ])
+            ).isValid
+        )
+    }
+
     func testWorkspaceContractsMatchPagedSnapshotAndTypedDiffShapes()
         async throws
     {
@@ -458,6 +543,43 @@ final class CoreIntentCatalogTests: XCTestCase {
                     "activeWorkspaceID": .string(workspaceID.uuidString),
                     "activePaneID": .null,
                     "workspaces": .array([]),
+                ])
+            ).isValid
+        )
+
+        XCTAssertTrue(
+            try state.validateOutput(
+                .object([
+                    "snapshotID": .string(snapshotID.uuidString),
+                    "activeWorkspaceID": .string(workspaceID.uuidString),
+                    "activePaneID": .string(gitPaneID.uuidString),
+                    "nodes": .array([
+                        .object([
+                            "kind": .string("pane"),
+                            "id": .string(gitPaneID.uuidString),
+                            "tabID": .string(tabID.uuidString),
+                            "content": .object([
+                                "kind": .string("automation")
+                            ]),
+                            "frame": .object([
+                                "x": .integer(0),
+                                "y": .integer(0),
+                                "width": .integer(1),
+                                "height": .integer(1),
+                            ]),
+                        ]),
+                    ]),
+                    "nextCursor": .null,
+                ])
+            ).isValid
+        )
+
+        XCTAssertTrue(
+            try createTab.validateInput(
+                .object([
+                    "content": .object([
+                        "kind": .string("automation")
+                    ])
                 ])
             ).isValid
         )
@@ -641,7 +763,7 @@ final class CoreIntentCatalogTests: XCTestCase {
                 )
             }
 
-            if contract.name.rawValue == CoreIntentName.fileOpen.rawValue {
+            if openContractNames.contains(contract.name.rawValue) {
                 XCTAssertEqual(contract.contractClass, .open)
                 XCTAssertFalse(rule.allowsAutomaticSelection)
                 XCTAssertEqual(rule.providerConsent, .nonTrustedProvider)
@@ -652,12 +774,23 @@ final class CoreIntentCatalogTests: XCTestCase {
             }
         }
 
-        XCTAssertEqual(CoreIntentName.allCases.count, 41)
+        // The exact open inventory. Every entry here is a contract whose handler a person
+        // may re-point and which built-in UI may therefore reach, so growing this set is a
+        // reviewed decision rather than an edit.
+        XCTAssertEqual(
+            Set(
+                definitions
+                    .filter { $0.declaration.contractClass == .open }
+                    .map(\.declaration.name.rawValue)
+            ),
+            openContractNames
+        )
+
+        XCTAssertEqual(CoreIntentName.allCases.count, 43)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
-                try definition(name, in: definitions)
-                    .declaration.audiences,
+                try definition(name, in: definitions).declaration.audiences,
                 name.audienceProfile.audiences,
                 name.rawValue
             )
@@ -695,11 +828,12 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .filesystemPathMove,
                 .filesystemPathTrash,
             ],
-            .system: [.fileReveal, .fileOpen, .clipboardWrite],
+            .system: [.fileReveal, .fileOpen, .urlOpen, .clipboardWrite],
             .process: [.processExec],
             .network: [.networkFetch],
             .workspace: [
                 .workspaceState,
+                .workspacePaneOwner,
                 .workspaceTabCreate,
                 .workspacePaneSplit,
                 .workspacePaneFocus,
@@ -779,10 +913,10 @@ private extension CoreIntentCatalogTests {
     func expectedSchemaShapes() -> [CoreIntentName: SchemaShape] {
         [
             .filesystemDirectoryList: SchemaShape(
-                ["path", "cursor", "limit"],
+                ["path", "cursor", "limit", "includeMetadata"],
                 required: ["path"],
-                output: ["entries", "nextCursor"],
-                requiredOutput: ["entries", "nextCursor"]
+                output: ["entries", "nextCursor", "path"],
+                requiredOutput: ["entries", "nextCursor", "path"]
             ),
             .filesystemFileRead: SchemaShape(
                 ["path", "cursor"],
@@ -835,6 +969,12 @@ private extension CoreIntentCatalogTests {
             .fileOpen: SchemaShape(
                 ["path"],
                 required: ["path"],
+                output: [],
+                requiredOutput: []
+            ),
+            .urlOpen: SchemaShape(
+                ["url"],
+                required: ["url"],
                 output: [],
                 requiredOutput: []
             ),
@@ -996,6 +1136,12 @@ private extension CoreIntentCatalogTests {
                     "nextCursor",
                 ]
             ),
+            .workspacePaneOwner: SchemaShape(
+                ["paneID"],
+                required: ["paneID"],
+                output: ["workspaceID", "workspacePath", "tabID"],
+                requiredOutput: ["workspaceID", "workspacePath", "tabID"]
+            ),
             .workspaceTabCreate: SchemaShape(
                 ["content"],
                 required: [],
@@ -1053,6 +1199,7 @@ private extension CoreIntentCatalogTests {
             .filesystemPathTrash: ["filesystem.write"],
             .fileReveal: ["shell.open"],
             .fileOpen: ["shell.open"],
+            .urlOpen: ["shell.open"],
             .clipboardWrite: [],
             .processExec: ["process.exec"],
             .terminalWrite: ["terminal.write"],
@@ -1073,6 +1220,7 @@ private extension CoreIntentCatalogTests {
             .secretsSet: ["secrets"],
             .secretsDelete: ["secrets"],
             .workspaceState: [],
+            .workspacePaneOwner: [],
             .workspaceTabCreate: ["workspace.control"],
             .workspacePaneSplit: ["workspace.control"],
             .workspacePaneFocus: ["workspace.control"],

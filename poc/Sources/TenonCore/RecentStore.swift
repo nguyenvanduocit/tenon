@@ -11,10 +11,20 @@ public final class RecentStore {
     private let limit: Int
     public private(set) var recent: [SlotContent]
 
-    public init(fileURL: URL, limit: Int = 6) {
+    public init(
+        fileURL: URL,
+        limit: Int = 6,
+        preloaded: [SlotContent]? = nil
+    ) {
         self.fileURL = fileURL
         self.limit = limit
-        self.recent = RecentStore.read(from: fileURL)
+        self.recent = preloaded ?? RecentStore.read(from: fileURL)
+    }
+
+    /// Launch-time read seam. The app calls this from its concurrent preparation phase,
+    /// then constructs the UI-owned store from the immutable result.
+    package static func load(from fileURL: URL) -> [SlotContent] {
+        read(from: fileURL)
     }
 
     /// Move `content` to the front (deduping by value), drop the empty placeholder,
@@ -64,6 +74,8 @@ public final class RecentStore {
             return ["type": "changes"]
         case .docs:
             return ["type": "docs"]
+        case .automation:
+            return ["type": "automation"]
         case .pluginView(let pluginID, let viewID):
             return [
                 "type": "pluginView",
@@ -87,6 +99,8 @@ public final class RecentStore {
             return .changes
         case "docs":
             return .docs
+        case "automation":
+            return .automation
         case "pluginView":
             guard let rawPluginID = row["pluginID"],
                   let pluginID = try? PluginID(rawPluginID),

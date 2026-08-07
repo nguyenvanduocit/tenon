@@ -14,6 +14,7 @@ public struct Command: Sendable, Equatable, Identifiable {
     public let key: KeyChord?      // assigned binding; nil commands remain palette-only
     public let when: String?       // visibility predicate; nil = always visible
     public let isLauncher: Bool    // a creation verb → offered by the tab strip's `+`
+    public let fillsPane: Bool     // can occupy a pane designated by launcher scope
 
     public init(
         id: String,
@@ -24,7 +25,8 @@ public struct Command: Sendable, Equatable, Identifiable {
         keywords: [String] = [],
         key: KeyChord? = nil,
         when: String? = nil,
-        isLauncher: Bool = false
+        isLauncher: Bool = false,
+        fillsPane: Bool = false
     ) {
         self.id = id
         self.title = title
@@ -35,6 +37,7 @@ public struct Command: Sendable, Equatable, Identifiable {
         self.key = key
         self.when = when
         self.isLauncher = isLauncher
+        self.fillsPane = fillsPane
     }
 }
 
@@ -95,6 +98,13 @@ public struct CommandIndex: Sendable, Equatable {
     /// narrower set, not a second ordering.
     public var launcherOnly: CommandIndex {
         CommandIndex(commands.filter(\.isLauncher))
+    }
+
+    /// The subset valid when the launcher click already designated an empty pane region.
+    /// `fillsPane` is manifest-owned presentation metadata; this projection does not
+    /// hard-code plugin IDs or infer behavior from titles.
+    public var paneFillersOnly: CommandIndex {
+        CommandIndex(commands.filter { $0.isLauncher && $0.fillsPane })
     }
 
     /// Rank commands for `query`. Empty query → visible commands by frecency then

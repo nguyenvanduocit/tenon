@@ -1,5 +1,15 @@
 import Foundation
 
+/// The host-owned trust provenance persisted with an installation identity.
+///
+/// Changing class is an installation boundary, not a hot reload: the old identity may
+/// carry standing consent and durable plugin data that code from the other class must not
+/// inherit.
+public enum PluginInventoryTrust: String, Sendable, Codable {
+    case explicitEnablement
+    case bundledStandingConsent
+}
+
 /// One place plugins are loaded from, and what the host trusts things found there with
 /// (T-062).
 ///
@@ -19,15 +29,21 @@ public struct PluginInventory: Sendable {
     /// Whether newly authored plugins may be written here. False for the app bundle:
     /// a write there breaks the seal and is erased by the next install.
     public let isWritable: Bool
+    /// Whether discovery may execute a plugin that has no durable installation decision yet.
+    /// Writable, user-authored inventories set this to false because in-process
+    /// JavaScriptCore is an execution boundary, not a hard process sandbox.
+    public let enablesNewPluginsByDefault: Bool
 
     public init(
         root: URL,
         authorization: PluginHostAuthorization,
-        isWritable: Bool
+        isWritable: Bool,
+        enablesNewPluginsByDefault: Bool = true
     ) {
         self.root = root
         self.authorization = authorization
         self.isWritable = isWritable
+        self.enablesNewPluginsByDefault = enablesNewPluginsByDefault
     }
 }
 

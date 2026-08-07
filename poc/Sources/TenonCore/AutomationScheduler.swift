@@ -9,8 +9,9 @@ import TenonIntentCore
 /// assertable without a window or a real clock. Firings are delivered by the caller as
 /// the owner-scoped EVENT `automation.fired` (`PluginHost.automationFired`).
 ///
-/// T-060 adds the visibility half: `listings` for the settings surface, `manualFiring`
-/// for Run now, and a bounded `runHistory` recorded at the same edge that delivers.
+/// T-060 adds the visibility half: `listings` for the Automation Canvas operations pane,
+/// `manualFiring` for Run now, and a bounded `runHistory` recorded at the same edge that
+/// delivers.
 @MainActor
 @Observable
 public final class AutomationScheduler {
@@ -33,9 +34,9 @@ public final class AutomationScheduler {
         public let trigger: Trigger
     }
 
-    /// One row of the settings surface: a schedule that is currently armed, with the
-    /// instant it will next fire. Pure projection of scheduler state — the UI renders
-    /// this DIRECT, no plugin boundary is crossed.
+    /// One row of the Automation Canvas operations pane: a schedule that is currently
+    /// armed, with the instant it will next fire. Pure projection of scheduler state —
+    /// the UI renders this DIRECT, no plugin boundary is crossed.
     public struct ScheduleListing: Sendable, Equatable {
         public let pluginID: PluginID
         public let spec: AutomationScheduleSpec
@@ -58,8 +59,23 @@ public final class AutomationScheduler {
     private var entries: [Key: Entry] = [:]
     private let calendar: Calendar
 
+    /// Host preference overlay for manifest schedules. Pausing never removes the
+    /// declaration or shifts manual Run Now; scheduled ticks simply advance without
+    /// producing a firing, preventing a catch-up burst after resume.
+    public private(set) var pausedScheduleKeys: Set<AutomationScheduleKey> = []
+
     public init(calendar: Calendar = .current) {
         self.calendar = calendar
+    }
+
+    public func setPausedScheduleKeys(_ keys: Set<AutomationScheduleKey>) {
+        pausedScheduleKeys = keys
+    }
+
+    public func isPaused(pluginID: PluginID, scheduleID: String) -> Bool {
+        pausedScheduleKeys.contains(
+            AutomationScheduleKey(pluginID: pluginID, scheduleID: scheduleID)
+        )
     }
 
     /// Aligns the schedule table with the currently active plugins. An unchanged spec
@@ -111,7 +127,12 @@ public final class AutomationScheduler {
                 latest = next
             }
             let lateBy = now.timeIntervalSince(latest)
-            if lateBy <= entry.spec.grace {
+            let scheduleKey = AutomationScheduleKey(
+                pluginID: key.pluginID,
+                scheduleID: key.scheduleID
+            )
+            if lateBy <= entry.spec.grace,
+               !pausedScheduleKeys.contains(scheduleKey) {
                 firings.append(
                     Firing(
                         pluginID: key.pluginID,

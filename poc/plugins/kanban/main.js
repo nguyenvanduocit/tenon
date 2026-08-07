@@ -190,15 +190,13 @@ var MAX_READ_RESTARTS = 3;
 // Resolves to { text } on success, { missing: true } when the path does not exist, and
 // { reason } for every other failure. The distinction keeps the pane honest: only a
 // missing file may render as "No board"; anything else names what actually went wrong.
-async function readFile(path, call) {
+async function readFile(path, call = tenon.intents) {
   for (var attempt = 0; attempt < MAX_READ_RESTARTS; attempt++) {
     var text = "";
     var input = { path: path };
     var invalidated = false;
     for (var page = 0; page < MAX_PAGES; page++) {
-      var result = call
-        ? await call.send("filesystem.file.read.v1", input)
-        : await tenon.intents.send("filesystem.file.read.v1", input);
+      var result = await call.send("filesystem.file.read.v1", input);
       if (!result.ok) return readFailure(result);
       var value = result.value || {};
       if (value.invalidated) {
@@ -225,27 +223,14 @@ function readFailure(result) {
   return { reason: String(reason || error.code || "unknown") };
 }
 
-async function owningWorkspace(instanceID, call) {
-  var result = call
-    ? await call.send("workspace.state.v1", { limit: 256 })
-    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
+// The workspace that owns a pane, resolved by the host.
+async function owningWorkspace(instanceID, call = tenon.intents) {
+  var result = await call.send("workspace.pane.owner.v1", { paneID: instanceID });
   if (!result.ok) return { id: null, path: "" };
-  var nodes = result.value.nodes || [];
-  var workspacePaths = {};
-  var tabWorkspace = {};
-  var paneTab = null;
-  for (var i = 0; i < nodes.length; i++) {
-    var node = nodes[i];
-    if (node.kind === "workspace") workspacePaths[node.id] = node.path || "";
-    if (node.kind === "tab") tabWorkspace[node.id] = node.workspaceID;
-    if (node.kind === "pane" && node.id === instanceID) paneTab = node.tabID;
-  }
-  var workspaceId = paneTab ? tabWorkspace[paneTab] : null;
-  if (!workspaceId) return { id: null, path: "" };
-  return { id: workspaceId, path: workspacePaths[workspaceId] || "" };
+  return { id: result.value.workspaceID, path: result.value.workspacePath };
 }
 
-async function refresh(st, call) {
+async function refresh(st, call = tenon.intents) {
   if (!st.boardPath) return;
   st.generation += 1;
   var generation = st.generation;
@@ -487,9 +472,22 @@ function render(st) {
       children: [{ type: "hstack", spacing: 12, children: columns }]
     });
   }
+  // Which board this pane is showing goes in the pane's own chrome, beside its name. A
+  // body publishing this used to say it into a void — nothing drew a view's metadata once
+  // it had a `body` — so this is the first time the path is actually visible.
   var specification = {
     title: "Kanban",
-    subtitle: st.boardPath,
+    header: {
+      leading: [
+        {
+          type: "label",
+          id: "board",
+          text: st.boardPath,
+          color: "muted",
+          truncation: "head"
+        }
+      ]
+    },
     body: { type: "vstack", spacing: 10, children: children }
   };
   // The sheet is part of this view's published state: set it to open, omit it to close.

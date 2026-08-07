@@ -49,7 +49,11 @@ enum TenonTheme {
     // to a stub the pointer has to hunt for; the title's own cap keeps the ceiling.
     static let tabMinWidth: CGFloat = 140
     static let statusBarHeight: CGFloat = 24
-    static let slotHeaderHeight: CGFloat = 31
+    // The one chrome header every pane draws. 34 leaves 24 points inside the header's
+    // 5-point insets — enough for a `.controlSize(.small)` segmented picker to sit clear
+    // of the 6-point north resize edge, which is what lets a pane's controls live here
+    // instead of in a second row inside its body.
+    static let slotHeaderHeight: CGFloat = 34
     static let slotGutter: CGFloat = 8
     static let slotCornerRadius: CGFloat = 7
 

@@ -473,6 +473,7 @@ private extension UserInteractionIntentProvider {
 /// Renders the presented interactive intent plus any live toasts.
 struct PluginUIOverlay: View {
     @Bindable var state: PluginUIState
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var inputFocused: Bool
 
     var body: some View {
@@ -586,12 +587,17 @@ struct PluginUIOverlay: View {
                             Array(matches.enumerated()),
                             id: \.element.id
                         ) { index, item in
-                            pickRow(
-                                item,
-                                isSelected: index == selected
+                            Button { state.choose(item.id) } label: {
+                                pickRow(
+                                    item,
+                                    isSelected: index == selected
+                                )
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .accessibilityAddTraits(
+                                index == selected ? .isSelected : []
                             )
-                            .contentShape(Rectangle())
-                            .onTapGesture { state.choose(item.id) }
                             .accessibilityIdentifier(
                                 "tenon.ui.pick.row.\(item.id)"
                             )
@@ -847,8 +853,9 @@ struct PluginUIOverlay: View {
                 .shadow(color: .black.opacity(0.35), radius: 12, y: 4)
                 .frame(maxWidth: 380, alignment: .trailing)
                 .transition(
-                    .move(edge: .trailing)
-                        .combined(with: .opacity)
+                    reduceMotion
+                        ? .opacity
+                        : .move(edge: .trailing).combined(with: .opacity)
                 )
             }
         }
@@ -857,7 +864,7 @@ struct PluginUIOverlay: View {
             .bottom,
             TenonTheme.statusBarHeight + 16
         )
-        .animation(.easeOut(duration: 0.18), value: state.toasts)
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: state.toasts)
     }
 
     private func icon(for kind: IntentToastKind) -> String {

@@ -9,6 +9,249 @@ import XCTest
 /// split beside it when there is none, and never open a tab.
 @MainActor
 final class WorkspaceIntentProviderTests: XCTestCase {
+    func testAutomationContentRoundTripsThroughPublicWorkspaceIntents() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+        let paneID = try XCTUnwrap(store.catalog.activeSlotID)
+        let automation: IntentValue = .object([
+            "kind": .string("automation")
+        ])
+
+        _ = try successReply(
+            await invoke(
+                .workspacePaneContentSet,
+                input: .object(["content": automation]),
+                paneID: paneID,
+                bindings: bindings
+            )
+        )
+        XCTAssertEqual(store.catalog.slot(id: paneID)?.content, .automation)
+
+        let snapshot = try successReply(
+            await invoke(
+                .workspaceState,
+                input: .object([:]),
+                paneID: paneID,
+                bindings: bindings
+            )
+        )
+        guard case let .object(document) = snapshot,
+              case let .array(nodes)? = document["nodes"]
+        else {
+            return XCTFail("workspace state must return a nodes array")
+        }
+        XCTAssertTrue(nodes.contains { node in
+            guard case let .object(fields) = node,
+                  fields["kind"] == .string("pane"),
+                  fields["id"] == .string(paneID.uuidString)
+            else {
+                return false
+            }
+            return fields["content"] == automation
+        })
+    }
+
+    /// A pane's owner is a property of the pane. Resolving it must not consult the
+    /// selection, so a pane in a workspace nobody is looking at answers the same as one in
+    /// the selected workspace.
+    func testPaneOwnerResolvesForAPaneInAnUnselectedWorkspace() async throws {
+        var catalog = WorkspaceCatalog()
+        catalog.addWorkspace(name: "First", path: URL(fileURLWithPath: "/first"))
+        catalog.addWorkspace(name: "Second", path: URL(fileURLWithPath: "/second"))
+        let first = try XCTUnwrap(catalog.workspaces.first)
+        let second = try XCTUnwrap(catalog.workspaces.last)
+        catalog.selectWorkspace(first.id)
+        let store = WorkspaceStore(catalog: catalog)
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        let secondTab = try XCTUnwrap(second.tabs.first)
+        let unselectedPaneID = try XCTUnwrap(secondTab.slots.first?.id)
+        XCTAssertNotEqual(store.catalog.activeWorkspaceID, second.id)
+
+        let owner = try successReply(
+            await invoke(
+                .workspacePaneOwner,
+                input: .object(["paneID": .string(unselectedPaneID.uuidString)]),
+                paneID: unselectedPaneID,
+                bindings: bindings
+            )
+        )
+        XCTAssertEqual(
+            owner,
+            .object([
+                "workspaceID": .string(second.id.uuidString),
+                "workspacePath": .string("/second"),
+                "tabID": .string(secondTab.id.uuidString),
+            ])
+        )
+    }
+
+    /// The paginated snapshot answers "what is the catalog shaped like"; it cannot answer
+    /// "who owns this pane" past its first page, because the owning nodes simply are not in
+    /// the page. The edge contract is total, so it answers anyway.
+    func testPaneOwnerResolvesAPaneBeyondTheFirstSnapshotPage() async throws {
+        var catalog = WorkspaceCatalog()
+        for index in 0 ..< 90 {
+            catalog.addWorkspace(
+                name: "W\(index)",
+                path: URL(fileURLWithPath: "/w\(index)")
+            )
+        }
+        let first = try XCTUnwrap(catalog.workspaces.first)
+        catalog.selectWorkspace(first.id)
+        let store = WorkspaceStore(catalog: catalog)
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        let last = try XCTUnwrap(catalog.workspaces.last)
+        let lastTab = try XCTUnwrap(last.tabs.first)
+        let farPaneID = try XCTUnwrap(lastTab.slots.first?.id)
+
+        let snapshot = try successReply(
+            await invoke(
+                .workspaceState,
+                input: .object(["limit": .integer(256)]),
+                paneID: farPaneID,
+                bindings: bindings
+            )
+        )
+        guard case let .object(document) = snapshot,
+              case let .array(nodes)? = document["nodes"]
+        else {
+            return XCTFail("workspace state must return a nodes array")
+        }
+        XCTAssertFalse(
+            nodes.contains { node in
+                guard case let .object(fields) = node else { return false }
+                return fields["id"] == .string(farPaneID.uuidString)
+            },
+            "the fixture must be big enough that the far pane falls off page one"
+        )
+
+        let owner = try successReply(
+            await invoke(
+                .workspacePaneOwner,
+                input: .object(["paneID": .string(farPaneID.uuidString)]),
+                paneID: farPaneID,
+                bindings: bindings
+            )
+        )
+        XCTAssertEqual(
+            owner,
+            .object([
+                "workspaceID": .string(last.id.uuidString),
+                "workspacePath": .string("/w89"),
+                "tabID": .string(lastTab.id.uuidString),
+            ])
+        )
+    }
+
+    func testInvalidatedEmptyGridReservationDoesNotFallThroughToCreatingATab() async throws {
+        let fixture = makeHalfCanvasStore()
+        let bindings = try WorkspaceIntentProvider(store: fixture.store).bindings()
+        let tabCount = try XCTUnwrap(fixture.store.catalog.activeWorkspace?.tabs.count)
+
+        _ = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ) { scope in
+            fixture.store.discardEmptySlot(
+                try! XCTUnwrap(scope.paneID),
+                restoringFocusTo: fixture.originalPaneID
+            )
+            let reply = try! await self.invoke(
+                .workspaceTabCreate,
+                input: .object([
+                    "content": .object(["kind": .string("docs")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            )
+            guard case .failure = reply else {
+                XCTFail("an invalidated fill reservation must fail closed")
+                return self.intentSuccess()
+            }
+            return self.intentSuccess()
+        }
+
+        XCTAssertEqual(fixture.store.catalog.activeWorkspace?.tabs.count, tabCount)
+        XCTAssertFalse(
+            fixture.store.catalog.activeWorkspace?.tabs
+                .flatMap(\.slots)
+                .contains { $0.content == .docs } ?? false
+        )
+    }
+
+    func testEmptyGridContentPlacementPreservesNewerWorkspaceNavigation() async throws {
+        let fixture = makeHalfCanvasStore()
+        let bindings = try WorkspaceIntentProvider(store: fixture.store).bindings()
+        let sourceWorkspaceID = fixture.store.catalog.activeWorkspaceID
+        fixture.store.addWorkspace(
+            name: "Other",
+            path: FileManager.default.temporaryDirectory,
+            content: .terminal
+        )
+        let newerWorkspaceID = fixture.store.catalog.activeWorkspaceID
+        fixture.store.selectWorkspace(sourceWorkspaceID)
+        let target = GridRect(x: 6, y: 0, width: 6, height: 12)
+
+        let outcome = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: target
+        ) { scope in
+            fixture.store.selectWorkspace(newerWorkspaceID)
+            let reply = try! await self.invoke(
+                .workspaceContentOpen,
+                input: .object([
+                    "content": .object(["kind": .string("docs")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            )
+            guard case .success = reply else { return nil }
+            return self.intentSuccess()
+        }
+
+        XCTAssertEqual(outcome, .ran)
+        XCTAssertEqual(fixture.store.catalog.activeWorkspaceID, newerWorkspaceID)
+        let source = try XCTUnwrap(
+            fixture.store.catalog.workspaces.first { $0.id == sourceWorkspaceID }
+        )
+        XCTAssertTrue(source.tabs.flatMap(\.slots).contains {
+            $0.rect == target && $0.content == .docs
+        })
+    }
+
+    func testInvalidatedEmptyGridReservationDoesNotFallThroughToContentPlacement() async throws {
+        let fixture = makeHalfCanvasStore()
+        let bindings = try WorkspaceIntentProvider(store: fixture.store).bindings()
+
+        _ = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ) { scope in
+            fixture.store.discardEmptySlot(
+                try! XCTUnwrap(scope.paneID),
+                restoringFocusTo: fixture.originalPaneID
+            )
+            let reply = try! await self.invoke(
+                .workspaceContentOpen,
+                input: .object([
+                    "content": .object(["kind": .string("docs")])
+                ]),
+                scope: scope,
+                bindings: bindings
+            )
+            guard case .failure = reply else {
+                XCTFail("an invalidated fill reservation must not use ordinary placement")
+                return self.intentSuccess()
+            }
+            return self.intentSuccess()
+        }
+
+        XCTAssertEqual(fixture.store.catalog.activeTab?.slots.count, 1)
+        XCTAssertEqual(fixture.store.catalog.activeTab?.slots.first?.content, .terminal)
+    }
+
     func testTabCreationConsumesTheTitleBarPlusReservation() async throws {
         let store = WorkspaceStore()
         let bindings = try WorkspaceIntentProvider(store: store).bindings()
@@ -260,6 +503,31 @@ final class WorkspaceIntentProviderTests: XCTestCase {
 }
 
 private extension WorkspaceIntentProviderTests {
+    func makeHalfCanvasStore() -> (store: WorkspaceStore, originalPaneID: UUID) {
+        let originalPaneID = UUID()
+        let tab = Tab(
+            slots: [WorkspaceSlot(
+                id: originalPaneID,
+                rect: GridRect(x: 0, y: 0, width: 6, height: 12),
+                content: .terminal
+            )],
+            activeSlotID: originalPaneID
+        )
+        let workspace = Workspace(
+            name: "Test",
+            path: FileManager.default.temporaryDirectory,
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        return (
+            WorkspaceStore(catalog: WorkspaceCatalog(
+                workspaces: [workspace],
+                activeWorkspaceID: workspace.id
+            )),
+            originalPaneID
+        )
+    }
+
     func intentSuccess() -> IntentResult {
         .success(
             value: .object([:]),

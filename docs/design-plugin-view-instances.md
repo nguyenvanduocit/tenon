@@ -77,8 +77,9 @@ Instanced behavior:
 
 An instanced view whose content depends on a workspace — a file tree's root, a git panel's
 repository, a sessions list's project — binds that content to the workspace that OWNS its
-pane, never to the globally selected workspace. The owner is resolved through the public
-`workspace.state.v1` snapshot (pane → tab → workspace); events that carry `workspaceId`
+pane, never to the globally selected workspace. The owner is one question with one answer,
+so a view asks for it: `workspace.pane.owner.v1` takes the pane and returns
+`{workspaceID, workspacePath, tabID}`, total and unpaginated. Events that carry `workspaceId`
 (`workspace.slot-focused`) are filtered per instance against that owner. Switching the
 selection therefore mutates no inactive workspace's view, and returning to a workspace
 restores exactly the state it had (`WorkspaceScopedViewStateTests`).

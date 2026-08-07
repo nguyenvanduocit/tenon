@@ -413,9 +413,36 @@ enum SystemNetworkEndpointResolver {
                 }
                 return isPublicIPv4(mappedIPv4)
             }
+            // Deprecated IPv4-compatible addresses and both NAT64 prefixes can smuggle
+            // an otherwise denied IPv4 endpoint through an IPv6 spelling.
+            if bytes.prefix(12).allSatisfy({ $0 == 0 }) { return false }
+            if bytes[0] == 0x00, bytes[1] == 0x64,
+               bytes[2] == 0xFF, bytes[3] == 0x9B,
+               bytes[4...11].allSatisfy({ $0 == 0 })
+            {
+                let translated = bytes[12...15].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+                return isPublicIPv4(translated)
+            }
+            if bytes[0] == 0x00, bytes[1] == 0x64,
+               bytes[2] == 0xFF, bytes[3] == 0x9B,
+               bytes[4] == 0x00, bytes[5] == 0x01
+            { return false }
             if bytes[0] & 0xFE == 0xFC { return false }
             if bytes[0] == 0xFE, bytes[1] & 0xC0 == 0x80 { return false }
             if bytes[0] == 0xFF { return false }
+            // Accept only global-unicast space, then remove IANA special-purpose ranges
+            // that sit inside 2000::/3.
+            guard bytes[0] & 0xE0 == 0x20 else { return false }
+            if bytes[0] == 0x20, bytes[1] == 0x01 {
+                if bytes[2] == 0x00 { return false } // Teredo and protocol assignments
+                if bytes[2] == 0x00, bytes[3] == 0x02 { return false }
+                if bytes[2] == 0x0D, bytes[3] == 0xB8 { return false } // documentation
+                if bytes[2] & 0xF0 == 0x10 || bytes[2] & 0xF0 == 0x20 { return false } // ORCHID
+            }
+            if bytes[0] == 0x20, bytes[1] == 0x02 {
+                let embedded = bytes[2...5].reduce(UInt32(0)) { ($0 << 8) | UInt32($1) }
+                return isPublicIPv4(embedded)
+            }
             return true
         }
         return false
@@ -425,11 +452,16 @@ enum SystemNetworkEndpointResolver {
         !(
             value >> 24 == 0
                 || value >> 24 == 10
+                || value >> 22 == 0x0191 // 100.64.0.0/10 shared address space
                 || value >> 24 == 127
                 || value >> 16 == 0xA9FE
                 || value >> 20 == 0xAC1
+                || value >> 24 == 192 && value >> 8 == 0xC00000
+                || value >> 24 == 192 && value >> 8 == 0xC00002
                 || value >> 16 == 0xC0A8
-                || value >> 22 == 0x0191
+                || value & 0xFFFE0000 == 0xC6120000 // 198.18.0.0/15 benchmarking
+                || value >> 8 == 0xC63364 // 198.51.100.0/24 documentation
+                || value >> 8 == 0xCB0071 // 203.0.113.0/24 documentation
                 || value >> 24 >= 224
         )
     }

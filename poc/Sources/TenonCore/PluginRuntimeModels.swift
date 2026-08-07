@@ -70,23 +70,10 @@ public struct PluginRowItem: Sendable, Equatable, Identifiable {
     }
 }
 
-/// A native action in a plugin view's header strip.
-public struct ViewAction: Sendable, Equatable, Identifiable {
-    public let id: String
-    public let icon: String
-    public let tooltip: String?
-
-    public init(id: String, icon: String, tooltip: String? = nil) {
-        self.id = id
-        self.icon = icon
-        self.tooltip = tooltip
-    }
-}
-
 /// A view's modal presentation: the same node vocabulary, shown over the whole shell
 /// instead of inside the pane.
 ///
-/// Presentation only, exactly like `browserBar`. The plugin owns whether a modal exists
+/// Presentation only, exactly like `header`. The plugin owns whether a modal exists
 /// — it publishes one by setting this and takes it away by clearing it — and the host
 /// owns how it looks and how it is dismissed. Escape, the backdrop, and the close control
 /// all deliver `dismissAction` back through the view's `onSelect`, so the host never
@@ -114,8 +101,13 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
     public let instanceID: String?
     public let instanced: Bool
     public let title: String
-    public let subtitle: String?
-    public let actions: [ViewAction]
+    /// What this view puts in the ONE chrome header its pane draws.
+    ///
+    /// It rides the view contribution rather than living in a host-side store, which is what
+    /// makes a retired generation's chrome disappear with its contributions instead of needing
+    /// to be swept (invariant 10). A view that publishes no `header` key publishes `.empty`,
+    /// which is the bare chrome every pane starts with.
+    public let header: PaneHeader
     public let items: [PluginRowItem]
     public let body: PluginViewNode?
     public let modal: PluginViewModal?
@@ -129,18 +121,16 @@ public struct PluginViewInfo: Sendable, Equatable, Identifiable {
         instanceID: String?,
         instanced: Bool,
         title: String,
-        subtitle: String?,
-        actions: [ViewAction],
         items: [PluginRowItem],
         body: PluginViewNode?,
+        header: PaneHeader = .empty,
         modal: PluginViewModal? = nil
     ) {
         self.viewID = viewID
         self.instanceID = instanceID
         self.instanced = instanced
         self.title = title
-        self.subtitle = subtitle
-        self.actions = actions
+        self.header = header
         self.items = items
         self.body = body
         self.modal = modal

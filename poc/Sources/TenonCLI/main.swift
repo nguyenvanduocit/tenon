@@ -1,10 +1,6 @@
 import Foundation
 import TenonIntentCore
 
-#if TENON_CLI_IMPORTS_CORE_MODULE
-import TenonCore
-#endif
-
 private let terminalWaitMaximumMilliseconds = 55_000
 
 private func requestID() -> String {

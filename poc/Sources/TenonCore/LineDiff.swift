@@ -35,6 +35,10 @@ public struct DiffHunk: Equatable, Sendable {
     }
 }
 
+public enum LineDiffError: Error, Equatable, Sendable {
+    case tooComplex
+}
+
 /// Pure line-level diff via Myers' O(ND) shortest-edit-script algorithm — the same
 /// core git and most diff tools use. No AppKit/SwiftUI (Invariant 3): the whole
 /// rule is a value transform, asserted in `LineDiffTests` without a window.
@@ -64,7 +68,41 @@ public enum LineDiff {
     /// each change; runs of unchanged lines longer than that collapse away, and
     /// changes closer than `2 * context` merge into one hunk.
     public static func hunks(old: String, new: String, context: Int = 3) -> [DiffHunk] {
-        let all = lines(old: old, new: new)
+        makeHunks(from: lines(old: old, new: new), context: context)
+    }
+
+    /// Production-facing bounded form. The normal Myers result is exact, but retaining
+    /// its backtracking frontiers is quadratic in a worst-case edit. Refuse that shape
+    /// before allocating it so contract-valid hostile input has a deterministic ceiling.
+    public static func boundedHunks(
+        old: String,
+        new: String,
+        context: Int = 3,
+        maximumTotalLines: Int = 5_000,
+        maximumChangedSpanLines: Int = 512
+    ) throws -> [DiffHunk] {
+        guard old != new else { return [] }
+        let oldLines = splitLines(old)
+        let newLines = splitLines(new)
+        guard oldLines.count + newLines.count <= maximumTotalLines else {
+            throw LineDiffError.tooComplex
+        }
+        var prefix = 0
+        while prefix < oldLines.count, prefix < newLines.count,
+              oldLines[prefix] == newLines[prefix] { prefix += 1 }
+        var suffix = 0
+        while suffix < oldLines.count - prefix,
+              suffix < newLines.count - prefix,
+              oldLines[oldLines.count - suffix - 1] == newLines[newLines.count - suffix - 1]
+        { suffix += 1 }
+        let changedSpan = oldLines.count + newLines.count - 2 * (prefix + suffix)
+        guard changedSpan <= maximumChangedSpanLines else {
+            throw LineDiffError.tooComplex
+        }
+        return makeHunks(from: myers(oldLines, newLines), context: context)
+    }
+
+    private static func makeHunks(from all: [DiffLine], context: Int) -> [DiffHunk] {
         let changed = all.indices.filter { all[$0].kind != .context }
         guard !changed.isEmpty else { return [] }
 

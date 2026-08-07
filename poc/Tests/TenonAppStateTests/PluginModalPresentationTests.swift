@@ -87,8 +87,6 @@ final class PluginModalPresentationTests: XCTestCase {
             instanceID: instance,
             instanced: instance != nil,
             title: view,
-            subtitle: nil,
-            actions: [],
             items: [],
             body: nil,
             modal: modal

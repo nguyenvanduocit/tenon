@@ -139,7 +139,199 @@ final class PluginInventoryTests: XCTestCase {
         XCTAssertEqual(
             host.plugins.count,
             2,
-            "both inventories load — this is not consent by exclusion"
+            "both inventories remain visible — execution trust is represented explicitly"
+        )
+    }
+
+    /// JavaScriptCore isolates plugin state, not the host process. A writable inventory can
+    /// contain code authored by another tool, so discovery must not execute a new plugin until
+    /// the person enables it explicitly in Extensions.
+    @MainActor
+    func testNewPluginFromExplicitEnablementInventoryStartsDisabled() async throws {
+        let root = try makeTemporaryDirectory()
+        let bundled = root.appendingPathComponent("bundled", isDirectory: true)
+        let user = root.appendingPathComponent("user", isDirectory: true)
+        try writeDirectoryPlugin(
+            named: "authored",
+            in: user,
+            id: "dev.test.authored"
+        )
+
+        let host = try PluginHost(
+            inventories: [
+                PluginInventory(
+                    root: bundled,
+                    authorization: .bundledInventory,
+                    isWritable: false
+                ),
+                PluginInventory(
+                    root: user,
+                    authorization: PluginHostAuthorization(
+                        approvedOpenIntentIDs: { _, _ in [] }
+                    ),
+                    isWritable: true,
+                    enablesNewPluginsByDefault: false
+                ),
+            ],
+            stateRoot: root.appendingPathComponent("state", isDirectory: true),
+            kernel: try IntentKernelComponents(
+                persistence: IntentSQLiteIdempotencyPersistence.inMemory()
+            )
+        )
+        try await host.loadAll()
+        addTeardownBlock { await host.shutdown() }
+
+        let authored = try XCTUnwrap(
+            host.plugins.first { $0.id.rawValue == "dev.test.authored" }
+        )
+        XCTAssertFalse(authored.isEnabled)
+        XCTAssertFalse(authored.isLoaded)
+        XCTAssertFalse(host.loadedPluginIDs.contains(authored.id))
+
+        try await host.setEnabled(true, pluginID: authored.id)
+
+        let enabled = try XCTUnwrap(
+            host.plugins.first { $0.id == authored.id }
+        )
+        XCTAssertTrue(enabled.isEnabled)
+        XCTAssertTrue(enabled.isLoaded)
+        XCTAssertTrue(host.loadedPluginIDs.contains(authored.id))
+    }
+
+    /// The PluginID is publisher identity, not proof that the bytes still came from the
+    /// inventory the user trusted. A same-ID replacement crossing from the sealed inventory
+    /// into a writable one is a new installation: it must not execute or inherit the old
+    /// installation principal's standing consent.
+    @MainActor
+    func testTrustedPluginReplacedFromUserInventoryRotatesIdentityAndDisables() async throws {
+        let root = try makeTemporaryDirectory()
+        let bundled = root.appendingPathComponent("bundled", isDirectory: true)
+        let user = root.appendingPathComponent("user", isDirectory: true)
+        let pluginID = "dev.test.trust-transition"
+        try writeDirectoryPlugin(
+            named: "shipped",
+            in: bundled,
+            id: pluginID,
+            uses: ["process.exec.v1"]
+        )
+
+        let kernel = try IntentKernelComponents(
+            persistence: IntentSQLiteIdempotencyPersistence.inMemory()
+        )
+        let host = try PluginHost(
+            inventories: [
+                PluginInventory(
+                    root: bundled,
+                    authorization: .bundledInventory,
+                    isWritable: false,
+                    enablesNewPluginsByDefault: true
+                ),
+                PluginInventory(
+                    root: user,
+                    authorization: PluginHostAuthorization(
+                        approvedOpenIntentIDs: { _, _ in [] }
+                    ),
+                    isWritable: true,
+                    enablesNewPluginsByDefault: false
+                ),
+            ],
+            stateRoot: root.appendingPathComponent("state", isDirectory: true),
+            kernel: kernel
+        )
+        try await host.loadAll()
+        addTeardownBlock { await host.shutdown() }
+
+        let trusted = try XCTUnwrap(
+            host.plugins.first { $0.id.rawValue == pluginID }
+        )
+        let trustedInstallationID = try XCTUnwrap(trusted.installationID)
+        XCTAssertTrue(trusted.isLoaded)
+        let trustedPolicy = await kernel.policy.snapshot()
+        XCTAssertEqual(
+            trustedPolicy.callerConsents.filter {
+                $0.callerID.hasPrefix("plugin:\(pluginID):")
+            }.count,
+            1
+        )
+
+        try FileManager.default.removeItem(
+            at: bundled.appendingPathComponent("shipped", isDirectory: true)
+        )
+        try writeDirectoryPlugin(
+            named: "replacement",
+            in: user,
+            id: pluginID,
+            uses: ["process.exec.v1"]
+        )
+        try await host.loadAll()
+
+        let replacement = try XCTUnwrap(
+            host.plugins.first { $0.id.rawValue == pluginID }
+        )
+        XCTAssertFalse(replacement.isEnabled)
+        XCTAssertFalse(replacement.isLoaded)
+        XCTAssertNotEqual(replacement.installationID, trustedInstallationID)
+        let replacementPolicy = await kernel.policy.snapshot()
+        XCTAssertTrue(
+            replacementPolicy.callerConsents.filter {
+                $0.callerID.hasPrefix("plugin:\(pluginID):")
+            }.isEmpty,
+            "the retired trusted principal must leave no consent the replacement can inherit"
+        )
+    }
+
+    /// Version-1 installation records predate persisted inventory provenance. Their origin
+    /// cannot be reconstructed, so even a newly bundled same-ID plugin must receive a fresh
+    /// principal instead of inheriting possibly user-seeded state and consent keys.
+    @MainActor
+    func testLegacyInstallationRotatesBeforeBundledStandingConsent() async throws {
+        let root = try makeTemporaryDirectory()
+        let bundled = root.appendingPathComponent("bundled", isDirectory: true)
+        let stateRoot = root.appendingPathComponent("state", isDirectory: true)
+        let pluginID = PluginID("dev.test.legacy-transition")
+        let legacyStore = try PluginInstallationStore(pluginsRoot: stateRoot)
+        let legacySession = try await legacyStore.beginSession(for: pluginID)
+        try writeDirectoryPlugin(
+            named: "shipped",
+            in: bundled,
+            id: pluginID.rawValue,
+            uses: ["process.exec.v1"]
+        )
+
+        let kernel = try IntentKernelComponents(
+            persistence: IntentSQLiteIdempotencyPersistence.inMemory()
+        )
+        let host = try PluginHost(
+            inventories: [
+                PluginInventory(
+                    root: bundled,
+                    authorization: .bundledInventory,
+                    isWritable: false,
+                    enablesNewPluginsByDefault: true
+                ),
+            ],
+            stateRoot: stateRoot,
+            kernel: kernel
+        )
+        try await host.loadAll()
+        addTeardownBlock { await host.shutdown() }
+
+        let shipped = try XCTUnwrap(host.plugins.first { $0.id == pluginID })
+        XCTAssertNotEqual(
+            shipped.installationID,
+            legacySession.installationID,
+            "unknown legacy provenance must never cross into bundled standing consent"
+        )
+        XCTAssertTrue(shipped.isLoaded)
+        let policy = await kernel.policy.snapshot()
+        let consent = try XCTUnwrap(
+            policy.callerConsents.first {
+                $0.callerID.hasPrefix("plugin:\(pluginID.rawValue):")
+            }
+        )
+        let shippedInstallationID = try XCTUnwrap(shipped.installationID)
+        XCTAssertTrue(
+            consent.callerID.contains(shippedInstallationID.uuidString.lowercased())
         )
     }
 

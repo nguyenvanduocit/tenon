@@ -1,11 +1,11 @@
 import Foundation
 import TenonCore
+import TenonIntentCore
 
-/// The CLI control socket, which doubles as Tenon's single-instance lock. There is exactly one
-/// well-known socket per user (`/tmp/tenon-<uid>/tenon.sock`): whoever binds it is the one running
-/// app; a second launch finds it already held, tells the primary to come to the front, and exits.
-/// So the app is a true singleton and the socket path is stable — an agent never has to disambiguate
-/// between instances.
+/// The CLI control socket and its sibling advisory lock enforce Tenon's per-channel
+/// single-instance rule. Production keeps `/tmp/tenon-<uid>/tenon.sock`; staging owns a
+/// separate namespace. Whoever holds that channel's `tenon.lock` may create or reclaim its
+/// socket; a second launch in the same channel tells that primary to come to the front and exits.
 ///
 /// Threading: a dedicated background thread runs the blocking `accept`/`read` loop; each valid
 /// request hops to the main actor via `onRequest`; the resulting async intent dispatch holds only
@@ -26,10 +26,12 @@ import TenonCore
 /// explicit Thread bridge when the deployment stack provides one.
 final class CLISocketServer: @unchecked Sendable {
     enum Role: Equatable {
-        /// This process bound the socket — it is the one running app.
+        /// This process bound the socket — it is the running app in this channel.
         case primary
         /// Another app already holds the socket; it has been asked to activate. The caller must exit.
         case secondary
+        /// This process could not prove ownership of the channel claim and must not start a UI.
+        case unavailable
     }
 
     /// Assigned by `TenonApp` once `pool` exists. Invoked on the MAIN thread for each valid request;
@@ -49,6 +51,8 @@ final class CLISocketServer: @unchecked Sendable {
         case socketDirectoryUnavailable
         /// Nothing was listening on the path and binding it still failed.
         case bindFailed(path: String)
+        /// The stable per-user claim file was unsafe or could not be opened/locked.
+        case claimUnavailable(path: String)
 
         var message: String {
             switch self {
@@ -56,6 +60,8 @@ final class CLISocketServer: @unchecked Sendable {
                 "could not create the socket directory"
             case let .bindFailed(path):
                 "could not bind \(path)"
+            case let .claimUnavailable(path):
+                "could not acquire the single-instance claim at \(path)"
             }
         }
     }
@@ -67,37 +73,94 @@ final class CLISocketServer: @unchecked Sendable {
     /// `TENON_SOCKET_PATH` into terminals.
     private(set) var socketPath: String?
 
+    /// The path child processes must target even if this server could not bind. Keeping the
+    /// channel path non-empty makes degradation local instead of silently routing to production.
+    var clientSocketPath: String {
+        socketPath ?? instanceChannel.socketPath()
+    }
+
+    private let instanceChannel: AppInstanceChannel
+
     private var listenFD: Int32 = -1
+    /// Held until after the listening socket is removed, so no contender can inspect or reclaim
+    /// the path while this server is still tearing it down.
+    private var claimFD: Int32 = -1
+    private static let maximumConcurrentConnections = 8
+    private let connectionSlots = DispatchSemaphore(
+        value: maximumConcurrentConnections
+    )
+    private let connectionQueue = DispatchQueue(
+        label: "dev.tenon.cli-connections",
+        qos: .userInitiated,
+        attributes: .concurrent
+    )
 
     /// `enabled: false` disables the socket + single-instance handshake entirely (role stays
     /// `.primary`, nothing binds). Used when hosting XCTest, where the app must not `exit(0)` on a
     /// live instance and must not touch the real control socket.
     /// - Parameter overridingPath: test seam only. The shipped app always uses the well-known
-    ///   user-wide path; a test that used it would fight the developer's own running Tenon for
-    ///   the single-instance lock.
-    init(enabled: Bool = true, overridingPath: String? = nil) {
+    ///   channel path; a test that used it would fight the developer's own running Tenon for the
+    ///   single-instance lock.
+    /// - Parameter socketRootForTesting: replaces `/tmp` while preserving channel derivation.
+    init(
+        enabled: Bool = true,
+        instanceChannel: AppInstanceChannel = .production,
+        overridingPath: String? = nil,
+        socketRootForTesting: String? = nil,
+        afterBindBeforeListenForTesting: (() -> Void)? = nil
+    ) {
+        self.instanceChannel = instanceChannel
         guard enabled else {
             role = .primary
             return
         }
-        let path = overridingPath ?? Self.wellKnownPath()
-
-        // Someone already listening? Then we are a second launch: activate them and bow out.
-        if let path, Self.probeLiveInstance(at: path) {
-            Self.requestActivation(at: path)
-            role = .secondary
-            return
+        let path: String?
+        if let overridingPath {
+            let directory = (overridingPath as NSString).deletingLastPathComponent
+            path = Self.prepareSocketDirectory(at: directory, expectedOwner: geteuid())
+                ? overridingPath
+                : nil
+        } else {
+            path = if let socketRootForTesting {
+                Self.wellKnownPath(
+                    for: instanceChannel,
+                    socketRoot: socketRootForTesting
+                )
+            } else {
+                Self.wellKnownPath(for: instanceChannel)
+            }
         }
 
         guard let path else {
-            // Couldn't even make the socket dir; run without a control socket rather than not at all.
-            role = .primary
+            role = .unavailable
             reportDegradation(.socketDirectoryUnavailable)
             return
         }
 
-        unlink(path)
-        if let fd = Self.bindAndListen(at: path) {
+        let directory = (path as NSString).deletingLastPathComponent
+        let claimPath = "\(directory)/tenon.lock"
+        switch Self.acquireSingleInstanceClaim(in: directory, expectedOwner: geteuid()) {
+        case let .acquired(descriptor):
+            claimFD = descriptor
+        case .heldByPrimary:
+            // The claim covers the primary's bind/listen window, where connect may legitimately
+            // fail even though that launch has already won the singleton election.
+            Self.requestActivationWhenReady(at: path)
+            role = .secondary
+            return
+        case .unavailable:
+            role = .unavailable
+            reportDegradation(.claimUnavailable(path: claimPath))
+            return
+        }
+
+        // Only the claim owner may inspect, reclaim, or bind the socket pathname. This keeps the
+        // entire stale-check/bind/listen sequence serial even though none of those syscalls alone
+        // spans the whole election.
+        if let fd = Self.bindAndListen(
+            at: path,
+            afterBindBeforeListenForTesting: afterBindBeforeListenForTesting
+        ) {
             listenFD = fd
             socketPath = path
             role = .primary
@@ -105,11 +168,32 @@ final class CLISocketServer: @unchecked Sendable {
             return
         }
 
-        // bind() failed — most likely another instance won a launch race between our probe and bind.
+        // bind() failed — most likely another instance won the atomic claim.
         if Self.probeLiveInstance(at: path) {
+            close(claimFD)
+            claimFD = -1
             Self.requestActivation(at: path)
             role = .secondary
             return
+        }
+
+        // A killed process leaves a socket node behind. Reclaim only that exact node type: a
+        // regular file or symlink is never disposable just because it occupies our pathname.
+        if Self.reclaimStaleSocket(at: path) {
+            if let fd = Self.bindAndListen(at: path) {
+                listenFD = fd
+                socketPath = path
+                role = .primary
+                startAcceptThread()
+                return
+            }
+            if Self.probeLiveInstance(at: path) {
+                close(claimFD)
+                claimFD = -1
+                Self.requestActivation(at: path)
+                role = .secondary
+                return
+            }
         }
 
         // No live instance and we still can't bind: degrade to running without a control socket.
@@ -127,42 +211,147 @@ final class CLISocketServer: @unchecked Sendable {
 
     deinit {
         if listenFD >= 0 { close(listenFD) }
-        if let socketPath { unlink(socketPath) }
+        if let socketPath { _ = Self.reclaimStaleSocket(at: socketPath) }
+        if claimFD >= 0 { close(claimFD) }
     }
 
     // MARK: - Path & single-instance handshake
 
-    private static func wellKnownPath() -> String? {
-        let directory = "/tmp/tenon-\(getuid())"
-        do {
-            try FileManager.default.createDirectory(
-                atPath: directory,
-                withIntermediateDirectories: true,
-                attributes: [.posixPermissions: 0o700]
-            )
-        } catch {
-            return nil
-        }
+    private static func wellKnownPath(
+        for instanceChannel: AppInstanceChannel,
+        socketRoot: String = "/tmp"
+    ) -> String? {
+        let directory = instanceChannel.socketDirectoryPath(root: socketRoot)
+        guard prepareSocketDirectory(at: directory, expectedOwner: geteuid()) else { return nil }
         return "\(directory)/tenon.sock"
+    }
+
+    /// Creates the private directory, or verifies an existing path without following symlinks.
+    ///
+    /// The name under `/tmp` is predictable by design, so successful `createDirectory` alone is
+    /// not proof that this user controls it: that API silently accepts an existing directory.
+    /// This check is internal so hostile-path tests can exercise the production predicate.
+    static func prepareSocketDirectory(at path: String, expectedOwner: uid_t) -> Bool {
+        var information = stat()
+        if lstat(path, &information) == 0 {
+            return isPrivateSocketDirectory(information, expectedOwner: expectedOwner)
+        }
+        guard errno == ENOENT else { return false }
+
+        if mkdir(path, 0o700) != 0 {
+            // Another process may have created the predictable directory after our lstat.
+            guard errno == EEXIST else { return false }
+        }
+
+        guard lstat(path, &information) == 0 else { return false }
+        return isPrivateSocketDirectory(information, expectedOwner: expectedOwner)
+    }
+
+    private static func isPrivateSocketDirectory(
+        _ information: stat,
+        expectedOwner: uid_t
+    ) -> Bool {
+        let fileType = information.st_mode & mode_t(S_IFMT)
+        let permissions = information.st_mode & mode_t(0o777)
+        return fileType == mode_t(S_IFDIR)
+            && information.st_uid == expectedOwner
+            && permissions == mode_t(0o700)
+    }
+
+    private enum ClaimAcquisition {
+        case acquired(Int32)
+        case heldByPrimary
+        case unavailable
+    }
+
+    /// Opens and locks the stable claim inode without following either directory or file symlinks.
+    /// The file is intentionally never unlinked: crashes release `flock` with the descriptor, and
+    /// retaining one inode prevents two processes from locking different generations of its name.
+    private static func acquireSingleInstanceClaim(
+        in directory: String,
+        expectedOwner: uid_t
+    ) -> ClaimAcquisition {
+        let directoryFD = Darwin.open(
+            directory,
+            O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+        )
+        guard directoryFD >= 0 else { return .unavailable }
+        defer { close(directoryFD) }
+
+        var directoryInformation = stat()
+        guard fstat(directoryFD, &directoryInformation) == 0,
+              isPrivateSocketDirectory(directoryInformation, expectedOwner: expectedOwner)
+        else { return .unavailable }
+
+        let claimFD = "tenon.lock".withCString { name in
+            Darwin.openat(
+                directoryFD,
+                name,
+                O_CREAT | O_RDWR | O_CLOEXEC | O_NOFOLLOW,
+                S_IRUSR | S_IWUSR
+            )
+        }
+        guard claimFD >= 0 else { return .unavailable }
+
+        var claimInformation = stat()
+        let claimIsSafe = fstat(claimFD, &claimInformation) == 0
+            && claimInformation.st_mode & mode_t(S_IFMT) == mode_t(S_IFREG)
+            && claimInformation.st_uid == expectedOwner
+            && claimInformation.st_mode & mode_t(0o777) == mode_t(0o600)
+            && claimInformation.st_nlink == 1
+        guard claimIsSafe else {
+            close(claimFD)
+            return .unavailable
+        }
+
+        while flock(claimFD, LOCK_EX | LOCK_NB) != 0 {
+            if errno == EINTR { continue }
+            let lockError = errno
+            close(claimFD)
+            return lockError == EWOULDBLOCK || lockError == EAGAIN
+                ? .heldByPrimary
+                : .unavailable
+        }
+        return .acquired(claimFD)
+    }
+
+    private static func reclaimStaleSocket(at path: String) -> Bool {
+        var information = stat()
+        guard lstat(path, &information) == 0 else { return false }
+        guard information.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK) else { return false }
+        return unlink(path) == 0
     }
 
     /// True if a process is currently accepting on `path` (a `connect` succeeds).
     private static func probeLiveInstance(at path: String) -> Bool {
+        guard isSocketNode(at: path) else { return false }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return false }
         defer { close(fd) }
         return connectSocket(fd, to: path) == 0
     }
 
+    /// The singleton claim is acquired before `listen`, so a contender can arrive during that
+    /// small setup window. Give the claim owner a bounded amount of time to become reachable
+    /// instead of silently losing the one activation request.
+    private static func requestActivationWhenReady(at path: String) {
+        for attempt in 0..<25 {
+            if requestActivation(at: path) { return }
+            if attempt < 24 { usleep(10_000) }
+        }
+    }
+
     /// Tell the already-running app to come to the front (`app.focus`), best-effort.
-    private static func requestActivation(at path: String) {
+    @discardableResult
+    private static func requestActivation(at path: String) -> Bool {
+        guard isSocketNode(at: path) else { return false }
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
-        guard fd >= 0 else { return }
+        guard fd >= 0 else { return false }
         defer { close(fd) }
-        guard connectSocket(fd, to: path) == 0 else { return }
+        guard connectSocket(fd, to: path) == 0 else { return false }
         let request = CLIRequest(id: "single-instance-activate", action: "app.focus")
         guard let data = try? CLIWireCodec.encodeRequest(request) else {
-            return
+            return false
         }
         writeAll(fd, data)
         shutdown(fd, SHUT_WR)
@@ -170,17 +359,38 @@ final class CLISocketServer: @unchecked Sendable {
         setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
         var scratch = [UInt8](repeating: 0, count: 256)
         _ = scratch.withUnsafeMutableBytes { read(fd, $0.baseAddress, $0.count) }
+        return true
+    }
+
+    /// `connect(2)` follows filesystem symlinks. Check the pathname itself first so a hostile
+    /// staging symlink can never redirect activation to production's live socket.
+    private static func isSocketNode(at path: String) -> Bool {
+        var information = stat()
+        return lstat(path, &information) == 0
+            && information.st_mode & mode_t(S_IFMT) == mode_t(S_IFSOCK)
     }
 
     // MARK: - Socket setup
 
-    private static func bindAndListen(at path: String) -> Int32? {
+    private static func bindAndListen(
+        at path: String,
+        afterBindBeforeListenForTesting: (() -> Void)? = nil
+    ) -> Int32? {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
         guard fd >= 0 else { return nil }
         setCloseOnExec(fd)
         guard withSocketAddress(path, { bind(fd, $0, $1) }) == 0 else { close(fd); return nil }
-        chmod(path, 0o600)
-        guard listen(fd, 8) == 0 else { close(fd); unlink(path); return nil }
+        afterBindBeforeListenForTesting?()
+        guard chmod(path, 0o600) == 0 else {
+            close(fd)
+            _ = reclaimStaleSocket(at: path)
+            return nil
+        }
+        guard listen(fd, 8) == 0 else {
+            close(fd)
+            _ = reclaimStaleSocket(at: path)
+            return nil
+        }
         return fd
     }
 
@@ -220,7 +430,17 @@ final class CLISocketServer: @unchecked Sendable {
                 close(client)
                 return
             }
-            self.handleConnection(client)
+            // A stalled client consumes one of a fixed number of workers, never the
+            // accept thread and never an unbounded task/thread allocation.
+            self.connectionSlots.wait()
+            self.connectionQueue.async { [weak self] in
+                defer { self?.connectionSlots.signal() }
+                guard let self else {
+                    close(client)
+                    return
+                }
+                self.handleConnection(client)
+            }
         }
         let thread = Thread {
             Self.acceptLoop(
@@ -250,6 +470,7 @@ final class CLISocketServer: @unchecked Sendable {
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
             var timeout = timeval(tv_sec: 5, tv_usec: 0)
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
+            setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             handle(client)
         }
     }
@@ -278,16 +499,22 @@ final class CLISocketServer: @unchecked Sendable {
                 writeAndClose(client, .failure(id: request.id, error: error))
             case .success(let action):
                 DispatchQueue.main.async { [weak self] in
-                    guard let self else { return }
+                    guard let self else {
+                        close(client)
+                        return
+                    }
                     guard let handler = self.onRequest else {
-                        self.writeAndClose(client, .failure(
+                        self.writeAndCloseOffMain(client, .failure(
                             id: request.id,
                             error: CLIError(code: .notReady, message: "Tenon is still starting up")
                         ))
                         return
                     }
                     handler(action) { result in
-                        self.writeAndClose(client, result.response(id: request.id))
+                        self.writeAndCloseOffMain(
+                            client,
+                            result.response(id: request.id)
+                        )
                     }
                 }
             }
@@ -326,6 +553,16 @@ final class CLISocketServer: @unchecked Sendable {
         Self.writeAll(fd, data)
         shutdown(fd, SHUT_WR)
         close(fd)
+    }
+
+    private func writeAndCloseOffMain(_ fd: Int32, _ response: CLIResponse) {
+        connectionQueue.async { [weak self] in
+            guard let self else {
+                close(fd)
+                return
+            }
+            self.writeAndClose(fd, response)
+        }
     }
 
     private static func writeAll(_ fd: Int32, _ data: Data) {

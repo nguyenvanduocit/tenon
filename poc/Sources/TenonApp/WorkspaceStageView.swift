@@ -11,13 +11,24 @@ struct WorkspaceStageView: View {
     var host: PluginHost
     var intentRuntime: AppIntentRuntime
     var palette: CommandPaletteState
+    let agentSuggestions: [AgentLaunchSuggestion]
     var editorStates: EditorPaneStateStore
+    var paneHeaders: PaneHeaderStore
     var router: DragRouter
+    var automation: AutomationScheduler
+    let automationSchedulesEnabled: Bool
+    let automationActions: AutomationPaneActions
 
     var body: some View {
         let pluginSnapshots = host.plugins
         let pluginViewSections = host.pluginViews
         let webSurfaceTitles = webPool.titles
+        // THE INVALIDATION CONTRACT. `configure` on the canvas is reached only when this
+        // body re-evaluates, so reading the store here is what makes a host-native pane's
+        // header refresh at all — its content model lives in a different SwiftUI graph and
+        // can invalidate nothing out here. Drop this line and every built-in header
+        // silently freezes at its first value while still rendering.
+        let paneHeaderValues = paneHeaders.headers
 
         if let workspace = store.catalog.activeWorkspace,
            let tab = workspace.activeTab {
@@ -34,16 +45,26 @@ struct WorkspaceStageView: View {
                     host: host,
                     intentRuntime: intentRuntime,
                     palette: palette,
+                    agentSuggestions: agentSuggestions,
                     editorStates: editorStates,
                     pluginSnapshots: pluginSnapshots,
                     pluginViewSections: pluginViewSections,
                     webSurfaceTitles: webSurfaceTitles,
                     paneAttention: pool.paneAttention,
-                    router: router
+                    paneHeaders: paneHeaderValues,
+                    paneHeaderStore: paneHeaders,
+                    router: router,
+                    automation: automation,
+                    automationSchedulesEnabled: automationSchedulesEnabled,
+                    automationActions: automationActions
                 )
 
                 if tab.slots.isEmpty {
-                    EmptyTabCallToAction(store: store)
+                    EmptyTabCallToAction(
+                        store: store,
+                        pool: pool,
+                        agentSuggestions: agentSuggestions
+                    )
                 }
             }
             .background(TenonTheme.ink)
@@ -68,14 +89,25 @@ struct WorkspaceStageView: View {
 /// to the otherwise-empty tab.
 private struct EmptyTabCallToAction: View {
     let store: WorkspaceStore
+    let pool: SurfacePool
+    let agentSuggestions: [AgentLaunchSuggestion]
 
     var body: some View {
         EmptyStateCard(
             title: "This tab is empty",
             subtitle: "No terminal running yet",
             recents: store.recent?.recent ?? [],
+            agentSuggestions: agentSuggestions,
             isDefaultAction: true,
-            onLaunch: { store.addSlot(content: $0) }
+            onLaunch: { store.addSlot(content: $0) },
+            onLaunchAgent: { suggestion in
+                _ = AgentLaunchExecutor.run(
+                    suggestion,
+                    placement: .emptyTab,
+                    workspaceStore: store,
+                    terminalPool: pool
+                )
+            }
         )
         .accessibilityIdentifier("empty-tab-card")
     }

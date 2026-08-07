@@ -11,21 +11,10 @@ struct TenonApp: App {
 
     @State private var composition: AppComposition?
     @State private var constructionError: String?
+    @State private var isConstructing = false
 
     init() {
         DiffSnapshot.renderIfRequested()
-
-        do {
-            _composition = State(
-                initialValue: try AppComposition()
-            )
-            _constructionError = State(initialValue: nil)
-        } catch {
-            _composition = State(initialValue: nil)
-            _constructionError = State(
-                initialValue: String(describing: error)
-            )
-        }
     }
 
     var body: some Scene {
@@ -40,7 +29,29 @@ struct TenonApp: App {
                     intentRuntime: composition.intentRuntime,
                     router: composition.router,
                     palette: composition.palette,
-                    pluginUI: composition.userInterface
+                    quickCommands: composition.quickCommands,
+                    pluginUI: composition.userInterface,
+                    automation: composition.automationScheduler,
+                    automationSchedulesEnabled:
+                        composition.prefs.preferences.automationSchedulesEnabled,
+                    automationActions: AutomationPaneActions(
+                        runNow: { pluginID, scheduleID in
+                            await composition.runAutomationNow(
+                                pluginID: pluginID,
+                                scheduleID: scheduleID
+                            )
+                        },
+                        setPaused: { pluginID, scheduleID, paused in
+                            composition.setAutomationSchedulePaused(
+                                pluginID: pluginID,
+                                scheduleID: scheduleID,
+                                paused: paused
+                            )
+                        },
+                        createWithAI: {
+                            composition.openAutomationAuthoringPane()
+                        }
+                    )
                 )
                 .frame(minWidth: 980, minHeight: 620)
                 .overlay(alignment: .top) {
@@ -52,11 +63,14 @@ struct TenonApp: App {
                     appDelegate.bind(composition)
                     await composition.start()
                 }
-            } else {
+            } else if let constructionError {
                 StartupFailureView(
                     message: constructionError
-                        ?? "The app could not create its local runtime."
                 )
+            } else {
+                ProgressView("Preparing Tenon…")
+                    .frame(minWidth: 980, minHeight: 620)
+                    .task { await constructCompositionIfNeeded() }
             }
         }
         .windowStyle(.hiddenTitleBar)
@@ -82,17 +96,8 @@ struct TenonApp: App {
             if let composition {
                 SettingsView(
                     host: composition.host,
-                    prefs: AppPreferencesStore.shared,
-                    automation: composition.automationScheduler,
-                    runNow: { pluginID, scheduleID in
-                        await composition.runAutomationNow(
-                            pluginID: pluginID,
-                            scheduleID: scheduleID
-                        )
-                    },
-                    createWithAI: {
-                        composition.openAutomationAuthoringPane()
-                    }
+                    prefs: composition.prefs,
+                    instanceChannel: composition.instanceChannel
                 )
             } else {
                 StartupFailureView(
@@ -102,20 +107,247 @@ struct TenonApp: App {
             }
         }
     }
+
+    @MainActor
+    private func constructCompositionIfNeeded() async {
+        guard composition == nil, constructionError == nil, !isConstructing else {
+            return
+        }
+        isConstructing = true
+        defer { isConstructing = false }
+        do {
+            composition = try await AppComposition.make()
+        } catch is CancellationError {
+            return
+        } catch {
+            constructionError = String(describing: error)
+        }
+    }
+}
+
+/// Immutable values and pre-opened actor-owned stores produced without occupying the UI
+/// executor. UI/AppKit objects are deliberately absent and are assembled afterwards by
+/// `AppComposition` on `MainActor`.
+private struct AppStartupPreparation: Sendable {
+    private enum PreparationError: Error, CustomStringConvertible {
+        case controlChannelUnavailable(String)
+
+        var description: String {
+            switch self {
+            case let .controlChannelUnavailable(reason):
+                "Tenon could not safely claim this install channel: \(reason)"
+            }
+        }
+    }
+
+    let paths: AppStatePaths
+    let underTest: Bool
+    let cliServer: CLISocketServer
+    let codexHomePath: String
+    let codexHomeURL: URL
+    let claudeHomeURL: URL
+    let agentSessionRegistry: AgentSessionRegistry
+    let agentHookServer: AgentHookServer
+    let agentHookScriptURL: URL
+    let codexHookInstallResult: AgentHookInstallResult
+    let claudeHookInstallResult: AgentHookInstallResult
+    let launch: RestoredWorkspaceCatalog
+    let recentViews: [SlotContent]
+    let recentWorkspaces: [RecentWorkspaceStore.Entry]
+    let kernel: IntentKernelComponents
+    let pluginPersistence: PluginHostPersistence
+
+    @concurrent
+    static func prepare(
+        paths requestedPaths: AppStatePaths?,
+        launchContent: SlotContent,
+        confirmationAuthorizer: IntentConfirmationAuthorizer
+    ) async throws -> Self {
+        try Task.checkCancellation()
+        let paths = try requestedPaths ?? AppStatePaths.resolve()
+        let environment = ProcessInfo.processInfo.environment
+        let underTest = environment["XCTestConfigurationFilePath"] != nil
+            || NSClassFromString("XCTestCase") != nil
+        let cliServer = CLISocketServer(
+            enabled: !underTest,
+            instanceChannel: paths.instanceChannel
+        )
+        // Preserve the single-instance fast path: a secondary launch must not install
+        // hooks or open durable stores while the primary instance owns them.
+        switch cliServer.role {
+        case .primary:
+            break
+        case .secondary:
+            exit(0)
+        case .unavailable:
+            throw PreparationError.controlChannelUnavailable(
+                cliServer.degradation?.message ?? "unknown control-channel error"
+            )
+        }
+
+        let codexHomePath = environment["CODEX_HOME"]
+            .map { ($0 as NSString).expandingTildeInPath }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".codex", isDirectory: true).path
+        let codexHomeURL = URL(fileURLWithPath: codexHomePath, isDirectory: true)
+        let claudeHomePath = environment["CLAUDE_CONFIG_DIR"]
+            .map { ($0 as NSString).expandingTildeInPath }
+            ?? FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".claude", isDirectory: true).path
+        let claudeHomeURL = URL(fileURLWithPath: claudeHomePath, isDirectory: true)
+        let agentSessionRegistry = AgentSessionRegistry(
+            allowedTranscriptRoots: [
+                codexHomeURL.appendingPathComponent("sessions", isDirectory: true),
+                claudeHomeURL.appendingPathComponent("projects", isDirectory: true),
+            ]
+        )
+        let agentHookServer = AgentHookServer(enabled: !underTest) { event in
+            Task { await agentSessionRegistry.record(event) }
+            // The registry answers "which transcript is this pane's"; the lens needs the
+            // work the hook reports, which the transcript will not describe until the turn
+            // ends. Two readers of one fact, neither derived from the other.
+            Task { @MainActor in AgentHookLensBus.deliver(event) }
+        }
+        let agentHookScriptURL = paths.runtimeStateRoot
+            .appendingPathComponent("agent-hooks", isDirectory: true)
+            .appendingPathComponent("agent-hook.sh")
+        let codexHookInstallResult: AgentHookInstallResult = underTest
+            ? .alreadyInstalled
+            : AgentHookInstaller.install(
+                provider: .codex,
+                scriptURL: agentHookScriptURL,
+                hooksURL: codexHomeURL.appendingPathComponent("hooks.json")
+            )
+        let claudeHookInstallResult: AgentHookInstallResult = underTest
+            ? .alreadyInstalled
+            : AgentHookInstaller.install(
+                provider: .claude,
+                scriptURL: agentHookScriptURL,
+                hooksURL: claudeHomeURL.appendingPathComponent("settings.json")
+            )
+        if !underTest {
+            // The install can lose a race against whatever else writes these files. Record
+            // the outcome and how to repeat it, so a pane can say so and offer the retry
+            // instead of leaving the Session view mysteriously empty.
+            let claudeSettingsURL = claudeHomeURL.appendingPathComponent("settings.json")
+            let codexHooksURL = codexHomeURL.appendingPathComponent("hooks.json")
+            await AgentHookInstallStatus.shared.register(
+                provider: .claude,
+                result: claudeHookInstallResult
+            ) {
+                AgentHookInstaller.install(
+                    provider: .claude,
+                    scriptURL: agentHookScriptURL,
+                    hooksURL: claudeSettingsURL
+                )
+            }
+            await AgentHookInstallStatus.shared.register(
+                provider: .codex,
+                result: codexHookInstallResult
+            ) {
+                AgentHookInstaller.install(
+                    provider: .codex,
+                    scriptURL: agentHookScriptURL,
+                    hooksURL: codexHooksURL
+                )
+            }
+        }
+
+        try Task.checkCancellation()
+        let installedPluginIDs = Set(
+            PluginLoader.discover(
+                in: [paths.pluginInventoryRoot, paths.userPluginInventoryRoot]
+            ).compactMap {
+                (try? PluginLoader.loadManifest(at: $0))?.id.rawValue
+            }
+        )
+        let fileManager = FileManager.default
+        let restored = WorkspaceCatalogStore
+            .loadDocument(at: paths.workspaceCatalogFile)
+            .flatMap { document in
+                WorkspaceCatalogSnapshot.restore(
+                    document,
+                    isDirectory: { path in
+                        var isDirectory: ObjCBool = false
+                        return fileManager.fileExists(
+                            atPath: path,
+                            isDirectory: &isDirectory
+                        ) && isDirectory.boolValue
+                    },
+                    isFileReadable: { fileManager.fileExists(atPath: $0) },
+                    isKnownPluginView: { pluginID, _ in
+                        installedPluginIDs.contains(pluginID)
+                    }
+                )
+            }
+        let launch = WorkspaceCatalogSnapshot.launchCatalog(
+            restored: restored,
+            launchDirectory: resolvedLaunchDirectory(),
+            launchContent: launchContent,
+            fallbackDirectory: fileManager.homeDirectoryForCurrentUser
+                .standardizedFileURL
+        )
+        let recentViewsURL = paths.workspaceStateRoot.appendingPathComponent(
+            ".recent-views.json"
+        )
+        let recentWorkspacesURL = paths.workspaceStateRoot.appendingPathComponent(
+            ".recent-workspaces.json"
+        )
+        let recentViews = RecentStore.load(from: recentViewsURL)
+        let recentWorkspaces = RecentWorkspaceStore.load(from: recentWorkspacesURL)
+        let kernel = try await AppIntentRuntime.prepareKernel(
+            stateRoot: paths.runtimeStateRoot,
+            confirmationAuthorizer: confirmationAuthorizer
+        )
+        let pluginPersistence = try PluginHostPersistence(
+            stateRoot: paths.pluginStateRoot
+        )
+        try Task.checkCancellation()
+        return Self(
+            paths: paths,
+            underTest: underTest,
+            cliServer: cliServer,
+            codexHomePath: codexHomePath,
+            codexHomeURL: codexHomeURL,
+            claudeHomeURL: claudeHomeURL,
+            agentSessionRegistry: agentSessionRegistry,
+            agentHookServer: agentHookServer,
+            agentHookScriptURL: agentHookScriptURL,
+            codexHookInstallResult: codexHookInstallResult,
+            claudeHookInstallResult: claudeHookInstallResult,
+            launch: launch,
+            recentViews: recentViews,
+            recentWorkspaces: recentWorkspaces,
+            kernel: kernel,
+            pluginPersistence: pluginPersistence
+        )
+    }
 }
 
 @MainActor
 @Observable
 final class AppComposition {
     let host: PluginHost
+    /// The composition retains the one observable preferences owner so scheduling and
+    /// both shell surfaces read the same persisted enablement value.
+    let prefs: AppPreferencesStore
     let store: WorkspaceStore
     let terminalSurfaces: SurfacePool
     let agentLens: AgentLensPool
+    let agentSessionRegistry: AgentSessionRegistry
+    let agentHookServer: AgentHookServer
+    let codexHookInstallResult: AgentHookInstallResult
+    let claudeHookInstallResult: AgentHookInstallResult
     let webSurfaces: PluginWebSurfacePool
     let intentRuntime: AppIntentRuntime
     let cliServer: CLISocketServer
+    let instanceChannel: AppInstanceChannel
     let router = DragRouter()
-    let palette = CommandPaletteState()
+    let palette: CommandPaletteState
+    /// Which plugins this person has let handle a delegable contract. Nothing is granted
+    /// by installing — not even for a plugin that ships with the app.
+    let openHandlerApprovals: OpenHandlerApprovals
+    let quickCommands = QuickCommandStore()
     let userInterface: PluginUIState
     let catalogStore: WorkspaceCatalogStore
     /// T-046: wall-clock automation schedules. `Date()` enters only at this
@@ -149,117 +381,109 @@ final class AppComposition {
     @ObservationIgnored
     private var appActivationObservers: [NSObjectProtocol] = []
 
-    convenience init() throws {
-        try self.init(paths: AppStatePaths.resolve())
+    static func make(paths: AppStatePaths? = nil) async throws -> AppComposition {
+        let userInterface = PluginUIState()
+        let prefs = AppPreferencesStore.shared
+        let prepared = try await AppStartupPreparation.prepare(
+            paths: paths,
+            launchContent: prefs.preferences.newWorkspaceContent.slotContent(),
+            confirmationAuthorizer: userInterface.confirmationAuthorizer()
+        )
+        try Task.checkCancellation()
+        return try AppComposition(
+            prepared: prepared,
+            prefs: prefs,
+            userInterface: userInterface
+        )
     }
 
-    init(paths: AppStatePaths) throws {
-        let underTest =
-            ProcessInfo.processInfo
-                .environment["XCTestConfigurationFilePath"] != nil
-                || NSClassFromString("XCTestCase") != nil
-        let cliServer = CLISocketServer(enabled: !underTest)
-        if cliServer.role == .secondary {
-            exit(0)
-        }
-        let socketPath = cliServer.socketPath ?? ""
-
+    private init(
+        prepared: AppStartupPreparation,
+        prefs: AppPreferencesStore,
+        userInterface: PluginUIState
+    ) throws {
         NSApplication.shared.setActivationPolicy(.regular)
 
+        let paths = prepared.paths
         let pluginsRoot = paths.pluginInventoryRoot
-        let prefs = AppPreferencesStore.shared
         let catalogStore = WorkspaceCatalogStore(
             fileURL: paths.workspaceCatalogFile
         )
-        let fileManager = FileManager.default
-        // Plugin directories are short-named; the stable full id lives in each manifest.
-        // This is what init can know before `host.loadAll()` runs: a restored plugin-view
-        // pane whose plugin left the inventory degrades now, and a view id unknown within
-        // a live plugin is the host's instance reconciliation's business once it loads.
-        //
-        // Asked through the loader rather than by reading directories here, because
-        // "where plugins live and what counts as one" has exactly one owner. Hand-rolling
-        // it meant this probe knew only the primary root and only the directory
-        // packaging, so a restored pane belonging to a user-written plugin (T-062) or to
-        // a single-file automation (T-047) was dropped at launch as if uninstalled.
-        let installedPluginIDs: Set<String> = Set(
-            PluginLoader.discover(
-                in: [pluginsRoot, paths.userPluginInventoryRoot]
-            ).compactMap {
-                (try? PluginLoader.loadManifest(at: $0))?.id.rawValue
-            }
+        let recentViewsURL = paths.workspaceStateRoot.appendingPathComponent(
+            ".recent-views.json"
         )
-        let restored = WorkspaceCatalogStore
-            .loadDocument(at: paths.workspaceCatalogFile)
-            .flatMap { document in
-                WorkspaceCatalogSnapshot.restore(
-                    document,
-                    isDirectory: { path in
-                        var isDirectory: ObjCBool = false
-                        return fileManager.fileExists(
-                            atPath: path,
-                            isDirectory: &isDirectory
-                        ) && isDirectory.boolValue
-                    },
-                    isFileReadable: { fileManager.fileExists(atPath: $0) },
-                    isKnownPluginView: { pluginID, _ in
-                        installedPluginIDs.contains(pluginID)
-                    }
-                )
-            }
-        let launch = WorkspaceCatalogSnapshot.launchCatalog(
-            restored: restored,
-            launchDirectory: resolvedLaunchDirectory(),
-            launchContent: prefs.preferences.newWorkspaceContent
-                .slotContent(),
-            fallbackDirectory: FileManager.default
-                .homeDirectoryForCurrentUser.standardizedFileURL
+        let recentWorkspacesURL = paths.workspaceStateRoot.appendingPathComponent(
+            ".recent-workspaces.json"
         )
         let store = WorkspaceStore(
-            catalog: launch.catalog,
+            catalog: prepared.launch.catalog,
             recent: RecentStore(
-                fileURL: paths.workspaceStateRoot.appendingPathComponent(
-                    ".recent-views.json"
-                )
+                fileURL: recentViewsURL,
+                preloaded: prepared.recentViews
             ),
             recentWorkspaces: RecentWorkspaceStore(
-                fileURL: paths.workspaceStateRoot.appendingPathComponent(
-                    ".recent-workspaces.json"
-                )
+                fileURL: recentWorkspacesURL,
+                preloaded: prepared.recentWorkspaces
             )
         )
 
         let useStub =
             ProcessInfo.processInfo
                 .environment["TENON_STUB_TERMINAL"] != nil
+        // A degraded staging server must still point its panes at staging. Falling back to
+        // an empty override would make the CLI use production's compatibility socket.
+        let socketPath = prepared.cliServer.clientSocketPath
         let terminalSurfaces = SurfacePool(
-            backendName: useStub ? "Stub" : "libghostty"
-        ) { slotID, workspacePath in
-            if useStub {
-                return StubTerminalSurface()
-            }
-            return GhosttySurface(
-                workingDirectory: workspacePath,
-                environment: [
+            backendName: useStub ? "Stub" : "libghostty",
+            makeSurfaceWithIdentity: { slotID, surfaceToken, workspacePath in
+                if useStub {
+                    return StubTerminalSurface()
+                }
+                var environment = [
+                    "CODEX_HOME": prepared.codexHomePath,
                     "TENON_SOCKET_PATH": socketPath,
+                    "TENON_AGENT_HOOK_SCRIPT": prepared.agentHookScriptURL.path,
                     "TENON_PANE_ID": slotID.uuidString,
+                    "TENON_AGENT_SURFACE_TOKEN": surfaceToken.uuidString,
                 ]
-            )
-        }
+                if let port = prepared.agentHookServer.port {
+                    environment["TENON_AGENT_HOOK_PORT"] = String(port)
+                    environment["TENON_AGENT_HOOK_TOKEN"] =
+                        prepared.agentHookServer.bearerToken
+                }
+                return GhosttySurface(
+                    workingDirectory: workspacePath,
+                    environment: environment
+                )
+            }
+        )
         // T-031: seed each restored pane's recorded title and cwd as placeholder data —
         // the pane renders something useful immediately, and not one surface (so not one
         // shell) is built for it until the human actually opens it.
-        for (slotID, title) in launch.titles {
+        for (slotID, title) in prepared.launch.titles {
             terminalSurfaces.setTitle(title, for: slotID)
         }
-        for (slotID, cwd) in launch.cwds {
+        for (slotID, cwd) in prepared.launch.cwds {
             terminalSurfaces.seedSpawnDirectory(cwd, for: slotID)
         }
         let webSurfaces = PluginWebSurfacePool()
-        let agentLens = AgentLensPool()
-        let userInterface = PluginUIState()
+        let agentLens = AgentLensPool(
+            discovery: AgentLensDiscovery(
+                sessionRegistry: prepared.agentSessionRegistry,
+                codexSessionsRoot: prepared.codexHomeURL
+                    .appendingPathComponent("sessions", isDirectory: true),
+                codexHookDegradation: Self.agentHookDegradation(
+                    server: prepared.agentHookServer,
+                    installResult: prepared.codexHookInstallResult
+                ),
+                claudeHookDegradation: Self.agentHookDegradation(
+                    server: prepared.agentHookServer,
+                    installResult: prepared.claudeHookInstallResult
+                )
+            )
+        )
         let intentRuntime = try AppIntentRuntime(
-            stateRoot: paths.runtimeStateRoot,
+            kernel: prepared.kernel,
             workspaceStore: store,
             terminalSurfaces: terminalSurfaces,
             webSurfaces: webSurfaces,
@@ -270,6 +494,22 @@ final class AppComposition {
         // install erases the write. The user inventory is where an authored plugin
         // lives: writable, outside any bundle, and untrusted, because standing consent
         // is earned by installing Tenon and never by a file's location.
+        // Which plugins this person lets handle a delegable contract. Shipping with the app
+        // is consent to *run* a plugin; it is not consent to let it see every address and
+        // path opened through it, so a bundled plugin starts with no handler approval
+        // either and earns it in Settings. Scoped to what the manifest actually declares,
+        // because an approval for something never offered is refused outright by
+        // `ProviderActivationCoordinator`.
+        let openHandlerApprovals = OpenHandlerApprovals(
+            fileURL: paths.openHandlerApprovalsFile
+        )
+        let approvedOpenIntents: PluginHostAuthorization.OpenIntentApprovals = {
+            key, manifest in
+            await PluginOpenHandlerCandidacy.effectiveApprovals(
+                declared: manifest.intents.provides.map(\.name),
+                approved: openHandlerApprovals.approvedIntentIDs(for: key.pluginID)
+            )
+        }
         let host = try PluginHost(
             inventories: [
                 PluginInventory(
@@ -280,22 +520,29 @@ final class AppComposition {
                     // developer stands that directory in for the bundle with
                     // `TENON_TRUST_PLUGIN_INVENTORY=1`.
                     authorization: paths.trustsPluginInventory
-                        ? .bundledInventory
+                        ? PluginHostAuthorization(
+                            approvedOpenIntentIDs: approvedOpenIntents,
+                            grantsStandingConsent: { _, _ in true },
+                            inventoryTrust: .bundledStandingConsent
+                        )
                         : PluginHostAuthorization(
-                            approvedOpenIntentIDs: { _, _ in [] }
+                            approvedOpenIntentIDs: approvedOpenIntents
                         ),
-                    isWritable: paths.pluginInventoryIsWritable
+                    isWritable: paths.pluginInventoryIsWritable,
+                    enablesNewPluginsByDefault: paths.trustsPluginInventory
                 ),
                 PluginInventory(
                     root: paths.userPluginInventoryRoot,
                     authorization: PluginHostAuthorization(
-                        approvedOpenIntentIDs: { _, _ in [] }
+                        approvedOpenIntentIDs: approvedOpenIntents
                     ),
-                    isWritable: true
+                    isWritable: true,
+                    enablesNewPluginsByDefault: false
                 ),
             ],
             stateRoot: paths.pluginStateRoot,
             kernel: intentRuntime.kernel,
+            persistence: prepared.pluginPersistence,
             invocationScopeProvider: { @MainActor [weak store] in
                 guard let store else {
                     return InvocationScope()
@@ -313,21 +560,34 @@ final class AppComposition {
         )
 
         self.host = host
+        self.prefs = prefs
         self.store = store
         self.terminalSurfaces = terminalSurfaces
         self.agentLens = agentLens
+        self.agentSessionRegistry = prepared.agentSessionRegistry
+        self.agentHookServer = prepared.agentHookServer
+        self.codexHookInstallResult = prepared.codexHookInstallResult
+        self.claudeHookInstallResult = prepared.claudeHookInstallResult
         self.webSurfaces = webSurfaces
         self.intentRuntime = intentRuntime
-        self.cliServer = cliServer
+        self.cliServer = prepared.cliServer
+        self.instanceChannel = prepared.paths.instanceChannel
+        self.palette = CommandPaletteState(storeURL: paths.commandFrecencyFile)
+        self.openHandlerApprovals = openHandlerApprovals
         self.userInterface = userInterface
         self.catalogStore = catalogStore
         self.attentionNotifier = attentionNotifier
+
+        automationScheduler.setPausedScheduleKeys(
+            prefs.preferences.pausedAutomationSchedules
+        )
 
         Self.wire(
             host: host,
             store: store,
             terminalSurfaces: terminalSurfaces,
             agentLens: agentLens,
+            agentSessionRegistry: prepared.agentSessionRegistry,
             webSurfaces: webSurfaces,
             catalogStore: catalogStore,
             automation: automationScheduler
@@ -365,7 +625,7 @@ final class AppComposition {
             }
         }
 
-        cliServer.onRequest = { action, respond in
+        prepared.cliServer.onRequest = { action, respond in
             Task { @MainActor in
                 respond(
                     await CLICommandExecutor.execute(
@@ -375,6 +635,15 @@ final class AppComposition {
                 )
             }
         }
+    }
+
+    private static func agentHookDegradation(
+        server: AgentHookServer,
+        installResult: AgentHookInstallResult
+    ) -> String? {
+        guard server.port != nil else { return "the loopback listener could not bind" }
+        if case let .unavailable(reason) = installResult { return reason }
+        return nil
     }
 
     func start() async {
@@ -418,9 +687,14 @@ final class AppComposition {
         lifecycleID = nil
         lifecycleTask = nil
 
-        attentionPollTask?.cancel()
-        automationTickTask?.cancel()
+        let attentionPolling = attentionPollTask
+        let automationTicking = automationTickTask
+        attentionPolling?.cancel()
+        automationTicking?.cancel()
+        await attentionPolling?.value
+        await automationTicking?.value
         attentionPollTask = nil
+        automationTickTask = nil
         for observer in appActivationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -440,6 +714,8 @@ final class AppComposition {
 
         await host.shutdown()
         agentLens.retainOnly([])
+        await agentSessionRegistry.retainOnly([])
+        agentHookServer.stop()
         webSurfaces.disposeAll()
         do {
             try await intentRuntime.stop()
@@ -504,6 +780,49 @@ extension AppComposition {
     }
 }
 
+/// Delivers one already-advanced scheduler batch while its owner-scoped policy epochs stay
+/// current. The check belongs immediately before EACH delivery: `delivery` can suspend, and
+/// MainActor reentrancy lets a preference change while the prior firing is in flight. A
+/// global Off/On cycle invalidates the rest of the batch; a schedule pause/resume cycle
+/// invalidates only that schedule, so an unrelated schedule never loses its firing.
+@MainActor
+enum ScheduledAutomationDelivery {
+    struct BatchEpoch {
+        let globalRevision: UInt64
+        let scheduleRevisions: [AutomationScheduleKey: UInt64]
+    }
+
+    struct CurrentState {
+        let enabled: Bool
+        let globalRevision: UInt64
+        let paused: Bool
+        let scheduleRevision: UInt64
+    }
+
+    static func deliver(
+        _ firings: [AutomationScheduler.Firing],
+        batchEpoch: BatchEpoch,
+        currentState: (AutomationScheduleKey) -> CurrentState,
+        delivery: (AutomationScheduler.Firing) async -> Void
+    ) async {
+        for firing in firings {
+            let key = AutomationScheduleKey(
+                pluginID: firing.pluginID,
+                scheduleID: firing.scheduleID
+            )
+            let state = currentState(key)
+            guard state.enabled,
+                  state.globalRevision == batchEpoch.globalRevision
+            else { return }
+            guard let batchScheduleRevision = batchEpoch.scheduleRevisions[key],
+                  !state.paused,
+                  state.scheduleRevision == batchScheduleRevision
+            else { continue }
+            await delivery(firing)
+        }
+    }
+}
+
 private extension AppComposition {
     /// T-029, the feed: the same fixed 200 ms / 20 ms-tolerance cadence
     /// `terminal.wait.v1`'s loop uses (`TerminalIntentProvider`). `Date()` is supplied
@@ -545,9 +864,41 @@ private extension AppComposition {
                     return
                 }
                 guard let self else { return }
-                for firing in self.automationScheduler.tick(now: Date()) {
-                    await self.deliverAndRecord(firing)
-                }
+                // Always advance the scheduler. When delivery is disabled, dropping the
+                // due values here prevents a catch-up burst when the preference is restored.
+                let firings = self.automationScheduler.tick(now: Date())
+                let scheduleRevisions = Dictionary(
+                    uniqueKeysWithValues: firings.map { firing in
+                        let key = AutomationScheduleKey(
+                            pluginID: firing.pluginID,
+                            scheduleID: firing.scheduleID
+                        )
+                        return (
+                            key,
+                            self.prefs.automationScheduleRevision(for: key)
+                        )
+                    }
+                )
+                await ScheduledAutomationDelivery.deliver(
+                    firings,
+                    batchEpoch: .init(
+                        globalRevision: self.prefs.automationSchedulesRevision,
+                        scheduleRevisions: scheduleRevisions
+                    ),
+                    currentState: { key in
+                        .init(
+                            enabled: self.prefs.preferences.automationSchedulesEnabled,
+                            globalRevision: self.prefs.automationSchedulesRevision,
+                            paused: self.prefs.preferences.pausedAutomationSchedules
+                                .contains(key),
+                            scheduleRevision: self.prefs
+                                .automationScheduleRevision(for: key)
+                        )
+                    },
+                    delivery: { firing in
+                        await self.deliverAndRecord(firing)
+                    }
+                )
             }
         }
     }
@@ -562,6 +913,27 @@ private extension AppComposition {
             now: Date()
         ) else { return }
         await deliverAndRecord(firing)
+    }
+
+    /// Host-native per-schedule delivery preference. The manifest remains the source of
+    /// the schedule declaration, and manual Run Now remains available while paused.
+    func setAutomationSchedulePaused(
+        pluginID: PluginID,
+        scheduleID: String,
+        paused: Bool
+    ) {
+        let key = AutomationScheduleKey(
+            pluginID: pluginID,
+            scheduleID: scheduleID
+        )
+        if paused {
+            prefs.preferences.pausedAutomationSchedules.insert(key)
+        } else {
+            prefs.preferences.pausedAutomationSchedules.remove(key)
+        }
+        automationScheduler.setPausedScheduleKeys(
+            prefs.preferences.pausedAutomationSchedules
+        )
     }
 
     /// The one place a firing is delivered and remembered — the tick loop and Run
@@ -619,6 +991,7 @@ private extension AppComposition {
         store: WorkspaceStore,
         terminalSurfaces: SurfacePool,
         agentLens: AgentLensPool,
+        agentSessionRegistry: AgentSessionRegistry,
         webSurfaces: PluginWebSurfacePool,
         catalogStore: WorkspaceCatalogStore,
         automation: AutomationScheduler
@@ -638,6 +1011,7 @@ private extension AppComposition {
                 snapshot in
             terminalSurfaces?.retainOnly(Set(snapshot.allSlotIDs))
             agentLens?.retainOnly(Set(snapshot.allSlotIDs))
+            Task { await agentSessionRegistry.retainOnly(Set(snapshot.allSlotIDs)) }
             // T-029: catalog changes (workspace/tab selection, pane moves) change
             // which panes are displayed, so the viewed projection recomputes here.
             terminalSurfaces?.applyViewed(
@@ -650,11 +1024,18 @@ private extension AppComposition {
             if let host {
                 webSurfaces?.reconcile(catalog: snapshot, host: host)
             }
-            Task { @MainActor [weak host] in
-                await host?.emit(
+            Task { @MainActor [weak host, weak store] in
+                guard let host else { return }
+                await host.emit(
                     workspaceEvents: events,
                     in: snapshot
                 )
+                // Event delivery can suspend, and sibling mutation tasks are not
+                // ordered. Reconcile from live state so a late task cannot restore
+                // the captured catalog that preceded a plugin pane assignment.
+                if let store {
+                    await host.reconcileViewInstances(from: store.catalog)
+                }
             }
             for event in events {
                 if case let .slotFocused(slotID, _, _) = event {

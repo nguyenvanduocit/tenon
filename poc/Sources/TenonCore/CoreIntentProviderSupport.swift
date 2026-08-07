@@ -50,6 +50,17 @@ enum CoreIntentProviderSupport {
         return value
     }
 
+    static func optionalBool(
+        _ key: String,
+        in object: [String: IntentValue]
+    ) throws -> Bool? {
+        guard let field = object[key] else { return nil }
+        guard case let .bool(value) = field else {
+            throw CoreIntentProviderInputError.missingOrInvalidField(key)
+        }
+        return value
+    }
+
     static func stringArray(
         _ key: String,
         in object: [String: IntentValue]

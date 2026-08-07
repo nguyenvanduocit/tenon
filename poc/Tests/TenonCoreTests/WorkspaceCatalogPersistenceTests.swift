@@ -163,6 +163,35 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         XCTAssertEqual(restored.catalog, catalog)
     }
 
+    func testAutomationPaneRoundTripsThroughCatalogPersistence() throws {
+        let decoded = try JSONDecoder().decode(
+            WorkspaceCatalogSnapshot.Document.self,
+            from: documentJSON(contentJSON: #"{"type":"automation"}"#)
+        )
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            decoded,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(restored.catalog.activeTab?.activeSlot?.content, .automation)
+
+        let recaptured = WorkspaceCatalogSnapshot.document(
+            capturing: restored.catalog
+        )
+        let roundTripped = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            recaptured,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+        XCTAssertEqual(
+            roundTripped.catalog.activeTab?.activeSlot?.content,
+            .automation
+        )
+    }
+
     func testAnInlineDiffPaneIsCapturedAsEmptyBecauseItsTextsAreLivePluginState() throws {
         let inlineSlot = WorkspaceSlot(
             rect: GridRect(x: 0, y: 0, width: 12, height: 12),

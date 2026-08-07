@@ -1,6 +1,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import TenonCore
 
 /// Where a pane drag that reached the tab bar would land.
 enum TabBarDropTarget: Equatable {
@@ -27,15 +28,35 @@ enum TabBarDropResolver {
     }
 }
 
+/// The body destination chosen after a pane drag has switched tabs. The router owns
+/// this value because the source tab's canvas is no longer the visible interaction
+/// owner once the tab bar reveals another tab.
+struct RoutedPaneDropTarget: Equatable {
+    let tabID: UUID
+    let slotID: UUID
+    let edge: SpatialDropEdge
+}
+
+/// Identity-only state for a pane drag whose lifetime can cross tab-local canvases.
+/// Geometry always comes from the currently visible canvas, so switching tabs cannot
+/// carry a stale source layout into the destination's hit testing.
+struct RoutedPaneDrag: Equatable {
+    let slotID: UUID
+    let sourceTabID: UUID
+    var bodyTarget: RoutedPaneDropTarget?
+}
+
 /// Main-thread geometry bridge between the SwiftUI tab bar and the AppKit spatial
 /// canvas. The tab bar writes chip/band frames (window coordinates, non-published so
 /// the fast layout path never loops back through SwiftUI); the canvas reads them
 /// mid-drag to decide a reparent and publishes the live drop target back so the tab
 /// bar can highlight it.
 @Observable
+@MainActor
 final class DragRouter {
     @ObservationIgnored var tabBarBand: CGRect = .zero
     @ObservationIgnored var tabChipFrames: [UUID: CGRect] = [:]
+    @ObservationIgnored private(set) var paneDrag: RoutedPaneDrag?
     var activeDropTarget: TabBarDropTarget = .none
 
     func target(at windowPoint: CGPoint) -> TabBarDropTarget {
@@ -44,6 +65,24 @@ final class DragRouter {
             band: tabBarBand,
             chips: tabChipFrames
         )
+    }
+
+    func beginPaneDrag(slotID: UUID, sourceTabID: UUID) {
+        guard paneDrag == nil else { return }
+        paneDrag = RoutedPaneDrag(
+            slotID: slotID,
+            sourceTabID: sourceTabID,
+            bodyTarget: nil
+        )
+    }
+
+    func setBodyTarget(_ target: RoutedPaneDropTarget?) {
+        paneDrag?.bodyTarget = target
+    }
+
+    func endPaneDrag() {
+        paneDrag = nil
+        activeDropTarget = .none
     }
 }
 

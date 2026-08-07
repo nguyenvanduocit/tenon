@@ -124,16 +124,6 @@ private extension FilesystemIntentProvider {
         case filesystemFailed(String)
     }
 
-    struct DirectoryPage: Sendable {
-        let entries: [IntentValue]
-        let nextCursor: String?
-    }
-
-    struct DirectoryCursor: Sendable {
-        let offset: Int
-        let fingerprint: String?
-    }
-
     static let defaultDirectoryLimit = 100
     static let maximumDirectoryLimit = 256
     static let maximumInlineBytes = CoreIntentPayloadPolicy.maximumInlineTextCharacters
@@ -173,6 +163,10 @@ private extension FilesystemIntentProvider {
                 throw CoreIntentProviderInputError.missingOrInvalidField("limit")
             }
             let cursor = try directoryCursor(from: rawCursor)
+            let includeMetadata = try CoreIntentProviderSupport.optionalBool(
+                "includeMetadata",
+                in: input
+            ) ?? false
 
             let page = try await CoreIntentProviderSupport.runBlocking(
                 deadline: envelope.deadline,
@@ -182,14 +176,16 @@ private extension FilesystemIntentProvider {
                     path: path,
                     cursor: cursor,
                     limit: limit,
+                    includeMetadata: includeMetadata,
                     deadline: envelope.deadline
                 )
             }
             return .success(
-                .object([
-                    "entries": .array(page.entries),
-                    "nextCursor": page.nextCursor.map(IntentValue.string) ?? .null,
-                ])
+                directoryOutput(
+                    entries: page.entries,
+                    nextCursor: page.nextCursor,
+                    path: path.resolvedPath
+                )
             )
         } catch let error as CoreIntentProviderInputError {
             return CoreIntentProviderSupport.invalidInputFailure(error)
@@ -509,119 +505,15 @@ private extension FilesystemIntentProvider {
         )
     }
 
-    static func directoryPage(
-        path: AuthorizedFilesystemPath,
-        cursor: DirectoryCursor,
-        limit: Int,
-        deadline: ContinuousClock.Instant
-    ) throws -> DirectoryPage {
-        let descriptor = try openBound(
-            path,
-            flags: O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
-        )
-        guard let directory = fdopendir(descriptor) else {
-            Darwin.close(descriptor)
-            throw mapPOSIXError(errno)
-        }
-        defer { closedir(directory) }
-
-        let directoryDescriptor = dirfd(directory)
-        let fingerprint = try directoryFingerprint(
-            descriptor: directoryDescriptor
-        )
-        if let expected = cursor.fingerprint, expected != fingerprint {
-            throw OperationError.filesystemFailed("stale-cursor")
-        }
-
-        var scanned = 0
-        var entries: [IntentValue] = []
-        entries.reserveCapacity(limit)
-        var hasMore = false
-        errno = 0
-        while let rawEntry = readdir(directory) {
-            if scanned.isMultiple(of: 64) {
-                try Task.checkCancellation()
-                guard ContinuousClock.now < deadline else {
-                    throw CancellationError()
-                }
-            }
-            let nameBytes = withUnsafeBytes(of: rawEntry.pointee.d_name) {
-                Array($0.prefix { $0 != 0 })
-            }
-            guard let name = String(bytes: nameBytes, encoding: .utf8) else {
-                throw OperationError.filesystemFailed(
-                    "directory-entry-is-not-utf8"
-                )
-            }
-            guard name != ".", name != ".." else { continue }
-            if scanned < cursor.offset {
-                scanned += 1
-                continue
-            }
-
-            guard entries.count < limit else {
-                hasMore = true
-                break
-            }
-
-            let isDirectory: Bool
-            if rawEntry.pointee.d_type == DT_DIR {
-                isDirectory = true
-            } else if rawEntry.pointee.d_type == DT_UNKNOWN {
-                var metadata = stat()
-                let status = name.withCString {
-                    fstatat(
-                        directoryDescriptor,
-                        $0,
-                        &metadata,
-                        AT_SYMLINK_NOFOLLOW
-                    )
-                }
-                guard status == 0 else { throw mapPOSIXError(errno) }
-                isDirectory = (metadata.st_mode & S_IFMT) == S_IFDIR
-            } else {
-                isDirectory = false
-            }
-
-            let candidate = IntentValue.object([
-                "name": .string(name),
-                "isDirectory": .bool(isDirectory),
-            ])
-            let candidateEntries = entries + [candidate]
-            let candidateCursor =
-                "v1:\(cursor.offset + candidateEntries.count):\(fingerprint)"
-            let candidateOutput = directoryOutput(
-                entries: candidateEntries,
-                nextCursor: candidateCursor
-            )
-            do {
-                try candidateOutput.validate()
-            } catch {
-                hasMore = true
-                break
-            }
-            entries.append(candidate)
-            scanned += 1
-        }
-        if !hasMore, errno != 0 {
-            throw mapPOSIXError(errno)
-        }
-
-        return DirectoryPage(
-            entries: entries,
-            nextCursor: hasMore
-                ? "v1:\(cursor.offset + entries.count):\(fingerprint)"
-                : nil
-        )
-    }
-
     static func directoryOutput(
         entries: [IntentValue],
-        nextCursor: String?
+        nextCursor: String?,
+        path: String
     ) -> IntentValue {
         .object([
             "entries": .array(entries),
             "nextCursor": nextCursor.map(IntentValue.string) ?? .null,
+            "path": .string(path),
         ])
     }
 
@@ -942,8 +834,227 @@ private extension FilesystemIntentProvider {
 
 // Internal, not fileprivate: a write landing inside one page's identity-to-read
 // window cannot be staged through the public bindings, so the tests drive the
-// paging pair directly.
+// paging pair directly. The directory pager is here for the same reason — a
+// mid-page vanishing entry and the number of times a page is validated are both
+// unreachable from the binding.
 extension FilesystemIntentProvider {
+    struct DirectoryPage: Sendable {
+        let entries: [IntentValue]
+        let nextCursor: String?
+    }
+
+    struct DirectoryCursor: Sendable {
+        let offset: Int
+        let fingerprint: String?
+    }
+
+    /// One bounded page of directory entries.
+    ///
+    /// The page is accounted incrementally — each candidate's own canonical
+    /// encoding is added to a running total — and validated once, after the
+    /// scan. Validating every prefix instead costs a full traversal and a full
+    /// re-encode per entry, which is quadratic in the page.
+    ///
+    /// `interposedBeforeEntryMetadata` runs with an entry's name immediately
+    /// before that entry is stat'ed; tests use it to make one entry vanish
+    /// inside the window and assert the page still comes back.
+    /// `onPageValidation` runs immediately before each validation of an
+    /// assembled page, so a test can count validations instead of timing them.
+    static func directoryPage(
+        path: AuthorizedFilesystemPath,
+        cursor: DirectoryCursor,
+        limit: Int,
+        includeMetadata: Bool,
+        deadline: ContinuousClock.Instant,
+        interposedBeforeEntryMetadata: ((String) throws -> Void)? = nil,
+        onPageValidation: (() -> Void)? = nil
+    ) throws -> DirectoryPage {
+        let descriptor = try openBound(
+            path,
+            flags: O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+        )
+        guard let directory = fdopendir(descriptor) else {
+            Darwin.close(descriptor)
+            throw mapPOSIXError(errno)
+        }
+        defer { closedir(directory) }
+
+        let directoryDescriptor = dirfd(directory)
+        let fingerprint = try directoryFingerprint(
+            descriptor: directoryDescriptor
+        )
+        if let expected = cursor.fingerprint, expected != fingerprint {
+            throw OperationError.filesystemFailed("stale-cursor")
+        }
+
+        let limits = IntentValueLimits.default
+        let iso = Date.ISO8601FormatStyle()
+        // `{"entries":[…],"nextCursor":C,"path":P}` is 36 fixed bytes once the
+        // canonical encoder has sorted the keys, plus the two encoded scalars,
+        // plus each entry and the comma before it. The cursor is seeded at the
+        // longest this page could issue, and `null` is shorter still, so the
+        // running total is never optimistic.
+        let encodedPathBytes = try IntentValue
+            .string(path.resolvedPath)
+            .canonicalJSONData()
+            .count
+        let longestCursorBytes = try max(
+            IntentValue
+                .string("v1:\(cursor.offset + limit):\(fingerprint)")
+                .canonicalJSONData()
+                .count,
+            4
+        )
+        var encodedBytes = 36 + encodedPathBytes + longestCursorBytes
+        // Root object, entries array, nextCursor, path. Object keys are not
+        // counted as values.
+        var valueCount = 4
+
+        var scanned = 0
+        var entries: [IntentValue] = []
+        entries.reserveCapacity(limit)
+        var hasMore = false
+        while true {
+            // `readdir` reports end-of-directory and failure the same way, by
+            // returning nil, and separates them only through errno — which it
+            // leaves untouched when the directory simply ends. Nothing may run
+            // between this reset and the check on the next line: the metadata
+            // formatting and the canonical encoding below both call into
+            // Foundation, which is free to set errno on a call that succeeded,
+            // and one stray value left there would turn a complete scan into a
+            // thrown POSIX error.
+            errno = 0
+            guard let rawEntry = readdir(directory) else {
+                if errno != 0 { throw mapPOSIXError(errno) }
+                break
+            }
+            if scanned.isMultiple(of: 64) {
+                try Task.checkCancellation()
+                guard ContinuousClock.now < deadline else {
+                    throw CancellationError()
+                }
+            }
+            let nameBytes = withUnsafeBytes(of: rawEntry.pointee.d_name) {
+                Array($0.prefix { $0 != 0 })
+            }
+            guard let name = String(bytes: nameBytes, encoding: .utf8) else {
+                throw OperationError.filesystemFailed(
+                    "directory-entry-is-not-utf8"
+                )
+            }
+            guard name != ".", name != ".." else { continue }
+            if scanned < cursor.offset {
+                scanned += 1
+                continue
+            }
+
+            guard entries.count < limit else {
+                hasMore = true
+                break
+            }
+
+            // One syscall answers both questions, and it answers the kind
+            // question exactly as `d_type` alone did: a known kind is never
+            // re-derived from the stat, so asking for metadata cannot move an
+            // entry between file and directory.
+            var metadata = stat()
+            var metadataAvailable = false
+            if rawEntry.pointee.d_type == DT_UNKNOWN || includeMetadata {
+                try interposedBeforeEntryMetadata?(name)
+                let status = name.withCString {
+                    fstatat(
+                        directoryDescriptor,
+                        $0,
+                        &metadata,
+                        AT_SYMLINK_NOFOLLOW
+                    )
+                }
+                if status == 0 {
+                    metadataAvailable = true
+                } else if rawEntry.pointee.d_type == DT_UNKNOWN {
+                    throw mapPOSIXError(errno)
+                }
+                // Otherwise the entry left between readdir and the stat.
+                // readdir already handed the name over, so it stays in the page
+                // with unknown metadata.
+            }
+
+            let isDirectory: Bool
+            if rawEntry.pointee.d_type == DT_DIR {
+                isDirectory = true
+            } else if rawEntry.pointee.d_type == DT_UNKNOWN {
+                isDirectory = (metadata.st_mode & S_IFMT) == S_IFDIR
+            } else {
+                isDirectory = false
+            }
+
+            var fields: [String: IntentValue] = [
+                "name": .string(name),
+                "isDirectory": .bool(isDirectory),
+            ]
+            if includeMetadata {
+                fields["sizeBytes"] = metadataAvailable
+                    ? .integer(Int64(metadata.st_size))
+                    : .null
+                fields["modifiedAt"] = metadataAvailable
+                    ? .string(
+                        iso.format(
+                            Date(
+                                timeIntervalSince1970:
+                                    Double(metadata.st_mtimespec.tv_sec)
+                            )
+                        )
+                    )
+                    : .null
+            }
+            let candidate = IntentValue.object(fields)
+
+            // A throw here is unreachable — NAME_MAX is 255 bytes against a
+            // 64 KB string limit — and swallowing it would emit an empty page
+            // that still claims more, which is an endless paging loop.
+            let entryBytes = try candidate.canonicalJSONData().count
+            let separator = entries.isEmpty ? 0 : 1
+            let entryValues = includeMetadata ? 5 : 3
+            guard encodedBytes + separator + entryBytes <= limits.maxEncodedBytes,
+                  valueCount + entryValues <= limits.maxValueCount,
+                  entries.count + 1 <= limits.maxCollectionCount
+            else {
+                hasMore = true
+                break
+            }
+            encodedBytes += separator + entryBytes
+            valueCount += entryValues
+            entries.append(candidate)
+            scanned += 1
+        }
+
+        while true {
+            let nextCursor = hasMore
+                ? "v1:\(cursor.offset + entries.count):\(fingerprint)"
+                : nil
+            let page = directoryOutput(
+                entries: entries,
+                nextCursor: nextCursor,
+                path: path.resolvedPath
+            )
+            onPageValidation?()
+            do {
+                try page.validate()
+            } catch {
+                // The accounting above is conservative, so this is unreachable;
+                // it stays because dropping the last entry on a page of one
+                // would otherwise loop forever on an empty page that claims more.
+                guard entries.count > 1 else {
+                    throw OperationError.filesystemFailed("page-entry-too-large")
+                }
+                entries.removeLast()
+                hasMore = true
+                continue
+            }
+            return DirectoryPage(entries: entries, nextCursor: nextCursor)
+        }
+    }
+
     /// Where the next file page starts, and the file identity that made that byte
     /// offset mean something. Purely a value: the host keeps nothing when a caller
     /// drops one.

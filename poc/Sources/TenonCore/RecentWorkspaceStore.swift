@@ -27,10 +27,20 @@ public final class RecentWorkspaceStore {
     private let limit: Int
     public private(set) var recent: [Entry]
 
-    public init(fileURL: URL, limit: Int = 8) {
+    public init(
+        fileURL: URL,
+        limit: Int = 8,
+        preloaded: [Entry]? = nil
+    ) {
         self.fileURL = fileURL
         self.limit = limit
-        self.recent = RecentWorkspaceStore.read(from: fileURL)
+        self.recent = preloaded ?? RecentWorkspaceStore.read(from: fileURL)
+    }
+
+    /// Launch-time read seam. The app calls this from its concurrent preparation phase,
+    /// then constructs the observable store from the immutable result.
+    package static func load(from fileURL: URL) -> [Entry] {
+        read(from: fileURL)
     }
 
     /// Move the workspace at `path` to the front (deduping by path so re-opening it just

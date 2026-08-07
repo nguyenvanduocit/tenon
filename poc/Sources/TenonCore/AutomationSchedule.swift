@@ -1,4 +1,18 @@
 import Foundation
+import TenonIntentCore
+
+/// Stable host identity for one manifest-declared schedule. The pair is persisted in
+/// preferences when a person pauses a schedule, so a hot reload or temporary plugin
+/// disable does not forget that choice.
+public struct AutomationScheduleKey: Sendable, Hashable, Codable {
+    public let pluginID: PluginID
+    public let scheduleID: String
+
+    public init(pluginID: PluginID, scheduleID: String) {
+        self.pluginID = pluginID
+        self.scheduleID = scheduleID
+    }
+}
 
 /// One wall-clock schedule declared in a plugin manifest's `automation.schedules` block.
 ///

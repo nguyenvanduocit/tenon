@@ -7,7 +7,7 @@ import TenonIntentCore
 /// explicit source change and the catalog fitness tests require a matching definition.
 /// Raw values are public protocol names, so every value is versioned from its first release.
 public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
-    case filesystemDirectoryList = "filesystem.directory.list.v1"
+    case filesystemDirectoryList = "filesystem.directory.list.v2"
     case filesystemFileRead = "filesystem.file.read.v1"
     case filesystemPathExists = "filesystem.path.exists.v1"
     case filesystemFileWrite = "filesystem.file.write.v1"
@@ -17,6 +17,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case filesystemPathTrash = "filesystem.path.trash.v1"
     case fileReveal = "file.reveal.v1"
     case fileOpen = "file.open.v1"
+    case urlOpen = "url.open.v1"
     case clipboardWrite = "clipboard.write.v1"
     case processExec = "process.exec.v1"
     case terminalWrite = "terminal.write.v1"
@@ -37,6 +38,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case secretsSet = "secrets.set.v1"
     case secretsDelete = "secrets.delete.v1"
     case workspaceState = "workspace.state.v1"
+    case workspacePaneOwner = "workspace.pane.owner.v1"
     case workspaceTabCreate = "workspace.tab.create.v1"
     case workspacePaneSplit = "workspace.pane.split.v1"
     case workspacePaneFocus = "workspace.pane.focus.v1"
@@ -101,6 +103,7 @@ public extension CoreIntentName {
              .filesystemPathTrash,
              .fileReveal,
              .fileOpen,
+             .urlOpen,
              .processExec,
              .terminalWrite,
              .terminalRun,
@@ -109,6 +112,7 @@ public extension CoreIntentName {
              .terminalScrollbackRead,
              .terminalWait,
              .workspaceState,
+             .workspacePaneOwner,
              .workspaceTabCreate,
              .workspacePaneSplit,
              .workspacePaneFocus,
@@ -185,6 +189,7 @@ public extension CoreIntentName {
 
         case .fileReveal,
              .fileOpen,
+             .urlOpen,
              .clipboardWrite:
             .system
 
@@ -195,6 +200,7 @@ public extension CoreIntentName {
             .network
 
         case .workspaceState,
+             .workspacePaneOwner,
              .workspaceTabCreate,
              .workspacePaneSplit,
              .workspacePaneFocus,
@@ -514,6 +520,13 @@ private extension CoreIntentCatalog {
             capability: "shell.open",
             filesystemPaths: ["/path"]
         )
+        // Same authority, different subject: `shell.open` is "ask for this to be opened by
+        // its handler", and the handler for an address is bound by network scope rather
+        // than by a filesystem path.
+        let shellOpenURL = try CoreIntentRuleData.binding(
+            capability: "shell.open",
+            networkURLs: ["/url"]
+        )
         // `process.exec` is intentionally one unsandboxed local-process authority. A child
         // can access the invoking user's files and network through argv or its own syscalls,
         // so filesystem path bindings would imply confinement the host does not enforce.
@@ -553,12 +566,25 @@ private extension CoreIntentCatalog {
             try CoreIntentRuleData.definition(
                 .filesystemDirectoryList,
                 title: "List directory",
-                description: "Returns one bounded, cursor-addressable page of directory entries.",
+                description: """
+                Returns one bounded, cursor-addressable page of directory \
+                entries. `path` is the listed directory's resolved absolute \
+                path. Every entry carries `name` and `isDirectory`. \
+                `includeMetadata` defaults to false; setting it true adds \
+                `sizeBytes` and `modifiedAt` to every entry, each null when \
+                that entry's metadata could not be read. `sizeBytes` is the \
+                entry's own size as the filesystem reports it — for a \
+                directory that is the directory file itself, not its recursive \
+                content — and `modifiedAt` is an ISO-8601 UTC timestamp. \
+                Metadata costs one stat per entry, so a caller rendering names \
+                alone should leave it off.
+                """,
                 input: CoreIntentSchema.root(
                     properties: [
                         "path": CoreIntentSchema.path,
                         "cursor": CoreIntentSchema.string(maxLength: 512),
                         "limit": CoreIntentSchema.integer(minimum: 1, maximum: 256),
+                        "includeMetadata": CoreIntentSchema.boolean,
                     ],
                     required: ["path"]
                 ),
@@ -572,6 +598,16 @@ private extension CoreIntentCatalog {
                                         maxLength: 4_096
                                     ),
                                     "isDirectory": CoreIntentSchema.boolean,
+                                    "sizeBytes": CoreIntentSchema.nullable(
+                                        CoreIntentSchema.integer(minimum: 0)
+                                    ),
+                                    "modifiedAt": CoreIntentSchema.nullable(
+                                        CoreIntentSchema.string(
+                                            minLength: 20,
+                                            maxLength: 32,
+                                            format: "date-time"
+                                        )
+                                    ),
                                 ],
                                 required: ["name", "isDirectory"]
                             ),
@@ -580,8 +616,9 @@ private extension CoreIntentCatalog {
                         "nextCursor": CoreIntentSchema.nullable(
                             CoreIntentSchema.string(maxLength: 512)
                         ),
+                        "path": CoreIntentSchema.path,
                     ],
-                    required: ["entries", "nextCursor"]
+                    required: ["entries", "nextCursor", "path"]
                 ),
                 audiences: programmatic,
                 exposure: programmaticExposure,
@@ -849,6 +886,36 @@ private extension CoreIntentCatalog {
                     "dev.tenon.core.external-open-failed",
                 ],
                 bindings: [shellOpenPath],
+                admission: .interactive,
+                timeout: .seconds(15),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .urlOpen,
+                contractClass: .open,
+                title: "Open address",
+                description: """
+                Opens a web address with the trusted default or an explicitly approved \
+                provider. The trusted default hands it to the system; an approved provider \
+                may show it inside Tenon instead.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: ["url": CoreIntentSchema.url],
+                    required: ["url"]
+                ),
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(
+                    .write,
+                    confirmation: .policy,
+                    external: true
+                ),
+                errors: [
+                    "dev.tenon.core.invalid-url",
+                    "dev.tenon.core.external-open-failed",
+                ],
+                bindings: [shellOpenURL],
                 admission: .interactive,
                 timeout: .seconds(15),
                 trustedProviderID: trustedProviderID
@@ -1504,6 +1571,23 @@ private extension CoreIntentCatalog {
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
+                .workspacePaneOwner,
+                title: "Resolve the workspace that owns a pane",
+                description: "Returns the workspace and tab that own the named pane.",
+                input: CoreIntentSchema.root(
+                    properties: ["paneID": CoreIntentSchema.uuid],
+                    required: ["paneID"]
+                ),
+                output: CoreIntentSchema.workspacePaneOwnerOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.read),
+                errors: ["dev.tenon.core.workspace-unavailable"],
+                admission: .background,
+                timeout: .seconds(10),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
                 .workspaceTabCreate,
                 title: "Create tab",
                 description: "Creates a tab in the workspace identified by invocation scope.",
@@ -1892,6 +1976,7 @@ private enum CoreIntentSchema {
         contentKind("terminal"),
         contentKind("changes"),
         contentKind("docs"),
+        contentKind("automation"),
         contentKind("empty"),
         object(
             properties: [
@@ -1951,6 +2036,7 @@ private enum CoreIntentSchema {
         contentKind("terminal"),
         contentKind("changes"),
         contentKind("docs"),
+        contentKind("automation"),
         contentKind("empty"),
         object(
             properties: [
@@ -2085,6 +2171,18 @@ private enum CoreIntentSchema {
             "nodes",
             "nextCursor",
         ]
+    )
+
+    /// One edge, resolved for one pane: total, unpaginated, single-valued. Deliberately
+    /// carries no workspace name, pane content, or frame — no caller needs them, and every
+    /// field added here is a field every future caller has to be handed.
+    static let workspacePaneOwnerOutput = root(
+        properties: [
+            "workspaceID": uuid,
+            "workspacePath": path,
+            "tabID": uuid,
+        ],
+        required: ["workspaceID", "workspacePath", "tabID"]
     )
 
     static let uuid = string(

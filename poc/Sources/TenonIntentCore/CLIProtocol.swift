@@ -1,5 +1,4 @@
 import Foundation
-import TenonIntentCore
 
 /// The newline-delimited JSON contract between `tenon-cli` and the running app.
 ///

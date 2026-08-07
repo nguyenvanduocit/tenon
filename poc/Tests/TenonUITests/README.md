@@ -10,12 +10,13 @@ shell is plugged into it.
 
 The app and accessibility contract are wired into the default `Tenon` scheme. XCUITest
 requires a logged-in macOS GUI session with Accessibility automation available; a pure
-headless shell can still run the three unit-test bundles.
+headless shell can still run the three SwiftPM-backed test bundles.
 
 ## The identifier contract
 
 The shell publishes these identifiers from the SwiftUI/AppKit views in `Sources/TenonApp`.
-`TenonWorkspaceFlowUITests.A11y` is the machine-readable copy — keep both in sync.
+`TenonWorkspaceFlowUITests.A11y` and `PaletteFlowUITests` are the machine-readable consumers
+— keep them and this table in sync.
 
 | Identifier      | Put it on…                                   | Why the test needs it |
 |-----------------|----------------------------------------------|-----------------------|
@@ -24,6 +25,8 @@ The shell publishes these identifiers from the SwiftUI/AppKit views in `Sources/
 | `tenon.launcher.row.<commandID>` | each row in the `+` launcher popover | proves the popover projects plugin-declared launcher intents, and that clicking one invokes that plugin |
 | `tenon.canvas`  | the active tab's spatial-canvas container    | launch/readiness anchor; scopes slot lookups |
 | `tenon.slot`    | each slot view on the canvas (same id on all)| counts slots — split/close change the count; drag reorders them |
+| `tenon.palette.search` | command-palette search field | proves `⌘⇧P` opens the palette and transfers keyboard focus |
+| `tenon.palette.row.<rowID>` | each command-palette result row | proves filtering projects a real bundled intent row |
 
 ### Two extra requirements for `tenon.slot`
 
@@ -45,12 +48,13 @@ xcodebuild test -project Tenon.xcodeproj -scheme Tenon \
 ```
 
 `-only-testing:TenonUITests` runs just this bundle. Drop it to run the whole suite
-(`TenonCoreTests` + `TenonAppTests` + `TenonIntegrationTests` + `TenonUITests`).
+(`TenonIntentCoreTests` + `TenonCoreTests` + `TenonAppStateTests` +
+`TenonIntegrationTests` + `TenonUITests`).
 
 UI tests need a real GUI login session (a window server) — they cannot run from a pure
-headless shell. That is the boundary the CLAUDE.md verification note draws: `swift test`
-stays the fast headless bar; XCUITest is the deliberately-small layer for what only a window
-can prove.
+headless shell. `swift test` stays the fast headless bar; XCUITest is the deliberately-small
+layer for what only a window can prove. The verification receipt is the runner output; this
+document intentionally does not freeze a test count.
 
 ## The drag test, specifically
 

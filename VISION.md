@@ -82,6 +82,11 @@ A slot UUID owns its terminal surface. Moving, resizing, switching tabs, or
 switching workspaces preserves that identity and its live process. A surface is
 released only after its slot leaves the complete workspace catalog.
 
+The workspace catalog persists workspace, tab, slot, content, geometry,
+selection, terminal title, and working-directory placeholders across app
+relaunch. A restored terminal is materialized lazily as a fresh shell; Tenon
+does not serialize or resurrect a process.
+
 ### Changeable architecture
 
 Layout rules are pure values in `TenonCore`; AppKit paints and interacts with
@@ -128,9 +133,10 @@ proposal is valid, and whose claimed affected IDs equal the actual changes.
 
 - preserve terminal state through every workspace, tab, and layout transition;
 - keep pointer interaction responsive with several live terminal surfaces;
-- persist workspaces, tabs, slot content, and grid rectangles;
+- keep persisted workspaces, tabs, slot content, grid rectangles, and selections
+  fail-soft across schema and filesystem drift;
 - expose built-in and plugin slot types through one coherent content picker;
-- harden plugin consent, isolation, and auditability;
+- preserve fail-closed plugin consent and harden runtime isolation/auditability;
 - verify complete user interactions in the hosted macOS test target.
 
 ## First supervision experiment
@@ -162,6 +168,14 @@ unsupported by their cited evidence are measured separately, with zero accepted
 in the reviewed experiment sample.
 
 The current pre-alpha implements the native terminal workspace, spatial canvas,
-libghostty integration, built-in slot surfaces, and plugin runtime described
-above. The Attention Inbox, context capsules, structured agent signals, and
-fan-out measurements remain to be implemented and validated.
+catalog persistence, libghostty integration, built-in slot surfaces, governed
+plugin/intent runtime, CLI adapter, command palette, automations, and a
+host-internal Agent Lens. Agent Lens can bind supported provider evidence to one
+live terminal-surface incarnation and render one chronological Session timeline;
+when authoritative identity is unavailable it degrades explicitly and Terminal
+remains the exact evidence path. It is not the cross-session Attention Inbox.
+
+The Attention Inbox, context capsules, cross-workstream prioritization, and
+fan-out measurements remain to be implemented and validated. Current document
+authority and implementation status are indexed in
+[`docs/README.md`](docs/README.md).

@@ -31,9 +31,99 @@ enum ChangeTint: Sendable {
     }
 }
 
-/// How the changed-file list is laid out: a flat list (file + dir) or a collapsible
-/// directory tree. The user toggles between them in the panel header.
-enum ChangesLayout { case flat, tree }
+/// How the changed-file list is laid out: a collapsible directory tree or a flat list
+/// (file + dir). The user picks between them in the pane's chrome header.
+///
+/// Raw values because both ends of that picker are minted from this enum: the segments the
+/// user sees and the value a click reports back arrive as strings, and taking them from the
+/// cases themselves is what stops the two ends drifting apart. Declaration order IS the order
+/// the segments draw in, so `allCases` is the only place that order is written down.
+enum ChangesLayout: String, CaseIterable {
+    case tree, flat
+
+    /// The icon-only segment's glyph, and what VoiceOver reads for it.
+    var symbolName: String { self == .tree ? "list.bullet.indent" : "list.dash" }
+    var title: String { self == .tree ? "Tree" : "Flat" }
+}
+
+/// What the Changes pane contributes to the ONE chrome header the card draws.
+///
+/// Pure and outside the view for the same reason `DiffPaneHeader` is: choosing what a pane has
+/// to say is arithmetic over the pane's own state, and once the items are chosen the drawing
+/// has no decisions left in it. `ChangesLayout` is internal, so unlike Diff's private
+/// `DiffStyle` it can be spoken here directly — which removes a Bool the caller could invert.
+enum ChangesPaneHeader {
+    /// - Parameters:
+    ///   - branch: the checked-out branch, or `nil` when the workspace is not a repository.
+    ///   - canRefresh: whether this pane loads git at all. The snapshot pane seeds a model and
+    ///     never reads the working tree, so offering it a refresh would offer a button that
+    ///     could not do anything.
+    static func header(
+        branch: String?,
+        total: Int,
+        layout: ChangesLayout,
+        isLoading: Bool,
+        canRefresh: Bool
+    ) -> PaneHeader {
+        var leading: [PaneHeaderItem] = [
+            .image(id: "vcs", systemName: "arrow.trianglehead.branch", tint: .muted, tooltip: nil),
+            // A workspace that is not a repository still opens this pane, and it still has to
+            // name itself; the chrome title says what the pane IS, this says what it is OF.
+            .label(
+                id: "branch",
+                text: branch ?? "CHANGES",
+                weight: .semibold,
+                color: .text,
+                truncation: .middle,
+                tooltip: nil
+            ),
+        ]
+        // A zero would only restate the "Working tree clean" placeholder already filling the
+        // body, and it would do it in the one strip where width is scarce.
+        if total > 0 {
+            leading.append(.badge(id: "count", text: "\(total)", tint: .muted, tooltip: nil))
+        }
+
+        var trailing: [PaneHeaderItem] = [
+            .segmented(
+                id: PaneHeaderCommand.changesLayout.rawValue,
+                segments: ChangesLayout.allCases.compactMap {
+                    // Icon-only, so the segment draws no words of its own. One authored
+                    // string reaches both readers that need some: `PaneHeaderSegment` lends
+                    // the spoken name to the hover text when no tooltip was written, which
+                    // is how "Tree"/"Flat" survive the move out of the in-body picker.
+                    PaneHeaderSegment(
+                        value: $0.rawValue,
+                        systemName: $0.symbolName,
+                        accessibilityLabel: $0.title
+                    )
+                },
+                selection: layout.rawValue,
+                isEnabled: true,
+                accessibilityID: nil
+            ),
+        ]
+        if canRefresh {
+            trailing.append(
+                .iconButton(
+                    id: PaneHeaderCommand.changesRefresh.rawValue,
+                    systemName: "arrow.clockwise",
+                    tint: .muted,
+                    // Load-bearing, not cosmetic: a read is already in flight and a second one
+                    // would race it. Disabling rather than hiding also keeps the header from
+                    // reflowing every time the pane reloads.
+                    isEnabled: !isLoading,
+                    // The tooltip is what this control reads as once the width folds it into
+                    // the overflow menu, where an untitled button would show its raw id.
+                    tooltip: "Refresh",
+                    accessibilityID: nil
+                )
+            )
+        }
+
+        return PaneHeader(leading: leading, trailing: trailing)
+    }
+}
 
 /// Builds a directory tree from a flat list of changed files.
 private enum TreeBuilder {
@@ -89,7 +179,9 @@ final class ChangesModel {
     private(set) var loaded = false
     private(set) var isLoading = false
 
-    private var loadedWorkspace: URL?
+    /// The workspace this model is currently showing — the one `load` last accepted, which is
+    /// not necessarily the one the pane was created with.
+    private(set) var loadedWorkspace: URL?
     private var task: Task<Void, Never>?
 
     var total: Int { staged.count + changed.count }
@@ -104,6 +196,24 @@ final class ChangesModel {
         self.branch = previewBranch
         self.staged = staged
         self.changed = changed
+    }
+
+    /// Re-reads the workspace this model is already showing.
+    ///
+    /// Refresh takes no workspace argument on purpose. Its caller is a header handler
+    /// registered once from `.onAppear`, and `.onAppear` does not run again when the pane is
+    /// handed a different root: `SpatialSlotCardView.configure` assigns `contentHost.rootView`
+    /// in place rather than remounting the pane. A root captured at registration is therefore
+    /// the root the pane had when it mounted, for as long as the pane lives — so the refresh
+    /// button would silently re-read a repository the user stopped looking at. This model is
+    /// the thing that knows which workspace it actually read, and asking it to repeat itself
+    /// is the only phrasing of "refresh" that cannot go stale.
+    ///
+    /// A model that has never loaded — the seeded snapshot — has nothing to repeat, and is
+    /// also the pane that publishes no refresh button in the first place.
+    func reload() {
+        guard let loadedWorkspace else { return }
+        load(loadedWorkspace, force: true)
     }
 
     func load(_ workspace: URL, force: Bool = false) {
@@ -255,14 +365,25 @@ struct ChangesPanelView: View {
     private let root: URL?
     private let autoLoad: Bool
     private let embedInScrollView: Bool
+    /// Which pane this is, so its header contribution can be told apart from every other
+    /// pane's in the one store the canvas reads.
+    private let slotID: UUID
+    /// Where the header goes UP. The already-projected value comes back DOWN through
+    /// `SpatialSlotCardView.configure`; this is the other half of that loop.
+    private let headerStore: PaneHeaderStore
     @State private var model: ChangesModel
     @State private var hovered: String?
+    /// Unmoved: the pane still owns which layout it is showing. Putting the picker in the
+    /// chrome moved pixels, not ownership — the store carries a value up and a typed command
+    /// back down, and this stays the only place the answer lives.
     @State private var layout: ChangesLayout = .tree
     /// Directory rows the user has collapsed, keyed by "section:dirPath".
     @State private var collapsed: Set<String> = []
 
-    init(root: URL, store: WorkspaceStore?) {
+    init(root: URL, slotID: UUID, headerStore: PaneHeaderStore, store: WorkspaceStore?) {
         self.root = root
+        self.slotID = slotID
+        self.headerStore = headerStore
         self.store = store
         self.autoLoad = true
         self.embedInScrollView = true
@@ -270,8 +391,10 @@ struct ChangesPanelView: View {
     }
 
     /// Offscreen-snapshot init: a seeded model, no git load, no scroll container.
-    init(previewModel: ChangesModel) {
+    init(previewModel: ChangesModel, slotID: UUID, headerStore: PaneHeaderStore) {
         self.root = nil
+        self.slotID = slotID
+        self.headerStore = headerStore
         self.store = nil
         self.autoLoad = false
         self.embedInScrollView = false
@@ -279,69 +402,60 @@ struct ChangesPanelView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            header
-            content
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-        .background(TenonTheme.panel)
-        .onAppear { if autoLoad, let root { model.load(root) } }
-        .onChange(of: root) { _, newRoot in if autoLoad, let newRoot { model.load(newRoot, force: true) } }
-    }
-
-    private var header: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "arrow.trianglehead.branch")
-                .font(.system(size: 10))
-                .foregroundStyle(TenonTheme.muted)
-            Text(model.isRepo ? model.branch : "CHANGES")
-                .font(TenonTheme.utilityFont(size: 10, weight: .semibold))
-                .foregroundStyle(TenonTheme.text)
-                .lineLimit(1)
-            if model.total > 0 {
-                Text("\(model.total)")
-                    .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
-                    .foregroundStyle(TenonTheme.muted)
-                    .padding(.horizontal, 5).padding(.vertical, 1)
-                    .background(TenonTheme.chromeRaised, in: Capsule())
-            }
-            Spacer()
-            layoutToggle
-            if autoLoad {
-                Button { if let root { model.load(root, force: true) } } label: {
-                    Image(systemName: "arrow.clockwise").font(.system(size: 10))
+        content
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .background(TenonTheme.panel)
+            .onAppear {
+                if autoLoad, let root { model.load(root) }
+                // The controls in the chrome report an item id; the router turns it back into
+                // a typed command and this is where the pane acts on it.
+                //
+                // Only things that OUTLIVE a re-root are captured, because this closure does:
+                // `.onAppear` runs once per mount while the canvas keeps handing the same
+                // hosting view new roots, so anything read out of the view struct here is
+                // frozen at mount time. `$layout` is a binding into `@State` and `model` is
+                // `@State` itself; both address storage the pane keeps across every re-root,
+                // and neither is a copy of a value that has since moved on.
+                let selected = $layout
+                let changes = model
+                headerStore.onCommand(for: slotID) { command, value in
+                    switch command {
+                    case .changesLayout:
+                        guard let next = value.flatMap(ChangesLayout.init(rawValue:)) else {
+                            return
+                        }
+                        selected.wrappedValue = next
+                    case .changesRefresh:
+                        // No workspace captured: the model is what knows which one it read.
+                        changes.reload()
+                    case .diffStyle, .agentLensPresentation, .agentLensInspector:
+                        return
+                    }
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(TenonTheme.muted)
-                .disabled(model.isLoading)
             }
-        }
-        .padding(.horizontal, 12)
-        .frame(height: 31)
-        .background(TenonTheme.chromeRaised)
-        .overlay(alignment: .bottom) { Rectangle().fill(TenonTheme.line).frame(height: 1) }
+            .onChange(of: root) { _, newRoot in if autoLoad, let newRoot { model.load(newRoot, force: true) } }
+            // Published from `.onChange`, never from `body`: writing to an observable during a
+            // view update is what makes SwiftUI re-enter, and the store's equality guard is a
+            // backstop for that mistake rather than a licence to make it. `initial: true` is
+            // the pane's first publish, so the branch name is up before the first reload.
+            .onChange(of: header, initial: true) { _, next in
+                headerStore.publish(next, for: slotID)
+            }
+            .onDisappear { headerStore.clear(for: slotID) }
     }
 
-    private var layoutToggle: some View {
-        HStack(spacing: 2) {
-            toggleButton(.tree, icon: "list.bullet.indent", help: "Tree")
-            toggleButton(.flat, icon: "list.dash", help: "Flat")
-        }
-    }
-
-    private func toggleButton(_ mode: ChangesLayout, icon: String, help: String) -> some View {
-        Button { layout = mode } label: {
-            Image(systemName: icon)
-                .font(.system(size: 10))
-                .foregroundStyle(layout == mode ? TenonTheme.amber : TenonTheme.muted.opacity(0.55))
-                .frame(width: 22, height: 18)
-                .background(
-                    layout == mode ? TenonTheme.amber.opacity(0.12) : Color.clear,
-                    in: RoundedRectangle(cornerRadius: 4)
-                )
-        }
-        .buttonStyle(.plain)
-        .help(help)
+    /// This pane's chrome contribution for its current state.
+    ///
+    /// Reading model state here registers the observation that makes the `.onChange` above
+    /// fire — the read is in the view graph, the write is not.
+    private var header: PaneHeader {
+        ChangesPaneHeader.header(
+            branch: model.isRepo ? model.branch : nil,
+            total: model.total,
+            layout: layout,
+            isLoading: model.isLoading,
+            canRefresh: autoLoad
+        )
     }
 
     @ViewBuilder

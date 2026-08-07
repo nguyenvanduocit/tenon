@@ -236,7 +236,7 @@ private func declaration(
         owner: owner,
         inputSchema: inputSchema,
         outputSchema: outputSchema,
-        audiences: [.plugin, .palette, .cli, .agent],
+        audiences: [.plugin, .user, .cli, .agent],
         effects: effects,
         title: title,
         description: nil,

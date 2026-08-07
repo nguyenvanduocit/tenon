@@ -2,42 +2,44 @@
   "id": "dev.tenon.claude-sessions",
   "name": "claude-sessions",
   "version": "0.1.0",
-  "displayName": "Claude Sessions",
+  "displayName": "Agent Sessions",
   "icon": "clock.arrow.circlepath",
-  "permissions": ["process.exec", "terminal.write", "workspace.control"],
+  "permissions": ["filesystem.read", "process.exec", "terminal.write", "workspace.control"],
   "intents": {
     "uses": [
+      "filesystem.directory.list.v2",
       "process.exec.v1",
       "terminal.open.v1",
-      "workspace.state.v1",
+      "workspace.pane.owner.v1",
       "workspace.content.open.v1"
     ],
     "provides": [
       {
         "name": "dev.tenon.claude-sessions.open.v1",
-        "title": "Open Claude Sessions",
-        "audiences": ["plugin", "palette"],
+        "title": "Open Agent Sessions",
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "palette": {
           "category": "Open",
           "icon": "clock.arrow.circlepath",
-          "keywords": ["claude", "session", "resume", "history", "transcript"],
-          "launcher": true
+          "keywords": ["agent", "claude", "codex", "session", "resume", "history", "transcript"],
+          "launcher": true,
+          "fillsPane": true
         }
       },
       {
         "name": "dev.tenon.claude-sessions.refresh.v1",
-        "title": "Claude Sessions: Refresh",
-        "audiences": ["plugin", "palette"],
+        "title": "Agent Sessions: Refresh",
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "read", "idempotency": "none", "confirmation": "never", "external": true },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "palette": {
-          "category": "Claude Sessions",
+          "category": "Agent Sessions",
           "icon": "arrow.clockwise",
-          "keywords": ["claude", "session", "refresh"]
+          "keywords": ["agent", "claude", "codex", "session", "refresh"]
         }
       }
     ]
@@ -55,6 +57,13 @@
       "label": "Claude home",
       "type": "string",
       "default": "~/.claude",
+      "group": "Scanning"
+    },
+    {
+      "key": "codexHome",
+      "label": "Codex home",
+      "type": "string",
+      "default": "~/.codex",
       "group": "Scanning"
     },
     {

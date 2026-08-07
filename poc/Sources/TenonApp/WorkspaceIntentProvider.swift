@@ -65,6 +65,12 @@ final class WorkspaceIntentProvider {
                 return await self.state(envelope: envelope)
             },
             IntentProviderBinding(
+                intentID: try CoreIntentName.workspacePaneOwner.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return await self.paneOwner(envelope: envelope)
+            },
+            IntentProviderBinding(
                 intentID: try CoreIntentName.workspaceTabCreate.intentID
             ) { envelope, context in
                 try context.checkCancellation()
@@ -183,10 +189,55 @@ private extension WorkspaceIntentProvider {
         }
     }
 
+    /// One pane in, one owner out. A pane the catalog does not hold and a pane whose id is
+    /// not a UUID are different failures on purpose: the first is a state answer
+    /// (`workspace-unavailable`), the second is a malformed request.
+    func paneOwner(envelope: IntentEnvelope) -> IntentProviderReply {
+        do {
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            let raw = try AppIntentProviderSupport.string("paneID", in: object)
+            guard let paneID = UUID(uuidString: raw) else {
+                throw AppIntentInputError.missingOrInvalidField("paneID")
+            }
+            guard let value = Self.paneOwnerValue(
+                catalog: store.catalog,
+                paneID: paneID
+            ) else {
+                return failure(
+                    codes.workspaceUnavailable,
+                    reason: "pane-unknown"
+                )
+            }
+            return .success(value)
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return failure(
+                codes.workspaceUnavailable,
+                reason: "pane-unknown"
+            )
+        }
+    }
+
     func createTab(envelope: IntentEnvelope) -> IntentProviderReply {
         do {
             let object = try AppIntentProviderSupport.object(envelope.input)
             let content = try object["content"].map(Self.content(from:))
+            switch EmptyGridLauncherPlacement.consumeReservedTabCreation(
+                scope: envelope.scope,
+                content: content,
+                store: store
+            ) {
+            case .consumed:
+                return AppIntentProviderSupport.emptySuccess
+            case .invalidated:
+                return failure(
+                    codes.layoutUnavailable,
+                    reason: "empty-grid-reservation-invalidated"
+                )
+            case .notReserved:
+                break
+            }
             if NewTabLauncherPlacement.consumeReservedTabCreation(
                 scope: envelope.scope,
                 content: content,
@@ -345,6 +396,22 @@ private extension WorkspaceIntentProvider {
             }
             let content = try Self.content(from: value)
 
+            switch EmptyGridLauncherPlacement.consumeReservedContentOpen(
+                scope: envelope.scope,
+                content: content,
+                store: store
+            ) {
+            case .consumed:
+                return AppIntentProviderSupport.emptySuccess
+            case .invalidated:
+                return failure(
+                    codes.layoutUnavailable,
+                    reason: "empty-grid-reservation-invalidated"
+                )
+            case .notReserved:
+                break
+            }
+
             if let paneID = envelope.scope.paneID {
                 guard store.catalog.slot(id: paneID) != nil else {
                     return failure(
@@ -480,6 +547,8 @@ private extension WorkspaceIntentProvider {
             return .changes
         case "docs":
             return .docs
+        case "automation":
+            return .automation
         case "empty":
             return .empty
         case "file":
@@ -589,6 +658,18 @@ private extension WorkspaceIntentProvider {
     struct WorkspaceCursor: Equatable {
         let snapshotID: UUID
         let offset: Int
+    }
+
+    static func paneOwnerValue(
+        catalog: WorkspaceCatalog,
+        paneID: UUID
+    ) -> IntentValue? {
+        guard let owner = catalog.owner(ofSlot: paneID) else { return nil }
+        return .object([
+            "workspaceID": .string(owner.workspaceID.uuidString),
+            "workspacePath": .string(owner.workspacePath.path),
+            "tabID": .string(owner.tabID.uuidString),
+        ])
     }
 
     static func snapshotPage(
@@ -759,6 +840,8 @@ private extension WorkspaceIntentProvider {
             .object(["kind": .string("changes")])
         case .docs:
             .object(["kind": .string("docs")])
+        case .automation:
+            .object(["kind": .string("automation")])
         case .empty:
             .object(["kind": .string("empty")])
         case let .file(path):

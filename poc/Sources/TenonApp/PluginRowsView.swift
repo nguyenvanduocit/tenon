@@ -2,17 +2,19 @@ import AppKit
 import SwiftUI
 import TenonCore
 
-/// Renders a plugin view's declarative rows as a real file-manager tree: header strip,
-/// disclosure chevrons, native context menus, inline editing, drag-out, selection.
+/// Renders a plugin view's declarative rows as a real file-manager tree: disclosure
+/// chevrons, native context menus, inline editing, drag-out, selection.
+///
+/// Rows only. What the view has to SAY about itself — its name, its state, its controls —
+/// goes in the pane's one chrome header, published as `PaneHeader` alongside these items,
+/// so a rows pane and a body pane say it in the same place and neither spends a second
+/// strip on it.
 ///
 /// Every affordance here is driven by a field on the row a plugin published — no view
 /// knows which plugin it is drawing, and no plugin ever sees an AppKit type (VISION §6).
 /// A row click and a context-menu pick take the same route back (`onSelect`, with the
 /// menu id in the value slot); committing an inline edit takes `onSubmit`.
 struct PluginRowsView: View {
-    let title: String
-    let subtitle: String?
-    let actions: [ViewAction]
     let items: [PluginRowItem]
     /// (itemID, menuID?) — a plain click passes nil.
     let onSelect: (String, String?) -> Void
@@ -22,67 +24,26 @@ struct PluginRowsView: View {
     @State private var hoveredID: String?
 
     var body: some View {
-        VStack(spacing: 0) {
-            if !title.isEmpty || subtitle != nil || !actions.isEmpty {
-                header
-            }
-            ScrollView {
-                LazyVStack(spacing: 1) {
-                    ForEach(items) { item in
-                        PluginRow(
-                            item: item,
-                            isHovering: hoveredID == item.id,
-                            onHover: { hovering in
-                                if hovering { hoveredID = item.id }
-                                else if hoveredID == item.id { hoveredID = nil }
-                            },
-                            onSelect: onSelect,
-                            onSubmit: onSubmit
-                        )
-                    }
+        ScrollView {
+            LazyVStack(spacing: 1) {
+                ForEach(items) { item in
+                    PluginRow(
+                        item: item,
+                        isHovering: hoveredID == item.id,
+                        onHover: { hovering in
+                            if hovering { hoveredID = item.id }
+                            else if hoveredID == item.id { hoveredID = nil }
+                        },
+                        onSelect: onSelect,
+                        onSubmit: onSubmit
+                    )
                 }
-                .padding(.horizontal, 6)
-                .padding(.bottom, 8)
             }
-            .scrollIndicators(.hidden)
+            .padding(.horizontal, 6)
+            .padding(.bottom, 8)
         }
+        .scrollIndicators(.hidden)
         .background(TenonTheme.panel)
-    }
-
-    private var header: some View {
-        HStack(spacing: 6) {
-            VStack(alignment: .leading, spacing: 1) {
-                if !title.isEmpty {
-                    Text(title)
-                        .font(TenonTheme.interfaceFont(size: 12, weight: .semibold))
-                        .foregroundStyle(TenonTheme.text)
-                        .lineLimit(1)
-                }
-                if let subtitle, !subtitle.isEmpty {
-                    Text(subtitle)
-                        .font(TenonTheme.interfaceFont(size: 10))
-                        .foregroundStyle(TenonTheme.muted)
-                        .lineLimit(1)
-                        // Head truncation keeps the meaningful tail of a path visible.
-                        .truncationMode(.head)
-                }
-            }
-            .frame(maxWidth: .infinity, alignment: .leading)
-
-            ForEach(actions) { action in
-                Button {
-                    onSelect(action.id, nil)
-                } label: {
-                    Image(systemName: action.icon)
-                        .font(.system(size: 11))
-                        .foregroundStyle(TenonTheme.muted)
-                }
-                .buttonStyle(.plain)
-                .help(action.tooltip ?? "")
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
     }
 }
 

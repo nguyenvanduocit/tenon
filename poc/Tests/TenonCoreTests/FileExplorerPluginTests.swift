@@ -247,7 +247,7 @@ private actor FileExplorerIntentBridge {
         recorded.append(request)
         let value: IntentValue
         switch request.intentID.rawValue {
-        case "filesystem.directory.list.v1":
+        case "filesystem.directory.list.v2":
             let path = request.input.objectValue?["path"]?.stringValue
             let entries: [IntentValue]
             if path == root {

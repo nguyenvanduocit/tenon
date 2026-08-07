@@ -16,7 +16,7 @@
       {
         "name": "dev.tenon.examples.fleet-review.run.v1",
         "title": "Fleet Review: review the current change",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },

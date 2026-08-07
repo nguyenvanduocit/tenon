@@ -91,7 +91,7 @@ A palette row is static presentation metadata on a plugin-owned intent:
         "name": "dev.tenon.core-commands.pane.split-right.v1",
         "title": "Split Right",
         "description": "Split the focused pane to the right.",
-        "audiences": ["palette", "plugin"],
+        "audiences": ["user", "plugin"],
         "effects": {
           "kind": "write",
           "idempotency": "none",
@@ -120,6 +120,20 @@ A palette row is static presentation metadata on a plugin-owned intent:
   }
 }
 ```
+
+`palette.launcher: true` includes the row in ordinary “open something” launchers.
+`palette.fillsPane: true` is the narrower declarative promise that the intent can occupy a
+pane supplied in invocation scope. Empty spatial-grid launchers project only rows carrying
+both flags. The host reserves the exact clicked region and scopes the selected intent to
+that pane; New Tab, Split, and other structural actions therefore remain available in the
+ordinary launcher but are absent from this fill-only context. If a provider fails or
+returns without filling the reserved pane, the host removes the untouched reservation and
+keeps the launcher open with an error.
+
+The empty-grid launcher is not pointer-only. `Option-Return` on the spatial canvas opens
+the nearest valid empty region, and VoiceOver exposes one “Fill empty region” custom action
+per distinct available region. These routes reuse the same fill-only projection, exact
+reservation, scoped invocation, and rollback behavior as right-click.
 
 Runtime code binds only the implementation:
 

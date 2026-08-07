@@ -5,6 +5,9 @@ public enum SlotContent: Equatable, Sendable {
     case terminal
     case changes
     case docs
+    /// The host-native automation operations surface: armed schedules, Run Now,
+    /// authoring, and recent delivery evidence.
+    case automation
     /// One file open as a pane. Created by `workspace.tab.create.v1` or
     /// `workspace.pane.content.set.v1`; the host owns the native editor.
     case file(path: String)
@@ -26,6 +29,7 @@ public enum SlotContent: Equatable, Sendable {
         case (.terminal, .terminal),
              (.changes, .changes),
              (.docs, .docs),
+             (.automation, .automation),
              (.file, .file),
              (.diff, .diff):
             return true
@@ -46,6 +50,8 @@ public enum SlotContent: Equatable, Sendable {
             return "changes"
         case .docs:
             return "docs"
+        case .automation:
+            return "automation"
         case .pluginView(let pluginID, let viewID):
             return "plugin-view:\(pluginID.rawValue):\(viewID)"
         case .diff(let request):
@@ -324,6 +330,21 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         return nil
     }
 
+    /// The workspace and tab that own `id`, searched across the whole catalog — a pane in
+    /// an unselected workspace resolves exactly like one in the selected workspace, because
+    /// a pane's owner is a property of the pane, not of the current selection.
+    public func owner(
+        ofSlot id: UUID
+    ) -> (workspaceID: UUID, workspacePath: URL, tabID: UUID)? {
+        for workspace in workspaces {
+            for tab in workspace.tabs
+            where tab.slots.contains(where: { $0.id == id }) {
+                return (workspace.id, workspace.path, tab.id)
+            }
+        }
+        return nil
+    }
+
     @discardableResult
     public mutating func addWorkspace(
         name: String,
@@ -489,6 +510,79 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     @discardableResult
     public mutating func addSlot(content: SlotContent = .terminal) -> [WorkspaceEvent] {
         openSlot(content: content, near: activeTab?.activeSlotID)
+    }
+
+    /// Adds one pane at the exact empty grid rectangle selected by the caller. This is
+    /// the targeted counterpart to `addSlot(content:)`, whose placement policy chooses
+    /// the best available region on its own.
+    @discardableResult
+    public mutating func addSlot(
+        id: UUID,
+        content: SlotContent,
+        at rect: GridRect
+    ) -> [WorkspaceEvent] {
+        guard let location = activeTabLocation,
+              slot(id: id) == nil
+        else { return [] }
+        let tab = workspaces[location.workspace].tabs[location.tab]
+        let proposal = tab.spatialSlots + [SpatialSlot(id: id, rect: rect)]
+        guard SpatialLayout.isValid(proposal) else { return [] }
+
+        let slot = WorkspaceSlot(id: id, rect: rect, content: content)
+        workspaces[location.workspace].tabs[location.tab].slots.append(slot)
+        workspaces[location.workspace].tabs[location.tab].activeSlotID = id
+        let workspaceID = workspaces[location.workspace].id
+        return [
+            .slotOpened(slot: id, tab: tab.id, workspace: workspaceID),
+            .slotFocused(slot: id, tab: tab.id, workspace: workspaceID),
+        ]
+    }
+
+    /// Removes an untouched launcher reservation without asking neighbouring panes to
+    /// absorb it. The surrounding geometry therefore returns to the exact pre-click
+    /// layout instead of expanding as an ordinary pane close would.
+    @discardableResult
+    public mutating func discardEmptySlot(
+        _ id: UUID,
+        restoringFocusTo previousSlotID: UUID?
+    ) -> [WorkspaceEvent] {
+        for workspaceIndex in workspaces.indices {
+            for tabIndex in workspaces[workspaceIndex].tabs.indices {
+                let tab = workspaces[workspaceIndex].tabs[tabIndex]
+                guard let slotIndex = tab.slots.firstIndex(where: { $0.id == id }),
+                      tab.slots[slotIndex].content == .empty
+                else { continue }
+
+                var slots = tab.slots
+                slots.remove(at: slotIndex)
+                var activeSlotID = tab.activeSlotID
+                if activeSlotID == id {
+                    activeSlotID = previousSlotID.flatMap { previous in
+                        slots.contains(where: { $0.id == previous }) ? previous : nil
+                    } ?? slots.first?.id
+                }
+                workspaces[workspaceIndex].tabs[tabIndex].slots = slots
+                workspaces[workspaceIndex].tabs[tabIndex].activeSlotID = activeSlotID
+
+                let workspaceID = workspaces[workspaceIndex].id
+                var events: [WorkspaceEvent] = [
+                    .slotClosed(slot: id, tab: tab.id, workspace: workspaceID),
+                ]
+                if let activeSlotID,
+                   activeSlotID != tab.activeSlotID,
+                   activeWorkspaceID == workspaceID,
+                   workspaces[workspaceIndex].activeTabID == tab.id
+                {
+                    events.append(.slotFocused(
+                        slot: activeSlotID,
+                        tab: tab.id,
+                        workspace: workspaceID
+                    ))
+                }
+                return events
+            }
+        }
+        return []
     }
 
     /// A second pane showing what `id` shows. Placement is the same policy `addSlot` uses,
@@ -823,6 +917,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
 
         let workspaceID = workspaces[source.workspace].id
         let sourceTabID = workspaces[source.workspace].tabs[source.tab].id
+        let didSelectTarget = workspaces[source.workspace].activeTabID != targetTabID
         let content = workspaces[source.workspace].tabs[source.tab]
             .slots.first { $0.id == slotID }!.content
 
@@ -862,7 +957,97 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 workspace: workspaceID
             ))
         }
-        events.append(.tabSelected(tab: targetTabID, workspace: workspaceID))
+        if didSelectTarget {
+            events.append(.tabSelected(tab: targetTabID, workspace: workspaceID))
+        }
+        events.append(.slotFocused(
+            slot: slotID,
+            tab: targetTabID,
+            workspace: workspaceID
+        ))
+        return events
+    }
+
+    /// Move a slot into an existing tab at the edge selected on that tab's visible
+    /// canvas. The destination layout is resolved before the source is detached, so an
+    /// invalid or stale target leaves both tabs unchanged.
+    @discardableResult
+    public mutating func moveSlot(
+        _ slotID: UUID,
+        toTab targetTabID: UUID,
+        beside targetSlotID: UUID,
+        edge: SpatialDropEdge
+    ) -> [WorkspaceEvent] {
+        guard let source = location(ofSlot: slotID),
+              let targetIndex = workspaces[source.workspace].tabs.firstIndex(
+                  where: { $0.id == targetTabID }
+              ),
+              workspaces[source.workspace].tabs[source.tab].id != targetTabID
+        else { return [] }
+
+        let targetTab = workspaces[source.workspace].tabs[targetIndex]
+        guard let insertion = SpatialLayout.insertBeside(
+            targetTab.spatialSlots,
+            newSlotID: slotID,
+            targetID: targetSlotID,
+            edge: edge
+        ) else { return [] }
+
+        let workspaceID = workspaces[source.workspace].id
+        let sourceTabID = workspaces[source.workspace].tabs[source.tab].id
+        let didSelectTarget = workspaces[source.workspace].activeTabID != targetTabID
+        let content = workspaces[source.workspace].tabs[source.tab]
+            .slots.first { $0.id == slotID }!.content
+        let targetSlotsByID = Dictionary(
+            uniqueKeysWithValues: targetTab.slots.map { ($0.id, $0) }
+        )
+        let changedTargetIDs = insertion.proposal.compactMap { spatial -> UUID? in
+            guard spatial.id != slotID,
+                  targetSlotsByID[spatial.id]?.rect != spatial.rect
+            else { return nil }
+            return spatial.id
+        }
+
+        guard let detached = detachSlot(slotID, at: source) else { return [] }
+
+        workspaces[source.workspace].tabs[targetIndex].slots = insertion.proposal.map {
+            spatial in
+            if spatial.id == slotID {
+                return WorkspaceSlot(id: slotID, rect: spatial.rect, content: content)
+            }
+            var slot = targetSlotsByID[spatial.id]!
+            slot.rect = spatial.rect
+            return slot
+        }
+        workspaces[source.workspace].tabs[targetIndex].activeSlotID = slotID
+        workspaces[source.workspace].activeTabID = targetTabID
+
+        var events: [WorkspaceEvent] = []
+        if !detached.resized.isEmpty {
+            events.append(.slotsResized(
+                slots: detached.resized,
+                detached: false,
+                tab: sourceTabID,
+                workspace: workspaceID
+            ))
+        }
+        events.append(.slotMovedToTab(
+            slot: slotID,
+            fromTab: sourceTabID,
+            toTab: targetTabID,
+            workspace: workspaceID
+        ))
+        if !changedTargetIDs.isEmpty {
+            events.append(.slotsResized(
+                slots: changedTargetIDs,
+                detached: false,
+                tab: targetTabID,
+                workspace: workspaceID
+            ))
+        }
+        if didSelectTarget {
+            events.append(.tabSelected(tab: targetTabID, workspace: workspaceID))
+        }
         events.append(.slotFocused(
             slot: slotID,
             tab: targetTabID,

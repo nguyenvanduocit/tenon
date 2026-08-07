@@ -1316,6 +1316,40 @@ final class GhosttySurface: TerminalSurface {
         view.window?.makeFirstResponder(view)
     }
 
+    /// T-084: stop the pane's job tree, then let the surface go.
+    ///
+    /// `ghostty_surface_free` in `GhosttyNSViewResources.deinit` does send SIGHUP to the
+    /// child's process group, and for an ordinary foreground command that is enough. It is not
+    /// enough for the two cases a supervision workspace actually accumulates: a process that
+    /// ignores SIGHUP (there is no SIGKILL anywhere in the pinned libghostty), and a background
+    /// job leading its own process group (measured surviving a pane close on 2026-08-07).
+    /// `TerminalJobTerminator` covers both by sweeping the pane's tty and escalating.
+    ///
+    /// The callbacks are cleared first so a dying pane cannot report a title, a directory, or
+    /// its own process exit into a slot the workspace has already forgotten.
+    func terminate() {
+        onTitleChange = nil
+        onPwdChange = nil
+        onProcessExit = nil
+        onNewTab = nil
+        onNewSplit = nil
+        onGotoSplit = nil
+        onFocusGained = nil
+
+        guard !view.processExited,
+              let foreground = view.foregroundPID,
+              foreground > 1,
+              foreground <= UInt64(pid_t.max)
+        else { return }
+        let rootPID = pid_t(foreground)
+        // Detached because the escalation waits 120 ms and nothing in the close path may block
+        // on it: the pane is already gone from the catalog by the time this runs. Bounded by
+        // construction — two `ps` reads and one sleep, no retry loop.
+        Task.detached(priority: .userInitiated) {
+            await TerminalJobTerminator.live.terminate(rootPID: rootPID)
+        }
+    }
+
     /// Write bytes into the slot's PTY, as if typed — backs `terminal.write.v1`.
     func sendText(_ text: String) {
         view.sendText(text)

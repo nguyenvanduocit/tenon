@@ -19,7 +19,7 @@
     "uses": [
       "filesystem.file.read.v1",
       "filesystem.file.write.v1",
-      "workspace.state.v1",
+      "workspace.pane.owner.v1",
       "workspace.content.open.v1",
       "workspace.pane.focus.v1",
       "terminal.open.v1",
@@ -29,11 +29,11 @@
       {
         "name": "dev.tenon.kanban.open.v1",
         "title": "Kanban: Open Board",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
         "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
         "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "checklist", "keywords": ["kanban", "board", "tasks", "todo"], "launcher": true }
+        "palette": { "category": "Open", "icon": "checklist", "keywords": ["kanban", "board", "tasks", "todo"], "launcher": true, "fillsPane": true }
       }
     ]
   }

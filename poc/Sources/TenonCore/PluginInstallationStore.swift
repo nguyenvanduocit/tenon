@@ -53,6 +53,11 @@ public enum PluginInstallationStoreError: Error, Sendable, Equatable {
     }
 }
 
+struct PluginInstallationDisposition: Sendable {
+    let installation: PluginInstallationKey
+    let isEnabled: Bool
+}
+
 /// Owns installation UUIDs and monotonically increasing runtime-session revisions.
 ///
 /// A session identity is returned only after its new revision's atomic write succeeds. The
@@ -64,6 +69,9 @@ public actor PluginInstallationStore {
         let installationID: UUID
         let sessionRevision: UInt64
         let isEnabled: Bool
+        /// Optional so version-1 documents written before trust provenance was added still
+        /// decode. Reconciliation handles that legacy state before any runtime is created.
+        let inventoryTrust: PluginInventoryTrust?
     }
 
     private struct Document: Sendable, Codable {
@@ -102,6 +110,70 @@ public actor PluginInstallationStore {
         }
     }
 
+    /// Reconciles the inventory's current trust provenance before runtime construction.
+    ///
+    /// A trust-class change rotates the installation UUID so caller consent, settings,
+    /// storage, and secrets owned by the old principal cannot cross the boundary. Moving to
+    /// explicit enablement also fails closed by disabling the replacement. Legacy records
+    /// have unknowable provenance and therefore rotate once whichever class discovers them.
+    func reconcileInventoryTrust(
+        for pluginID: PluginID,
+        inventoryTrust: PluginInventoryTrust,
+        enablesNewPluginsByDefault: Bool
+    ) throws -> PluginInstallationDisposition {
+        try Self.withLockedFile(at: fileURL) {
+            var proposed = try Self.load(from: fileURL)
+            let record: Record
+
+            if let current = proposed[pluginID],
+               current.inventoryTrust == inventoryTrust
+            {
+                return PluginInstallationDisposition(
+                    installation: Self.installationKey(current),
+                    isEnabled: current.isEnabled
+                )
+            } else if let current = proposed[pluginID] {
+                // A trust transition is a new installation. Legacy records have no
+                // trustworthy provenance, so they take this path too — even when the
+                // current inventory is bundled. Otherwise an attacker could pre-seed a
+                // same-ID user installation whose data is later inherited by shipped code.
+                record = Record(
+                    pluginID: current.pluginID,
+                    installationID: Self.freshInstallationID(
+                        excluding: proposed.values
+                    ),
+                    sessionRevision: 0,
+                    isEnabled: inventoryTrust == .explicitEnablement
+                        ? false
+                        : current.isEnabled,
+                    inventoryTrust: inventoryTrust
+                )
+            } else {
+                guard proposed.count < Self.maximumInstallations else {
+                    throw PluginInstallationStoreError.tooManyInstallations(
+                        limit: Self.maximumInstallations
+                    )
+                }
+                record = Record(
+                    pluginID: pluginID,
+                    installationID: Self.freshInstallationID(
+                        excluding: proposed.values
+                    ),
+                    sessionRevision: 0,
+                    isEnabled: enablesNewPluginsByDefault,
+                    inventoryTrust: inventoryTrust
+                )
+            }
+
+            proposed[pluginID] = record
+            try Self.persist(proposed, to: fileURL)
+            return PluginInstallationDisposition(
+                installation: Self.installationKey(record),
+                isEnabled: record.isEnabled
+            )
+        }
+    }
+
     public func currentSession(
         for pluginID: PluginID
     ) throws -> PluginSessionIdentity? {
@@ -136,7 +208,8 @@ public actor PluginInstallationStore {
                     pluginID: current.pluginID,
                     installationID: current.installationID,
                     sessionRevision: current.sessionRevision,
-                    isEnabled: isEnabled
+                    isEnabled: isEnabled,
+                    inventoryTrust: current.inventoryTrust
                 )
             } else {
                 guard proposed.count < Self.maximumInstallations else {
@@ -150,7 +223,8 @@ public actor PluginInstallationStore {
                         excluding: proposed.values
                     ),
                     sessionRevision: 0,
-                    isEnabled: isEnabled
+                    isEnabled: isEnabled,
+                    inventoryTrust: nil
                 )
             }
 
@@ -175,7 +249,8 @@ public actor PluginInstallationStore {
                     pluginID: pluginID,
                     installationID: current.installationID,
                     sessionRevision: current.sessionRevision + 1,
-                    isEnabled: current.isEnabled
+                    isEnabled: current.isEnabled,
+                    inventoryTrust: current.inventoryTrust
                 )
             } else {
                 guard proposed.count < Self.maximumInstallations else {
@@ -189,7 +264,8 @@ public actor PluginInstallationStore {
                         excluding: proposed.values
                     ),
                     sessionRevision: 1,
-                    isEnabled: true
+                    isEnabled: true,
+                    inventoryTrust: nil
                 )
             }
 

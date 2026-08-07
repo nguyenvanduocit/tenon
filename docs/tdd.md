@@ -1,5 +1,7 @@
 # TDD Design — how Tenon stays testable
 
+**Status:** current test architecture · **Reviewed:** 2026-08-06
+
 **The rule: domain and boundary rules live in `TenonIntentCore`/`TenonCore` as typed,
 headlessly tested values and services. The SwiftUI shell contains native adapters and
 projection only.** This is Functional Core, Imperative Shell (Bernhardt). Interaction
@@ -15,8 +17,9 @@ Every feature lands in this order — no exceptions:
 2. **Green.** Implement the minimal core change until the suite passes.
 3. **Shell.** Only then wire the UI — the shell may call core mutations and render core
    state, never decide anything itself.
-4. **Smoke.** `swift build` + launch-alive check (window opens, shell child spawns).
-   Pixels are the only thing not asserted automatically.
+4. **Smoke.** `swift build`, headless tests, then the smallest hosted/XCUITest path that
+   crosses the changed native boundary. Visual polish still needs human inspection; native
+   interaction wiring does not.
 
 Worked example (the workspace, 2026-07-23): `WorkspaceTests` written first → red
 (`cannot find type 'Workspace'`) → `Workspace.swift` + `WorkspaceStore.swift` → green
@@ -28,12 +31,12 @@ on first compile → `SurfacePool`/`ContentView`/`TenonApp` wired with zero new 
 |---|---|---|---|
 | Workspace tree (tabs/splits/panes/focus) | pure `struct Workspace`, mutations return `[WorkspaceEvent]` | exhaustive unit | `WorkspaceTests` |
 | Observable stores (`WorkspaceStore`) | thin class over the pure value | batch/no-op forwarding | `WorkspaceStoreTests` |
-| Plugin host (load, reload, isolation, enable/disable) | `PluginHost` + one `JSContext`/plugin | unit vs throwaway plugin trees in temp dirs | `PluginHostTests`, `PluginPolicyTests` |
-| Intent contract/policy gate | canonical catalog + dispatcher/policy | declared-use/audience/capability/scope/provider pairs | `TenonIntentCoreTests`, `PluginPolicyTests` |
-| Event bridges (workspace→plugins, title→plugins) | value → `(name, payload)` mapping | end-to-end through a real JS plugin | `WorkspacePluginBridgeTests` |
+| Plugin host (load, reload, isolation, enable/disable) | `PluginHost` + one `JSContext`/plugin | unit vs throwaway plugin trees in temp dirs | `PluginHostTests`, `PluginCapabilityTests`, `PluginInventoryTests` |
+| Intent contract/policy gate | canonical catalog + dispatcher/policy | declared-use/audience/capability/scope/provider pairs | `TenonIntentCoreTests`, `CoreIntentCatalogTests`, `PluginIntentManifestTests` |
+| Event bridges (workspace/terminal/plugin facts) | value → `(name, payload)` mapping | end-to-end through real JS runtimes | `PluginBuiltinsTests`, `PluginPublishedEventTests`, `AutomationEventDeliveryTests` |
 | Shipped plugins | the actual `plugins/` files | copied to temp dir, driven for real (incl. on-disk edits through FSEvents) | `ShippedPluginsTests` |
-| Terminal, rendering, input | `GhosttySurface` behind the `TerminalSurface` seam | **not unit-tested** — smoke launch only | — |
-| SwiftUI views | projections of core state | **not tested** — they contain no rules to test | — |
+| Terminal, rendering, input | `GhosttySurface` behind the `TerminalSurface` seam | pure rules headless; real surface hosted; key/gesture wiring in XCUITest | `TenonAppStateTests`, `TenonIntegrationTests`, `TenonUITests` |
+| SwiftUI/AppKit shell | projections and native adapters | state/interaction coordinators hosted without a window where possible; black-box UI for window-only wiring | `TenonAppStateTests`, `TenonUITests` |
 
 ## Which runner covers which directory
 
@@ -74,26 +77,21 @@ or add a row here saying which runner skips it and why.
 6. **Shipped plugins are fixtures too.** `ShippedPluginsTests` runs the real
    `plugins/` files, so the demo content can never silently rot.
 
-## Muxy-parity roadmap, mapped to test surfaces
+## Current coverage status
 
-Done: workspace (tabs/splits/panes/focus, keyboard + ghostty-binding driven),
-plugin host with hot reload, enable/disable persisted, permission gate, libghostty
-rendering, 3 shipped plugins.
+Implemented and covered across the layers above: workspace trees and spatial transactions,
+fail-soft workspace catalog relaunch, lazy fresh-shell restoration, staged plugin hot
+reload, durable installation identity/enablement, capability and consent policy, canonical
+intent discovery/dispatch, command-palette and keybinding projections, declarative plugin
+views/settings/automations/events, host-native editor state/external-change handling,
+quick-command state, Agent Lens evidence reduction, and libghostty/UI smoke paths.
 
-Next, each entering through a failing core test first:
+Open work is quality work, not an excuse for parallel APIs: stronger plugin process
+isolation, broader release automation and measurements, large-file/resource protocols, and
+new supervision experiments must enter through the same failing fitness/domain/adapter test
+sequence.
 
-- **Session restore** — serialize `Workspace` (make it `Codable`) + reopen shells:
-  round-trip tests in `WorkspaceTests`.
-- **Pane resize persistence** — `ratio` updates as a mutation (`setRatio`) so split
-  drags survive restore: tree tests.
-- **Command palette evolution** — rank a policy-filtered projection of plugin-owned intent
-  metadata with a pure index; selection/keybindings dispatch the same canonical intent.
-- **Plugin capability evolution** — add canonical intent/resource authority bindings and
-  blocked/allowed policy tests; no handwritten finite plugin API.
-- **Quick terminal, themes, settings** — each is a store + events in core; the
-  window/hotkey/appearance part is shell.
-- **Runtime consent + audit log** — a pure `PermissionLedger` (request → decision →
-  log entry) tested headless; the consent *dialog* is shell.
-
-The test for whether a design fits Tenon: **"can this rule be asserted in
-`TenonCoreTests` without a window?"** If not, the rule is in the wrong place.
+The placement test remains: **can the rule be asserted without a window?** If yes, put it in
+`TenonIntentCore`, `TenonCore`, or an app-state type and test it headlessly. If no because it
+is truly native wiring, prove the pure policy below it first and keep the hosted/UI test as
+the smallest adapter receipt.

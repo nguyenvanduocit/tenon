@@ -37,6 +37,8 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.newWorkspaceContent, .terminal)
         XCTAssertTrue(prefs.sidebarVisibleOnLaunch)
         XCTAssertEqual(prefs.accent, .amber)
+        XCTAssertTrue(prefs.automationSchedulesEnabled)
+        XCTAssertTrue(prefs.pausedAutomationSchedules.isEmpty)
     }
 
     func testPreferencesSurviveACodableRoundTrip() throws {
@@ -47,6 +49,13 @@ final class AppPreferencesTests: XCTestCase {
         prefs.sidebarVisibleOnLaunch = false
         prefs.sidebarWidth = 300
         prefs.accent = .blue
+        prefs.automationSchedulesEnabled = false
+        prefs.pausedAutomationSchedules = [
+            AutomationScheduleKey(
+                pluginID: "dev.example.audit",
+                scheduleID: "morning"
+            ),
+        ]
 
         let data = try JSONEncoder().encode(prefs)
         let decoded = try JSONDecoder().decode(AppPreferences.self, from: data)
@@ -66,6 +75,14 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(decoded.newWorkspaceContent, .terminal)
         XCTAssertTrue(decoded.sidebarVisibleOnLaunch)
         XCTAssertEqual(decoded.accent, .amber)
+        XCTAssertTrue(
+            decoded.automationSchedulesEnabled,
+            "older preference documents default scheduled delivery to enabled"
+        )
+        XCTAssertTrue(
+            decoded.pausedAutomationSchedules.isEmpty,
+            "older preference documents start with no per-schedule pauses"
+        )
     }
 
     func testEveryAccentColorHasALabelAndHex() {

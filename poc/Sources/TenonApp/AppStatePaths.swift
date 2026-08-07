@@ -12,7 +12,9 @@ enum AppStatePathError: Error, Sendable, Equatable, CustomStringConvertible {
 }
 
 struct AppStatePaths: Sendable, Equatable {
+    let instanceChannel: AppInstanceChannel
     let pluginInventoryRoot: URL
+    let applicationSupportRoot: URL
     let stateRoot: URL
 
     /// Whether the host itself controls the inventory it just resolved, and may therefore
@@ -52,13 +54,25 @@ struct AppStatePaths: Sendable, Equatable {
         stateRoot.appendingPathComponent("runtime", isDirectory: true)
     }
 
+    var commandFrecencyFile: URL {
+        applicationSupportRoot.appendingPathComponent(".command-frecency.json")
+    }
+
     /// The persisted workspace catalog (T-027), beside `.recent-workspaces.json` and
     /// `.recent-views.json` in the workspace state root.
     var workspaceCatalogFile: URL {
         workspaceStateRoot.appendingPathComponent(".workspace-catalog.json")
     }
 
+    /// Which plugins a person has let handle delegable contracts. Kept beside the other
+    /// application-level preferences rather than in workspace state: a handler choice is
+    /// about this person and this machine, not about one project.
+    var openHandlerApprovalsFile: URL {
+        applicationSupportRoot.appendingPathComponent(".open-handler-approvals.json")
+    }
+
     static func resolve(
+        instanceChannel requestedInstanceChannel: AppInstanceChannel? = nil,
         environment: [String: String] =
             ProcessInfo.processInfo.environment,
         applicationSupportDirectory: URL =
@@ -70,6 +84,11 @@ struct AppStatePaths: Sendable, Equatable {
             .appendingPathComponent("plugins", isDirectory: true),
         fileManager: FileManager = .default
     ) throws -> AppStatePaths {
+        let instanceChannel = if let requestedInstanceChannel {
+            requestedInstanceChannel
+        } else {
+            try AppInstanceChannel.resolve()
+        }
         let inventoryRoot: URL
         let trustsInventory: Bool
         let inventoryIsWritable: Bool
@@ -110,11 +129,17 @@ struct AppStatePaths: Sendable, Equatable {
             )
         }
 
-        let stateRoot = applicationSupportDirectory
-            .appendingPathComponent("Tenon", isDirectory: true)
+        let applicationSupportRoot = applicationSupportDirectory
+            .appendingPathComponent(
+                instanceChannel.applicationSupportDirectoryName,
+                isDirectory: true
+            )
+        let stateRoot = applicationSupportRoot
             .appendingPathComponent("state", isDirectory: true)
         let paths = AppStatePaths(
+            instanceChannel: instanceChannel,
             pluginInventoryRoot: inventoryRoot,
+            applicationSupportRoot: applicationSupportRoot,
             stateRoot: stateRoot,
             trustsPluginInventory: trustsInventory,
             pluginInventoryIsWritable: inventoryIsWritable

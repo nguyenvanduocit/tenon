@@ -1,6 +1,15 @@
+// @domain: plugin-host, plugin-contributions, plugin-events, plugin-settings, intent-bus
+//
+// Five domains on one file is the split signal `docs/domains.md` describes, not a label to
+// tidy away: at 3134 lines this type is described in CLAUDE.md as owning "manifests,
+// activation, contributions, events, settings/storage, and hot reload". The MARK tags below
+// are the decomposition boundary that sentence implies.
+
 import Foundation
 import Observation
 import TenonIntentCore
+
+// MARK: - Installation snapshots  @domain: plugin-host
 
 /// Static and runtime state for one verified plugin installation.
 public struct PluginSnapshot: Sendable, Equatable, Identifiable {
@@ -74,6 +83,8 @@ public struct PluginLoadFailure: Sendable, Equatable, Identifiable {
     }
 }
 
+// MARK: - Contribution projections  @domain: plugin-contributions
+
 /// A status-bar contribution from one immutable plugin identity.
 public struct StatusItem: Sendable, Equatable, Identifiable {
     public let pluginID: PluginID
@@ -91,8 +102,9 @@ public struct PluginViewSection: Sendable, Equatable, Identifiable {
     public let instanceID: String?
     public let instanced: Bool
     public let title: String
-    public let subtitle: String?
-    public let actions: [ViewAction]
+    /// What this view puts in its pane's ONE chrome header. Rebuilt from live sessions with
+    /// the rest of the section, so a retired generation leaves no chrome behind.
+    public let header: PaneHeader
     public let items: [PluginRowItem]
     public let body: PluginViewNode?
     /// Set while this view wants a modal over the whole shell; nil otherwise.
@@ -110,10 +122,9 @@ public struct PluginViewSection: Sendable, Equatable, Identifiable {
         instanceID: String?,
         instanced: Bool,
         title: String,
-        subtitle: String?,
-        actions: [ViewAction],
         items: [PluginRowItem],
         body: PluginViewNode?,
+        header: PaneHeader = .empty,
         modal: PluginViewModal? = nil
     ) {
         self.pluginID = pluginID
@@ -121,13 +132,14 @@ public struct PluginViewSection: Sendable, Equatable, Identifiable {
         self.instanceID = instanceID
         self.instanced = instanced
         self.title = title
-        self.subtitle = subtitle
-        self.actions = actions
+        self.header = header
         self.items = items
         self.body = body
         self.modal = modal
     }
 }
+
+// MARK: - Intent presentation projection  @domain: intent-bus, plugin-contributions
 
 /// Static palette metadata projected from a manifest-backed intent declaration.
 ///
@@ -143,11 +155,14 @@ public struct PluginIntentPresentation: Sendable, Equatable, Identifiable {
     public let key: String?
     public let when: String?
     public let launcher: Bool
+    public let fillsPane: Bool
 
     public var id: IntentID {
         intentID
     }
 }
+
+// MARK: - Host errors  @domain: plugin-host
 
 public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible {
     case stopped
@@ -216,6 +231,8 @@ public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible
     }
 }
 
+// MARK: - Host-owned authorization  @domain: plugin-host, intent-bus
+
 /// Host-owned authorization decisions that cannot come from a plugin manifest.
 public struct PluginHostAuthorization: Sendable {
     public typealias OpenIntentApprovals = @Sendable (
@@ -239,22 +256,28 @@ public struct PluginHostAuthorization: Sendable {
     /// authorized through this value.
     public static let bundledInventory = PluginHostAuthorization(
         approvedOpenIntentIDs: { _, _ in [] },
-        grantsStandingConsent: { _, _ in true }
+        grantsStandingConsent: { _, _ in true },
+        inventoryTrust: .bundledStandingConsent
     )
 
     let approvedOpenIntentIDs: OpenIntentApprovals
     let grantsStandingConsent: StandingConsentDecision
+    let inventoryTrust: PluginInventoryTrust
 
     /// Standing consent defaults to `false` while `.bundledInventory` is `true`: a caller
     /// that forgets to decide gets prompts, never silent authority.
     public init(
         approvedOpenIntentIDs: @escaping OpenIntentApprovals,
-        grantsStandingConsent: @escaping StandingConsentDecision = { _, _ in false }
+        grantsStandingConsent: @escaping StandingConsentDecision = { _, _ in false },
+        inventoryTrust: PluginInventoryTrust = .explicitEnablement
     ) {
         self.approvedOpenIntentIDs = approvedOpenIntentIDs
         self.grantsStandingConsent = grantsStandingConsent
+        self.inventoryTrust = inventoryTrust
     }
 }
+
+// MARK: - Runtime boundary  @domain: plugin-host
 
 protocol PluginHostRuntime: AnyObject, Sendable {
     var manifest: PluginManifest { get }
@@ -304,6 +327,27 @@ struct PluginHostRuntimeFactory: Sendable {
         self.make = make
     }
 }
+
+// MARK: - Durable stores  @domain: plugin-settings
+
+/// Durable plugin-host stores opened during the app's concurrent startup preparation.
+/// Keeping this package-scoped preserves the ordinary `PluginHost` API while letting the
+/// production composition root avoid filesystem and lock acquisition on `MainActor`.
+package struct PluginHostPersistence: Sendable {
+    package let installations: PluginInstallationStore
+    package let settings: SettingsStore
+    package let storage: PluginStorage
+    package let secrets: SecretStore
+
+    package init(stateRoot: URL) throws {
+        installations = try PluginInstallationStore(pluginsRoot: stateRoot)
+        settings = try SettingsStore(pluginsRoot: stateRoot)
+        storage = try PluginStorage(pluginsRoot: stateRoot)
+        secrets = try SecretStore()
+    }
+}
+
+// MARK: - Host state  @domain: plugin-host
 
 /// Main-actor coordinator for plugin identity, lifecycle, contributions, and events.
 ///
@@ -449,6 +493,9 @@ public final class PluginHost {
     private var isReconcilingViews = false
 
     @ObservationIgnored
+    private var needsViewReconcile = false
+
+    @ObservationIgnored
     private var lifecycle: Lifecycle = .running
 
     @ObservationIgnored
@@ -513,6 +560,16 @@ public final class PluginHost {
         let declarations: [IntentContractDeclaration]
         let dispatchRules: [IntentDispatchRule]
         let openIntentReferences: Set<IntentID>
+    }
+
+    private struct DiscoveredManifest: Sendable {
+        let directory: URL
+        let manifest: PluginManifest
+    }
+
+    private struct ManifestDiscovery: Sendable {
+        let decoded: [DiscoveredManifest]
+        let failures: [PluginLoadFailure]
     }
 
     private struct ActiveSession {
@@ -602,12 +659,32 @@ public final class PluginHost {
         )
     }
 
+    package convenience init(
+        inventories: [PluginInventory],
+        stateRoot: URL,
+        kernel: IntentKernelComponents,
+        persistence: PluginHostPersistence,
+        invocationScopeProvider: @escaping InvocationScopeProvider = {
+            InvocationScope()
+        }
+    ) throws {
+        try self.init(
+            inventories: inventories,
+            stateRoot: stateRoot,
+            kernel: kernel,
+            invocationScopeProvider: invocationScopeProvider,
+            runtimeFactory: .live,
+            persistence: persistence
+        )
+    }
+
     init(
         inventories: [PluginInventory],
         stateRoot: URL,
         kernel: IntentKernelComponents,
         invocationScopeProvider: @escaping InvocationScopeProvider,
-        runtimeFactory: PluginHostRuntimeFactory
+        runtimeFactory: PluginHostRuntimeFactory,
+        persistence: PluginHostPersistence? = nil
     ) throws {
         guard !inventories.isEmpty else {
             throw PluginHostError.noInventoryConfigured
@@ -617,14 +694,16 @@ public final class PluginHost {
         self.kernel = kernel
         self.invocationScopeProvider = invocationScopeProvider
         self.runtimeFactory = runtimeFactory
-        installations = try PluginInstallationStore(pluginsRoot: stateRoot)
-        settings = try SettingsStore(pluginsRoot: stateRoot)
-        storage = try PluginStorage(pluginsRoot: stateRoot)
-        secrets = try SecretStore()
+        let resolvedPersistence = try persistence
+            ?? PluginHostPersistence(stateRoot: stateRoot)
+        installations = resolvedPersistence.installations
+        settings = resolvedPersistence.settings
+        storage = resolvedPersistence.storage
+        secrets = resolvedPersistence.secrets
         coreCatalog = CoreIntentCatalog(components: kernel)
     }
 
-    // MARK: - Loading and hot reload
+    // MARK: - Loading and hot reload  @domain: plugin-host
 
     /// Validates the complete manifest batch before constructing any runtime, then starts
     /// every enabled candidate before publishing any provider generation.
@@ -751,36 +830,11 @@ public final class PluginHost {
     ) {
         _ = try await coreCatalog.install()
 
-        let directories = PluginLoader.discover(
-            in: inventories.map(\.root)
-        )
-        var decoded: [(directory: URL, manifest: PluginManifest)] = []
-        var failures: [PluginLoadFailure] = []
-        decoded.reserveCapacity(directories.count)
-        for directory in directories {
-            do {
-                decoded.append(
-                    (
-                        directory,
-                        try PluginLoader.loadManifest(at: directory)
-                    )
-                )
-            } catch {
-                let invalid = PluginHostError.manifestInvalid(
-                    directory: directory.lastPathComponent,
-                    diagnostic: Self.diagnostic(for: error)
-                )
-                guard !isPrimaryInventory(directory) else {
-                    throw invalid
-                }
-                failures.append(
-                    PluginLoadFailure(
-                        directoryName: directory.lastPathComponent,
-                        diagnostic: Self.diagnostic(for: error)
-                    )
-                )
-            }
+        let discovery = try await Self.discoverManifests(in: inventories)
+        var decoded = discovery.decoded.map {
+            (directory: $0.directory, manifest: $0.manifest)
         }
+        var failures = discovery.failures
 
         let admitted = admitByInventoryPrecedence(decoded)
         failures.append(contentsOf: admitted.failures)
@@ -830,6 +884,52 @@ public final class PluginHost {
                 $0.directoryName < $1.directoryName
             }
         )
+    }
+
+    /// Directory enumeration and manifest decoding are filesystem work. Keep them out of
+    /// the main-actor coordinator; only the resulting immutable values cross back for
+    /// identity admission and contribution publication.
+    @concurrent
+    private static func discoverManifests(
+        in inventories: [PluginInventory]
+    ) async throws -> ManifestDiscovery {
+        let directories = PluginLoader.discover(
+            in: inventories.map(\.root)
+        )
+        var decoded: [DiscoveredManifest] = []
+        var failures: [PluginLoadFailure] = []
+        decoded.reserveCapacity(directories.count)
+
+        for directory in directories {
+            do {
+                decoded.append(
+                    DiscoveredManifest(
+                        directory: directory,
+                        manifest: try PluginLoader.loadManifest(at: directory)
+                    )
+                )
+            } catch {
+                let diagnostic = Self.diagnostic(for: error)
+                let belongsToPrimary = PluginInventoryResolution.inventory(
+                    for: directory,
+                    in: inventories
+                )?.root.standardizedFileURL.path
+                    == inventories[0].root.standardizedFileURL.path
+                guard !belongsToPrimary else {
+                    throw PluginHostError.manifestInvalid(
+                        directory: directory.lastPathComponent,
+                        diagnostic: diagnostic
+                    )
+                }
+                failures.append(
+                    PluginLoadFailure(
+                        directoryName: directory.lastPathComponent,
+                        diagnostic: diagnostic
+                    )
+                )
+            }
+        }
+        return ManifestDiscovery(decoded: decoded, failures: failures)
     }
 
     /// Everything one plugin must satisfy on its own before a runtime is built for it.
@@ -907,20 +1007,25 @@ public final class PluginHost {
             }
         }
 
-        let isEnabled = try await installations.isEnabled(
-            for: item.manifest.id
+        let inventory = PluginInventoryResolution.inventory(
+            for: item.directory,
+            in: inventories
         )
-        let installation = try await installations.installation(
-            for: item.manifest.id
+        let disposition = try await installations.reconcileInventoryTrust(
+            for: item.manifest.id,
+            inventoryTrust: inventory?.authorization.inventoryTrust
+                ?? .explicitEnablement,
+            enablesNewPluginsByDefault: inventory?.enablesNewPluginsByDefault
+                ?? false
         )
         return PreparedPlugin(
             record: ManifestRecord(
                 directoryName: item.directory.lastPathComponent,
                 directory: item.directory,
                 manifest: item.manifest,
-                isEnabled: isEnabled
+                isEnabled: disposition.isEnabled
             ),
-            installation: installation,
+            installation: disposition.installation,
             declarations: declarations.sorted {
                 $0.name.rawValue < $1.name.rawValue
             },
@@ -1489,7 +1594,7 @@ public final class PluginHost {
         }
     }
 
-    // MARK: - Settings and installation lifecycle
+    // MARK: - Settings and installation lifecycle  @domain: plugin-settings
 
     public func setSetting(
         _ value: IntentValue,
@@ -1710,7 +1815,7 @@ public final class PluginHost {
         publish()
     }
 
-    // MARK: - Contributions and events
+    // MARK: - Contributions and events  @domain: plugin-contributions, plugin-events
 
     /// One keystroke of the palette query. Bumps the host-owned monotonic revision —
     /// instantly invalidating every in-flight answer — republishes sections (now
@@ -1972,6 +2077,7 @@ public final class PluginHost {
         from catalog: WorkspaceCatalog
     ) async {
         lastWorkspaceCatalog = catalog
+        needsViewReconcile = true
         guard !isReconcilingViews else {
             return
         }
@@ -1980,6 +2086,18 @@ public final class PluginHost {
             isReconcilingViews = false
         }
 
+        repeat {
+            needsViewReconcile = false
+            guard let latestCatalog = lastWorkspaceCatalog else {
+                return
+            }
+            await performViewInstanceReconcile(from: latestCatalog)
+        } while needsViewReconcile
+    }
+
+    private func performViewInstanceReconcile(
+        from catalog: WorkspaceCatalog
+    ) async {
         var desired: Set<ViewInstanceReference> = []
         for slot in catalog.pluginViewSlots {
             guard let session = sessions[slot.pluginID],
@@ -2060,7 +2178,7 @@ public final class PluginHost {
         publish()
     }
 
-    // MARK: - Watching and shutdown
+    // MARK: - Watching and shutdown  @domain: plugin-host
 
     public func startWatching() throws {
         try requireRunning()
@@ -2167,7 +2285,7 @@ public final class PluginHost {
         await task.value
     }
 
-    // MARK: - Diagnostics
+    // MARK: - Diagnostics  @domain: plugin-host
 
     public func appendLog(_ line: String) {
         log.append(line)
@@ -2204,7 +2322,7 @@ public final class PluginHost {
     }
 }
 
-// MARK: - Private lifecycle helpers
+// MARK: - Private lifecycle helpers  @domain: plugin-host
 
 private extension PluginHost {
     func makeIntentBridge(
@@ -2653,10 +2771,9 @@ private extension PluginHost {
                     instanceID: $0.instanceID,
                     instanced: $0.instanced,
                     title: $0.title,
-                    subtitle: $0.subtitle,
-                    actions: $0.actions,
                     items: $0.items,
                     body: $0.body,
+                    header: $0.header,
                     modal: $0.modal
                 )
             }
@@ -2791,7 +2908,8 @@ private extension PluginHost {
                 keywords: palette.keywords,
                 key: palette.key,
                 when: palette.when,
-                launcher: palette.launcher
+                launcher: palette.launcher,
+                fillsPane: palette.fillsPane
             )
         }.sorted {
             $0.intentID.rawValue < $1.intentID.rawValue
@@ -2840,7 +2958,7 @@ private extension PluginHost {
     }
 }
 
-// MARK: - Pure policy and projection helpers
+// MARK: - Pure policy and projection helpers  @domain: intent-bus, plugin-contributions
 
 extension PluginHost {
     nonisolated static func pluginDispatchRule(
@@ -2857,7 +2975,7 @@ extension PluginHost {
             trustedDefault: providerID,
             allowsAutomaticSelection: true,
             providerConsent: .never,
-            admissionClass: declaration.audiences.contains(.palette)
+            admissionClass: declaration.audiences.contains(.user)
                 ? .interactive
                 : .background,
             valueLimits: .default,

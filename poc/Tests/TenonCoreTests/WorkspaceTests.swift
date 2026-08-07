@@ -287,6 +287,60 @@ final class WorkspaceCatalogTests: XCTestCase {
         )))
     }
 
+    func testAddSlotAtExactEmptyRectAndDiscardReservationPreserveExistingGeometry() throws {
+        let originalID = UUID()
+        let reservedID = UUID()
+        let originalRect = GridRect(x: 0, y: 0, width: 6, height: 12)
+        let targetRect = GridRect(x: 6, y: 0, width: 6, height: 12)
+        var catalog = makeCatalog(
+            slots: [WorkspaceSlot(id: originalID, rect: originalRect, content: .terminal)],
+            activeSlotID: originalID
+        )
+
+        let opened = catalog.addSlot(
+            id: reservedID,
+            content: .empty,
+            at: targetRect
+        )
+
+        XCTAssertEqual(catalog.slot(id: reservedID)?.rect, targetRect)
+        XCTAssertEqual(catalog.activeSlotID, reservedID)
+        XCTAssertTrue(opened.contains { if case .slotOpened(slot: reservedID, tab: _, workspace: _) = $0 { return true }; return false })
+
+        let discarded = catalog.discardEmptySlot(reservedID, restoringFocusTo: originalID)
+
+        XCTAssertNil(catalog.slot(id: reservedID))
+        XCTAssertEqual(catalog.slot(id: originalID)?.rect, originalRect)
+        XCTAssertEqual(catalog.activeSlotID, originalID)
+        XCTAssertTrue(discarded.contains { if case .slotClosed(slot: reservedID, tab: _, workspace: _) = $0 { return true }; return false })
+    }
+
+    func testAddSlotAtExactRectRejectsOverlapAndUndersizedTargets() {
+        let originalID = UUID()
+        var catalog = makeCatalog(
+            slots: [
+                WorkspaceSlot(
+                    id: originalID,
+                    rect: GridRect(x: 0, y: 0, width: 6, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: originalID
+        )
+
+        XCTAssertTrue(catalog.addSlot(
+            id: UUID(),
+            content: .empty,
+            at: GridRect(x: 3, y: 0, width: 6, height: 12)
+        ).isEmpty)
+        XCTAssertTrue(catalog.addSlot(
+            id: UUID(),
+            content: .empty,
+            at: GridRect(x: 6, y: 0, width: 2, height: 12)
+        ).isEmpty)
+        XCTAssertEqual(catalog.activeTab?.slots.count, 1)
+    }
+
     func testAddSlotFallsBackToSplittingActiveSlotWhenGridIsFull() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let originalID = try XCTUnwrap(catalog.activeSlotID)
@@ -1132,6 +1186,45 @@ final class WorkspaceCatalogTests: XCTestCase {
         )
         XCTAssertEqual(sourceTab.slots.map(\.id), [a])
         XCTAssertEqual(sourceTab.slots.first?.rect, fullGrid)
+    }
+
+    func testMoveSlotBesidePaneInHoverSelectedTabCommitsRequestedEdge() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let sourceLeft = try XCTUnwrap(catalog.activeSlotID)
+        catalog.splitActiveSlot(.horizontal, content: .changes)
+        let movingID = try XCTUnwrap(catalog.activeSlotID)
+        let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
+        catalog.newTab()
+        let targetTabID = try XCTUnwrap(catalog.activeTab?.id)
+        let targetID = try XCTUnwrap(catalog.activeSlotID)
+
+        // Hover already revealed the target before mouse-up.
+        XCTAssertEqual(catalog.activeTab?.id, targetTabID)
+        let events = catalog.moveSlot(
+            movingID,
+            toTab: targetTabID,
+            beside: targetID,
+            edge: .left
+        )
+
+        XCTAssertEqual(catalog.activeTab?.slots.map(\.id), [targetID, movingID])
+        XCTAssertEqual(
+            catalog.slot(id: movingID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12)
+        )
+        XCTAssertEqual(
+            catalog.slot(id: targetID)?.rect,
+            GridRect(x: 6, y: 0, width: 6, height: 12)
+        )
+        let sourceTab = try XCTUnwrap(
+            catalog.activeWorkspace?.tabs.first { $0.id == sourceTabID }
+        )
+        XCTAssertEqual(sourceTab.slots.map(\.id), [sourceLeft])
+        XCTAssertEqual(sourceTab.slots.first?.rect, fullGrid)
+        XCTAssertFalse(events.contains {
+            if case .tabSelected = $0 { return true }
+            return false
+        }, "drop must not publish a second selection after hover selected the tab")
     }
 
     func testMoveSlotIntoSameTabOrUnknownTargetIsAtomicNoOp() throws {

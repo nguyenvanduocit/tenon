@@ -8,6 +8,14 @@ enum AgentLensDecodeError: Error, Equatable, Sendable {
 
 struct AgentTranscriptDecoder: Sendable {
     private static let outputLimit = 64 << 10
+    private static let subagentOperationNames: Set<String> = [
+        "followup_task",
+        "interrupt_agent",
+        "list_agents",
+        "send_message",
+        "spawn_agent",
+        "wait_agent",
+    ]
 
     let provider: AgentProvider
 
@@ -43,6 +51,9 @@ struct AgentTranscriptDecoder: Sendable {
 
         let fallbackID = "claude-\(byteOffset)"
         let messageID = Self.string(record["uuid"]) ?? Self.string(message["id"]) ?? fallbackID
+        // Claude Code stamps every record with the directory the call ran in, which is what
+        // lets a path be shown the way a person recognizes it.
+        let workspaceRoot = Self.string(record["cwd"])
         let blocks = Self.contentBlocks(message["content"])
         var events: [AgentLensEvent] = []
         var visibleTexts: [String] = []
@@ -63,14 +74,46 @@ struct AgentTranscriptDecoder: Sendable {
                 }
             case "tool_use":
                 let id = Self.string(block["id"]) ?? "\(messageID)-tool-\(index)"
-                let name = Self.string(block["name"]) ?? "Tool"
+                let rawName = Self.string(block["name"]) ?? "Tool"
+                let input = block["input"] as? [String: Any] ?? [:]
+                // A question is a decision, and it carries the same identity the live hook
+                // gives it, so the record of one that was already answered reconciles with
+                // it instead of appearing again as a fresh prompt.
+                if rawName == "AskUserQuestion" {
+                    for (questionIndex, question) in ClaudeToolFacts.questions(input: input)
+                        .enumerated()
+                    {
+                        events.append(
+                            .interactionRequested(
+                                AgentInteractionRequest(
+                                    id: "\(id)-\(questionIndex)",
+                                    kind: .question,
+                                    title: question.prompt,
+                                    detail: question.header,
+                                    options: question.options,
+                                    state: .pending,
+                                    evidence: evidence
+                                )
+                            )
+                        )
+                    }
+                    break
+                }
+                let presentation = ClaudeToolFacts.presentation(
+                    toolName: rawName,
+                    input: input,
+                    workspaceRoot: workspaceRoot
+                )
                 events.append(
                     .toolStarted(
                         AgentToolRun(
                             id: id,
-                            name: name,
-                            summary: Self.summary(block["input"]),
-                            detail: "",
+                            name: presentation.name,
+                            kind: presentation.kind,
+                            summary: presentation.summary,
+                            detail: presentation.kind == .plan
+                                ? Self.planDetail(Self.summary(block["input"]))
+                                : "",
                             state: .running,
                             exitCode: nil,
                             evidence: evidence
@@ -80,15 +123,36 @@ struct AgentTranscriptDecoder: Sendable {
             case "tool_result":
                 let id = Self.string(block["tool_use_id"]) ?? "\(messageID)-result-\(index)"
                 let isError = block["is_error"] as? Bool == true
+                // Claude Code keeps the structured result beside the message rather than
+                // inside the block: exit status, the patch a file edit applied, the answers
+                // a question received.
+                let result = record["toolUseResult"]
+                let answers = ClaudeToolFacts.answers(response: result)
+                if !answers.isEmpty {
+                    for answerIndex in answers.indices {
+                        events.append(
+                            .interactionResolved(id: "\(id)-\(answerIndex)", evidence: evidence)
+                        )
+                    }
+                    break
+                }
+                let completion = ClaudeToolFacts.completion(
+                    toolName: "",
+                    response: result,
+                    isError: isError
+                )
+                let detail = completion.detail.isEmpty
+                    ? Self.capped(Self.contentText(block["content"]))
+                    : completion.detail
                 events.append(
                     .toolFinished(
                         AgentToolRun(
                             id: id,
                             name: "Tool",
-                            summary: isError ? "Tool failed" : "Tool completed",
-                            detail: Self.capped(Self.contentText(block["content"])),
-                            state: isError ? .failed : .succeeded,
-                            exitCode: nil,
+                            summary: "",
+                            detail: detail,
+                            state: completion.state,
+                            exitCode: completion.exitCode,
                             evidence: evidence
                         )
                     )
@@ -112,18 +176,23 @@ struct AgentTranscriptDecoder: Sendable {
             )
         }
 
-        let visibleText = visibleTexts.joined(separator: "\n\n").trimmingCharacters(
-            in: .whitespacesAndNewlines
-        )
-        if !visibleText.isEmpty {
+        let visibleText = visibleTexts.joined(separator: "\n\n")
+        if visibleText.contains(where: { !$0.isWhitespace }) {
+            let role: AgentMessageRole = recordType == "user" ? .user : .assistant
+            let kind = Self.messageKind(role: role, text: visibleText)
             let value = AgentLensMessage(
                 id: messageID,
-                role: recordType == "user" ? .user : .assistant,
+                role: role,
+                kind: kind,
                 text: visibleText,
                 isStreaming: false,
                 evidence: evidence
             )
-            events.append(recordType == "user" ? .userMessage(value) : .assistantMessage(value))
+            if kind != .conversation {
+                events.append(.contextMessage(value))
+            } else {
+                events.append(recordType == "user" ? .userMessage(value) : .assistantMessage(value))
+            }
         }
         return events
     }
@@ -169,11 +238,11 @@ struct AgentTranscriptDecoder: Sendable {
                         )
                     ),
                 ]
-            case "turn_started":
+            case "turn_started", "task_started":
                 return [.status(.running, evidence: evidence)]
-            case "turn_complete", "turn_completed":
+            case "turn_complete", "turn_completed", "task_complete", "task_completed":
                 return [.status(.completed, evidence: evidence)]
-            case "turn_aborted":
+            case "turn_aborted", "task_aborted", "task_failed":
                 return [.status(.failed("Turn interrupted"), evidence: evidence)]
             default:
                 return []
@@ -189,19 +258,47 @@ struct AgentTranscriptDecoder: Sendable {
         completed: Bool,
         evidence: AgentEvidence
     ) -> [AgentLensEvent] {
-        switch string(item["type"]) {
-        case "message", "userMessage":
+        let itemType = string(item["type"])
+        switch itemType {
+        case "userMessage":
             let text = contentText(item["content"])
             guard !text.isEmpty else { return [] }
-            let role: AgentMessageRole = string(item["role"]) == "assistant" ? .assistant : .user
+            let kind = messageKind(role: .user, text: text)
             let message = AgentLensMessage(
                 id: id,
-                role: role,
+                role: .user,
+                kind: kind,
                 text: text,
                 isStreaming: !completed,
                 evidence: evidence
             )
-            return [role == .assistant ? .assistantMessage(message) : .userMessage(message)]
+            return kind == .conversation ? [.userMessage(message)] : [.contextMessage(message)]
+
+        case "message":
+            let text = contentText(item["content"])
+            guard !text.isEmpty else { return [] }
+            guard let role = messageRole(string(item["role"])) else { return [] }
+            let message = AgentLensMessage(
+                id: id,
+                role: role,
+                kind: messageKind(role: role, text: text),
+                text: text,
+                isStreaming: !completed,
+                evidence: evidence
+            )
+            if message.kind != .conversation {
+                return [.contextMessage(message)]
+            }
+            switch role {
+            case .assistant:
+                return [.assistantMessage(message)]
+            case .user:
+                return [.userMessage(message)]
+            case .system, .developer:
+                return [.contextMessage(message)]
+            case .reasoning:
+                return [.reasoning(message)]
+            }
 
         case "agentMessage":
             guard let text = string(item["text"]), !text.isEmpty else { return [] }
@@ -232,15 +329,19 @@ struct AgentTranscriptDecoder: Sendable {
                 ),
             ]
 
-        case "function_call", "local_shell_call":
-            let name = string(item["name"]) ?? "Tool"
+        case "function_call", "local_shell_call", "custom_tool_call":
+            let rawName = string(item["name"]) ?? (itemType == "local_shell_call" ? "local_shell_call" : "Tool")
+            let input = summary(item["arguments"] ?? item["input"] ?? item["action"])
+            let kind = toolKind(name: rawName, input: input)
+            let name = toolName(rawName, kind: kind, input: input)
             return [
                 .toolStarted(
                     AgentToolRun(
                         id: string(item["call_id"]) ?? id,
                         name: name,
-                        summary: summary(item["arguments"] ?? item["input"] ?? item["action"]),
-                        detail: "",
+                        kind: kind,
+                        summary: toolSummary(input, name: name, kind: kind),
+                        detail: kind == .plan ? planDetail(input) : "",
                         state: .running,
                         exitCode: nil,
                         evidence: evidence
@@ -248,7 +349,7 @@ struct AgentTranscriptDecoder: Sendable {
                 ),
             ]
 
-        case "function_call_output":
+        case "function_call_output", "custom_tool_call_output":
             let output = item["output"]
             let outputRecord = output as? [String: Any]
             let failed = outputRecord?["success"] as? Bool == false ||
@@ -273,6 +374,7 @@ struct AgentTranscriptDecoder: Sendable {
             let tool = AgentToolRun(
                 id: id,
                 name: "Command",
+                kind: .command,
                 summary: string(item["command"]) ?? "Shell command",
                 detail: capped(string(item["aggregatedOutput"]) ?? ""),
                 state: state,
@@ -286,6 +388,7 @@ struct AgentTranscriptDecoder: Sendable {
             let tool = AgentToolRun(
                 id: id,
                 name: "File change",
+                kind: .fileChange,
                 summary: changesSummary(item["changes"]),
                 detail: "",
                 state: toolState(status: status, exitCode: nil),
@@ -313,6 +416,7 @@ struct AgentTranscriptDecoder: Sendable {
             let tool = AgentToolRun(
                 id: id,
                 name: "Web search",
+                kind: .webSearch,
                 summary: string(item["query"]) ?? "Search",
                 detail: summary(item["action"]),
                 state: completed ? .succeeded : .running,
@@ -323,17 +427,17 @@ struct AgentTranscriptDecoder: Sendable {
 
         case "plan":
             guard let text = string(item["text"]), !text.isEmpty else { return [] }
-            return [
-                .reasoning(
-                    AgentLensMessage(
-                        id: id,
-                        role: .reasoning,
-                        text: text,
-                        isStreaming: !completed,
-                        evidence: evidence
-                    )
-                ),
-            ]
+            let tool = AgentToolRun(
+                id: id,
+                name: "Plan",
+                kind: .plan,
+                summary: text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Execution plan",
+                detail: text,
+                state: completed ? .succeeded : .running,
+                exitCode: nil,
+                evidence: evidence
+            )
+            return [completed ? .toolFinished(tool) : .toolStarted(tool)]
 
         default:
             return []
@@ -397,6 +501,148 @@ struct AgentTranscriptDecoder: Sendable {
         return values.compactMap { value in
             string(value) ?? string((value as? [String: Any])?["text"])
         }
+    }
+
+    private static func messageRole(_ value: String?) -> AgentMessageRole? {
+        switch value?.lowercased() {
+        case "assistant": .assistant
+        case "user": .user
+        case "system": .system
+        case "developer": .developer
+        default: nil
+        }
+    }
+
+    private static func messageKind(
+        role: AgentMessageRole,
+        text: String
+    ) -> AgentMessageKind {
+        if isInjectedSkillInstructions(text) {
+            return .skill
+        }
+        if role == .user, isInjectedProjectInstructions(text) {
+            return .instruction
+        }
+        guard role == .system || role == .developer else { return .conversation }
+        if text.contains("<skills_instructions>") || text.contains("SKILL.md") {
+            return .skill
+        }
+        return .instruction
+    }
+
+    private static func isInjectedSkillInstructions(_ text: String) -> Bool {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.hasPrefix("Base directory for this skill:") else { return false }
+        guard let firstLineEnd = trimmed.firstIndex(of: "\n") else { return false }
+        let baseDirectory = trimmed[..<firstLineEnd].lowercased()
+        return baseDirectory.contains("/skills/")
+    }
+
+    private static func isInjectedProjectInstructions(_ text: String) -> Bool {
+        guard text.contains("<INSTRUCTIONS>"), text.contains("<environment_context>") else {
+            return false
+        }
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let marker = "# AGENTS.md instructions for "
+        if trimmed.hasPrefix(marker) { return true }
+        guard trimmed.hasPrefix("<recommended_plugins>"),
+              let envelopeEnd = trimmed.range(of: "</recommended_plugins>")
+        else { return false }
+        return trimmed[envelopeEnd.upperBound...]
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+            .hasPrefix(marker)
+    }
+
+    private static func toolKind(name: String, input: String) -> AgentToolKind {
+        let normalized = name.lowercased()
+        if subagentOperationNames.contains(normalized) || normalized.contains("subagent") {
+            return .subagent
+        }
+        if normalized == "skill" || input.contains("SKILL.md") {
+            return .skill
+        }
+        if normalized == "todowrite" || normalized == "update_plan" || normalized == "updateplan" {
+            return .plan
+        }
+        if normalized == "local_shell_call" || normalized == "shell" {
+            return .command
+        }
+        return .generic
+    }
+
+    private static func toolName(
+        _ rawName: String,
+        kind: AgentToolKind,
+        input: String
+    ) -> String {
+        switch kind {
+        case .plan:
+            return "Plan"
+        case .skill:
+            return skillName(in: input) ?? "Skill"
+        case .subagent:
+            return switch rawName.lowercased() {
+            case "spawn_agent": "Spawn subagent"
+            case "followup_task": "Continue subagent"
+            case "send_message": "Message subagent"
+            case "wait_agent": "Wait for subagent"
+            case "interrupt_agent": "Interrupt subagent"
+            case "list_agents": "List subagents"
+            default: "Subagent"
+            }
+        default:
+            return rawName
+        }
+    }
+
+    private static func toolSummary(
+        _ input: String,
+        name: String,
+        kind: AgentToolKind
+    ) -> String {
+        switch kind {
+        case .plan: planSummary(input)
+        case .skill: "Loaded \(name) instructions"
+        case .subagent: input.isEmpty ? "Subagent operation" : input
+        default: input
+        }
+    }
+
+    private static func skillName(in input: String) -> String? {
+        guard let marker = input.range(of: "/SKILL.md", options: .backwards) else {
+            return nil
+        }
+        return input[..<marker.lowerBound]
+            .split(separator: "/")
+            .last
+            .map(String.init)
+    }
+
+    private static func planSummary(_ input: String) -> String {
+        guard let data = input.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let todos = object["todos"] as? [[String: Any]],
+              !todos.isEmpty
+        else { return "Execution checklist" }
+        let completed = todos.filter { string($0["status"]) == "completed" }.count
+        return "\(completed)/\(todos.count) steps complete"
+    }
+
+    private static func planDetail(_ input: String) -> String {
+        guard let data = input.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let todos = object["todos"] as? [[String: Any]],
+              !todos.isEmpty
+        else { return input }
+        return todos.compactMap { todo in
+            guard let content = string(todo["content"]), !content.isEmpty else { return nil }
+            let marker = switch string(todo["status"]) {
+            case "completed": "✓"
+            case "in_progress": "▸"
+            default: "·"
+            }
+            return "\(marker) \(content)"
+        }.joined(separator: "\n")
     }
 
     fileprivate static func summary(_ value: Any?) -> String {
@@ -505,7 +751,7 @@ struct CodexProtocolFrameDecoder: Sendable {
                   let delta = AgentTranscriptDecoder.string(params["delta"])
             else { return [] }
             return [.toolDelta(id: id, text: delta, evidence: evidence)]
-        case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta", "item/plan/delta":
+        case "item/reasoning/summaryTextDelta", "item/reasoning/textDelta":
             guard let id = AgentTranscriptDecoder.string(params["itemId"]),
                   let delta = AgentTranscriptDecoder.string(params["delta"])
             else { return [] }
@@ -520,6 +766,11 @@ struct CodexProtocolFrameDecoder: Sendable {
                     )
                 ),
             ]
+        case "item/plan/delta":
+            guard let id = AgentTranscriptDecoder.string(params["itemId"]),
+                  let delta = AgentTranscriptDecoder.string(params["delta"])
+            else { return [] }
+            return [.toolDelta(id: id, text: delta, evidence: evidence)]
         case "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
              "item/permissions/requestApproval":
             let requestID = Self.requestID(frame["id"]) ?? "approval-\(sequence)"
@@ -537,13 +788,15 @@ struct CodexProtocolFrameDecoder: Sendable {
             ]
         case "item/tool/requestUserInput", "mcpServer/elicitation/request":
             let requestID = Self.requestID(frame["id"]) ?? "question-\(sequence)"
+            let presentation = Self.questionPresentation(params)
             return [
                 .interactionRequested(
                     AgentInteractionRequest(
                         id: requestID,
                         kind: .question,
-                        title: "Input required",
-                        detail: AgentTranscriptDecoder.summary(params),
+                        title: presentation.title,
+                        detail: presentation.detail,
+                        options: presentation.options,
                         state: .pending,
                         evidence: evidence
                     )
@@ -565,5 +818,37 @@ struct CodexProtocolFrameDecoder: Sendable {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         return nil
+    }
+
+    private static func questionPresentation(_ params: [String: Any]) -> (
+        title: String,
+        detail: String,
+        options: [AgentInteractionOption]
+    ) {
+        let question = (params["questions"] as? [[String: Any]])?.first ?? params
+        let title = AgentTranscriptDecoder.string(question["question"])
+            ?? AgentTranscriptDecoder.string(question["prompt"])
+            ?? AgentTranscriptDecoder.string(question["title"])
+            ?? "Input required"
+        let detail = AgentTranscriptDecoder.string(question["header"])
+            ?? AgentTranscriptDecoder.string(question["description"])
+            ?? ""
+        let rawOptions = question["options"] as? [Any] ?? []
+        let options = rawOptions.enumerated().compactMap { index, value -> AgentInteractionOption? in
+            if let label = value as? String, !label.isEmpty {
+                return AgentInteractionOption(id: "\(index)-\(label)", label: label, detail: "")
+            }
+            guard let record = value as? [String: Any],
+                  let label = AgentTranscriptDecoder.string(record["label"])
+                    ?? AgentTranscriptDecoder.string(record["value"]),
+                  !label.isEmpty
+            else { return nil }
+            return AgentInteractionOption(
+                id: "\(index)-\(label)",
+                label: label,
+                detail: AgentTranscriptDecoder.string(record["description"]) ?? ""
+            )
+        }
+        return (title, detail, options)
     }
 }

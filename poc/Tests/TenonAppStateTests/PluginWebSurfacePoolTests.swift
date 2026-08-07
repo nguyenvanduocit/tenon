@@ -82,6 +82,117 @@ final class PluginWebSurfacePoolTests: XCTestCase {
         try await removeDataStore(installationID)
     }
 
+    func testBrowserUserAgentAdvertisesSafariProductToken() {
+        // macOS 26 onward: Safari's marketing version tracks the OS release.
+        XCTAssertEqual(
+            WebUserAgent.applicationName(
+                operatingSystemVersion: OperatingSystemVersion(
+                    majorVersion: 26,
+                    minorVersion: 4,
+                    patchVersion: 1
+                )
+            ),
+            "Version/26.4 Safari/605.1.15"
+        )
+        // Older systems shipped Safari versions unrelated to the OS number. The
+        // `Version/` token follows that rule; the product token never moves, because
+        // it is the token UA sniffers actually read.
+        XCTAssertEqual(
+            WebUserAgent.applicationName(
+                operatingSystemVersion: OperatingSystemVersion(
+                    majorVersion: 15,
+                    minorVersion: 6,
+                    patchVersion: 0
+                )
+            ),
+            "Version/18.5 Safari/605.1.15"
+        )
+    }
+
+    @MainActor
+    func testSurfaceAdvertisesSafariUserAgentToTheNetwork() async throws {
+        let installationID = UUID()
+        var surface: WebSurface? = WebSurface(
+            websiteDataStoreIdentifier: installationID
+        )
+        // Read the value out rather than binding the view or its configuration: either
+        // binding would keep the data store open past `surface = nil`, and the teardown
+        // below needs the store closable.
+        let applicationName = surface?.webView?.configuration
+            .applicationNameForUserAgent
+
+        // Tear down before asserting: this test mints a real persistent store, and an
+        // assertion that fails between the two would leave one on disk per failing run.
+        surface = nil
+        try await removeDataStore(installationID)
+
+        XCTAssertEqual(applicationName, WebUserAgent.current)
+    }
+
+    @MainActor
+    func testPopupNavigationLoadsInPlaceOnlyForAllowedMainFrameURLs() {
+        let allowed = URL(string: "https://example.com/path")
+        XCTAssertEqual(
+            WebSurface.popupTarget(allowed, initiatedByMainFrame: true),
+            allowed
+        )
+        XCTAssertNil(
+            WebSurface.popupTarget(
+                URL(string: "javascript:alert(1)"),
+                initiatedByMainFrame: true
+            )
+        )
+        XCTAssertNil(
+            WebSurface.popupTarget(nil, initiatedByMainFrame: true)
+        )
+        // An embedded third party asks for a new window with the same delegate shape,
+        // and `window.open` needs no user gesture. Adopting it would let a subframe
+        // replace the top-level document of the pane.
+        XCTAssertNil(
+            WebSurface.popupTarget(allowed, initiatedByMainFrame: false)
+        )
+    }
+
+    /// The rule above, driven by WebKit rather than by the test: a real embedded frame
+    /// scripting a real `window.open` reaches the real delegate.
+    @MainActor
+    func testCrossOriginSubframeCannotRedirectTheSurface() async throws {
+        let installationID = UUID()
+        var surface: WebSurface? = WebSurface(
+            websiteDataStoreIdentifier: installationID
+        )
+        let settled = Settled()
+        surface?.onLoading = { isLoading in
+            if !isLoading { settled.value = true }
+        }
+
+        // A `data:` document has an opaque origin, so the iframe is cross-origin to the
+        // top document, and `window.open` needs no user gesture: WebKit delivers the
+        // popup while the page is still loading, ahead of the finish this test waits on.
+        // A closed loopback port is the target, so a regression is a local refusal
+        // instead of a request to a real host.
+        let hijack = "<script>window.open('https://127.0.0.1:9/hijack')</script>"
+        let encoded = try XCTUnwrap(
+            hijack.addingPercentEncoding(withAllowedCharacters: .alphanumerics)
+        )
+        surface?.webView?.loadHTMLString(
+            "<html><body>top<iframe src=\"data:text/html,\(encoded)\"></iframe></body></html>",
+            baseURL: try XCTUnwrap(URL(string: "https://a.example/"))
+        )
+
+        let loaded = await waitUntil { settled.value }
+
+        XCTAssertTrue(loaded)
+        XCTAssertEqual(
+            surface?.webView?.url?.absoluteString,
+            "https://a.example/"
+        )
+
+        surface?.dispose()
+        surface = nil
+        try await removeDataStore(installationID)
+    }
+
     @MainActor
     func testRetainOnlyReleasesClosedPaneSurface() async throws {
         let pool = PluginWebSurfacePool()
@@ -348,4 +459,10 @@ final class PluginWebSurfacePoolTests: XCTestCase {
             error: nil
         )
     }
+}
+
+/// A flag a WebKit callback sets and a bounded wait polls.
+@MainActor
+private final class Settled {
+    var value = false
 }

@@ -21,9 +21,10 @@ final class LauncherCommandsTests: XCTestCase {
     func testPaletteDeclarationCarriesTheLauncherFlag() throws {
         let declared = try JSONDecoder().decode(
             PluginPalettePresentation.self,
-            from: Data(#"{"category": "New", "icon": "terminal", "launcher": true}"#.utf8)
+            from: Data(#"{"category": "New", "icon": "terminal", "launcher": true, "fillsPane": true}"#.utf8)
         )
         XCTAssertTrue(declared.launcher)
+        XCTAssertTrue(declared.fillsPane)
     }
 
     /// Omitting the flag must keep an intent out of the launcher: a palette command is
@@ -34,6 +35,7 @@ final class LauncherCommandsTests: XCTestCase {
             from: Data(#"{"category": "Git"}"#.utf8)
         )
         XCTAssertFalse(declared.launcher)
+        XCTAssertFalse(declared.fillsPane)
     }
 
     // MARK: - Projection
@@ -53,11 +55,27 @@ final class LauncherCommandsTests: XCTestCase {
         XCTAssertEqual(ranked.map(\.command.id), ["new-terminal"])
     }
 
+    func testPaneFillersKeepOnlyLauncherCommandsThatCanOccupyATargetSlot() {
+        let index = CommandIndex([
+            Command(
+                id: "new-terminal",
+                title: "New Terminal",
+                isLauncher: true,
+                fillsPane: true
+            ),
+            Command(id: "new-tab", title: "New Tab", isLauncher: true),
+            Command(id: "split-right", title: "Split Right", isLauncher: true),
+            Command(id: "close-pane", title: "Close Pane", fillsPane: true),
+        ])
+
+        XCTAssertEqual(index.paneFillersOnly.commands.map(\.id), ["new-terminal"])
+    }
+
     // MARK: - Shipped plugins
 
     /// The regression that matters for the title bar: the launcher must still offer
     /// everything the removed "Add slot" menu did — Terminal, Files, Diff, Docs,
-    /// Browser — plus the split verbs that menu never had.
+    /// Automation, Browser — plus the split verbs that menu never had.
     func testShippedLauncherOffersEverythingTheAddSlotMenuDid() throws {
         let launchers = try shippedLauncherIntentIDs()
 
@@ -66,6 +84,7 @@ final class LauncherCommandsTests: XCTestCase {
             "dev.tenon.file-explorer.open.v1",           // Files
             "dev.tenon.core-commands.changes.open.v1",   // Diff
             "dev.tenon.core-commands.docs.open.v1",      // Docs
+            "dev.tenon.core-commands.automation.open.v1", // Automation
             "dev.tenon.browser.open.v1",                 // Browser
             "dev.tenon.core-commands.tab.new.v1",
             "dev.tenon.core-commands.pane.split-right.v1",
@@ -98,11 +117,47 @@ final class LauncherCommandsTests: XCTestCase {
         }
     }
 
+    func testShippedPaneFillersExcludeTabAndSplitStructureCommands() throws {
+        let fillers = try shippedPaneFillerIntentIDs()
+
+        for expected in [
+            "dev.tenon.core-commands.terminal.new.v1",
+            "dev.tenon.core-commands.changes.open.v1",
+            "dev.tenon.core-commands.docs.open.v1",
+            "dev.tenon.core-commands.automation.open.v1",
+            "dev.tenon.file-explorer.open.v1",
+            "dev.tenon.browser.open.v1",
+            "dev.tenon.kanban.open.v1",
+            "dev.tenon.claude-sessions.open.v1",
+        ] {
+            XCTAssertTrue(fillers.contains(expected), "\(expected) must fill an empty grid target")
+        }
+
+        for excluded in [
+            "dev.tenon.core-commands.tab.new.v1",
+            "dev.tenon.core-commands.pane.split-right.v1",
+            "dev.tenon.core-commands.pane.split-down.v1",
+        ] {
+            XCTAssertFalse(fillers.contains(excluded), "\(excluded) cannot fill an empty grid target")
+        }
+    }
+
     private func shippedLauncherIntentIDs() throws -> Set<String> {
         var ids: Set<String> = []
         for directory in PluginLoader.discover(in: Self.pluginsRoot) {
             let manifest = try PluginLoader.loadManifest(at: directory)
             for provision in manifest.intents.provides where provision.palette?.launcher == true {
+                ids.insert(provision.name.rawValue)
+            }
+        }
+        return ids
+    }
+
+    private func shippedPaneFillerIntentIDs() throws -> Set<String> {
+        var ids: Set<String> = []
+        for directory in PluginLoader.discover(in: Self.pluginsRoot) {
+            let manifest = try PluginLoader.loadManifest(at: directory)
+            for provision in manifest.intents.provides where provision.palette?.fillsPane == true {
                 ids.insert(provision.name.rawValue)
             }
         }

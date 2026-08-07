@@ -62,8 +62,8 @@ For the current product:
 - `TenonCore`, `TenonApp`, and their built-in Swift services are one semantic owner;
 - each plugin `PluginID` is a separate semantic owner because it is independently
   installed, disabled, and hot-reloaded;
-- CLI, palette, agent, and registered product-keybinding entry points are public adapter
-  principals even though the app ultimately serves them;
+- CLI, user, and agent entry points are public adapter principals even though the app
+  ultimately serves them;
 - two plugins always have different semantic owners, including bundled plugins.
 
 ### Principal
@@ -74,11 +74,18 @@ owners answer different questions:
 - semantic owner chooses **DIRECT versus a public boundary**;
 - principal determines **what a public boundary caller may discover and invoke**.
 
-The current public intent caller audiences are `plugin`, `palette`, `cli`, and `agent`.
-A registered product keybinding uses the palette projection/principal and invokes a
-plugin-provided intent carrying presentation metadata. Built-in Swift UI is part of the host
-semantic owner and has no generic app intent principal. A provider making a nested call uses
-its plugin principal; “core” does not mint extra authority.
+The current public intent caller audiences are `plugin`, `user`, `cli`, and `agent`.
+
+`user` is one principal with many surfaces: the command palette, the launcher in each of
+its anchors, a registered product keybinding, and any other host surface carrying an
+accepted gesture. They are surfaces of the same caller — *a person, acting now, in this
+window* — rather than a principal each. Naming it for the person instead of for one control
+is what keeps a new surface from looking like it needs a new identity: it does not.
+
+Built-in Swift UI is part of the host semantic owner and mints no principal of its own; when
+it carries a person's gesture across a public boundary it carries `user`, and when it calls
+its own services it stays DIRECT. A provider making a nested call uses its plugin principal;
+"core" does not mint extra authority.
 
 ### Public adapter boundary
 
@@ -193,6 +200,17 @@ Current DIRECT inventory:
 - ordinary functions/modules inside one plugin generation;
 - SwiftUI workspace, tab, pane, and settings interactions;
 - app lifecycle and composition-root wiring;
+- install-channel routing: the exact closed set `{production, staging}` is resolved from
+  the app bundle identity at the composition root. Each channel is a singleton within
+  itself and owns a distinct Unix socket/claim plus a distinct Application Support root;
+  production retains the legacy paths. This is same-owner DIRECT lifecycle selection,
+  not a caller principal, public adapter, or field added to the CLI wire protocol. The
+  production-default CLI remains compatible, while a terminal inherits its owning
+  channel's exact socket through `TENON_SOCKET_PATH`, even when that channel's server is
+  degraded. Shared Codex/Claude hook configuration stays channel-neutral and resolves the
+  owning runtime script from the terminal's `TENON_AGENT_HOOK_SCRIPT` environment. A launch
+  that cannot prove ownership of its channel claim stops before state/UI assembly, and
+  activation probes reject socket-path symlinks rather than following them across channels;
 - `WorkspaceStore` and typed workspace use cases;
 - terminal and web surface pool retain/reconcile/focus/lifecycle;
 - pane activity/attention state (T-029): one `PaneActivity` per slot, fed by the shell's
@@ -203,23 +221,67 @@ Current DIRECT inventory:
   EVENT admitted through this law's ordered decision — never a reuse of this host state;
 - launcher surfaces and tab-context placement (T-039, AIO-8): the title-bar `+`, a tab
   right-click, and a right-click on an unoccupied spatial-grid cell all host the same
-  `LauncherMenu`, which alone reads `CommandIndex.launcherOnly` — there is no second list or
-  presentation. Detecting that a grid cell is unoccupied and presenting/dismissing the
-  popover are host-native DIRECT UI control: same semantic owner, no caller principal, no
-  result, no independent lifetime, no authority, and no backpressure. Plugin-contributed
-  entries remain CONTRIBUTIONs (palette declarations), and choosing one takes the existing
-  finite INTENT path under the palette principal with its existing authority, failure, and
-  admission semantics. The title-bar `+` creates a blank tab through the typed workspace
-  service and invokes the chosen intent against that tab's pane scope. While that scoped
-  reservation is live, `workspace.tab.create.v1` fills and claims it instead of opening a
-  second tab; correlation is by pane scope plus the host-minted user-gesture identity,
-  never by guessing from concurrently opened tabs. Claiming fills the reserved pane by ID
-  without overriding workspace/tab navigation that happened while the intent was awaiting.
-  The empty-grid anchor inherits the focused scope, while a tab anchor names scope at the
-  call site through the pure `TabContextPlacement` rule so a background tab receives its
-  own result. Content placement inside the named tab stays in
+  `LauncherMenu`, which alone selects and ranks the appropriate `CommandIndex` projection
+  and merges the shell's bounded host-agent suggestion snapshot — there is no second
+  anchor-owned list or presentation. The ordinary launcher reads `launcherOnly`; an
+  empty-grid launcher reads `paneFillersOnly`, derived from the declarative
+  `palette.fillsPane` CONTRIBUTION, so structural actions such as New Tab and Split are not
+  offered where they cannot satisfy the click. Detecting the clicked empty cell, resolving
+  the largest valid empty `GridRect` that contains it, reserving that exact rectangle with
+  an empty pane, and presenting/dismissing the popover are host-native DIRECT UI/workspace
+  control: same semantic owner, no caller principal, no independent lifetime, and no new
+  public mechanism. Plugin-contributed entries remain CONTRIBUTIONs (palette declarations),
+  and choosing one takes the existing finite INTENT path under the `user` principal with
+  its existing authority, failure, and admission semantics. A detected Codex or Claude row
+  is instead the host-native DIRECT convenience described below; it never enters that
+  projection's intent adapter. The title-bar `+` creates a
+  blank tab through the typed workspace service and invokes the chosen intent against that
+  tab's pane scope. While either a new-tab or empty-grid scoped reservation is live,
+  `workspace.tab.create.v1` fills and claims it instead of opening a second tab; correlation
+  is by pane scope plus the host-minted user-gesture identity, never by guessing from
+  concurrently opened tabs. An empty-grid selection is scoped to the reserved pane, so
+  `workspace.content.open.v1` fills the exact clicked rectangle; failure or a successful
+  provider that leaves the reservation empty removes only that untouched reservation,
+  without spatial reflow. A matching reservation that has become stale fails closed and
+  never falls through to ordinary tab/content placement. Claiming fills the reserved pane
+  by ID without overriding workspace/tab navigation that happened while the intent was
+  awaiting. Pointer right-click, the canvas's Option-Return control, and VoiceOver custom
+  actions all enter this same DIRECT target/presentation path; accessibility does not add a
+  second command registry or dispatch mechanism. A tab anchor names
+  scope at the call site through the pure `TabContextPlacement` rule so a background tab
+  receives its own result. Content placement inside the named tab stays in
   `workspace.content.open.v1`: reuse the pane showing this kind of content, otherwise
   split, never open another tab;
+- personal runbooks (source-owned as `QuickCommand`): the single title-bar library control,
+  editor sheet, project/everywhere filtering, and persisted recent selection are host-native
+  DIRECT UI and preference state. A run is one finite fire-and-return operation inside the
+  host semantic owner, carries no public principal or independent lifetime, and reports only
+  whether the typed placement/send operation was accepted. A Terminal runbook calls
+  `WorkspaceStore` and `SurfacePool` directly and explicitly chooses the focused terminal or
+  a fresh tab; if the focused target cannot receive terminal input, placement fails over to
+  a fresh terminal tab. Codex and Claude runbooks always create a fresh terminal tab and
+  write one POSIX-quoted brief to the selected host-supported executable so the live PTY has
+  its own stable pane identity and return path. Authority is the accepted in-window gesture;
+  bodies are capped at 6,000 characters, the library at 40 entries, and the feature adds no
+  queue beyond `SurfacePool`'s existing one-pending-string-per-pane readiness path. This
+  focused-view convenience is neither registered nor discoverable as a product keybinding,
+  does not mint an app principal, and adds no intent or public `tenon` path. The public
+  `terminal.run.v1`/`terminal.open.v1` providers remain adapters over the same
+  workspace/surface services for plugin, CLI, and agent callers;
+- detected agent launch suggestions: the shell performs one off-main, read-only scan for the
+  exact host-supported executables `{codex, claude}` and reads at most 512 KiB from the tail
+  of each known shell-history file. It retains no raw history and projects at most one row
+  per installed agent. Only an exact source-owned allowlist of reusable startup options is
+  learned; prompt text, cwd/add-dir, resume/session identity, settings bodies, and shell
+  operators are discarded. The semantic owner is the built-in `TenonApp` shell and its
+  typed `WorkspaceStore`/`SurfacePool` services; the caller is an accepted in-window
+  gesture with no public principal. One click returns one finite placement/delivery outcome,
+  creates no new lifetime beyond the terminal pane the workspace already owns, and fails
+  before mutation when the executable or anchor is unavailable. The title-bar `+` opens a
+  fresh tab, a tab anchor opens a fresh pane in that tab, and empty-tab/empty-pane/empty-grid
+  anchors fill their designated space. Backpressure is the existing one-pending-string per
+  pane readiness slot. This adds no intent, event, contribution, resource protocol, command
+  registry, public `tenon` path, or persisted preference;
 - file-pane renderer selection (T-038): `SlotContent.file(path:)` and its native editor
   were already host-owned, so rendering a PNG as a picture or an HTML file as a page
   crosses no ownership boundary — same-owner DIRECT, no new intent, no new plugin, no new
@@ -230,10 +292,95 @@ Current DIRECT inventory:
   its cookie jar. The preview is a renderer, not a browser — no JavaScript, ephemeral data
   store, read access scoped to the file's own directory, and any navigation away is
   refused;
+- a file cited in Agent Lens prose (T-068): agents name paths constantly, and the return
+  path from a claim to the file it is about crosses no ownership boundary. Agent Lens is
+  host-native `TenonApp` UI and `SlotContent.file(path:)` is the host's own pane, so the
+  click calls the typed `WorkspaceStore.openContent` use case, exactly as the changes panel
+  already does for a diff. `workspace.content.open.v1` remains the public adapter over that
+  same service for plugin, CLI, and agent callers — one typed semantic implementation, no
+  second public path, and no app intent principal minted for built-in UI. Which spans are
+  citations is the pure `AgentFileReferenceRule`, and only a path that resolves to a file
+  under the workspace root renders as a link, so a click always lands on evidence;
 - plugin-host administration from the Settings UI;
+- Automation Canvas and Settings separation: the host-native `SlotContent.automation`
+  pane reads manifest declarations, scheduler phase, plugin availability, and delivery
+  history; its schedule selection, search/filter controls, Run Now, Create with AI, and
+  persisted per-schedule Pause/Resume call typed application services **DIRECT**. The
+  semantic owner is the built-in host, the caller is an accepted in-window gesture with no
+  public principal, each action has one finite local outcome, and no queue or lifetime is
+  created. A pause is host preference state: ticks keep advancing while automatic delivery
+  is suppressed, so resume never catches up skipped events; manual Run Now remains
+  available. A global preference epoch invalidates a whole in-flight batch across an Off/On
+  cycle, while per-schedule epochs skip only the changed owner and preserve unrelated
+  firings. Persistence is best-effort through the existing preferences store and live state
+  changes immediately. **host-native core:** VISION requires built-in Canvas slot
+  surfaces and makes human supervision, explicit attention, and evidence navigation the
+  product; plugin declarations remain CONTRIBUTIONs and event delivery remains EVENT.
+  Settings owns only the persisted global scheduled-delivery preference and applies it
+  through the same-owner composition root; disabling scheduled delivery does not disable
+  the declaring plugin. Empty-pane placement is typed `WorkspaceStore` control. The
+  discoverable `dev.tenon.core-commands.automation.open.v1` row is plugin-owned palette/
+  launcher metadata (CONTRIBUTION); accepting it carries the `user` principal through that
+  finite plugin-owned INTENT, whose provider nested-sends the existing
+  `workspace.tab.create.v1` INTENT with `content.kind = automation`. This adds no core
+  intent, generic app principal, public `tenon` path, or second workspace mutation API;
+- browser-surface renderer identity (T-077): the User-Agent a `WebSurface` sends, and the
+  disposition of a `target="_blank"` navigation the main frame asks for. Both are properties
+  of the host-owned WebKit renderer, whose single semantic owner is `PluginWebSurfacePool` —
+  already DIRECT above. A plugin asks a surface to go somewhere through the
+  `browser.surface.*` INTENTs and never sees the header the host writes, so neither decision
+  crosses an ownership boundary, adds a principal, or adds a `tenon` member. The identity is
+  one contribution to the string WebKit composes (`applicationNameForUserAgent`), never a
+  whole-string `customUserAgent` override, so there stays exactly one knob for it. The popup
+  disposition is the pure `WebSurface.popupTarget` rule — an allowed http/https URL named by
+  the **main frame** loads in place; a subframe's request is declined, because adopting it
+  would let an embedded third party replace the pane's top-level document with no user
+  gesture. Both rules are asserted without a window;
 - pure parsers, ranking, schemas, and value transformations;
 - `tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the
   plugin runtime as pure string functions.
+
+#### Adding a DIRECT entry
+
+This inventory has 17 entries, pinned in `DirectInventoryGateTests`.
+
+Step 4 of the ordered decision law is self-ratifying. The five same-owner conditions in
+**Terms** — one semantic owner, no caller principal, no independent lifetime, no public
+mechanism, no ecosystem contract — are satisfied by construction for any Swift shipping
+inside the app bundle, so an author who writes a behaviour in the host has already met the
+test that would have sent it elsewhere. The measurement: this inventory went from 11
+entries and 3,363 normalized characters at `fcac70d` to 17 entries and 10,788 characters,
+while the public plugin surface moved about one intent. Growth of 1.55× in entries and
+3.21× in characters over that span was ambient, not decided. Adding to this inventory is
+therefore a reviewed edit.
+
+An entry that is **added**, or an existing entry that is **enlarged**, MUST carry exactly
+one labelled clause:
+
+- **why not a plugin:** naming the specific missing CONTRIBUTION, EVENT, or INTENT — name
+  the missing thing, not the difficulty; or
+- **host-native core:** citing the VISION requirement that puts the behaviour in the host.
+
+Enlarging an existing entry is the same act as adding one, and it is how this inventory
+actually grew. `launcher surfaces and tab-context placement (T-039, AIO-8)` went from 1,571
+to 2,727 characters over the same span and absorbed an entire further DIRECT behaviour —
+empty-grid launcher placement — under an unchanged heading. A gate that counted only
+entries would have passed that change without a word.
+
+"No plugin presentation surface existed" is refuted by shipped code and MUST NOT be offered
+as justification. `PluginViewModal` (`poc/Sources/TenonCore/PluginRuntimeModels.swift:81`)
+publishes a window-level sheet over the whole shell across the plugin boundary, and the
+bundled kanban plugin already uses it (`poc/plugins/kanban/main.js`, `specification.modal =
+modal`). A justification must name what is missing, and that one is not.
+
+Removal is legitimate and is the direction this law wants: reclassifying a DIRECT behaviour
+into a CONTRIBUTION, EVENT, or INTENT and deleting its entry shrinks the host's private
+surface. The fix for the resulting red is to lower the pinned count in the same change, not
+to keep the entry.
+
+The 17 entries above predate this rule and are grandfathered — pinned in that test by exact
+lead phrase and exact normalized length, so they can shrink or disappear freely but cannot
+quietly grow. Convenience, familiarity, and "it was easier in Swift" are not justifications.
 
 ### SCOPED FACILITY
 
@@ -303,15 +450,15 @@ requires the change protocol below.
 
 | Domain | Canonical v1 intents | Audience |
 |---|---|---|
-| Filesystem | `filesystem.directory.list.v1`, `filesystem.file.read.v1`, `filesystem.path.exists.v1`, `filesystem.file.write.v1`, `filesystem.directory.create.v1`, `filesystem.file.create.v1`, `filesystem.path.move.v1`, `filesystem.path.trash.v1` | plugin, CLI, agent |
-| File/OS | `file.reveal.v1`, `file.open.v1` | plugin, CLI, agent |
+| Filesystem | `filesystem.directory.list.v2`, `filesystem.file.read.v1`, `filesystem.path.exists.v1`, `filesystem.file.write.v1`, `filesystem.directory.create.v1`, `filesystem.file.create.v1`, `filesystem.path.move.v1`, `filesystem.path.trash.v1` | plugin, CLI, agent |
+| File/OS | `file.reveal.v1`, `file.open.v1`, `url.open.v1` | plugin, CLI, agent |
 | Clipboard | `clipboard.write.v1` | plugin |
 | Process | `process.exec.v1` | plugin, CLI, agent |
 | Terminal | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1`, `terminal.wait.v1` | plugin, CLI, agent |
 | Browser surface | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` | plugin |
 | User interaction | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1`, `ui.toast.v1` | plugin |
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
-| Workspace | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
+| Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
 | Network | `network.fetch.v1` | plugin, CLI, agent |
 
 Core intents have exactly two audience profiles:
@@ -330,11 +477,11 @@ execution topology is the following closed map:
 
 | Lane | Exact intents |
 |---|---|
-| `filesystem` | `filesystem.directory.list.v1`, `filesystem.file.read.v1`, `filesystem.path.exists.v1`, `filesystem.file.write.v1`, `filesystem.directory.create.v1`, `filesystem.file.create.v1`, `filesystem.path.move.v1`, `filesystem.path.trash.v1` |
-| `system` | `file.reveal.v1`, `file.open.v1`, `clipboard.write.v1` |
+| `filesystem` | `filesystem.directory.list.v2`, `filesystem.file.read.v1`, `filesystem.path.exists.v1`, `filesystem.file.write.v1`, `filesystem.directory.create.v1`, `filesystem.file.create.v1`, `filesystem.path.move.v1`, `filesystem.path.trash.v1` |
+| `system` | `file.reveal.v1`, `file.open.v1`, `url.open.v1`, `clipboard.write.v1` |
 | `process` | `process.exec.v1` |
 | `network` | `network.fetch.v1` |
-| `workspace` | `workspace.state.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
+| `workspace` | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
 | `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1` |
 | `terminalWait` | `terminal.wait.v1` |
 | `browser` | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` |
@@ -381,6 +528,13 @@ Current EVENT inventory:
 
 - workspace/tab/pane/content/focus facts emitted by `WorkspaceStore`;
 - terminal title, command-finished, exit, and other terminal facts;
+- host-private agent lifecycle facts reported by Codex and Claude provider hooks. Each
+  adapter accepts an already-happened root session event (`session_id`, `transcript_path`)
+  only for the exact live terminal-surface incarnation; provider identity is explicit and
+  the hook resolves the provider ancestor's process group rather than reporting its own
+  short-lived shell group. Same-directory transcript recency is never treated as session
+  identity. These facts do not request provider mutation, are not exposed to plugins, and
+  never enter the intent dispatcher;
 - `pane.cwd-changed`: a pane's working directory and resolved project root. Published by
   the host after it resolves the root (`ProjectRoot.resolve`), and only when the *root*
   moves — an ordinary `cd` inside one repository updates the pane and notifies nobody, so
@@ -461,16 +615,47 @@ the caller forgets it. A cursor is a value, it can be dropped with no consequenc
 expires by being refused. `terminal.scrollback.read.v1` pages this way and stays an INTENT;
 continuous terminal output, which the host would push without being asked, would not.
 
+**The staged half of `filesystem.file.write.v1` is a resource protocol, not a cursor.** One
+call with no cursor is a finite atomic write and stops at INTENT. Passing `commit: false`
+opens a staging: a dot-file beside the target plus a ledger entry naming it, which is host
+state that exists between calls and leaks if the caller walks away — exactly what the
+paragraph above says a cursor is not. It is therefore inventoried here and MUST keep
+answering the six questions this rung asks:
+
+- **owner** — one `FileWriteStagingRegistry` per `FilesystemIntentProvider` instance, so
+  every bound below is enforced against the provider generation that opened the staging;
+- **capacity** — four concurrent stagings, each pinning one parent directory descriptor;
+  a fifth open fails closed with `staging-capacity-exhausted`;
+- **overflow** — 1 MiB total staged bytes (`maximumStagedFileWriteBytes`), each page
+  separately bounded by the inline text limit;
+- **cancellation** — any failed page discards the staging and unlinks its dot-file; the
+  cursor it issued is then refused as invalid input;
+- **teardown on hot reload** — the registry belongs to the provider generation and dies
+  with it; a staging that outlives its opener is swept at the next write, and its
+  300-second lifetime is fixed when it opens and never extended;
+- **terminal state** — the committing rename, or expiry. The target never holds
+  intermediate content; only the rename is observable.
+
+The 113 KB kanban board is why this exists: a supervision artifact a plugin must rewrite
+atomically does not fit one inline page, and half-writing it is worse than refusing it.
+
 Current RESOURCE inventory:
 
 - `tenon.timers.after/every/cancel`;
 - `tenon.process.stream` and its output/exit/overflow/cancel lifecycle;
 - `tenon.fs.watch` and its cancel lifecycle;
+- `filesystem.file.write.v1` stagings, bounded as above;
 - terminal surfaces and browser surfaces retained by their host pools;
+- Agent Lens transcript tails: one bounded, cancellable read resource for the exact
+  hook-bound root transcript of a terminal-surface incarnation;
 - future large filesystem/process/terminal bodies returned as opaque handles.
 
 Plugin runtime retirement MUST cancel or retire every resource owned by that generation.
 No resource callback may enter a destroyed JavaScript context.
+
+Known conformance gap: `tenon.process.stream` currently terminates its Foundation `Process`
+leader but cannot prove descendant retirement. It is not process-tree supervision until its
+launcher owns a POSIX process group and joins it during generation teardown.
 
 ### CONTRIBUTION
 
@@ -503,17 +688,19 @@ resource. They are not product/domain intents and MUST NOT be extensible by plug
 
 Reserved control-plane operations are:
 
-- CLI framing/version negotiation, `ping`, and single-instance app activation/focus;
+- CLI framing/version negotiation, `ping`, and per-install-channel single-instance app
+  activation/focus;
 - intent `list`/`describe` discovery and projection revision handling;
 - provider stage, bind, readiness, generation swap, retire, and lease drain;
 - request cancellation, progress, settlement, tracing, and telemetry metadata;
 - resource handle status/read/progress/cancel where the resource protocol defines them;
 - plugin runtime activation, hot-reload generation teardown, and health diagnostics.
 
-The CLI has exactly two direct domain-adjacent controls: `ping` and the single-instance
-activation/focus handshake. Workspace state/mutation, terminal send/read/wait, files,
-processes, and every other finite action use `intent list`, `intent describe`, and
-`intent send`.
+The CLI has exactly two direct domain-adjacent controls: `ping` and the same-channel
+single-instance activation/focus handshake. Production and staging never address one
+another through that handshake. Workspace state/mutation, terminal send/read/wait, files,
+processes, and every other finite action use `intent list`, `intent describe`, and `intent
+send`.
 
 A control-plane message MUST NOT contain a product-specific operation such as “split pane”
 or “open file.” Adding such a payload is a boundary violation, even if it avoids adding a
@@ -540,6 +727,7 @@ fitness-test update in the same change.
 | `tenon.path.basename` | pure DIRECT utility |
 | `tenon.path.dirname` | pure DIRECT utility |
 | `tenon.path.extname` | pure DIRECT utility |
+| `tenon.events.emit` | EVENT publication control for manifest-declared, plugin-owned channels |
 | `tenon.events.on` | EVENT subscription control |
 | `tenon.timers.after` | RESOURCE creation |
 | `tenon.timers.every` | RESOURCE creation |
@@ -594,6 +782,60 @@ plugin execution, and unbounded resource work MUST NOT run on `MainActor`. Execu
 isolation preserves forward progress for built-in UI, unrelated provider generations, and
 unrelated core execution lanes.
 
+### The kernel latency budget
+
+**One `IntentDispatcher.send` MUST cost at most 700× the CPU of the same provider operation
+invoked as a typed DIRECT call**, measured as the cheapest of fifteen samples.
+
+**Why a ratio.** An absolute microsecond figure from one machine under one load is
+unreproducible, and an unreproducible budget is not a budget. Per-send absolutes swung
+294–365 µs across nine runs on one idle machine in one build configuration; the ratio over
+the same runs moved by 6%.
+
+**What the denominator is.** An `actor` method returning the same `IntentValue`, awaited
+from the same context, so both arms pay exactly one actor hop. A non-actor baseline would
+omit the hop the intent path necessarily pays, and would inflate the ratio for free.
+
+**What the ratio therefore isolates.** `IntentValue` conversion, compiled input and output
+validation, catalog and contract lookup, policy, capability and audience checks, the
+confirmation authorizer, provider selection, admission, mailbox enqueue and drain, and
+telemetry. Idempotency is **not** on this path: the fixture's `.pessimistic` effects declare
+`idempotency: .none` (`poc/Sources/TenonIntentCore/IntentEnvelope.swift:114`). The
+confirmation authorizer **is** on it, because `.pessimistic` declares `confirmation: .policy`
+(`:116`) — a read-shaped contract declaring `.never` pays less, so this ratio is the
+expensive end of the kernel, not its average.
+
+**Measurement record.** 2026-08-07, Apple Silicon, `swift test` debug build, 15 samples of
+100 paired iterations after 200 paired warmups. Nine runs gave per-run medians of 393.4× to
+416.8×, with the worst single sample at 463.4×; the direct arm cost 746–937 ns per call and
+the intent arm 294–365 µs per call. The ceiling of 700× is 1.68× headroom over the worst
+observed median. The debug absolutes are large in their own right and are recorded here so a
+future release-build measurement has something to be compared against; the enforced figure is
+the debug ratio, because that is the configuration the fitness suite runs in.
+
+**Why CPU time.** `getrusage(RUSAGE_SELF)` rather than wall time: under load the same
+statistic computed from wall clock is dominated by scheduling, and a flaky fitness test gets
+deleted rather than fixed. `.kanban` T-074 records exactly that failure mode for two existing
+wall-clock-dependent suites, so the instrument choice is load-bearing, not incidental.
+
+**Resolving power, stated honestly.** This is a drift alarm, not a precision instrument. A
+regression that doubles kernel CPU per send trips it from anywhere in the observed baseline
+distribution (2 × 393.4 = 786.8 > 700). A 1.5× regression can pass (1.5 × 393.4 = 590.1). The
+concrete regressions it is meant to catch are a JSON round trip between in-process Swift
+layers — already forbidden in prose above, and until now unenforced — a per-send schema
+recompile, and a second policy pass.
+
+**Instrument caveat.** `getrusage(RUSAGE_SELF)` is process-wide, and every test target links
+into one `TenonPackageTests.xctest` process. Work leaked by other test classes — plugin
+runtimes, FSEvents, automation schedulers — lands in both arms. Because that contamination
+scales with each arm's elapsed time it largely cancels in the ratio, but it is the first
+thing to suspect if this test starts drifting. If XCTest is ever run with parallel test
+classes, this measurement becomes invalid and the test MUST be revised, not suppressed.
+
+`IntentKernelLatencyBudgetTests.testOneKernelSendStaysInsideTheDocumentedLatencyBudget`
+enforces this, and it reads `700` out of the sentence above, so the law and its enforcement
+cannot drift apart.
+
 ## Change protocol
 
 A change that adds or changes an interaction MUST include all of the following:
@@ -611,6 +853,11 @@ A change that adds or changes an interaction MUST include all of the following:
 6. Run source-wide stale-surface search plus the relevant build, tests, and performance
    probes.
 7. Obtain a reviewer/verifier pass separate from the authoring pass.
+8. A change that adds a DIRECT inventory entry, or enlarges an existing one, MUST
+   additionally satisfy **Adding a DIRECT entry**: carry the labelled justification clause
+   in the entry text, and update the pinned entry count and per-entry length in
+   `DirectInventoryGateTests` in the same reviewed change. A reviewer MUST be able to name
+   the missing CONTRIBUTION, EVENT, or INTENT from the entry text alone.
 
 Changing the law itself requires an ADR-quality change: a concrete counterexample,
 trade-off analysis, updated decision order, inventory migration, and updated fitness
@@ -645,7 +892,12 @@ The architecture suite MUST fail when:
 - a product command appears in CLI/control-plane code;
 - an EVENT asks for a result, an INTENT streams indefinitely, or a CONTRIBUTION performs an
   imperative mutation while being parsed;
-- two public mechanisms perform the same action.
+- two public mechanisms perform the same action;
+- a DIRECT inventory entry is added or enlarged without the labelled justification clause
+  required by **Adding a DIRECT entry**;
+- the DIRECT inventory's entry count or per-entry size differs from the pinned values
+  without a matching edit to this document;
+- one `IntentDispatcher.send` exceeds the kernel latency budget.
 
 Fitness failures are architecture failures. The accepted responses are to fix the
 violation or revise this law and its enforcement together; suppressing the test alone is
@@ -665,7 +917,10 @@ This decision is wrong and MUST be revised if evidence proves any of these:
 - a resource cannot state a finite buffer, owner, cancellation, and teardown rule;
 - the adapter and built-in UI cannot share one typed domain implementation;
 - compiled intent validation/routing causes a measured user-visible regression that cannot
-  meet the budget without removing a safety invariant;
+  be removed without removing a safety invariant;
+- one `IntentDispatcher.send` exceeds the kernel latency budget above — 700× the CPU of the
+  equivalent typed DIRECT call — and cannot be brought back under it without removing a
+  safety invariant;
 - **a lane's serial mailbox makes a legitimate concurrent product use impossible.**
   Recorded 2026-07-31 against `terminalWait`, with a measurement rather than an argument.
 

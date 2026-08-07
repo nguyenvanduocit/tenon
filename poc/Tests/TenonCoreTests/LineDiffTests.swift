@@ -123,6 +123,14 @@ final class LineDiffTests: XCTestCase {
         XCTAssertEqual(hunks.count, 2)
     }
 
+    func testBoundedHunksRejectsPathologicalDisjointInput() {
+        let old = (0..<300).map { "old \($0)" }.joined(separator: "\n")
+        let new = (0..<300).map { "new \($0)" }.joined(separator: "\n")
+        XCTAssertThrowsError(try LineDiff.boundedHunks(old: old, new: new)) {
+            XCTAssertEqual($0 as? LineDiffError, .tooComplex)
+        }
+    }
+
     func testHunkHeaderReflectsRanges() {
         let old = "a\nb\nc\n"
         let new = "a\nX\nc\n"

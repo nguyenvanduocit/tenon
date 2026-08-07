@@ -4,6 +4,65 @@ import Observation
 import SwiftUI
 import TenonCore
 
+/// What the file pane contributes to the ONE chrome header the card draws.
+///
+/// Exactly one item, or none. The three states are ranked rather than combined because they
+/// are the same fact at rising severity — the pane could not be read, the pane's buffer and
+/// the disk disagree, the pane has unsaved work — and two of them stacked in a 34-point strip
+/// would say the quieter one twice.
+enum FilePaneHeader {
+    static func header(error: String?, hasDiskConflict: Bool, isDirty: Bool) -> PaneHeader {
+        if let error {
+            // A read or write failure is prose of whatever length the filesystem cares to
+            // produce, so it goes in a `label` — 200 characters that shorten with a visible
+            // ellipsis at the width the solver grants — and not in a `badge`, whose
+            // 24-character chip cuts mid-word and is sized for a count. The tooltip carries
+            // the sentence: 1024 characters, PATH_MAX, so the message can still name the file
+            // it failed on. Anything longer is summarised by its producer, not promised by
+            // the header.
+            return PaneHeader(
+                trailing: [
+                    .label(
+                        id: "error",
+                        text: error,
+                        weight: .medium,
+                        color: .red,
+                        truncation: .tail,
+                        tooltip: error
+                    ),
+                ]
+            )
+        }
+        if hasDiskConflict {
+            // The file moved on disk under unsaved edits. The buffer stays — the user's work
+            // outranks the disk — and this says so out loud instead of letting ⌘S overwrite
+            // in silence. Fifteen characters of fixed host text is genuinely badge-shaped, so
+            // the chip states the fact and the tooltip carries the only sentence that names
+            // the cause: without "another program edited this file", "Changed on disk" reads
+            // as a warning with no author and no safe response.
+            return PaneHeader(
+                trailing: [
+                    .badge(
+                        id: "conflict",
+                        text: "Changed on disk",
+                        tint: .amber,
+                        tooltip: "Another program edited this file while you had unsaved "
+                            + "changes. ⌘S keeps what you see here."
+                    ),
+                ]
+            )
+        }
+        if isDirty {
+            return PaneHeader(
+                trailing: [
+                    .dot(id: "dirty", tint: .amber, tooltip: "Unsaved changes — ⌘S to save"),
+                ]
+            )
+        }
+        return .empty
+    }
+}
+
 /// One file open as a pane (`SlotContent.file`) — a real editor: STTextView with a
 /// line-number gutter, tree-sitter colours, the system find bar, and ⌘S to save.
 ///
@@ -16,18 +75,26 @@ struct FileSlotView: View {
     /// a pane switch — and never leak into a pane showing a different file.
     let slotID: UUID
     let editorStates: EditorPaneStateStore
+    /// Where this pane's status goes UP into the one chrome header the card draws.
+    let headerStore: PaneHeaderStore
     @State private var model = FileDocumentModel(
         watchFiles: FileDocumentModel.liveWatchFiles
     )
 
     var body: some View {
-        // No header of its own: the pane chrome already names the file. Unsaved and
-        // error state float over the top-right corner instead, where they cost no
-        // vertical space and are absent whenever there is nothing to say.
+        // No header of its own, and no overlay either: the pane chrome already names the
+        // file, and it now carries the unsaved/conflict/error state beside that name. Both
+        // cost this pane no vertical space, and both are absent whenever there is nothing to
+        // say — which is what the top-right overlay this replaces was for.
         content
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(TenonTheme.panel)
-            .overlay(alignment: .topTrailing) { statusBadge }
+            // Published from `.onChange`, never from `body`. `initial: true` covers the first
+            // frame, where a restored pane can already be dirty before anything changes.
+            .onChange(of: header, initial: true) { _, next in
+                headerStore.publish(next, for: slotID)
+            }
+            .onDisappear { headerStore.clear(for: slotID) }
             .task(id: path) {
                 let slotID = slotID
                 model.onBufferStateChange = { [weak model, weak editorStates] in
@@ -63,40 +130,16 @@ struct FileSlotView: View {
             }
     }
 
-    @ViewBuilder
-    private var statusBadge: some View {
-        if let error = model.error {
-            Text(error)
-                .font(TenonTheme.interfaceFont(size: 9))
-                .foregroundStyle(Color.red.opacity(0.9))
-                .lineLimit(1)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(TenonTheme.chromeRaised, in: Capsule())
-                .padding(8)
-        } else if model.hasDiskConflict {
-            // The file moved on disk under unsaved edits. The buffer stays — the
-            // user's work outranks the disk — and this says so out loud instead of
-            // letting ⌘S overwrite in silence.
-            Text("Changed on disk — ⌘S keeps your version")
-                .font(TenonTheme.interfaceFont(size: 9))
-                .foregroundStyle(TenonTheme.amber)
-                .lineLimit(1)
-                .padding(.horizontal, 7)
-                .padding(.vertical, 3)
-                .background(TenonTheme.chromeRaised, in: Capsule())
-                .padding(8)
-                .help(
-                    "Another program edited this file while you had unsaved "
-                        + "changes. Saving keeps what you see here."
-                )
-        } else if model.isDirty {
-            Circle()
-                .fill(TenonTheme.amber)
-                .frame(width: 6, height: 6)
-                .padding(9)
-                .help("Unsaved changes — ⌘S to save")
-        }
+    /// This pane's chrome contribution for its current state.
+    ///
+    /// Reading model state here registers the observation that makes the `.onChange` above
+    /// fire — the read is in the view graph, the write is not.
+    private var header: PaneHeader {
+        FilePaneHeader.header(
+            error: model.error,
+            hasDiskConflict: model.hasDiskConflict,
+            isDirty: model.isDirty
+        )
     }
 
     @ViewBuilder

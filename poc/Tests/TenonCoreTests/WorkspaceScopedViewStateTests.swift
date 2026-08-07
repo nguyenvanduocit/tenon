@@ -29,6 +29,20 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         static let paneB = "BBBBBBBB-2222-0000-0000-000000000002"
     }
 
+    /// The root a File Browser pane says it is showing, read off the `root` label the view
+    /// publishes into its pane's chrome header.
+    ///
+    /// This is the observable these tests hang the whole per-workspace rooting proof on, so
+    /// it is worth saying what it is: the ONE thing each pane displays that differs by
+    /// owning workspace. It moved out of the view body and into the header along with every
+    /// other second header bar; what it proves did not change.
+    private static func publishedRoot(of view: PluginViewInfo?) -> String? {
+        guard case let .label(_, text, _, _, _, _) = view?.header.leading.first else {
+            return nil
+        }
+        return text
+    }
+
     // MARK: - File Browser (the reported defect)
 
     func testFileBrowserStateStaysWithItsWorkspaceWhenSelectionChanges() async throws {
@@ -42,7 +56,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             ],
             selectedID: Fixture.workspaceA,
             respond: { request in
-                guard request.intentID.rawValue == "filesystem.directory.list.v1" else {
+                guard request.intentID.rawValue == "filesystem.directory.list.v2" else {
                     return nil
                 }
                 let path = request.input.objectValue?["path"]?.stringValue
@@ -79,7 +93,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             let views = await runtime.snapshot().views
             let a = views.first { $0.instanceID == Fixture.paneA }
             let b = views.first { $0.instanceID == Fixture.paneB }
-            return a?.subtitle == rootA && b?.subtitle == rootB
+            return Self.publishedRoot(of: a) == rootA && Self.publishedRoot(of: b) == rootB
         }
         XCTAssertTrue(
             bothRooted,
@@ -111,12 +125,12 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             let a = views.first { $0.instanceID == Fixture.paneA }
             let b = views.first { $0.instanceID == Fixture.paneB }
             XCTAssertEqual(
-                a?.subtitle,
+                Self.publishedRoot(of: a),
                 rootA,
                 "A's browser must not follow the selection (selected: \(selected))"
             )
             XCTAssertEqual(
-                b?.subtitle,
+                Self.publishedRoot(of: b),
                 rootB,
                 "B's browser must not follow the selection (selected: \(selected))"
             )
@@ -201,6 +215,128 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         _ = await runtime.shutdown()
     }
 
+    /// One conflicted, one staged and one changed file on a branch two commits ahead of its
+    /// upstream and one behind — the smallest `--porcelain=v2` status that makes every badge
+    /// the git header can draw non-zero at once.
+    private static let porcelainStatus = [
+        "# branch.oid 1234567",
+        "# branch.head feature/pane-header",
+        "# branch.upstream origin/feature/pane-header",
+        "# branch.ab +2 -1",
+        "1 M. N... 100644 100644 100644 aaaaaaa bbbbbbb staged.txt",
+        "1 .M N... 100644 100644 100644 ccccccc ddddddd changed.txt",
+        "u UU N... 100644 100644 100644 100644 eeeeeee fffffff ggggggg conflict.txt",
+    ].joined(separator: "\u{0}") + "\u{0}"
+
+    /// The chrome header is where a supervisor reads a git panel WITHOUT reading it: which
+    /// branch, how much is uncommitted, how far the branch has drifted, and one verb to
+    /// re-read it. Every fact up there left the body when it arrived, which is the half of
+    /// this the second block asserts — a header restating the body is the two-row duplication
+    /// the one-header rule exists to delete.
+    func testGitHeaderCarriesBranchCountsAndSyncAndRefreshesFromItsTrailingEdge() async throws {
+        let root = try makeTemporaryDirectory(suffix: "repo-header")
+        let bridge = WorkspaceBridge(
+            plugin: (id: "dev.tenon.git", viewID: "git"),
+            workspaces: [
+                .init(id: Fixture.workspaceA, path: root, tabID: Fixture.tabA, paneID: Fixture.paneA),
+            ],
+            selectedID: Fixture.workspaceA,
+            respond: { request in
+                guard request.intentID.rawValue == "process.exec.v1" else { return nil }
+                let input = request.input.objectValue
+                let arguments = input?["arguments"]?.arrayValue?
+                    .compactMap(\.stringValue) ?? []
+                let workingDirectory = input?["workingDirectory"]?.stringValue ?? "/"
+                func inline(_ text: String) -> IntentValue {
+                    .object(["kind": .string("inline"), "text": .string(text)])
+                }
+                func exec(_ stdout: String) -> IntentValue {
+                    .object([
+                        "exitCode": .integer(0),
+                        "standardOutput": inline(stdout),
+                        "standardError": inline(""),
+                    ])
+                }
+                switch arguments.first {
+                case "rev-parse":
+                    return exec(workingDirectory + "\n")
+                case "status":
+                    return exec(Self.porcelainStatus)
+                default:
+                    return exec("")
+                }
+            }
+        )
+        let runtime = try makeRuntime(plugin: "git", bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "git", instanceID: Fixture.paneA)
+
+        let drawn = await eventually {
+            await self.paneAView(of: runtime)?.header.leading.map(\.id)
+                == ["branch-icon", "branch", "conflicts", "staged", "changed"]
+        }
+        XCTAssertTrue(
+            drawn,
+            "the git pane's identity and its measurement belong in the one chrome header"
+        )
+        let published = await paneAView(of: runtime)
+        let view = try XCTUnwrap(published)
+        guard case let .label(_, branch, _, _, _, _) = view.header.item(id: "branch") else {
+            _ = await runtime.shutdown()
+            return XCTFail("the branch is the pane's identity — it must be a header label")
+        }
+        XCTAssertEqual(branch, "feature/pane-header")
+        XCTAssertEqual(Self.badgeText(view.header.item(id: "conflicts")), "1 conflicted")
+        XCTAssertEqual(Self.badgeText(view.header.item(id: "staged")), "1 staged")
+        XCTAssertEqual(Self.badgeText(view.header.item(id: "changed")), "1 changed")
+        XCTAssertEqual(
+            view.header.trailing.map(\.id),
+            ["sync", "refresh"],
+            "status reads first in the trailing run, the verb sits at the edge"
+        )
+        XCTAssertEqual(Self.badgeText(view.header.item(id: "sync")), "↑2 ↓1")
+
+        // The de-duplication half. `String(describing:)` walks the whole published node tree,
+        // so these three assertions fail the moment a body row starts restating the strip.
+        let body = String(describing: view.body)
+        XCTAssertFalse(
+            body.contains("feature/pane-header"),
+            "the branch name is header identity; a body button repeating it is the second row"
+        )
+        XCTAssertFalse(
+            body.contains("Staged (") || body.contains("Changes (") || body.contains("Conflicts ("),
+            "the counts are header badges now; a section heading may name its files, not count them"
+        )
+        XCTAssertFalse(
+            body.contains("↑2"),
+            "upstream drift is a header badge; the branch row must not carry it too"
+        )
+
+        // The refresh verb has to actually re-read the repository, not merely be drawn.
+        let before = Self.statusCalls(in: await bridge.requests())
+        let clicked = try await runtime.invokeViewSelect(
+            viewID: "git",
+            instanceID: Fixture.paneA,
+            itemID: "refresh"
+        )
+        XCTAssertTrue(clicked)
+        let reread = await eventually {
+            Self.statusCalls(in: await bridge.requests()) > before
+        }
+        XCTAssertTrue(reread, "the header's refresh verb must re-run `git status`")
+
+        // A panel with no repository has no branch to name and nothing to count. Publishing
+        // NO header is how a plugin takes one away, so this is the state that must produce
+        // one — a strip saying "?" and nothing else would be worse than the bare chrome.
+        let cleared = try await runtime.evaluateForTesting("headerNode(emptyModel()) === null")
+        XCTAssertEqual(
+            cleared.boolValue,
+            true,
+            "a git panel with no repository must publish no header"
+        )
+        _ = await runtime.shutdown()
+    }
+
     // MARK: - Claude sessions panel
 
     func testClaudeSessionsListsEachPanesOwnWorkspaceProject() async throws {
@@ -263,6 +399,278 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         _ = await runtime.shutdown()
     }
 
+    func testAgentSessionsIncludeTitledCodexThreadsAndResumeWithCodex() async throws {
+        let root = "/tmp/tenon-agent-sessions-codex"
+        let sessionID = "019f0000-1111-7222-8333-444455556666"
+        let bridge = WorkspaceBridge(
+            plugin: (id: "dev.tenon.claude-sessions", viewID: "sessions"),
+            workspaces: [
+                .init(
+                    id: Fixture.workspaceA,
+                    path: root,
+                    tabID: Fixture.tabA,
+                    paneID: Fixture.paneA
+                ),
+            ],
+            selectedID: Fixture.workspaceA,
+            respond: { request in
+                guard request.intentID.rawValue == "process.exec.v1" else { return nil }
+                let input = request.input.objectValue
+                let arguments = input?["arguments"]?.arrayValue?.compactMap(\.stringValue) ?? []
+                let isCodexIndexRead = arguments.contains { $0.contains("sqlite3") }
+                let trustsPopulatedTitleRows = !arguments.contains {
+                    $0.contains("has_user_event")
+                }
+                let standardOutput: String
+                let exitCode: Int64
+                if isCodexIndexRead && trustsPopulatedTitleRows {
+                    standardOutput = """
+                    [{"id":"\(sessionID)","mtime":1786000000,"title":"Make session history readable","tokens":12345,"branch":"main"}]
+                    """
+                    exitCode = 0
+                } else {
+                    standardOutput = ""
+                    exitCode = 3
+                }
+                func inline(_ text: String) -> IntentValue {
+                    .object(["kind": .string("inline"), "text": .string(text)])
+                }
+                return .object([
+                    "exitCode": .integer(exitCode),
+                    "standardOutput": inline(standardOutput),
+                    "standardError": inline(""),
+                ])
+            }
+        )
+        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "sessions", instanceID: Fixture.paneA)
+
+        let loaded = await eventually {
+            await self.sessionState(
+                of: runtime,
+                instance: Fixture.paneA,
+                index: 0,
+                key: "title"
+            ) == "Make session history readable"
+        }
+        XCTAssertTrue(loaded, "Codex's stored thread title must be the visible session name")
+        let provider = await sessionState(
+            of: runtime,
+            instance: Fixture.paneA,
+            index: 0,
+            key: "provider"
+        )
+        XCTAssertEqual(provider, "codex")
+        let rowValue = try await runtime.evaluateForTesting(
+            "sessionRow(panes[\"\(Fixture.paneA)\"].sessions[0]).children[0].children[0].value"
+        )
+        let visibleRow = try XCTUnwrap(rowValue.stringValue)
+        XCTAssertEqual(visibleRow, "Make session history readable")
+        XCTAssertFalse(visibleRow.contains(sessionID), "session IDs are internal actions, not UI copy")
+
+        _ = try await runtime.invokeViewSelect(
+            viewID: "sessions",
+            instanceID: Fixture.paneA,
+            itemID: "resume:codex:\(sessionID)"
+        )
+        let resumed = await eventually {
+            await bridge.requests().contains { request in
+                guard request.intentID.rawValue == "terminal.open.v1" else { return false }
+                let command = request.input.objectValue?["command"]?.stringValue ?? ""
+                return command.contains("codex resume") && command.contains(sessionID)
+            }
+        }
+        XCTAssertTrue(resumed, "a Codex row must resume through the Codex CLI")
+        _ = await runtime.shutdown()
+    }
+
+    /// What a supervisor scans on a sessions pane: whose project it is, how much agent
+    /// history is here and from which tool, and two verbs — start one, re-read the list.
+    ///
+    /// Codex-only on purpose. The Codex half reads a bounded SQLite index and is the one scan
+    /// path this test can drive without pinning itself to how Claude transcripts are
+    /// enumerated, which is being reworked under T-081. The zero-Claude case is an assertion
+    /// in its own right: a count badge nobody can read as "none" has no business being drawn.
+    func testAgentSessionsHeaderCountsItsSessionsAndStartsOneFromItsTrailingMenu() async throws {
+        let root = "/tmp/tenon-agent-sessions-header"
+        let bridge = WorkspaceBridge(
+            plugin: (id: "dev.tenon.claude-sessions", viewID: "sessions"),
+            workspaces: [
+                .init(
+                    id: Fixture.workspaceA,
+                    path: root,
+                    tabID: Fixture.tabA,
+                    paneID: Fixture.paneA
+                ),
+            ],
+            selectedID: Fixture.workspaceA,
+            respond: { request in
+                guard request.intentID.rawValue == "process.exec.v1" else { return nil }
+                let arguments = request.input.objectValue?["arguments"]?.arrayValue?
+                    .compactMap(\.stringValue) ?? []
+                let isCodexIndexRead = arguments.contains { $0.contains("sqlite3") }
+                func inline(_ text: String) -> IntentValue {
+                    .object(["kind": .string("inline"), "text": .string(text)])
+                }
+                return .object([
+                    "exitCode": .integer(isCodexIndexRead ? 0 : 3),
+                    "standardOutput": inline(
+                        isCodexIndexRead
+                            ? #"[{"id":"thread-1","mtime":1786000000,"title":"Land the pane header","tokens":900,"branch":"main"}]"#
+                            : ""
+                    ),
+                    "standardError": inline(""),
+                ])
+            }
+        )
+        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "sessions", instanceID: Fixture.paneA)
+
+        let drawn = await eventually {
+            await self.paneAView(of: runtime)?.header.leading.map(\.id) == ["project", "codex"]
+        }
+        XCTAssertTrue(
+            drawn,
+            "the project and the per-tool session count are the pane's scannable facts"
+        )
+        let published = await paneAView(of: runtime)
+        let view = try XCTUnwrap(published)
+        guard case let .label(_, project, _, _, truncation, _) = view.header.item(id: "project")
+        else {
+            _ = await runtime.shutdown()
+            return XCTFail("the project is the pane's identity — it must be a header label")
+        }
+        XCTAssertEqual(project, root)
+        XCTAssertEqual(
+            truncation,
+            .head,
+            "a path gives up its front; the directory you are in is its meaningful tail"
+        )
+        XCTAssertEqual(Self.badgeText(view.header.item(id: "codex")), "1 Codex")
+        XCTAssertEqual(
+            view.header.trailing.map(\.id),
+            ["new", "refresh"],
+            "both pane-wide verbs sit in the strip; neither may keep a copy in the body"
+        )
+        guard case let .menu(_, _, entries, _, _, _) = view.header.item(id: "new") else {
+            _ = await runtime.shutdown()
+            return XCTFail("two labelled ways to start a session is a menu, not two glyphs")
+        }
+        XCTAssertEqual(entries.map(\.value), ["new:claude", "new:codex"])
+        XCTAssertEqual(entries.map(\.label), ["New Claude session", "New Codex session"])
+
+        let body = String(describing: view.body)
+        XCTAssertFalse(
+            body.contains("Agent sessions"),
+            "the pane's name is host chrome; a body title restating it is the second row"
+        )
+        XCTAssertFalse(
+            body.contains(root),
+            "the project path is a header label now"
+        )
+        XCTAssertFalse(
+            body.contains("New Codex") || body.contains("\"Refresh\"") || body.contains("label: \"Refresh\""),
+            "the toolbar row moved into the strip; a body copy of it is the duplication"
+        )
+
+        // A menu reports its OWN id plus the picked entry's value, so the pick has to survive
+        // that indirection all the way to the terminal it opens.
+        let picked = try await runtime.invokeViewSelect(
+            viewID: "sessions",
+            instanceID: Fixture.paneA,
+            itemID: "new",
+            value: .string("new:claude")
+        )
+        XCTAssertTrue(picked)
+        let started = await eventually {
+            await bridge.requests().contains { request in
+                request.intentID.rawValue == "terminal.open.v1"
+                    && request.input.objectValue?["command"]?.stringValue == "claude"
+            }
+        }
+        XCTAssertTrue(started, "picking `New Claude session` must open a Claude terminal")
+
+        // The count badges are pure functions of the scanned list, so they are checked
+        // against a list this test states outright rather than one it has to arrange.
+        let counted = try await runtime.evaluateForTesting(
+            """
+            JSON.stringify(headerNode({
+              project: "/p",
+              notice: null,
+              sessions: [
+                { provider: "claude" }, { provider: "claude" }, { provider: "codex" }
+              ]
+            }).leading.map(function (item) { return item.id + "=" + (item.text || ""); }))
+            """
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(counted.stringValue),
+            #"["project=/p","claude=2 Claude","codex=1 Codex"]"#
+        )
+        let scanning = try await runtime.evaluateForTesting(
+            """
+            JSON.stringify(headerNode({ project: "/p", notice: SCANNING, sessions: [] })
+              .trailing.map(function (item) { return item.id; }))
+            """
+        )
+        XCTAssertEqual(
+            try XCTUnwrap(scanning.stringValue),
+            #"["scanning","new","refresh"]"#,
+            "a scan in flight is the pane's own state and belongs in its strip"
+        )
+        _ = await runtime.shutdown()
+    }
+
+    func testClaudeEnrichmentOutputFitsTheFiniteProcessIntentBody() async throws {
+        let bridge = WorkspaceBridge(
+            plugin: (id: "dev.tenon.claude-sessions", viewID: "sessions"),
+            workspaces: [],
+            selectedID: "",
+            respond: { _ in nil }
+        )
+        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
+        _ = try await runtime.start()
+        let awkValue = try await runtime.evaluateForTesting("AWK")
+        let awk = try XCTUnwrap(awkValue.stringValue)
+        let root = URL(fileURLWithPath: try makeTemporaryDirectory(suffix: "sessions"))
+        let padding = String(repeating: "x", count: 19_000)
+        var transcripts: [String] = []
+        for index in 0 ..< 25 {
+            let transcript = root.appendingPathComponent("session-\(index).jsonl")
+            let body = """
+            {"type":"user","message":{"role":"user","content":"Readable prompt \(index) \(padding)"},"gitBranch":"main"}
+            {"type":"ai-title","aiTitle":"Readable title \(index)"}
+
+            """
+            try Data(body.utf8).write(to: transcript)
+            transcripts.append(transcript.path)
+        }
+
+        let process = Process()
+        let output = Pipe()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["LC_ALL=C", "/usr/bin/awk", awk] + transcripts
+        process.standardOutput = output
+        process.standardError = Pipe()
+        try process.run()
+        let data = output.fileHandleForReading.readDataToEndOfFile()
+        process.waitUntilExit()
+
+        XCTAssertEqual(process.terminationStatus, 0)
+        XCTAssertLessThanOrEqual(
+            data.count,
+            CoreIntentPayloadPolicy.maximumInlineTextCharacters,
+            "session enrichment must remain a finite process.exec.v1 body"
+        )
+        XCTAssertTrue(
+            String(decoding: data, as: UTF8.self).contains("Readable title 0"),
+            "bounding the enrich body must preserve the human-readable title"
+        )
+        _ = await runtime.shutdown()
+    }
+
     // MARK: - The sweep the task file demands
 
     /// Workspace-dependent shipped views are instanced; the gallery deliberately shares
@@ -307,6 +715,53 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         _ = await gallery.shutdown()
     }
 
+    /// The pane→workspace edge is host structure, so exactly one implementation of it may
+    /// exist and it lives in the host. A plugin that rebuilds a `tabWorkspace` map from
+    /// `workspace.state.v1` has copied the host's model into JavaScript, where it silently
+    /// answers "no owner" for any pane past the snapshot's first page.
+    func testNoShippedPluginReimplementsThePaneToWorkspaceJoin() throws {
+        let plugins = ["git", "kanban", "claude-sessions", "file-explorer"]
+        var rebuiltJoin: [String] = []
+        var missingOwnerIntent: [String] = []
+        var staleSnapshotUse: [String] = []
+
+        for plugin in plugins {
+            let source = try String(
+                contentsOf: Self.pluginsRoot
+                    .appendingPathComponent(plugin, isDirectory: true)
+                    .appendingPathComponent("main.js"),
+                encoding: .utf8
+            )
+            if source.contains("tabWorkspace") { rebuiltJoin.append(plugin) }
+            if !source.contains("workspace.pane.owner.v1") {
+                missingOwnerIntent.append(plugin)
+            }
+            // These two ask only about a pane's owner, so the whole-catalog snapshot has
+            // no remaining caller in them. git and file-explorer keep it for their genuine
+            // selected-workspace questions.
+            if ["kanban", "claude-sessions"].contains(plugin),
+               source.contains("workspace.state.v1") {
+                staleSnapshotUse.append(plugin)
+            }
+        }
+
+        XCTAssertEqual(
+            rebuiltJoin,
+            [],
+            "these plugins rebuild the host's pane→tab→workspace join by hand"
+        )
+        XCTAssertEqual(
+            missingOwnerIntent,
+            [],
+            "these plugins resolve a pane's owner without asking the host for it"
+        )
+        XCTAssertEqual(
+            staleSnapshotUse,
+            [],
+            "these plugins pay for a paginated catalog snapshot they no longer read"
+        )
+    }
+
     // MARK: - Helpers
 
     private func makeRuntime(
@@ -326,6 +781,25 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         )
     }
 
+    private func paneAView(of runtime: PluginRuntime) async -> PluginViewInfo? {
+        await runtime.snapshot().views.first { $0.instanceID == Fixture.paneA }
+    }
+
+    /// A badge is the one item whose whole meaning is its text, so reading it back is how
+    /// these tests say what a pane measured.
+    private static func badgeText(_ item: PaneHeaderItem?) -> String? {
+        guard case let .badge(_, text, _, _) = item else { return nil }
+        return text
+    }
+
+    private static func statusCalls(in requests: [PluginIntentSendRequest]) -> Int {
+        requests.filter { request in
+            request.intentID.rawValue == "process.exec.v1"
+                && request.input.objectValue?["arguments"]?.arrayValue?
+                .first?.stringValue == "status"
+        }.count
+    }
+
     private func items(
         of runtime: PluginRuntime,
         instance: String
@@ -342,6 +816,19 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         key: String
     ) async -> String? {
         let script = "(panes[\"\(instance)\"] || {})[\"\(key)\"] || null"
+        guard let value = try? await runtime.evaluateForTesting(script) else {
+            return nil
+        }
+        return value.stringValue
+    }
+
+    private func sessionState(
+        of runtime: PluginRuntime,
+        instance: String,
+        index: Int,
+        key: String
+    ) async -> String? {
+        let script = "((panes[\"\(instance)\"] || {}).sessions[\(index)] || {})[\"\(key)\"] || null"
         guard let value = try? await runtime.evaluateForTesting(script) else {
             return nil
         }
@@ -412,9 +899,29 @@ private actor WorkspaceBridge {
     func send(_ request: PluginIntentSendRequest) -> IntentResult {
         recorded.append(request)
         let value: IntentValue
-        if request.intentID.rawValue == "workspace.state.v1" {
+        switch request.intentID.rawValue {
+        case "workspace.state.v1":
             value = stateValue()
-        } else {
+        case "workspace.pane.owner.v1":
+            guard let owner = ownerValue(request.input) else {
+                return .failure(
+                    error: IntentError(
+                        code: .domain(
+                            try! IntentDomainErrorCode(
+                                "dev.tenon.core.workspace-unavailable"
+                            )
+                        ),
+                        details: .object(["reason": .string("pane-unknown")]),
+                        retryable: false,
+                        retryAfterMilliseconds: nil,
+                        outcome: .notStarted
+                    ),
+                    requestID: UUID(),
+                    providerID: try! ProviderID("dev.tenon.tests")
+                )
+            }
+            value = owner
+        default:
             value = respond(request) ?? .object([:])
         }
         return .success(
@@ -422,6 +929,21 @@ private actor WorkspaceBridge {
             requestID: UUID(),
             providerID: try! ProviderID("dev.tenon.tests")
         )
+    }
+
+    /// Answered from the same `workspaces` array `stateValue()` walks, so the snapshot and
+    /// the edge can never disagree about who owns what.
+    private func ownerValue(_ input: IntentValue) -> IntentValue? {
+        guard let paneID = input.objectValue?["paneID"]?.stringValue,
+              let workspace = workspaces.first(where: { $0.paneID == paneID })
+        else {
+            return nil
+        }
+        return .object([
+            "workspaceID": .string(workspace.id),
+            "workspacePath": .string(workspace.path),
+            "tabID": .string(workspace.tabID),
+        ])
     }
 
     private func stateValue() -> IntentValue {

@@ -17,8 +17,8 @@
       {
         "name": "dev.tenon.browser.open.v1",
         "title": "Open Browser",
-        "description": "Opens an independent browser surface in a new tab.",
-        "audiences": ["plugin", "palette"],
+        "description": "Opens a browser surface, at a given address when one is supplied.",
+        "audiences": ["plugin", "user"],
         "effects": {
           "kind": "write",
           "idempotency": "none",
@@ -28,7 +28,10 @@
         "inputSchema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
           "type": "object",
-          "additionalProperties": false
+          "additionalProperties": false,
+          "properties": {
+            "url": { "type": "string", "minLength": 1, "maxLength": 16384 }
+          }
         },
         "outputSchema": {
           "$schema": "https://json-schema.org/draft/2020-12/schema",
@@ -39,7 +42,8 @@
           "category": "Open",
           "icon": "globe",
           "keywords": ["web", "url", "site", "internet"],
-          "launcher": true
+          "launcher": true,
+          "fillsPane": true
         }
       }
     ]

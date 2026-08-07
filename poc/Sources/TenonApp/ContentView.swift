@@ -8,6 +8,7 @@ import TenonIntentCore
 /// tab-local spatial canvas. Every visible region is its own view; this struct only
 /// owns the sidebar's show/width layout state and wires the pieces together.
 struct ContentView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var host: PluginHost
     var store: WorkspaceStore
     var pool: SurfacePool
@@ -16,12 +17,22 @@ struct ContentView: View {
     var intentRuntime: AppIntentRuntime
     var router: DragRouter
     var palette: CommandPaletteState
+    var quickCommands: QuickCommandStore
     var pluginUI: PluginUIState
+    var automation: AutomationScheduler
+    let automationSchedulesEnabled: Bool
+    let automationActions: AutomationPaneActions
 
     /// Per-slot editor state (scroll/selection/unsaved buffer). Owned here — above
     /// the stage — because it must survive the pane views SwiftUI destroys on every
     /// tab switch; `SurfacePool` is the same idea for terminal surfaces (T-016).
     @State private var editorStates = EditorPaneStateStore()
+    /// Where a host-native pane's chrome-header contribution lives while its content view
+    /// is mounted. Owned here, above the stage, for the same reason `editorStates` is:
+    /// the views that publish into it are destroyed and rebuilt on every tab switch, and
+    /// the stage has to be able to read it as an observed input.
+    @State private var paneHeaders = PaneHeaderStore()
+    @State private var agentSuggestions: [AgentLaunchSuggestion] = []
 
     @State private var sidebarVisible = AppPreferencesStore.shared.preferences.sidebarVisibleOnLaunch
     @State private var sidebarWidth: CGFloat =
@@ -44,10 +55,12 @@ struct ContentView: View {
                 intentRuntime: intentRuntime,
                 router: router,
                 palette: palette,
+                quickCommands: quickCommands,
+                agentSuggestions: agentSuggestions,
                 sidebarVisible: sidebarVisible,
                 sidebarWidth: sidebarWidth,
                 onToggleSidebar: {
-                    withAnimation(.easeInOut(duration: 0.15)) { sidebarVisible.toggle() }
+                    setSidebarVisible(!sidebarVisible)
                 }
             )
             .frame(height: TenonTheme.titleBarHeight)
@@ -71,8 +84,13 @@ struct ContentView: View {
                         host: host,
                         intentRuntime: intentRuntime,
                         palette: palette,
+                        agentSuggestions: agentSuggestions,
                         editorStates: editorStates,
-                        router: router
+                        paneHeaders: paneHeaders,
+                        router: router,
+                        automation: automation,
+                        automationSchedulesEnabled: automationSchedulesEnabled,
+                        automationActions: automationActions
                     )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
 
@@ -121,6 +139,9 @@ struct ContentView: View {
         // publishes one, and dismissing routes back to that view rather than clearing
         // it here — the plugin owns the state.
         .overlay { PluginModalOverlay(host: host) }
+        .task {
+            agentSuggestions = await AgentLaunchDetector.scanLive()
+        }
         // Rebuild the whole shell when the accent changes so every chrome element
         // re-reads TenonTheme.amber. Reading the shared store here registers the
         // observation; terminal surfaces persist in the pool across the rebuild.
@@ -138,7 +159,10 @@ struct ContentView: View {
             Rectangle()
                 .fill(resizeHovering || resizeStartWidth != nil ? TenonTheme.amber : TenonTheme.line)
                 .frame(width: 1)
-                .animation(.easeOut(duration: 0.12), value: resizeHovering)
+                .animation(
+                    reduceMotion ? nil : .easeOut(duration: 0.12),
+                    value: resizeHovering
+                )
 
             Color.clear
                 .frame(width: sidebarHandleWidth)
@@ -169,9 +193,7 @@ struct ContentView: View {
                                     resizeHovering = false
                                     NSCursor.pop()
                                 }
-                                withAnimation(.easeInOut(duration: 0.15)) {
-                                    sidebarVisible = false
-                                }
+                                setSidebarVisible(false)
                                 sidebarWidth = base
                             }
                         }
@@ -181,5 +203,15 @@ struct ContentView: View {
         .frame(width: sidebarHandleWidth)
         .frame(maxHeight: .infinity)
         .accessibilityIdentifier("tenon.sidebarResize")
+    }
+
+    private func setSidebarVisible(_ visible: Bool) {
+        if reduceMotion {
+            sidebarVisible = visible
+        } else {
+            withAnimation(.easeInOut(duration: 0.15)) {
+                sidebarVisible = visible
+            }
+        }
     }
 }

@@ -10,7 +10,7 @@
         "name": "dev.tenon.hello-palette.greet.v1",
         "title": "Say Hello",
         "description": "Writes the next greeting to the plugin log.",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": {
           "kind": "write",
           "idempotency": "none",
@@ -37,7 +37,7 @@
         "name": "dev.tenon.hello-palette.reset.v1",
         "title": "Reset Greeting Counter",
         "description": "Resets the plugin-owned greeting counter.",
-        "audiences": ["plugin", "palette"],
+        "audiences": ["plugin", "user"],
         "effects": {
           "kind": "write",
           "idempotency": "none",

@@ -107,6 +107,367 @@ final class FilesystemIntentProviderTests: XCTestCase {
         )
     }
 
+    func testDirectoryListReportsSizeAndModificationTimeWhenRequested()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let sizes = ["alpha": 0, "beta": 17, "gamma": 4_096]
+        let stamps = [
+            "alpha": Date(timeIntervalSince1970: 1_700_000_000),
+            "beta": Date(timeIntervalSince1970: 1_712_345_678),
+            "gamma": Date(timeIntervalSince1970: 1_760_000_000),
+        ]
+        for (name, size) in sizes {
+            let url = directory.appendingPathComponent(name)
+            try Data(repeating: 0x61, count: size).write(to: url)
+            try FileManager.default.setAttributes(
+                [.modificationDate: stamps[name]!],
+                ofItemAtPath: url.path
+            )
+        }
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("nested"),
+            withIntermediateDirectories: false
+        )
+
+        let value = try assertSuccessValue(
+            try await invoke(
+                .filesystemDirectoryList,
+                input: .object([
+                    "path": .string(directory.path),
+                    "includeMetadata": .bool(true),
+                ]),
+                bindings: try FilesystemIntentProvider().bindings
+            )
+        )
+        let entries = try array(try object(value)["entries"])
+        XCTAssertEqual(entries.count, 4)
+        let iso = Date.ISO8601FormatStyle()
+        for entry in entries {
+            let fields = try object(entry)
+            let name = try string(fields["name"])
+            guard let size = sizes[name] else {
+                XCTAssertEqual(name, "nested")
+                XCTAssertEqual(fields["isDirectory"], IntentValue.bool(true))
+                XCTAssertNotEqual(fields["sizeBytes"], IntentValue.null)
+                XCTAssertNotEqual(fields["modifiedAt"], IntentValue.null)
+                continue
+            }
+            XCTAssertEqual(fields["isDirectory"], IntentValue.bool(false))
+            XCTAssertEqual(fields["sizeBytes"], .integer(Int64(size)))
+            XCTAssertEqual(
+                fields["modifiedAt"],
+                .string(iso.format(stamps[name]!))
+            )
+        }
+    }
+
+    func testDirectoryListOmitsMetadataUnlessRequested() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        try Data("hi".utf8).write(
+            to: directory.appendingPathComponent("note.txt")
+        )
+        try FileManager.default.createDirectory(
+            at: directory.appendingPathComponent("sub"),
+            withIntermediateDirectories: false
+        )
+
+        let bindings = try FilesystemIntentProvider().bindings
+        for input in [
+            IntentValue.object(["path": .string(directory.path)]),
+            IntentValue.object([
+                "path": .string(directory.path),
+                "includeMetadata": .bool(false),
+            ]),
+        ] {
+            let value = try assertSuccessValue(
+                try await invoke(
+                    .filesystemDirectoryList,
+                    input: input,
+                    bindings: bindings
+                )
+            )
+            let entries = try array(try object(value)["entries"])
+            XCTAssertEqual(entries.count, 2)
+            for entry in entries {
+                XCTAssertEqual(
+                    try object(entry).keys.sorted(),
+                    ["isDirectory", "name"]
+                )
+            }
+        }
+    }
+
+    func testDirectoryListReportsTheResolvedDirectoryPath() async throws {
+        let root = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let listed = root
+            .appendingPathComponent("real")
+            .appendingPathComponent("listed")
+        try FileManager.default.createDirectory(
+            at: listed,
+            withIntermediateDirectories: true
+        )
+        try Data("x".utf8).write(
+            to: listed.appendingPathComponent("entry.txt")
+        )
+        // The listed directory is reached through a symlinked parent, so the
+        // spelling the caller sent and the directory the host actually opened
+        // differ by construction rather than by /var-to-/private/var luck.
+        try FileManager.default.createSymbolicLink(
+            at: root.appendingPathComponent("link"),
+            withDestinationURL: root.appendingPathComponent("real")
+        )
+
+        let requestedPath = root
+            .appendingPathComponent("link")
+            .appendingPathComponent("listed")
+            .path
+        let value = try assertSuccessValue(
+            try await invoke(
+                .filesystemDirectoryList,
+                input: .object(["path": .string(requestedPath)]),
+                bindings: try FilesystemIntentProvider().bindings
+            )
+        )
+        let resolved = try AuthorizedFilesystemPath(
+            requestedPath: requestedPath
+        ).resolvedPath
+        XCTAssertNotEqual(resolved, requestedPath)
+        XCTAssertEqual(try string(try object(value)["path"]), resolved)
+    }
+
+    func testIncludeMetadataDoesNotChangeIsDirectory() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("file.txt")
+        try Data("x".utf8).write(to: file)
+        let sub = directory.appendingPathComponent("sub")
+        try FileManager.default.createDirectory(
+            at: sub,
+            withIntermediateDirectories: false
+        )
+        try FileManager.default.createSymbolicLink(
+            at: directory.appendingPathComponent("link-to-file"),
+            withDestinationURL: file
+        )
+        try FileManager.default.createSymbolicLink(
+            at: directory.appendingPathComponent("link-to-dir"),
+            withDestinationURL: sub
+        )
+
+        let bindings = try FilesystemIntentProvider().bindings
+        var mappings: [[String: Bool]] = []
+        for input in [
+            IntentValue.object(["path": .string(directory.path)]),
+            IntentValue.object([
+                "path": .string(directory.path),
+                "includeMetadata": .bool(true),
+            ]),
+        ] {
+            let value = try assertSuccessValue(
+                try await invoke(
+                    .filesystemDirectoryList,
+                    input: input,
+                    bindings: bindings
+                )
+            )
+            var mapping: [String: Bool] = [:]
+            for entry in try array(try object(value)["entries"]) {
+                let fields = try object(entry)
+                guard case let .bool(isDirectory)? = fields["isDirectory"] else {
+                    throw TestError.unexpectedValue
+                }
+                mapping[try string(fields["name"])] = isDirectory
+            }
+            mappings.append(mapping)
+        }
+        XCTAssertEqual(mappings.first, mappings.last)
+        XCTAssertEqual(mappings.last?["sub"], true)
+        XCTAssertEqual(mappings.last?["file.txt"], false)
+        // A stat that followed the link would call this one a directory.
+        XCTAssertEqual(mappings.last?["link-to-dir"], false)
+        XCTAssertEqual(mappings.last?["link-to-file"], false)
+    }
+
+    func testDirectoryListMetadataIsNullWhenAnEntryVanishesMidPage() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for index in 0 ..< 6 {
+            try Data(repeating: 0x61, count: index + 1).write(
+                to: directory.appendingPathComponent("entry-\(index)")
+            )
+        }
+
+        let vanishing = "entry-3"
+        let page = try FilesystemIntentProvider.directoryPage(
+            path: try AuthorizedFilesystemPath(requestedPath: directory.path),
+            cursor: FilesystemIntentProvider.DirectoryCursor(
+                offset: 0,
+                fingerprint: nil
+            ),
+            limit: 16,
+            includeMetadata: true,
+            deadline: .now.advanced(by: .seconds(5)),
+            interposedBeforeEntryMetadata: { name in
+                guard name == vanishing else { return }
+                try FileManager.default.removeItem(
+                    at: directory.appendingPathComponent(name)
+                )
+            }
+        )
+
+        // readdir already handed the name over, so the entry stays in the page;
+        // only its metadata is unknown.
+        XCTAssertEqual(page.entries.count, 6)
+        var sawVanished = false
+        for entry in page.entries {
+            let fields = try object(entry)
+            let name = try string(fields["name"])
+            XCTAssertEqual(fields["isDirectory"], IntentValue.bool(false))
+            if name == vanishing {
+                sawVanished = true
+                XCTAssertEqual(fields["sizeBytes"], IntentValue.null)
+                XCTAssertEqual(fields["modifiedAt"], IntentValue.null)
+                continue
+            }
+            XCTAssertNotEqual(fields["sizeBytes"], IntentValue.null)
+            XCTAssertNotEqual(fields["modifiedAt"], IntentValue.null)
+        }
+        XCTAssertTrue(sawVanished)
+    }
+
+    /// End-of-directory is `readdir` returning nil with errno untouched, so the
+    /// scan can only tell "the directory ended" from "the scan failed" if errno
+    /// is clean the instant `readdir` is called. Everything the loop body runs —
+    /// the ISO-8601 formatter, the canonical encoder, both Foundation — may set
+    /// errno on a call that succeeded. The interposed hook stands in for that:
+    /// it dirties errno on every entry, and the page must still come back.
+    func testDirectoryListIgnoresErrnoLeftSetByWorkInsideTheScan() throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for index in 0 ..< 5 {
+            try Data(repeating: 0x61, count: index + 1).write(
+                to: directory.appendingPathComponent("entry-\(index)")
+            )
+        }
+
+        let page = try FilesystemIntentProvider.directoryPage(
+            path: try AuthorizedFilesystemPath(requestedPath: directory.path),
+            cursor: FilesystemIntentProvider.DirectoryCursor(
+                offset: 0,
+                fingerprint: nil
+            ),
+            limit: 16,
+            includeMetadata: true,
+            deadline: .now.advanced(by: .seconds(5)),
+            interposedBeforeEntryMetadata: { _ in errno = EINVAL }
+        )
+
+        XCTAssertEqual(page.entries.count, 5)
+        XCTAssertNil(page.nextCursor)
+    }
+
+    func testDirectoryListValidatesTheAssembledPageOnceInsteadOfEveryPrefix()
+        throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for index in 0 ..< 256 {
+            try Data().write(
+                to: directory.appendingPathComponent(
+                    String(format: "entry-%03d", index)
+                )
+            )
+        }
+
+        var validations = 0
+        let page = try FilesystemIntentProvider.directoryPage(
+            path: try AuthorizedFilesystemPath(requestedPath: directory.path),
+            cursor: FilesystemIntentProvider.DirectoryCursor(
+                offset: 0,
+                fingerprint: nil
+            ),
+            limit: 256,
+            includeMetadata: false,
+            deadline: .now.advanced(by: .seconds(30)),
+            onPageValidation: { validations += 1 }
+        )
+        XCTAssertEqual(page.entries.count, 256)
+        XCTAssertEqual(validations, 1)
+    }
+
+    func testDirectoryListMetadataPageStaysWithinTheOutputBudget()
+        async throws
+    {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        for index in 0 ..< 254 {
+            let name = String(format: "%03d-", index)
+                + String(repeating: "x", count: 240)
+            try Data().write(to: directory.appendingPathComponent(name))
+        }
+        // The accounting encodes each entry on its own, so a name whose JSON is
+        // longer than its characters has to be counted in bytes, not in scalars.
+        try Data().write(
+            to: directory.appendingPathComponent(
+                "254-\"\\" + String(repeating: "x", count: 236)
+            )
+        )
+        try Data().write(
+            to: directory.appendingPathComponent(
+                "255-" + String(repeating: "é", count: 80)
+            )
+        )
+
+        let bindings = try FilesystemIntentProvider().bindings
+        var counts: [Int] = []
+        for includeMetadata in [false, true] {
+            var total = 0
+            var first = 0
+            var pages = 0
+            var cursor: String?
+            repeat {
+                pages += 1
+                // 256 entries cannot need 16 pages; a page that returned nothing
+                // while still issuing a cursor would otherwise spin here forever.
+                guard pages <= 16 else {
+                    return XCTFail("paging did not terminate")
+                }
+                var input: [String: IntentValue] = [
+                    "path": .string(directory.path),
+                    "limit": .integer(256),
+                    "includeMetadata": .bool(includeMetadata),
+                ]
+                if let cursor {
+                    input["cursor"] = .string(cursor)
+                }
+                let value = try assertSuccessValue(
+                    try await invoke(
+                        .filesystemDirectoryList,
+                        input: .object(input),
+                        bindings: bindings
+                    )
+                )
+                try value.validate()
+                let object = try object(value)
+                let entries = try array(object["entries"])
+                XCTAssertGreaterThan(entries.count, 0)
+                if pages == 1 { first = entries.count }
+                total += entries.count
+                cursor = object["nextCursor"].flatMap { next in
+                    guard case let .string(next) = next else { return nil }
+                    return next
+                }
+            } while cursor != nil
+            XCTAssertEqual(total, 256)
+            counts.append(first)
+        }
+        XCTAssertLessThan(counts[1], counts[0])
+    }
+
     func testAuthorizationBindingPinsSymlinkedParentDirectory() async throws {
         let root = try makeTemporaryDirectory()
         defer { try? FileManager.default.removeItem(at: root) }
@@ -716,6 +1077,45 @@ final class FilesystemIntentProviderTests: XCTestCase {
         )
     }
 
+    func testUnsupportedWriteShapeIsInvalidAndPastDeadlineDoesNoIO() async throws {
+        let directory = try makeTemporaryDirectory()
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let existing = directory.appendingPathComponent("existing.txt")
+        try Data("old".utf8).write(to: existing)
+        let bindings = try FilesystemIntentProvider().bindings
+
+        let resourceReply = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(existing.path),
+                "content": .object([
+                    "kind": .string("resource"),
+                    "resourceID": .string("resource-1"),
+                ]),
+            ]),
+            bindings: bindings
+        )
+        try assertFailure(
+            resourceReply,
+            code: "tenon.invalid-input"
+        )
+
+        let deadlineReply = try await invoke(
+            .filesystemFileWrite,
+            input: .object([
+                "path": .string(existing.path),
+                "content": .object([
+                    "kind": .string("inline"),
+                    "text": .string("new"),
+                ]),
+            ]),
+            bindings: bindings,
+            deadline: .now
+        )
+        try assertFailure(deadlineReply, code: "tenon.deadline-exceeded")
+        XCTAssertEqual(try String(contentsOf: existing, encoding: .utf8), "old")
+    }
+
     func testFileWriteStagedPagesCommitAtomicallyWithoutIntermediateTargetContent()
         async throws
     {
@@ -1128,45 +1528,6 @@ final class FilesystemIntentProviderTests: XCTestCase {
             )
         )
     }
-
-    func testUnsupportedWriteShapeIsInvalidAndPastDeadlineDoesNoIO() async throws {
-        let directory = try makeTemporaryDirectory()
-        defer { try? FileManager.default.removeItem(at: directory) }
-        let existing = directory.appendingPathComponent("existing.txt")
-        try Data("old".utf8).write(to: existing)
-        let bindings = try FilesystemIntentProvider().bindings
-
-        let resourceReply = try await invoke(
-            .filesystemFileWrite,
-            input: .object([
-                "path": .string(existing.path),
-                "content": .object([
-                    "kind": .string("resource"),
-                    "resourceID": .string("resource-1"),
-                ]),
-            ]),
-            bindings: bindings
-        )
-        try assertFailure(
-            resourceReply,
-            code: "tenon.invalid-input"
-        )
-
-        let deadlineReply = try await invoke(
-            .filesystemFileWrite,
-            input: .object([
-                "path": .string(existing.path),
-                "content": .object([
-                    "kind": .string("inline"),
-                    "text": .string("new"),
-                ]),
-            ]),
-            bindings: bindings,
-            deadline: .now
-        )
-        try assertFailure(deadlineReply, code: "tenon.deadline-exceeded")
-        XCTAssertEqual(try String(contentsOf: existing, encoding: .utf8), "old")
-    }
 }
 
 private extension FilesystemIntentProviderTests {
@@ -1255,29 +1616,18 @@ private extension FilesystemIntentProviderTests {
         return value
     }
 
-    /// Sends one staged (`commit: false`) write page and returns the cursor the
-    /// host issued for the next page.
-    func stagePage(
-        _ target: URL,
-        text: String,
-        cursor: String?,
-        bindings: [IntentProviderBinding]
-    ) async throws -> String {
-        var input: [String: IntentValue] = [
-            "path": .string(target.path),
-            "content": .object([
-                "kind": .string("inline"),
-                "text": .string(text),
-            ]),
-            "commit": .bool(false),
-        ]
-        if let cursor { input["cursor"] = .string(cursor) }
-        let reply = try await invoke(
-            .filesystemFileWrite,
-            input: .object(input),
-            bindings: bindings
-        )
-        return try string(try object(try successValue(reply))["cursor"])
+    /// Reports the failure before unwinding, so a rejected envelope names its
+    /// error code instead of surfacing as a bare `expectedSuccess`.
+    func assertSuccessValue(
+        _ reply: IntentProviderReply,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) throws -> IntentValue {
+        guard case let .success(value) = reply else {
+            XCTFail("Expected success, got \(reply)", file: file, line: line)
+            throw TestError.expectedSuccess
+        }
+        return value
     }
 
     func assertFailure(
@@ -1334,17 +1684,42 @@ private extension FilesystemIntentProviderTests {
         return string
     }
 
-    func inode(atPath path: String) throws -> UInt64 {
-        let attributes = try FileManager.default.attributesOfItem(atPath: path)
-        return try XCTUnwrap(
-            (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
-        )
-    }
-
     func integer(_ value: IntentValue?) throws -> Int64 {
         guard case let .integer(integer)? = value else {
             throw TestError.unexpectedValue
         }
         return integer
+    }
+
+    /// Sends one staged (`commit: false`) write page and returns the cursor the
+    /// host issued for the next page.
+    func stagePage(
+        _ target: URL,
+        text: String,
+        cursor: String?,
+        bindings: [IntentProviderBinding]
+    ) async throws -> String {
+        var input: [String: IntentValue] = [
+            "path": .string(target.path),
+            "content": .object([
+                "kind": .string("inline"),
+                "text": .string(text),
+            ]),
+            "commit": .bool(false),
+        ]
+        if let cursor { input["cursor"] = .string(cursor) }
+        let reply = try await invoke(
+            .filesystemFileWrite,
+            input: .object(input),
+            bindings: bindings
+        )
+        return try string(try object(try successValue(reply))["cursor"])
+    }
+
+    func inode(atPath path: String) throws -> UInt64 {
+        let attributes = try FileManager.default.attributesOfItem(atPath: path)
+        return try XCTUnwrap(
+            (attributes[.systemFileNumber] as? NSNumber)?.uint64Value
+        )
     }
 }

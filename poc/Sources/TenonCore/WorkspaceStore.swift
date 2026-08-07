@@ -90,6 +90,19 @@ public final class WorkspaceStore {
         if apply({ $0.addSlot(content: content) }) { recent?.record(content) }
     }
 
+    /// Reserves an exact empty canvas region and returns the pane identity a scoped
+    /// launcher invocation can address.
+    @discardableResult
+    public func addSlot(content: SlotContent, at rect: GridRect) -> UUID? {
+        let id = UUID()
+        guard apply({ $0.addSlot(id: id, content: content, at: rect) }) else { return nil }
+        return id
+    }
+
+    public func discardEmptySlot(_ id: UUID, restoringFocusTo previousSlotID: UUID?) {
+        apply { $0.discardEmptySlot(id, restoringFocusTo: previousSlotID) }
+    }
+
     public func splitActiveSlot(
         _ axis: SplitAxis,
         content: SlotContent? = nil
@@ -188,6 +201,22 @@ public final class WorkspaceStore {
         apply { $0.moveSlot(id, toTab: targetTabID) }
     }
 
+    public func moveSlot(
+        _ id: UUID,
+        toTab targetTabID: UUID,
+        beside targetSlotID: UUID,
+        edge: SpatialDropEdge
+    ) {
+        apply {
+            $0.moveSlot(
+                id,
+                toTab: targetTabID,
+                beside: targetSlotID,
+                edge: edge
+            )
+        }
+    }
+
     public func applyMove(_ transaction: SpatialLayoutTransaction) {
         apply { $0.applyMove(transaction) }
     }
@@ -270,7 +299,6 @@ public extension PluginHost {
                 ),
             ])
         )
-        await reconcileViewInstances(from: snapshot)
     }
 
     private static func busRepresentation(

@@ -14,6 +14,8 @@ struct ShellTitleBar: View {
     var intentRuntime: AppIntentRuntime
     var router: DragRouter
     var palette: CommandPaletteState
+    var quickCommands: QuickCommandStore
+    let agentSuggestions: [AgentLaunchSuggestion]
     let sidebarVisible: Bool
     let sidebarWidth: CGFloat
     let onToggleSidebar: () -> Void
@@ -205,8 +207,17 @@ struct ShellTitleBar: View {
                                 host: host,
                                 intentRuntime: intentRuntime,
                                 palette: palette,
+                                agentSuggestions: agentSuggestions,
+                                launchAgent: { suggestion in
+                                    AgentLaunchExecutor.run(
+                                        suggestion,
+                                        placement: .tab(tab.id),
+                                        workspaceStore: store,
+                                        terminalPool: pool
+                                    )
+                                },
                                 send: { commandID in
-                                    await send(commandID, onTab: tab.id)
+                                    LauncherOutcome(await send(commandID, onTab: tab.id))
                                 },
                                 dismiss: { contextLauncherTab = nil }
                             )
@@ -228,8 +239,17 @@ struct ShellTitleBar: View {
                             host: host,
                             intentRuntime: intentRuntime,
                             palette: palette,
+                            agentSuggestions: agentSuggestions,
+                            launchAgent: { suggestion in
+                                AgentLaunchExecutor.run(
+                                    suggestion,
+                                    placement: .newTab,
+                                    workspaceStore: store,
+                                    terminalPool: pool
+                                )
+                            },
                             send: { commandID in
-                                await sendInNewTab(commandID)
+                                LauncherOutcome(await sendInNewTab(commandID))
                             },
                             dismiss: { launcherPresented = false }
                         )
@@ -255,6 +275,14 @@ struct ShellTitleBar: View {
 
             WindowDragArea(color: TenonTheme.chromeNS)
                 .frame(maxWidth: .infinity)
+
+            QuickCommandControl(
+                commands: quickCommands,
+                workspaceStore: store,
+                terminalPool: pool
+            )
+            .padding(.leading, 8)
+            .accessibilityIdentifier("tenon.quickCommands.control")
         }
         // The whole strip is the "drop for a new tab" band; individual chips
         // carve out "drop into that tab" within it.

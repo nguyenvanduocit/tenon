@@ -170,9 +170,10 @@ Isolation requirements:
 
 ## View contribution
 
-The browser renders chrome through native declarative nodes, including `browserBar` and a
-web-surface node. The host paints native controls; JavaScript keeps navigation state and
-decides which intent to send for user actions.
+The browser publishes its chrome into the pane's ONE chrome header — three `iconButton`s
+for back/forward/reload and a flexible `textfield` for the address — beside a `webview`
+body node referencing the host-owned surface. The host paints native controls; JavaScript
+keeps navigation state and decides which intent to send for user actions.
 
 The browser is not represented by a browser-specific host content enum. A pane stores a
 generic plugin-view reference; disabling the browser plugin leaves a valid unavailable

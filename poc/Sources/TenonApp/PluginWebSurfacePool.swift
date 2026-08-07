@@ -254,7 +254,6 @@ private extension PluginWebSurfacePool {
              .badge,
              .button,
              .textfield,
-             .browserBar,
              .image,
              .spacer,
              .divider,
@@ -502,7 +501,7 @@ private extension BrowserIntentProvider {
 
 /// One host-owned web view plus navigation observations.
 @MainActor
-final class WebSurface: NSObject, WKNavigationDelegate {
+final class WebSurface: NSObject, WKNavigationDelegate, WKUIDelegate {
     let containerView: NSView
     private(set) var webView: WKWebView?
 
@@ -516,6 +515,7 @@ final class WebSurface: NSObject, WKNavigationDelegate {
 
     init(websiteDataStoreIdentifier: UUID) {
         let configuration = WKWebViewConfiguration()
+        configuration.applicationNameForUserAgent = WebUserAgent.current
         configuration.websiteDataStore = WKWebsiteDataStore(
             forIdentifier: websiteDataStoreIdentifier
         )
@@ -527,6 +527,7 @@ final class WebSurface: NSObject, WKNavigationDelegate {
         self.webView = webView
         super.init()
         webView.navigationDelegate = self
+        webView.uiDelegate = self
         webView.underPageBackgroundColor = .clear
         webView.translatesAutoresizingMaskIntoConstraints = false
         containerView.addSubview(webView)
@@ -582,6 +583,7 @@ final class WebSurface: NSObject, WKNavigationDelegate {
         guard let webView else { return }
         webView.stopLoading()
         webView.navigationDelegate = nil
+        webView.uiDelegate = nil
         webView.removeFromSuperview()
         self.webView = nil
         onTitle = nil
@@ -651,6 +653,52 @@ final class WebSurface: NSObject, WKNavigationDelegate {
 
     func webViewWebContentProcessDidTerminate(_ webView: WKWebView) {
         publishLoading(false)
+    }
+
+    /// A pane is one surface, so a link in its page asking for a new window gets this one.
+    ///
+    /// WebKit discards every `window.open` / `target="_blank"` navigation when no
+    /// `WKUIDelegate` is set — after `decidePolicyFor` has already allowed it — so the link
+    /// simply does nothing. Loading in place is the honest single-surface answer; returning
+    /// `nil` tells WebKit no separate web view was created.
+    ///
+    /// This is popup *navigation* only. Alert/confirm/prompt panels and the file-upload
+    /// panel stay unimplemented, so WebKit keeps its default of suppressing them.
+    func webView(
+        _ webView: WKWebView,
+        createWebViewWith configuration: WKWebViewConfiguration,
+        for navigationAction: WKNavigationAction,
+        windowFeatures: WKWindowFeatures
+    ) -> WKWebView? {
+        if let target = Self.popupTarget(
+            navigationAction.request.url,
+            initiatedByMainFrame: navigationAction.sourceFrame.isMainFrame
+        ) {
+            load(target)
+        }
+        return nil
+    }
+
+    /// Where a `target="_blank"` / `window.open` navigation should go on a single-surface
+    /// pane: the same place, under the same rule that governs any other top-level
+    /// navigation. `nil` means the pane declines it.
+    ///
+    /// Only the page the person is looking at may redirect the pane. A subframe — an ad, a
+    /// widget, any embedded third party — reaches this delegate with the same shape, and
+    /// `window.open` needs no user gesture, so adopting its target would let an embedded
+    /// origin replace the top-level document under the pane's persistent cookie store. A
+    /// declined popup is exactly what WebKit did before this delegate existed.
+    static func popupTarget(
+        _ url: URL?,
+        initiatedByMainFrame: Bool
+    ) -> URL? {
+        guard initiatedByMainFrame,
+              let url,
+              allowsTopLevelNavigation(url)
+        else {
+            return nil
+        }
+        return url
     }
 
     static func allowsTopLevelNavigation(_ url: URL?) -> Bool {

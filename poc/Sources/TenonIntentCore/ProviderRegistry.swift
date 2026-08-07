@@ -127,6 +127,52 @@ public struct ProviderResolutionRequest: Sendable, Equatable {
     }
 }
 
+/// Who would serve a contract, and why they won — or that nobody can win until a person
+/// says so. Asking this question runs no provider code and takes no right to run any, so a
+/// caller may branch on the answer without holding the authority to act on it.
+///
+/// Separating the question from the dispatch is what lets a host serve a trusted-default
+/// answer with its own typed implementation and no bus traffic, and what turns two eligible
+/// handlers into a chooser rather than a thrown error. See `docs/design-open-handlers.md`.
+public enum ProviderResolutionDecision: Sendable, Equatable {
+    /// The caller named this provider and it is eligible.
+    case explicitTarget(ProviderID)
+    /// The person configured this provider as the handler for the contract.
+    case configuredDefault(ProviderID)
+    /// Nothing was configured, so the built-in handler serves it.
+    case trustedDefault(ProviderID)
+    /// Exactly one provider is eligible and the contract allows taking it unasked.
+    case onlyEligible(ProviderID)
+    /// More than one provider could serve this and nothing has been chosen. Candidates are
+    /// sorted so a chooser presents them in a stable order.
+    case needsChoice([ProviderID])
+    /// The caller named a provider that is not eligible.
+    case targetUnavailable(ProviderID)
+    /// Nothing can serve this contract.
+    case noProvider
+
+    /// The provider that would run, or nil when the answer needs a person or nobody
+    /// qualifies.
+    public var providerID: ProviderID? {
+        switch self {
+        case let .explicitTarget(providerID),
+             let .configuredDefault(providerID),
+             let .trustedDefault(providerID),
+             let .onlyEligible(providerID):
+            providerID
+        case .needsChoice, .targetUnavailable, .noProvider:
+            nil
+        }
+    }
+
+    /// Whether the built-in handler is the one that would run. A host serving this answer
+    /// calls its own typed implementation instead of dispatching.
+    public var isTrustedDefault: Bool {
+        if case .trustedDefault = self { return true }
+        return false
+    }
+}
+
 public struct ProviderSelection: Sendable, Equatable {
     public let intentID: IntentID
     public let providerID: ProviderID
@@ -453,50 +499,41 @@ public actor ProviderRegistry {
 
     /// Resolves a provider and holds its exact generation until `acquire` consumes the
     /// selection or `releaseSelection` abandons it.
+    /// Asks who would serve `request`. Holds nothing, reserves nothing, and leaves the
+    /// registry unchanged, so a caller can find out what would happen — and present a
+    /// chooser, or run a built-in implementation directly — without taking the right to
+    /// invoke anybody. `resolveAndHold` answers with the same rule, so a decision reported
+    /// here is the one a dispatch would take.
+    public func resolutionDecision(
+        _ request: ProviderResolutionRequest
+    ) -> ProviderResolutionDecision {
+        decide(request: request, eligible: eligibleProviders(for: request))
+    }
+
     public func resolveAndHold(
         _ request: ProviderResolutionRequest
     ) throws -> ProviderSelection {
-        let routes = activeRoutes[request.intentID] ?? [:]
-        let eligible = routes.compactMap { providerID, key -> (ProviderID, GenerationKey)? in
-            guard let stored = generations[key],
-                  stored.lifecycle == .active,
-                  stored.isHealthy,
-                  stored.candidate.bindings[request.intentID]?.isExported == true
-            else {
-                return nil
-            }
-            return (providerID, key)
-        }
-        let eligibleByID = Dictionary(uniqueKeysWithValues: eligible)
+        let eligibleByID = eligibleProviders(for: request)
 
         let selected: ProviderID
-        if let explicitTarget = request.explicitTarget {
-            guard eligibleByID[explicitTarget] != nil else {
-                throw ProviderResolutionError.providerUnavailable(
-                    intentID: request.intentID,
-                    providerID: explicitTarget
-                )
-            }
-            selected = explicitTarget
-        } else if let configured = configuredDefaults[request.intentID],
-                  eligibleByID[configured] != nil
-        {
-            selected = configured
-        } else if let trustedDefault = request.trustedDefault,
-                  eligibleByID[trustedDefault] != nil
-        {
-            selected = trustedDefault
-        } else if eligibleByID.count == 1, request.allowsAutomaticSelection,
-                  let only = eligibleByID.keys.first
-        {
-            selected = only
-        } else if eligibleByID.isEmpty {
-            throw ProviderResolutionError.noProvider(request.intentID)
-        } else {
+        switch decide(request: request, eligible: eligibleByID) {
+        case let .explicitTarget(providerID),
+             let .configuredDefault(providerID),
+             let .trustedDefault(providerID),
+             let .onlyEligible(providerID):
+            selected = providerID
+        case .targetUnavailable(let providerID):
+            throw ProviderResolutionError.providerUnavailable(
+                intentID: request.intentID,
+                providerID: providerID
+            )
+        case .needsChoice(let candidates):
             throw ProviderResolutionError.ambiguousProvider(
                 intentID: request.intentID,
-                candidates: eligibleByID.keys.sorted { $0.rawValue < $1.rawValue }
+                candidates: candidates
             )
+        case .noProvider:
+            throw ProviderResolutionError.noProvider(request.intentID)
         }
 
         guard let key = eligibleByID[selected],
@@ -524,6 +561,59 @@ public actor ProviderRegistry {
             identity: key.identity,
             reservationID: reservationID
         )
+    }
+
+    /// The generations that could serve `request` right now. Eligibility is lifecycle,
+    /// health, and export — a draining or quarantined handler is never an answer.
+    private func eligibleProviders(
+        for request: ProviderResolutionRequest
+    ) -> [ProviderID: GenerationKey] {
+        let routes = activeRoutes[request.intentID] ?? [:]
+        return routes.reduce(into: [:]) { result, route in
+            let (providerID, key) = route
+            guard let stored = generations[key],
+                  stored.lifecycle == .active,
+                  stored.isHealthy,
+                  stored.candidate.bindings[request.intentID]?.isExported == true
+            else {
+                return
+            }
+            result[providerID] = key
+        }
+    }
+
+    /// The single ranking rule. Both the question and the dispatch go through here, so they
+    /// cannot drift apart: a caller's explicit target, then the person's configured
+    /// handler, then the built-in one, then a sole candidate the contract allows taking
+    /// unasked — and otherwise a person has to choose.
+    private func decide(
+        request: ProviderResolutionRequest,
+        eligible: [ProviderID: GenerationKey]
+    ) -> ProviderResolutionDecision {
+        if let explicitTarget = request.explicitTarget {
+            return eligible[explicitTarget] != nil
+                ? .explicitTarget(explicitTarget)
+                : .targetUnavailable(explicitTarget)
+        }
+        if let configured = configuredDefaults[request.intentID],
+           eligible[configured] != nil
+        {
+            return .configuredDefault(configured)
+        }
+        if let trustedDefault = request.trustedDefault,
+           eligible[trustedDefault] != nil
+        {
+            return .trustedDefault(trustedDefault)
+        }
+        if eligible.count == 1, request.allowsAutomaticSelection,
+           let only = eligible.keys.first
+        {
+            return .onlyEligible(only)
+        }
+        if eligible.isEmpty {
+            return .noProvider
+        }
+        return .needsChoice(eligible.keys.sorted { $0.rawValue < $1.rawValue })
     }
 
     public func acquire(_ selection: ProviderSelection) throws -> ProviderLease {

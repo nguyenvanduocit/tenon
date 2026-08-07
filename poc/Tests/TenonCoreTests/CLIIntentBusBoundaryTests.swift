@@ -9,7 +9,7 @@ final class CLIIntentBusBoundaryTests: XCTestCase {
             .deletingLastPathComponent()
         let actionSource = try source(
             root,
-            "Sources/TenonCore/CLIAction.swift"
+            "Sources/TenonIntentCore/CLIAction.swift"
         )
         let executorSource = try source(
             root,
@@ -69,6 +69,15 @@ final class CLIIntentBusBoundaryTests: XCTestCase {
         XCTAssertTrue(executorSource.contains("runtime.discover("))
         XCTAssertTrue(executorSource.contains("runtime.send("))
         XCTAssertTrue(clientSource.contains(#"action: "intent.send""#))
+        let package = try source(root, "Package.swift")
+        let cliTarget = try XCTUnwrap(
+            package.range(of: #"name: "TenonCLI""#).flatMap { start in
+                package[start.lowerBound...].range(of: "),\n\n        .testTarget")
+                    .map { String(package[start.lowerBound ..< $0.lowerBound]) }
+            }
+        )
+        XCTAssertTrue(cliTarget.contains(#"dependencies: ["TenonIntentCore"]"#))
+        XCTAssertFalse(cliTarget.contains(#""TenonCore""#))
 
         XCTAssertFalse(
             FileManager.default.fileExists(

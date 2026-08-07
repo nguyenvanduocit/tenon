@@ -38,7 +38,8 @@ metrics are documented in
 - [`poc/`](poc/) — the current native app. The directory name is historical.
 - [`prototypes/spatial-layout/`](prototypes/spatial-layout/) — the structural
   design contract for component hierarchy, regions, and interactions.
-- [`docs/`](docs/) — research and design history.
+- [`docs/README.md`](docs/README.md) — canonical documentation map, precedence,
+  implementation status, guides, and research history.
 
 ## Build
 
@@ -76,8 +77,16 @@ See [`poc/README.md`](poc/README.md) for controls, tests, the plugin runtime,
 and the libghostty packaging details.
 
 Status: pre-alpha. The native shell, spatial workspace model, libghostty
-embedding, built-in slot surfaces, and plugin runtime are running and covered
-by 159 non-UI tests plus 6 black-box macOS UI flows. Layout persistence and
-production hardening are still ahead. The Attention Inbox, evidence-linked
-context capsules, structured agent signals, and safe-fan-out measurements are
-the next product direction; they are not implemented runtime capabilities.
+embedding, workspace catalog persistence, built-in slot surfaces, governed
+intent/plugin runtime, CLI adapter, command palette, automations, and
+host-internal Agent Lens session projection are implemented. The repository has
+headless, hosted integration, and black-box macOS UI test layers; command output,
+not a hard-coded count in this README, is the verification receipt.
+
+Production hardening remains open, most importantly a hard isolation boundary
+for untrusted plugin JavaScript, a signed/notarized release pipeline, and recorded
+performance/reliability receipts.
+The cross-session Attention Inbox, evidence-linked context capsules, and
+safe-fan-out measurements remain product experiments rather than shipped
+runtime capabilities. See [`docs/README.md`](docs/README.md) for the exact
+status and authority of each document.

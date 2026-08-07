@@ -118,6 +118,49 @@ final class SurfaceLifecycleTests: XCTestCase {
         )
     }
 
+    // MARK: - Teardown: a closed pane's work stops with it
+
+    /// T-084: releasing the surface is not enough. libghostty's own teardown sends SIGHUP to one
+    /// process group and never escalates, so a pane closing has to say so explicitly — and it
+    /// has to say so BEFORE the surface is dropped, while its process identity is still readable.
+    func testASlotLeavingTheCatalogTerminatesItsSurface() {
+        let pool = makePool()
+        let surface = pool.surface(for: slot, workspacePath: scratch) as? StubTerminalSurface
+
+        pool.retainOnly([])
+
+        XCTAssertEqual(surface?.terminateCount, 1)
+    }
+
+    /// The negative that protects a running agent, and the reason terminate() cannot live in
+    /// deinit: everything below drops the surface from view without the slot dying.
+    func testHidingOrRebuildingAPaneNeverTerminatesIt() {
+        let pool = makePool()
+        let other = UUID()
+        let surface = pool.surface(for: slot, workspacePath: scratch) as? StubTerminalSurface
+        _ = pool.surface(for: other, workspacePath: scratch)
+
+        pool.retainOnly([slot, other])
+        pool.focusSurface(for: other)
+        pool.retainOnly([slot, other])
+
+        XCTAssertEqual(surface?.terminateCount, 0, "a hidden pane's job tree is still the human's")
+    }
+
+    /// The lifecycle sync re-asserts the catalog on every mutation, so a slot that already left
+    /// must not be signalled again — a second round would be aimed at pids the kernel may have
+    /// handed to somebody else by then.
+    func testARepeatedCatalogSyncTerminatesAClosedPaneOnlyOnce() {
+        let pool = makePool()
+        let surface = pool.surface(for: slot, workspacePath: scratch) as? StubTerminalSurface
+
+        pool.retainOnly([])
+        pool.retainOnly([])
+        pool.retainOnly([])
+
+        XCTAssertEqual(surface?.terminateCount, 1)
+    }
+
     // MARK: - Restored panes: placeholder data now, a fresh shell on first view
 
     func testARestoredPaneShowsItsRecordedDirectoryAndSpawnsAFreshShellThere() throws {
@@ -168,7 +211,7 @@ final class SurfaceLifecycleTests: XCTestCase {
         }
 
         // First session: a tree of terminal panes, one carrying a live title and cwd.
-        let first = try AppComposition(paths: makePaths())
+        let first = try await AppComposition.make(paths: makePaths())
         let watchedSlotID = try XCTUnwrap(first.store.catalog.activeSlotID)
         first.store.setSlotContent(watchedSlotID, .terminal)
         first.store.newTab(content: .terminal)
@@ -180,7 +223,7 @@ final class SurfaceLifecycleTests: XCTestCase {
         await first.stop()
 
         // Relaunch: the whole tree comes back, and not one shell is spawned for it.
-        let second = try AppComposition(paths: makePaths())
+        let second = try await AppComposition.make(paths: makePaths())
         addTeardownBlock { await second.stop() }
 
         XCTAssertEqual(Set(second.store.catalog.allSlotIDs), slotsAtQuit)

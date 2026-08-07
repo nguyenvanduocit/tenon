@@ -12,9 +12,7 @@ import TenonIntentCore
 struct SettingsView: View {
     var host: PluginHost
     @Bindable var prefs: AppPreferencesStore
-    var automation: AutomationScheduler
-    var runNow: (PluginID, String) async -> Void
-    var createWithAI: () -> Void
+    var instanceChannel: AppInstanceChannel
 
     @State private var route: SettingsRoute = .general
 
@@ -42,7 +40,12 @@ struct SettingsView: View {
                 }
 
                 Section {
-                    sidebarRow(.automation, "Automation", "clock.arrow.circlepath", .mint)
+                    sidebarRow(
+                        .automation,
+                        "Automation",
+                        "clock.arrow.circlepath",
+                        TenonTheme.amber
+                    )
                     sidebarRow(.cli, "CLI", "terminal.fill", .blue)
                     sidebarRow(.extensions, "Extensions", "puzzlepiece.extension.fill", .indigo)
                 }
@@ -76,15 +79,9 @@ struct SettingsView: View {
         case .general:
             GeneralSettingsDetail(prefs: prefs).navigationTitle("General")
         case .automation:
-            AutomationSettingsDetail(
-                host: host,
-                automation: automation,
-                runNow: runNow,
-                createWithAI: createWithAI
-            )
-            .navigationTitle("Automation")
+            AutomationSettingsDetail(prefs: prefs).navigationTitle("Automation")
         case .cli:
-            CLISettingsDetail().navigationTitle("CLI")
+            CLISettingsDetail(instanceChannel: instanceChannel).navigationTitle("CLI")
         case .extensions:
             ExtensionsDetail(host: host).navigationTitle("Extensions")
         case .plugin(let pluginID):
@@ -134,171 +131,25 @@ private struct SettingsIconBadge: View {
 
 // MARK: - Automation
 
-/// T-060: the automation surface. Every armed schedule with its next firing and a
-/// per-schedule Run Now, then the recent runs with the facts each firing delivered —
-/// the row's evidence is exactly the payload the plugin received plus the delivery
-/// outcome. Reads scheduler state DIRECT (same owner, invariant 6); Run Now composes
-/// the same delivery path the tick loop uses.
+/// Automation configuration only. The operational schedules, Run Now actions, authoring,
+/// and delivery history live in the dedicated Automation view on the Canvas.
 private struct AutomationSettingsDetail: View {
-    var host: PluginHost
-    var automation: AutomationScheduler
-    var runNow: (PluginID, String) async -> Void
-    var createWithAI: () -> Void
-
-    /// T-061 amendment (user-directed 02:12): the button's whole point is the pane it
-    /// opens, and Settings sits exactly on top of it — so choosing to create closes
-    /// this window and hands focus to the pair-authoring pane.
-    @Environment(\.dismissWindow) private var dismissWindow
+    @Bindable var prefs: AppPreferencesStore
 
     var body: some View {
         Form {
-            let listings = automation.listings()
-            // T-061: present in both states — an empty page's first affordance and a
-            // populated page's way to add the next one.
             Section {
-                Button("Create with AI…") {
-                    createWithAI()
-                    dismissWindow()
-                }
+                Toggle(
+                    "Run scheduled automations",
+                    isOn: $prefs.preferences.automationSchedulesEnabled
+                )
             } footer: {
-                Text("Opens a terminal running claude with a guide to pair-write an "
-                    + "automation script with you. The script lands in the plugins "
-                    + "folder and loads the moment it is saved.")
-                    .font(.caption)
-            }
-            if listings.isEmpty {
-                Section {
-                    Text("No installed plugin declares an automation schedule.")
-                        .font(.callout)
-                        .foregroundStyle(.secondary)
-                } footer: {
-                    Text("A plugin declares schedules in its manifest's "
-                        + "\"automation.schedules\" block; they appear here with "
-                        + "their next firing.")
-                        .font(.caption)
-                }
-            } else {
-                Section("Schedules") {
-                    ForEach(listings, id: \.rowID) { listing in
-                        scheduleRow(listing)
-                    }
-                }
-            }
-
-            let records = automation.runHistory.records
-            if !records.isEmpty {
-                Section("Recent runs") {
-                    ForEach(
-                        Array(records.prefix(30).enumerated()),
-                        id: \.offset
-                    ) { _, record in
-                        runRow(record)
-                    }
-                }
+                Text("When off, Tenon advances schedule clocks but suppresses scheduled "
+                    + "events, so re-enabling does not replay missed runs. Run Now remains "
+                    + "available in the Automation view on the Canvas.")
             }
         }
         .formStyle(.grouped)
-    }
-
-    private func scheduleRow(
-        _ listing: AutomationScheduler.ScheduleListing
-    ) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(pluginTitle(listing.pluginID)) · \(listing.spec.id)")
-                Text(cadenceText(listing.spec))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                HStack(spacing: 4) {
-                    Text("Next firing")
-                    Text(listing.nextDue, style: .relative)
-                    Text("(\(listing.nextDue.formatted(date: .abbreviated, time: .shortened)))")
-                }
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Button("Run Now") {
-                Task {
-                    await runNow(listing.pluginID, listing.spec.id)
-                }
-            }
-        }
-        .padding(.vertical, 2)
-    }
-
-    private func runRow(_ record: AutomationRunRecord) -> some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
-            Image(
-                systemName: record.delivered
-                    ? "checkmark.circle.fill"
-                    : "exclamationmark.circle.fill"
-            )
-            .foregroundStyle(record.delivered ? Color.green : Color.orange)
-            VStack(alignment: .leading, spacing: 2) {
-                Text("\(pluginTitle(record.pluginID)) · \(record.scheduleID)")
-                Text(evidenceText(record))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer()
-            Text(
-                record.firedAt.formatted(
-                    .relative(presentation: .named)
-                )
-            )
-            .font(.caption)
-            .foregroundStyle(.secondary)
-        }
-        .padding(.vertical, 1)
-    }
-
-    private func pluginTitle(_ pluginID: PluginID) -> String {
-        host.plugins.first(where: { $0.id == pluginID })?.settingsTitle
-            ?? pluginID.rawValue
-    }
-
-    private func cadenceText(_ spec: AutomationScheduleSpec) -> String {
-        switch spec.cadence {
-        case .every(let interval):
-            return "Every \(durationText(interval))"
-        case .daily(let hour, let minute):
-            return String(format: "Daily at %02d:%02d", hour, minute)
-        }
-    }
-
-    private func durationText(_ interval: TimeInterval) -> String {
-        let seconds = Int(interval)
-        if seconds % 86400 == 0 { return "\(seconds / 86400)d" }
-        if seconds % 3600 == 0 { return "\(seconds / 3600)h" }
-        if seconds % 60 == 0 { return "\(seconds / 60)m" }
-        return "\(seconds)s"
-    }
-
-    private func evidenceText(_ record: AutomationRunRecord) -> String {
-        var parts = [
-            "trigger \(record.trigger.rawValue)",
-            "scheduled for "
-                + record.scheduledFor.formatted(
-                    date: .abbreviated,
-                    time: .standard
-                ),
-        ]
-        if record.late { parts.append("late") }
-        parts.append(
-            record.delivered
-                ? "delivered"
-                : "dropped — no live plugin took it"
-        )
-        return parts.joined(separator: " · ")
-    }
-}
-
-private extension AutomationScheduler.ScheduleListing {
-    /// View identity for the settings list: (plugin, schedule) is unique by the
-    /// manifest's own duplicate-id rule.
-    var rowID: String {
-        pluginID.rawValue + "/" + spec.id
     }
 }
 
@@ -307,6 +158,7 @@ private extension AutomationScheduler.ScheduleListing {
 /// The "CLI" settings page: an Install button that copies the self-contained `tenon-cli` binary
 /// into `~/.local/bin` so agents and scripts can drive Tenon from any terminal.
 private struct CLISettingsDetail: View {
+    let instanceChannel: AppInstanceChannel
     @State private var installedPath: String?
     @State private var errorMessage: String?
 
@@ -330,7 +182,7 @@ private struct CLISettingsDetail: View {
                     Button(CLICommandInstaller.isInstalled ? "Reinstall Command" : "Install Command") {
                         install()
                     }
-                    .disabled(!CLICommandInstaller.canInstall)
+                    .disabled(!CLICommandInstaller.canInstall(in: instanceChannel))
 
                     if CLICommandInstaller.isInstalled {
                         Label("Installed", systemImage: "checkmark.circle.fill")
@@ -351,7 +203,12 @@ private struct CLISettingsDetail: View {
                         .textSelection(.enabled)
                 }
 
-                if !CLICommandInstaller.canInstall {
+                if instanceChannel == .staging {
+                    Label("Staging cannot replace production's global tenon-cli command.",
+                          systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.orange)
+                        .font(.caption)
+                } else if !CLICommandInstaller.canInstall(in: instanceChannel) {
                     Label("No tenon-cli binary is available in this build to install.",
                           systemImage: "exclamationmark.triangle.fill")
                         .foregroundStyle(.orange)
@@ -374,7 +231,7 @@ private struct CLISettingsDetail: View {
 
     private func install() {
         do {
-            installedPath = try CLICommandInstaller.install().path
+            installedPath = try CLICommandInstaller.install(in: instanceChannel).path
             errorMessage = nil
         } catch {
             errorMessage = "\(error)"
@@ -681,6 +538,13 @@ private struct ExtensionsDetail: View {
 
     var body: some View {
         Form {
+            Section {
+                Label(
+                    "Plugins run inside the Tenon process. Enable only code you trust.",
+                    systemImage: "exclamationmark.shield.fill"
+                )
+                .foregroundStyle(.orange)
+            }
             if host.plugins.isEmpty {
                 Section { Text("No plugins installed.").foregroundStyle(.secondary) }
             }

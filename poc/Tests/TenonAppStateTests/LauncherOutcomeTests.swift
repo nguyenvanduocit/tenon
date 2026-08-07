@@ -61,6 +61,94 @@ final class LauncherOutcomeTests: XCTestCase {
         XCTAssertEqual(outcome.errorMessage, "Intent is no longer available.")
     }
 
+    func testEmptyGridPlacementFillsTheExactReservedRectangle() async throws {
+        let fixture = makeHalfCanvasStore()
+        let target = GridRect(x: 6, y: 0, width: 6, height: 12)
+
+        let outcome = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: target
+        ) { scope in
+            let paneID = try! XCTUnwrap(scope.paneID)
+            XCTAssertEqual(fixture.store.catalog.slot(id: paneID)?.rect, target)
+            XCTAssertEqual(fixture.store.catalog.slot(id: paneID)?.content, .empty)
+            fixture.store.focusSlot(paneID)
+            fixture.store.openContent(.docs)
+            return try! self.success()
+        }
+
+        XCTAssertEqual(outcome, .ran)
+        XCTAssertEqual(fixture.store.catalog.slot(id: fixture.originalID)?.rect, fixture.originalRect)
+        XCTAssertEqual(
+            fixture.store.catalog.activeTab?.slots.first(where: { $0.id != fixture.originalID })?.content,
+            .docs
+        )
+        XCTAssertEqual(
+            fixture.store.catalog.activeTab?.slots.first(where: { $0.id != fixture.originalID })?.rect,
+            target
+        )
+    }
+
+    func testEmptyGridPlacementConsumesPaneFillingTabCreation() async throws {
+        let fixture = makeHalfCanvasStore()
+        let target = GridRect(x: 6, y: 0, width: 6, height: 12)
+        let originalTabCount = try XCTUnwrap(fixture.store.catalog.activeWorkspace?.tabs.count)
+
+        let outcome = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: target
+        ) { scope in
+            XCTAssertEqual(
+                EmptyGridLauncherPlacement.consumeReservedTabCreation(
+                    scope: scope,
+                    content: .changes,
+                    store: fixture.store
+                ),
+                .consumed
+            )
+            return try! self.success()
+        }
+
+        XCTAssertEqual(outcome, .ran)
+        XCTAssertEqual(fixture.store.catalog.activeWorkspace?.tabs.count, originalTabCount)
+        XCTAssertEqual(
+            fixture.store.catalog.activeTab?.slots.first(where: { $0.id != fixture.originalID })?.content,
+            .changes
+        )
+    }
+
+    func testEmptyGridFailureRemovesReservationWithoutExpandingItsNeighbor() async throws {
+        let fixture = makeHalfCanvasStore()
+
+        let outcome = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ) { _ in
+            self.failure(code: .denied)
+        }
+
+        XCTAssertEqual(outcome, .failed(code: "tenon.denied"))
+        XCTAssertEqual(fixture.store.catalog.activeTab?.slots.map(\.id), [fixture.originalID])
+        XCTAssertEqual(fixture.store.catalog.slot(id: fixture.originalID)?.rect, fixture.originalRect)
+        XCTAssertEqual(fixture.store.catalog.activeSlotID, fixture.originalID)
+    }
+
+    func testEmptyGridSuccessThatDoesNotFillTargetStaysOpenAndRollsBack() async throws {
+        let fixture = makeHalfCanvasStore()
+
+        let outcome = await EmptyGridLauncherPlacement.invoke(
+            in: fixture.store,
+            targetRect: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ) { _ in
+            try! self.success()
+        }
+
+        XCTAssertEqual(outcome, .targetNotFilled)
+        XCTAssertFalse(outcome.dismisses)
+        XCTAssertEqual(outcome.errorMessage, "This item could not fill this space.")
+        XCTAssertEqual(fixture.store.catalog.activeTab?.slots.map(\.id), [fixture.originalID])
+    }
+
     func testPlusPlacementScopesContentIntoAFreshTab() async throws {
         let store = WorkspaceStore()
         let originalTab = try XCTUnwrap(store.catalog.activeTab)
@@ -290,5 +378,32 @@ final class LauncherOutcomeTests: XCTestCase {
         )
         XCTAssertEqual(sourceTabs.count, 1)
         XCTAssertFalse(sourceTabs.flatMap(\.slots).contains { $0.content == .empty })
+    }
+
+    private func makeHalfCanvasStore() -> (
+        store: WorkspaceStore,
+        originalID: UUID,
+        originalRect: GridRect
+    ) {
+        let originalID = UUID()
+        let originalRect = GridRect(x: 0, y: 0, width: 6, height: 12)
+        let tab = Tab(
+            slots: [WorkspaceSlot(id: originalID, rect: originalRect, content: .terminal)],
+            activeSlotID: originalID
+        )
+        let workspace = Workspace(
+            name: "Test",
+            path: FileManager.default.temporaryDirectory,
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        return (
+            WorkspaceStore(catalog: WorkspaceCatalog(
+                workspaces: [workspace],
+                activeWorkspaceID: workspace.id
+            )),
+            originalID,
+            originalRect
+        )
     }
 }

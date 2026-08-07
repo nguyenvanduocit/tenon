@@ -386,6 +386,8 @@ public enum WorkspaceCatalogSnapshot {
             return ContentRecord(type: "changes")
         case .docs:
             return ContentRecord(type: "docs")
+        case .automation:
+            return ContentRecord(type: "automation")
         case .empty:
             return ContentRecord(type: "empty")
         case .file(let path):
@@ -430,6 +432,8 @@ public enum WorkspaceCatalogSnapshot {
             return .changes
         case "docs":
             return .docs
+        case "automation":
+            return .automation
         case "empty":
             return .empty
         case "file":

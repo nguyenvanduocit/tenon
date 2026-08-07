@@ -11,15 +11,29 @@ struct BuiltInSlotContentView: View {
     var pool: SurfacePool
     var agentLens: AgentLensPool
     var webPool: PluginWebSurfacePool
+    let agentSuggestions: [AgentLaunchSuggestion]
     /// Per-slot editor state (scroll/selection/unsaved buffer), so a file pane
     /// survives its view being destroyed on a pane switch (T-016).
     var editorStates: EditorPaneStateStore
+    /// Where a host-native pane publishes what it wants in the chrome header.
+    ///
+    /// This is the UP channel, and it is deliberately not the channel the header comes
+    /// down. `SpatialSlotCardView.configure` is handed an already-projected `PaneHeader`
+    /// VALUE to render; this store is what a content view WRITES into from
+    /// `.task`/`.onChange`/`.onAppear` when its own model changes. Neither direction can
+    /// serve the other: the card cannot see a content model, and the value it renders is
+    /// the projection's answer, which for a plugin pane never comes from this store at all
+    /// (`PaneHeaderProjection`).
+    var headerStore: PaneHeaderStore
     /// Present for real panes; nil in preview/detached rendering. An empty slot
     /// needs it to fill itself in place.
     var store: WorkspaceStore?
     /// Whether this slot is the active pane — an empty slot only claims the
     /// return-key default action while active.
     var isActive: Bool = false
+    var automation: AutomationScheduler
+    let automationSchedulesEnabled: Bool
+    let automationActions: AutomationPaneActions
 
     var body: some View {
         switch slot.content {
@@ -29,7 +43,18 @@ struct BuiltInSlotContentView: View {
                     for: slot.id,
                     workspacePath: workspacePath
                 ).makeView(),
-                model: agentLens.model(for: slot.id, terminalPool: pool)
+                focusTerminal: { pool.focusSurface(for: slot.id) },
+                model: agentLens.model(for: slot.id, terminalPool: pool),
+                workspaceRoot: workspacePath,
+                // A file cited in agent prose opens the host's own file pane through the
+                // typed workspace use case, the same service `workspace.content.open.v1`
+                // adapts for plugin, CLI, and agent callers.
+                openFile: store.map { store in
+                    { @MainActor @Sendable path in
+                        store.openContent(.file(path: path))
+                    }
+                },
+                headerStore: headerStore
             )
 
         case .file(let path):
@@ -45,15 +70,35 @@ struct BuiltInSlotContentView: View {
                 FileSlotView(
                     path: path,
                     slotID: slot.id,
-                    editorStates: editorStates
+                    editorStates: editorStates,
+                    headerStore: headerStore
                 )
             }
 
         case .changes:
-            ChangesPanelView(root: workspacePath, store: store)
+            ChangesPanelView(
+                root: workspacePath,
+                slotID: slot.id,
+                headerStore: headerStore,
+                store: store
+            )
 
         case .docs:
-            DocsSlotView(root: workspacePath)
+            DocsSlotView(
+                root: workspacePath,
+                slotID: slot.id,
+                headerStore: headerStore
+            )
+
+        case .automation:
+            AutomationSlotView(
+                slotID: slot.id,
+                host: host,
+                automation: automation,
+                schedulesEnabled: automationSchedulesEnabled,
+                actions: automationActions,
+                headerStore: headerStore
+            )
 
         case .pluginView(let pluginID, let viewID):
             PluginSlotView(
@@ -65,10 +110,20 @@ struct BuiltInSlotContentView: View {
             )
 
         case .diff(let request):
-            DiffSlotView(request: request)
+            DiffSlotView(
+                request: request,
+                slotID: slot.id,
+                headerStore: headerStore
+            )
 
         case .empty:
-            EmptySlotView(slotID: slot.id, store: store, isActive: isActive)
+            EmptySlotView(
+                slotID: slot.id,
+                store: store,
+                pool: pool,
+                agentSuggestions: agentSuggestions,
+                isActive: isActive
+            )
         }
     }
 }
@@ -92,17 +147,26 @@ enum SlotPresentation {
         case .changes:
             return "Changes — working tree"
         case .docs:
-            return "Docs — README"
+            // The kind, never the file. Which document a docs pane shows is decided by walking
+            // a candidate list against the filesystem inside `DocsModel`, and this function
+            // sees only `SlotContent`, which carries no filename — so any file named here
+            // would be a guess that goes wrong the moment the first candidate is absent. The
+            // pane publishes the real name into its chrome header (`DocsPaneHeader`).
+            return "Docs"
+        case .automation:
+            return "Automation"
         case .pluginView(let pluginID, let viewID):
             // An instanced view's tab shows the web page title for THIS pane (keyed by
             // its slot id); a singleton view falls back to a viewID-keyed title (T-012).
             // Failing both, the tab takes the title the plugin registered — the raw
             // viewID is a last resort, not the normal answer, or every plugin pane reads
             // like a variable name ("tree", "sessions") instead of "Files", "Sessions".
-            let registered = pluginViewSections.first {
-                $0.pluginID == pluginID && $0.viewID == viewID
-                    && ($0.instanceID == nil || $0.instanceID == slot.id.uuidString)
-            }?.title
+            let registered = PaneHeaderProjection.section(
+                pluginID: pluginID,
+                viewID: viewID,
+                slotID: slot.id,
+                in: pluginViewSections
+            )?.title
             var webTitle: String?
             for surfaceID in [slot.id.uuidString, viewID] {
                 guard let key = webPool.key(
@@ -134,6 +198,8 @@ enum SlotPresentation {
             return "±"
         case .docs:
             return "#"
+        case .automation:
+            return "↻"
         case .pluginView:
             return "◇"
         case .diff:
@@ -144,138 +210,18 @@ enum SlotPresentation {
     }
 }
 
-// MARK: - Git changes
-
-@MainActor
-@Observable
-private final class GitChangesModel {
-    private(set) var status = ""
-    private(set) var diff = ""
-    private(set) var error: String?
-    private(set) var isLoading = false
-
-    private var path: URL?
-    private var task: Task<Void, Never>?
-
-    func load(_ path: URL) {
-        let standardized = path.standardizedFileURL
-        guard self.path != standardized else { return }
-        self.path = standardized
-        task?.cancel()
-        status = ""
-        diff = ""
-        error = nil
-        isLoading = true
-
-        task = Task { [weak self] in
-            do {
-                async let status = CancellableProcess.run(
-                    executable: "/usr/bin/git",
-                    arguments: ["status", "--short", "--branch"],
-                    directory: standardized,
-                    outputLimit: 120_000
-                )
-                async let diff = CancellableProcess.run(
-                    executable: "/usr/bin/git",
-                    arguments: ["diff", "--no-ext-diff", "--unified=3", "--"],
-                    directory: standardized,
-                    outputLimit: 500_000
-                )
-                let values = try await (status, diff)
-                guard !Task.isCancelled else { return }
-                self?.status = values.0
-                self?.diff = values.1
-                self?.isLoading = false
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.isLoading = false
-                self?.error = error.localizedDescription
-            }
-        }
-    }
-
-    func cancel() {
-        task?.cancel()
-    }
-}
-
-private struct ChangesSlotView: View {
-    let root: URL
-    @State private var model = GitChangesModel()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text("WORKING TREE")
-                    .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
-                    .tracking(0.8)
-                Spacer()
-                if model.isLoading {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .foregroundStyle(TenonTheme.muted)
-            .padding(.horizontal, 10)
-            .frame(height: 27)
-            .background(TenonTheme.chromeRaised)
-
-            ScrollView([.horizontal, .vertical]) {
-                LazyVStack(alignment: .leading, spacing: 10) {
-                    Text(model.status.isEmpty ? "Clean working tree" : model.status)
-                        .foregroundStyle(TenonTheme.text)
-                    if !model.diff.isEmpty {
-                        Divider().overlay(TenonTheme.line)
-                        ForEach(
-                            Array(model.diff.split(separator: "\n", omittingEmptySubsequences: false).enumerated()),
-                            id: \.offset
-                        ) { _, line in
-                            Text(String(line))
-                                .foregroundStyle(diffColor(for: line))
-                        }
-                    }
-                }
-                .font(TenonTheme.utilityFont(size: 9))
-                .textSelection(.enabled)
-                .padding(10)
-                .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-
-            if let error = model.error {
-                Text(error)
-                    .font(TenonTheme.utilityFont(size: 9))
-                    .foregroundStyle(Color.red.opacity(0.82))
-                    .padding(8)
-            }
-        }
-        .background(TenonTheme.panel)
-        .onAppear { model.load(root) }
-        .onChange(of: root) { _, newRoot in model.load(newRoot) }
-        .onDisappear { model.cancel() }
-    }
-
-    private func diffColor(for line: Substring) -> Color {
-        if line.hasPrefix("+"), !line.hasPrefix("+++") {
-            return Color(nsColor: NSColor(hex: 0x61C28B))
-        }
-        if line.hasPrefix("-"), !line.hasPrefix("---") {
-            return Color(nsColor: NSColor(hex: 0xED6A5E))
-        }
-        if line.hasPrefix("@@") {
-            return TenonTheme.amber
-        }
-        return TenonTheme.muted
-    }
-}
-
 // MARK: - Docs
 
 @MainActor
 @Observable
 private final class DocsModel {
     private(set) var content = ""
-    private(set) var sourceName = "README.md"
     private(set) var error: String?
     private(set) var isLoading = false
+    /// The workspace-relative name of the file `content` came from — the candidate that won
+    /// the walk below, not a guess. It is published into the chrome header because this object
+    /// is the only thing in the process that knows the answer.
+    private(set) var document: String?
 
     private var path: URL?
     private var task: Task<Void, Never>?
@@ -287,29 +233,38 @@ private final class DocsModel {
         task?.cancel()
         content = ""
         error = nil
+        document = nil
         isLoading = true
 
         task = Task { [weak self] in
             do {
+                // The winning candidate comes back WITH the text rather than being recomputed
+                // for display: two walks of the same list against a filesystem that can change
+                // between them is two answers to one question.
                 let result = try await Task.detached(priority: .userInitiated) {
                     let candidates = ["README.md", "VISION.md", "docs/README.md"]
-                    guard let url = candidates
-                        .map({ standardized.appendingPathComponent($0) })
-                        .first(where: { FileManager.default.fileExists(atPath: $0.path) })
+                    guard let candidate = candidates
+                        .first(where: {
+                            FileManager.default.fileExists(
+                                atPath: standardized.appendingPathComponent($0).path
+                            )
+                        })
                     else {
                         throw CocoaError(.fileNoSuchFile)
                     }
+                    let url = standardized.appendingPathComponent(candidate)
                     let handle = try FileHandle(forReadingFrom: url)
                     defer { try? handle.close() }
                     let data = try handle.read(upToCount: 600_000) ?? Data()
                     return (
-                        url.lastPathComponent,
-                        String(data: data, encoding: .utf8) ?? "Document is not UTF-8 text."
+                        name: candidate,
+                        text: String(data: data, encoding: .utf8)
+                            ?? "Document is not UTF-8 text."
                     )
                 }.value
                 guard !Task.isCancelled else { return }
-                self?.sourceName = result.0
-                self?.content = result.1
+                self?.content = result.text
+                self?.document = result.name
                 self?.isLoading = false
             } catch {
                 guard !Task.isCancelled else { return }
@@ -324,25 +279,56 @@ private final class DocsModel {
     }
 }
 
+/// What the docs pane contributes to the ONE chrome header the card draws.
+///
+/// The document's name is here rather than in `SlotPresentation.title` because of what that
+/// function *is*: a pure map from `SlotContent` to a string, and `SlotContent.docs` carries no
+/// filename. Which document loaded is decided inside `DocsModel`, by walking a candidate list
+/// against the filesystem, and that answer lives in a `@State` model in the content view's own
+/// SwiftUI graph — the graph `PaneHeaderStore` exists to carry values OUT of. So the title
+/// names the KIND ("Docs") and this names the INSTANCE, which is the only division under which
+/// neither can be wrong.
+///
+/// That is not the restatement the second header row was doing. The strip this replaces printed
+/// `README.md` under a chrome header that had already printed `Docs — README`; here the chrome
+/// says one thing, the header says the other, and only one of them can know the filename.
+///
+/// Pure and headless for the same reason `DiffPaneHeader` is: the rule is arithmetic over the
+/// pane's state, and nothing about it needs a window to be true.
+enum DocsPaneHeader {
+    /// - Parameter document: the workspace-relative name of the file the pane actually loaded,
+    ///   or `nil` before the read lands and after one that found nothing.
+    static func header(document: String?, isLoading: Bool) -> PaneHeader {
+        PaneHeader(
+            leading: document.map {
+                [
+                    // `.head`, because a candidate can be a path (`docs/README.md`) and the
+                    // filename is the end that carries the meaning.
+                    .label(
+                        id: "document",
+                        text: $0,
+                        weight: .semibold,
+                        color: .text,
+                        truncation: .head,
+                        tooltip: nil
+                    ),
+                ]
+            } ?? [],
+            trailing: isLoading ? [.spinner(id: "loading")] : []
+        )
+    }
+}
+
 private struct DocsSlotView: View {
     let root: URL
+    /// Which pane this is, and where its header contribution goes UP — the projected value
+    /// comes back DOWN through `SpatialSlotCardView.configure`.
+    let slotID: UUID
+    let headerStore: PaneHeaderStore
     @State private var model = DocsModel()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            HStack {
-                Text(model.sourceName)
-                    .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
-                Spacer()
-                if model.isLoading {
-                    ProgressView().controlSize(.small)
-                }
-            }
-            .foregroundStyle(TenonTheme.muted)
-            .padding(.horizontal, 10)
-            .frame(height: 27)
-            .background(TenonTheme.chromeRaised)
-
             ScrollView([.horizontal, .vertical]) {
                 Text(model.content)
                     .font(TenonTheme.utilityFont(size: 10))
@@ -363,7 +349,18 @@ private struct DocsSlotView: View {
         .background(TenonTheme.panel)
         .onAppear { model.load(root) }
         .onChange(of: root) { _, newRoot in model.load(newRoot) }
-        .onDisappear { model.cancel() }
+        // Published from `.onChange`, never from `body`. `initial: true` covers the first
+        // frame, where the model is already loading and the pane has something to say.
+        .onChange(
+            of: DocsPaneHeader.header(document: model.document, isLoading: model.isLoading),
+            initial: true
+        ) { _, next in
+            headerStore.publish(next, for: slotID)
+        }
+        .onDisappear {
+            model.cancel()
+            headerStore.clear(for: slotID)
+        }
     }
 }
 
@@ -381,12 +378,12 @@ private struct PluginSlotView: View {
 
     /// This pane's section: the singleton (nil instance) or our own slot's instance.
     private func matches(_ section: PluginViewSection) -> Bool {
-        guard section.pluginID == pluginID,
-              section.viewID == viewID
-        else {
-            return false
-        }
-        return section.instanceID == nil || section.instanceID == slotID.uuidString
+        PaneHeaderProjection.matches(
+            section,
+            pluginID: pluginID,
+            viewID: viewID,
+            slotID: slotID
+        )
     }
 
     var body: some View {
@@ -446,13 +443,11 @@ private struct PluginSlotView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .padding(12)
                     }
+                    .scrollIndicators(.hidden, axes: .vertical)
                     .background(TenonTheme.panel)
                 }
             } else {
                 PluginRowsView(
-                    title: section.title,
-                    subtitle: section.subtitle,
-                    actions: section.actions,
                     items: section.items,
                     onSelect: { itemID, menuID in
                         Task { @MainActor in
@@ -542,84 +537,6 @@ private struct PluginTextFieldView: View {
     }
 }
 
-/// A `browserBar` node: a native browser toolbar the host paints pretty — SF Symbol
-/// back/forward/reload buttons and a Safari-style address field over a chrome material
-/// with a hairline bottom divider. It owns only presentation: every control routes to
-/// the plugin's `onSelect` through the fixed action ids `back`/`forward`/`reload`/`go`,
-/// so the plugin keeps all navigation logic and URL resolution (invariants 2 & 6). The
-/// address field mirrors the live URL the plugin pushes and re-syncs on redirects and
-/// link clicks, but never clobbers what the user is mid-typing.
-private struct BrowserBarView: View {
-    let url: String
-    let placeholder: String
-    let onAction: (String, String?) -> Void
-
-    @State private var draft: String = ""
-    @State private var hovered: String?
-    @FocusState private var addressFocused: Bool
-
-    var body: some View {
-        HStack(spacing: 3) {
-            navButton("chevron.left", "back")
-            navButton("chevron.right", "forward")
-            navButton("arrow.clockwise", "reload")
-            addressField
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(TenonTheme.chrome)
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(TenonTheme.line).frame(height: 1)
-        }
-    }
-
-    private func navButton(_ symbol: String, _ action: String) -> some View {
-        let isHovering = hovered == action
-        return Button { onAction(action, nil) } label: {
-            Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
-                .foregroundStyle(isHovering ? TenonTheme.text : TenonTheme.muted)
-                .frame(width: 26, height: 24)
-                .contentShape(RoundedRectangle(cornerRadius: 5))
-        }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(isHovering ? TenonTheme.text.opacity(0.07) : Color.clear)
-        )
-        .onHover { hovering in
-            if hovering { hovered = action }
-            else if hovered == action { hovered = nil }
-        }
-    }
-
-    private var addressField: some View {
-        HStack(spacing: 6) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(TenonTheme.muted.opacity(0.7))
-            TextField(placeholder, text: $draft)
-                .textFieldStyle(.plain)
-                .font(TenonTheme.interfaceFont(size: 12))
-                .foregroundStyle(TenonTheme.text)
-                .focused($addressFocused)
-                .onSubmit { onAction("go", draft) }
-        }
-        .padding(.horizontal, 9)
-        .padding(.vertical, 5)
-        .background(TenonTheme.chromeRaised)
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(addressFocused ? TenonTheme.amber.opacity(0.55) : TenonTheme.line, lineWidth: 1)
-        )
-        .onAppear { draft = url }
-        // Mirror real navigations (redirects, link clicks) into the field, but leave the
-        // user's in-progress typing alone.
-        .onChange(of: url) { _, newValue in if !addressFocused { draft = newValue } }
-    }
-}
-
 struct PluginNodeView: View {
     let node: PluginViewNode
     /// (action id, submitted text). Text is nil for a plain button, the typed value
@@ -647,15 +564,15 @@ struct PluginNodeView: View {
         case let .text(value, style, weight, color):
             Text(value)
                 .font(Self.font(style, weight))
-                .foregroundStyle(Self.color(color, style: style))
+                .foregroundStyle(ViewTokenPalette.color(color, style: style))
                 .textSelection(.enabled)
         case let .badge(value, tint):
             Text(value)
                 .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
-                .foregroundStyle(Self.color(tint, style: .caption))
+                .foregroundStyle(ViewTokenPalette.color(tint, style: .caption))
                 .padding(.horizontal, 6)
                 .padding(.vertical, 2)
-                .background(Self.color(tint, style: .caption).opacity(0.14))
+                .background(ViewTokenPalette.color(tint, style: .caption).opacity(0.14))
                 .clipShape(Capsule())
         case let .button(label, action, style):
             Button { onAction(action, nil) } label: {
@@ -706,13 +623,21 @@ struct PluginNodeView: View {
                 Spacer(minLength: 8)
                 Text(value)
                     .font(TenonTheme.interfaceFont(size: 11.5, weight: .medium))
-                    .foregroundStyle(tint == .default ? TenonTheme.text : Self.color(tint, style: .body))
+                    .foregroundStyle(
+                        tint == .default
+                            ? TenonTheme.text
+                            : ViewTokenPalette.color(tint, style: .body)
+                    )
                     .textSelection(.enabled)
             }
         case let .progress(value, tint):
             ProgressView(value: value)
                 .progressViewStyle(.linear)
-                .tint(tint == .default ? TenonTheme.amber : Self.color(tint, style: .body))
+                .tint(
+                    tint == .default
+                        ? TenonTheme.amber
+                        : ViewTokenPalette.color(tint, style: .body)
+                )
         case let .field(label, children):
             VStack(alignment: .leading, spacing: 4) {
                 Text(label)
@@ -736,8 +661,6 @@ struct PluginNodeView: View {
                             .foregroundStyle(TenonTheme.muted)
                     )
             }
-        case let .browserBar(url, placeholder):
-            BrowserBarView(url: url, placeholder: placeholder, onAction: onAction)
         }
     }
 
@@ -808,7 +731,25 @@ struct PluginNodeView: View {
         }
     }
 
-    private static func color(_ token: ColorToken, style: TextStyle) -> Color {
+}
+
+/// The ONE place a `ColorToken` becomes a `Color`.
+///
+/// `ColorToken` is the view vocabulary's own token enum, published by plugins and by built-in
+/// panes alike, and it is drawn in two places: the body, by `PluginNodeView`, and a pane's
+/// chrome header, by `PaneHeaderBar`. Two switches over one token enum is two answers to one
+/// question waiting to drift — the same shape invariant 6 forbids for semantics, in paint.
+///
+/// `style` is the only thing the two callers disagree about, and only for `.default`, which
+/// means "whatever unqualified text looks like here": primary in a title or a body line,
+/// secondary at caption scale. Header items draw at the pane title's 10 points — caption scale
+/// — so they pass `.caption` and an unqualified accessory reads as `muted`, leaving the pane's
+/// own name the primary text in that strip.
+enum ViewTokenPalette {
+    /// `@MainActor` because `.amber` follows the user's live accent preference, which the shell
+    /// owns; every caller is a SwiftUI body, which is already main-isolated.
+    @MainActor
+    static func color(_ token: ColorToken, style: TextStyle) -> Color {
         switch token {
         case .default: return style == .caption ? TenonTheme.muted : TenonTheme.text
         case .text: return TenonTheme.text
@@ -825,6 +766,8 @@ struct PluginNodeView: View {
 private struct EmptySlotView: View {
     let slotID: UUID
     var store: WorkspaceStore?
+    let pool: SurfacePool
+    let agentSuggestions: [AgentLaunchSuggestion]
     var isActive: Bool
 
     var body: some View {
@@ -832,95 +775,20 @@ private struct EmptySlotView: View {
             title: "This panel is empty",
             subtitle: "No terminal running yet",
             recents: store?.recent?.recent ?? [],
+            agentSuggestions: agentSuggestions,
             isDefaultAction: isActive,
-            onLaunch: { store?.setSlotContent(slotID, $0) }
+            onLaunch: { store?.setSlotContent(slotID, $0) },
+            onLaunchAgent: { suggestion in
+                guard let store else { return }
+                _ = AgentLaunchExecutor.run(
+                    suggestion,
+                    placement: .emptySlot(slotID),
+                    workspaceStore: store,
+                    terminalPool: pool
+                )
+            }
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(TenonTheme.ink)
-    }
-}
-
-// MARK: - Cancel-aware process capture
-
-private enum CancellableProcess {
-    static func run(
-        executable: String,
-        arguments: [String],
-        directory: URL,
-        outputLimit: Int
-    ) async throws -> String {
-        try Task.checkCancellation()
-        let process = Process()
-        let pipe = Pipe()
-        let buffer = ProcessOutputBuffer(limit: outputLimit)
-        process.executableURL = URL(fileURLWithPath: executable)
-        process.arguments = arguments
-        process.currentDirectoryURL = directory
-        process.standardOutput = pipe
-        process.standardError = pipe
-        pipe.fileHandleForReading.readabilityHandler = { handle in
-            let data = handle.availableData
-            if !data.isEmpty {
-                buffer.append(data)
-            }
-        }
-
-        return try await withTaskCancellationHandler {
-            try await withCheckedThrowingContinuation { continuation in
-                process.terminationHandler = { completed in
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    buffer.append(pipe.fileHandleForReading.readDataToEndOfFile())
-                    let text = buffer.string
-                    if completed.terminationStatus == 0 {
-                        continuation.resume(returning: text)
-                    } else {
-                        continuation.resume(throwing: NSError(
-                            domain: "Tenon.Process",
-                            code: Int(completed.terminationStatus),
-                            userInfo: [
-                                NSLocalizedDescriptionKey:
-                                    text.isEmpty ? "Command failed." : text,
-                            ]
-                        ))
-                    }
-                }
-                do {
-                    try Task.checkCancellation()
-                    try process.run()
-                } catch {
-                    pipe.fileHandleForReading.readabilityHandler = nil
-                    continuation.resume(throwing: error)
-                }
-            }
-        } onCancel: {
-            if process.isRunning {
-                process.terminate()
-            }
-        }
-    }
-}
-
-private final class ProcessOutputBuffer: @unchecked Sendable {
-    private let lock = NSLock()
-    private let limit: Int
-    private var data = Data()
-
-    init(limit: Int) {
-        self.limit = limit
-    }
-
-    func append(_ chunk: Data) {
-        guard !chunk.isEmpty else { return }
-        lock.lock()
-        defer { lock.unlock() }
-        let remaining = max(0, limit - data.count)
-        guard remaining > 0 else { return }
-        data.append(chunk.prefix(remaining))
-    }
-
-    var string: String {
-        lock.lock()
-        defer { lock.unlock() }
-        return String(data: data, encoding: .utf8) ?? "Command returned non-UTF-8 output."
     }
 }

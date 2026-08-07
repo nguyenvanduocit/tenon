@@ -1,14 +1,15 @@
 # Design — CLI support
 
-**Status:** accepted target; wire-v2 migration in progress · **Date:** 2026-07-25
+**Status:** accepted and implemented · **Reviewed:** 2026-08-06
 **Normative boundary:** [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md)
 **Intent kernel:** [`design-intent-bus.md`](design-intent-bus.md)
 
 ## Goal
 
-Tenon exposes one local Unix-domain socket and a `tenon-cli` binary. A human process or
-coding agent can discover authorized operations, invoke them, inspect workspace state,
-write to a terminal, read its viewport, and wait for a terminal condition.
+Each installed Tenon channel exposes one local Unix-domain socket, and Tenon ships a
+`tenon-cli` binary. A human process or coding agent can discover authorized operations,
+invoke them, inspect workspace state, write to a terminal, read its viewport, and wait for
+a terminal condition.
 
 The CLI is a public adapter over the same canonical intent contracts used by plugins and
 agents. It is not a second domain API.
@@ -75,15 +76,43 @@ The CLI principal is host-minted per accepted request/session. Its audience is `
 Discovery and invocation use the same policy revision; knowing an intent name never grants
 authority.
 
-## Transport and single instance
+## Transport and per-channel single instance
 
-- One well-known socket per user: `/tmp/tenon-<uid>/tenon.sock`.
-- Parent directory mode is `0700`; socket mode is `0600`.
+- The closed install channels are `production` and `staging`. Each is a singleton within
+  itself, and both may run concurrently.
+- Production retains the compatibility socket `/tmp/tenon-<uid>/tenon.sock`. Staging uses
+  `/tmp/tenon-staging-<uid>/tenon.sock`. Each directory owns its own `tenon.lock`.
+- A CLI launched from a neutral external shell defaults to production. Every Tenon pane
+  receives `TENON_SOCKET_PATH`, so pane-local CLI and agent calls target the instance that
+  owns that pane without adding channel data to the wire protocol. The intended channel
+  path is still injected when that instance's socket is degraded, so the request fails in
+  its own channel instead of falling back to production.
+- Global Codex and Claude hook configuration reads `TENON_AGENT_HOOK_SCRIPT` from the
+  launching terminal. Each pane supplies its owning channel's runtime script path, so the
+  shared hook configuration is channel-neutral and either app may be installed first.
+- The user-global `~/.local/bin/tenon-cli` installer is production-only. Staging uses the
+  CLI embedded in its own panes and cannot replace production's neutral-shell command.
+- Before bind, the parent path is verified as a real directory owned by the current user,
+  not a symlink, with mode `0700`; an unsafe pre-existing path fails closed. Socket mode is
+  `0600`.
+- `tenon.lock` is a regular, single-link file owned by the current user with mode `0600`;
+  it is opened without following symlinks, locked non-blocking, marked `FD_CLOEXEC`, and held
+  until the primary has closed and removed its socket. A contender that cannot take the lock
+  is secondary even while the winner is between `bind` and `listen`.
+- A process that cannot safely open or verify its channel claim is unavailable and stops
+  startup before workspace state is assembled. Live-instance probes and activation require
+  the pathname itself to be a socket node; they never follow a socket-path symlink.
+- The lock file keeps one stable inode and is not deleted. Process exit releases its advisory
+  lock, so a stale crash recovers without creating a second lock generation.
 - Listening and accepted descriptors use `FD_CLOEXEC` so spawned terminal processes cannot
   inherit the control channel.
-- A secondary app launch connects to the socket, sends `app.focus`, and exits before
-  constructing a second UI.
-- A stale socket is removed only after a failed live-instance probe.
+- A secondary launch in the same channel sends `app.focus` and exits from concurrent
+  startup preparation before hook installation or durable runtime/store construction.
+  SwiftUI may briefly show the bootstrap progress window that started that preparation;
+  it never assembles a second workspace UI. A launch in the other channel owns a different
+  claim and continues normally.
+- A stale socket is removed only by the claim owner after a failed live-instance probe, and
+  only when `lstat` proves the path is a socket; regular files and symlinks are preserved.
 - One connection carries one request and one response.
 - Framing is newline-delimited JSON with an incrementally enforced payload bound.
 - Local trust is explicit: a process running as the same macOS user can drive Tenon.
@@ -247,9 +276,9 @@ This is a finite snapshot query, not a stream. Input is `{}` and the target pane
 }
 ```
 
-The contract promises the visible viewport only. It MUST NOT claim full scrollback until a
-Ghostty-backed implementation can prove it. Large future history is a bounded resource,
-not a larger inline intent output.
+The contract promises the visible viewport only. Full history uses the separately bounded,
+cursor-paged `terminal.scrollback.read.v1` contract; viewport read MUST NOT silently grow
+into an unbounded inline result.
 
 ### `terminal.wait.v1`
 
@@ -316,7 +345,12 @@ The CLI boundary is accepted only when all of these pass:
 - `workspace.state.v1`, `terminal.write.v1`, `workspace.pane.focus.v1`,
   `terminal.viewport.read.v1`, and `terminal.wait.v1` pass end-to-end through the socket;
 - a wait can be cancelled and releases its observer exactly once;
-- a second app launch focuses the primary and exits;
+- production and staging can both become primary, while a second launch in either channel
+  focuses only that channel's primary and exits;
+- production and staging use distinct Application Support roots, including workspace,
+  plugin, runtime/idempotency, user-plugin, and palette-frecency state;
+- degraded staging panes retain the staging socket target, and shared agent-hook config
+  resolves the channel-local hook script from the pane environment;
 - socket permissions and `FD_CLOEXEC` are asserted;
 - the full Swift 6 build and test suite pass.
 

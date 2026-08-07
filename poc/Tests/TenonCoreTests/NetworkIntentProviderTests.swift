@@ -293,6 +293,26 @@ final class NetworkIntentProviderTests: XCTestCase {
             )
         )
     }
+
+    func testAddressClassificationRejectsSpecialPurposeRanges() {
+        for address in [
+            "100.64.0.1", "192.0.0.1", "192.0.2.1", "198.18.0.1",
+            "198.51.100.1", "203.0.113.1", "240.0.0.1",
+            "2001:db8::1", "2001::1", "2001:20::1", "64:ff9b:1::1",
+            "64:ff9b::127.0.0.1", "2002:7f00:1::1",
+        ] {
+            XCTAssertFalse(
+                SystemNetworkEndpointResolver.isPublicAddress(address),
+                address
+            )
+        }
+        for address in ["93.184.216.34", "2606:4700:4700::1111"] {
+            XCTAssertTrue(
+                SystemNetworkEndpointResolver.isPublicAddress(address),
+                address
+            )
+        }
+    }
 }
 
 private final class LoopbackHTTPServer: @unchecked Sendable {

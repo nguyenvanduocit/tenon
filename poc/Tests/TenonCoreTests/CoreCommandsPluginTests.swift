@@ -29,6 +29,7 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "Close Pane",
                 "Open Changes",
                 "Open Docs",
+                "Open Automation",
                 "Next Tab",
                 "Previous Tab",
                 "Focus Next Pane",
@@ -98,6 +99,7 @@ final class CoreCommandsPluginTests: XCTestCase {
             "dev.tenon.core-commands.pane.close.v1",
             "dev.tenon.core-commands.changes.open.v1",
             "dev.tenon.core-commands.docs.open.v1",
+            "dev.tenon.core-commands.automation.open.v1",
             "dev.tenon.core-commands.tab.next.v1",
             "dev.tenon.core-commands.tab.previous.v1",
             "dev.tenon.core-commands.pane.focus-next.v1",
@@ -131,10 +133,20 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "workspace.pane.close.v1",
                 "workspace.tab.create.v1",
                 "workspace.tab.create.v1",
+                "workspace.tab.create.v1",
                 "workspace.tab.next.v1",
                 "workspace.tab.previous.v1",
                 "workspace.pane.focus-next.v1",
             ]
+        )
+        let recordedRequests = await recorder.allRequests()
+        XCTAssertEqual(
+            recordedRequests[7].input,
+            .object([
+                "content": .object([
+                    "kind": .string("automation")
+                ])
+            ])
         )
         _ = await runtime.shutdown()
     }
@@ -230,7 +242,7 @@ final class CoreCommandsPluginTests: XCTestCase {
             input: .object([:]),
             caller: IntentPrincipal(
                 id: "tests",
-                kind: .palette,
+                kind: .user,
                 sessionRevision: 1
             ),
             scope: InvocationScope(),
@@ -285,5 +297,9 @@ private actor NestedRequestRecorder {
 
     func intentNames() -> [String] {
         requests.map(\.intentID.rawValue)
+    }
+
+    func allRequests() -> [IntentProviderSendRequest] {
+        requests
     }
 }

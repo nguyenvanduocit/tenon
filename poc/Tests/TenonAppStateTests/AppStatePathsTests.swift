@@ -4,6 +4,56 @@ import XCTest
 
 @MainActor
 final class AppStatePathsTests: XCTestCase {
+    func testStagingCannotReplaceTheProductionGlobalCLI() {
+        XCTAssertFalse(CLICommandInstaller.canInstall(in: .staging))
+        XCTAssertThrowsError(try CLICommandInstaller.install(in: .staging)) { error in
+            guard case .productionOnly? = error as? CLICommandInstaller.InstallError else {
+                return XCTFail("expected productionOnly, got \(error)")
+            }
+        }
+    }
+
+    func testProductionAndStagingResolveDistinctDurableStateRoots() throws {
+        let root = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let inventoryRoot = root.appendingPathComponent("plugins", isDirectory: true)
+        let applicationSupport = root.appendingPathComponent(
+            "Application Support",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+        try FileManager.default.createDirectory(
+            at: inventoryRoot,
+            withIntermediateDirectories: true
+        )
+
+        let production = try AppStatePaths.resolve(
+            instanceChannel: .production,
+            applicationSupportDirectory: applicationSupport,
+            bundledPluginsRoot: inventoryRoot
+        )
+        let staging = try AppStatePaths.resolve(
+            instanceChannel: .staging,
+            applicationSupportDirectory: applicationSupport,
+            bundledPluginsRoot: inventoryRoot
+        )
+
+        XCTAssertEqual(
+            production.stateRoot,
+            applicationSupport
+                .appendingPathComponent("Tenon", isDirectory: true)
+                .appendingPathComponent("state", isDirectory: true)
+        )
+        XCTAssertEqual(
+            staging.stateRoot,
+            applicationSupport
+                .appendingPathComponent("Tenon Staging", isDirectory: true)
+                .appendingPathComponent("state", isDirectory: true)
+        )
+        XCTAssertNotEqual(production.stateRoot, staging.stateRoot)
+        XCTAssertNotEqual(production.commandFrecencyFile, staging.commandFrecencyFile)
+    }
+
     func testEnvironmentOverrideChangesOnlyPluginInventoryRoot() throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
@@ -110,7 +160,7 @@ final class AppStatePathsTests: XCTestCase {
         XCTAssertEqual(consents, [])
     }
 
-    func testConstructionFailureDoesNotRecordRecentWorkspace() throws {
+    func testConstructionFailureDoesNotRecordRecentWorkspace() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let inventoryRoot = root.appendingPathComponent(
@@ -140,7 +190,12 @@ final class AppStatePathsTests: XCTestCase {
         let recentWorkspaces = paths.workspaceStateRoot
             .appendingPathComponent(".recent-workspaces.json")
 
-        XCTAssertThrowsError(try AppComposition(paths: paths))
+        do {
+            _ = try await AppComposition.make(paths: paths)
+            XCTFail("expected malformed plugin persistence to fail construction")
+        } catch {
+            // Expected: construction fails without recording the launch as recent.
+        }
         XCTAssertFalse(
             FileManager.default.fileExists(atPath: recentWorkspaces.path)
         )
@@ -177,7 +232,7 @@ final class AppStatePathsTests: XCTestCase {
         )
         let recentWorkspaces = paths.workspaceStateRoot
             .appendingPathComponent(".recent-workspaces.json")
-        let composition = try AppComposition(paths: paths)
+        let composition = try await AppComposition.make(paths: paths)
 
         await composition.start()
 
@@ -262,7 +317,7 @@ final class AppStatePathsTests: XCTestCase {
 
     /// End to end through the real composition: whatever the authoring flow is handed
     /// is writable and outside the bundle.
-    func testCompositionOffersAWritableInventoryOutsideTheBundle() throws {
+    func testCompositionOffersAWritableInventoryOutsideTheBundle() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bundledRoot = root
@@ -284,7 +339,7 @@ final class AppStatePathsTests: XCTestCase {
             bundledPluginsRoot: bundledRoot
         )
 
-        let composition = try AppComposition(paths: paths)
+        let composition = try await AppComposition.make(paths: paths)
         let writable = composition.host.writableInventoryRoot
 
         XCTAssertEqual(writable, paths.userPluginInventoryRoot)
@@ -301,7 +356,7 @@ final class AppStatePathsTests: XCTestCase {
     /// `Tenon.app` and broke its signature. Everything else in this task is the
     /// machinery that lets this line have a correct answer to give.
     @MainActor
-    func testCreateWithAIStartsTheAgentOutsideTheAppBundle() throws {
+    func testCreateWithAIStartsTheAgentOutsideTheAppBundle() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bundledRoot = root
@@ -322,7 +377,7 @@ final class AppStatePathsTests: XCTestCase {
             ),
             bundledPluginsRoot: bundledRoot
         )
-        let composition = try AppComposition(paths: paths)
+        let composition = try await AppComposition.make(paths: paths)
 
         composition.openAutomationAuthoringPane()
 
@@ -400,7 +455,7 @@ final class AppStatePathsTests: XCTestCase {
             applicationSupportDirectory: applicationSupport,
             bundledPluginsRoot: inventoryRoot
         )
-        let composition = try AppComposition(paths: paths)
+        let composition = try await AppComposition.make(paths: paths)
 
         await composition.start()
         let started = composition.isStarted

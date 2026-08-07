@@ -316,7 +316,7 @@ final class PaletteProviderTests: XCTestCase {
                     PluginIntentProvision(
                         name: try IntentID(Self.intentName),
                         title: "Open",
-                        audiences: [.plugin, .palette],
+                        audiences: [.plugin, .user],
                         effects: try IntentEffects(
                             kind: .read,
                             idempotency: .none,
@@ -403,7 +403,7 @@ final class PaletteProviderTests: XCTestCase {
               {
                 "name": "\(Self.intentName)",
                 "title": "Open",
-                "audiences": ["plugin", "palette"],
+                "audiences": ["plugin", "user"],
                 "effects": {
                   "kind": "read",
                   "idempotency": "none",

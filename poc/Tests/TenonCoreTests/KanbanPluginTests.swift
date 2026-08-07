@@ -583,8 +583,8 @@ final class KanbanPluginTests: XCTestCase {
             let views = await runtime.snapshot().views
             let a = views.first { $0.instanceID == Fixture.paneA }
             let b = views.first { $0.instanceID == Fixture.paneB }
-            return a?.subtitle == Self.rootA + "/.kanban/board.md"
-                && b?.subtitle == Self.rootB + "/.kanban/board.md"
+            return Self.publishedBoardPath(of: a) == Self.rootA + "/.kanban/board.md"
+                && Self.publishedBoardPath(of: b) == Self.rootB + "/.kanban/board.md"
         }
         XCTAssertTrue(bothRooted)
 
@@ -1240,6 +1240,16 @@ final class KanbanPluginTests: XCTestCase {
             .first { $0.instanceID == instance }?.modal
     }
 
+    /// The board this pane says it is showing, read off the `board` label the view publishes
+    /// into its pane's chrome header — the one thing two panes of this view display
+    /// differently, and so the observable this file's per-workspace rooting proof stands on.
+    private static func publishedBoardPath(of view: PluginViewInfo?) -> String? {
+        guard case let .label(_, text, _, _, _, _) = view?.header.leading.first else {
+            return nil
+        }
+        return text
+    }
+
     private static func firstScroll(in node: PluginViewNode) -> PluginViewNode? {
         if case .scroll = node { return node }
         for child in children(of: node) {
@@ -1538,6 +1548,19 @@ private actor KanbanBridge: KanbanIntentBridge {
                 },
                 selectedID: selectedID
             )
+        case "workspace.pane.owner.v1":
+            guard let owner = KanbanStateSnapshot.owner(
+                workspaces: workspaces.map {
+                    (id: $0.id, path: $0.path, tabID: $0.tabID, paneID: $0.paneID)
+                },
+                paneID: request.input.objectValue?["paneID"]?.stringValue
+            ) else {
+                return KanbanFileRead.failure(
+                    code: "dev.tenon.core.workspace-unavailable",
+                    reason: "pane-unknown"
+                )
+            }
+            value = owner
         case "filesystem.file.read.v1":
             let input = request.input.objectValue
             guard let path = input?["path"]?.stringValue else {
@@ -1665,18 +1688,30 @@ private actor OnDiskBridge: KanbanIntentBridge {
     func resetReadCount() { reads = 0 }
 
     func send(_ request: PluginIntentSendRequest) -> IntentResult {
+        let workspaces = [(
+            id: "AAAAAAAA-0000-0000-0000-000000000041",
+            path: workspacePath,
+            tabID: "AAAAAAAA-1111-0000-0000-000000000041",
+            paneID: "AAAAAAAA-2222-0000-0000-000000000041"
+        )]
         let value: IntentValue
         switch request.intentID.rawValue {
         case "workspace.state.v1":
             value = KanbanStateSnapshot.value(
-                workspaces: [(
-                    id: "AAAAAAAA-0000-0000-0000-000000000041",
-                    path: workspacePath,
-                    tabID: "AAAAAAAA-1111-0000-0000-000000000041",
-                    paneID: "AAAAAAAA-2222-0000-0000-000000000041"
-                )],
+                workspaces: workspaces,
                 selectedID: "AAAAAAAA-0000-0000-0000-000000000041"
             )
+        case "workspace.pane.owner.v1":
+            guard let owner = KanbanStateSnapshot.owner(
+                workspaces: workspaces,
+                paneID: request.input.objectValue?["paneID"]?.stringValue
+            ) else {
+                return KanbanFileRead.failure(
+                    code: "dev.tenon.core.workspace-unavailable",
+                    reason: "pane-unknown"
+                )
+            }
+            value = owner
         case "filesystem.file.read.v1":
             let input = request.input.objectValue
             guard let path = input?["path"]?.stringValue,
@@ -1795,6 +1830,24 @@ private enum KanbanFileWrite {
 }
 
 private enum KanbanStateSnapshot {
+    /// Sourced from the same fixture tuples `value(workspaces:selectedID:)` consumes, so
+    /// the snapshot and the pane→workspace edge can never disagree about who owns what.
+    static func owner(
+        workspaces: [(id: String, path: String, tabID: String, paneID: String)],
+        paneID: String?
+    ) -> IntentValue? {
+        guard let paneID,
+              let workspace = workspaces.first(where: { $0.paneID == paneID })
+        else {
+            return nil
+        }
+        return .object([
+            "workspaceID": .string(workspace.id),
+            "workspacePath": .string(workspace.path),
+            "tabID": .string(workspace.tabID),
+        ])
+    }
+
     static func value(
         workspaces: [(id: String, path: String, tabID: String, paneID: String)],
         selectedID: String

@@ -1,5 +1,4 @@
 import Foundation
-import TenonIntentCore
 
 /// One explicit invocation crossing the local CLI control socket.
 ///

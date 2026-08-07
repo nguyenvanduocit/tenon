@@ -98,12 +98,16 @@ final class AgentFleetIntegrationTests: XCTestCase {
         let pool = SurfacePool(backendName: "Fleet") { slotID, _ in
             registry.surface(for: slotID)
         }
+        let userInterface = PluginUIState()
         let runtime = try AppIntentRuntime(
-            stateRoot: stateRoot,
+            kernel: IntentKernelComponents(
+                persistence: try IntentSQLiteIdempotencyPersistence.inMemory(),
+                confirmationAuthorizer: userInterface.confirmationAuthorizer()
+            ),
             workspaceStore: store,
             terminalSurfaces: pool,
             webSurfaces: PluginWebSurfacePool(),
-            userInterface: PluginUIState()
+            userInterface: userInterface
         )
         let host = try PluginHost(
             pluginsRoot: plugins,
@@ -174,8 +178,17 @@ final class AgentFleetIntegrationTests: XCTestCase {
     private static let mainJS = """
     tenon.events.on("workspace.selected", async function () {
       var runs = await Promise.all([
-        tenon.agents.run({ command: "echo", arguments: ["alpha"], timeoutMs: 6000 }),
-        tenon.agents.run({ command: "echo", arguments: ["beta"], timeoutMs: 6000 })
+        // 60s, not 6s. The regression this test guards is UNBOUNDED BLOCKING, not
+        // slowness: when the wait lane was serial, beta's wait queued behind alpha's and
+        // then snapshotted a baseline that already counted beta's own finish, so it waited
+        // for a second finish that never comes — it fails at any timeout whatsoever. A
+        // generous budget therefore costs the test nothing, while a tight one made it fail
+        // on a loaded machine, which is precisely the machine that runs agent fleets.
+        // Measured 2026-08-07: green in ~2s in isolation, red at 6s inside a full suite
+        // under load average 22. A falsification criterion that is itself flaky falsifies
+        // nothing.
+        tenon.agents.run({ command: "echo", arguments: ["alpha"], timeoutMs: 60000 }),
+        tenon.agents.run({ command: "echo", arguments: ["beta"], timeoutMs: 60000 })
       ]);
       var parts = [];
       for (var i = 0; i < runs.length; i++) {

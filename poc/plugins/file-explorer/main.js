@@ -1,7 +1,7 @@
 // file-explorer — a declarative native file tree backed only by canonical intents.
 //
 // Instanced (T-012 model): every pane owns an independent tree. A tree's root comes from
-// the workspace that OWNS its pane — resolved through `workspace.state.v1` — so the
+// the workspace that OWNS its pane — resolved through `workspace.pane.owner.v1` — so the
 // globally selected workspace can change freely without touching an inactive pane's state.
 
 var VIEW = "tree";
@@ -52,25 +52,11 @@ function logFailure(operation, result) {
   tenon.log("file-explorer: " + operation + " failed: " + code);
 }
 
-// The workspace that owns a pane: pane → tab → workspace, from the public state snapshot.
-async function owningWorkspace(instanceID, call) {
-  var result = call
-    ? await call.send("workspace.state.v1", { limit: 256 })
-    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
+// The workspace that owns a pane, resolved by the host.
+async function owningWorkspace(instanceID, call = tenon.intents) {
+  var result = await call.send("workspace.pane.owner.v1", { paneID: instanceID });
   if (!result.ok) return { id: null, path: "" };
-  var nodes = result.value.nodes || [];
-  var workspacePaths = {};
-  var tabWorkspace = {};
-  var paneTab = null;
-  for (var i = 0; i < nodes.length; i++) {
-    var node = nodes[i];
-    if (node.kind === "workspace") workspacePaths[node.id] = node.path || "";
-    if (node.kind === "tab") tabWorkspace[node.id] = node.workspaceID;
-    if (node.kind === "pane" && node.id === instanceID) paneTab = node.tabID;
-  }
-  var workspaceId = paneTab ? tabWorkspace[paneTab] : null;
-  if (!workspaceId) return { id: null, path: "" };
-  return { id: workspaceId, path: workspacePaths[workspaceId] || "" };
+  return { id: result.value.workspaceID, path: result.value.workspacePath };
 }
 
 function resolveRoot(st) {
@@ -99,15 +85,13 @@ var DIRECTORY_MENU = [
   { id: "trash", label: "Move to Trash", destructive: true }
 ];
 
-async function listDirectory(path, call) {
+async function listDirectory(path, call = tenon.intents) {
   var entries = [];
   var cursor = null;
   do {
     var input = { path: path, limit: 256 };
     if (cursor) input.cursor = cursor;
-    var result = call
-      ? await call.send("filesystem.directory.list.v1", input)
-      : await tenon.intents.send("filesystem.directory.list.v1", input);
+    var result = await call.send("filesystem.directory.list.v2", input);
     if (!result.ok) {
       logFailure("list " + path, result);
       return null;
@@ -118,7 +102,7 @@ async function listDirectory(path, call) {
   return entries;
 }
 
-async function appendRows(st, directory, depth, rows, generation, call) {
+async function appendRows(st, directory, depth, rows, generation, call = tenon.intents) {
   if (generation !== st.renderGeneration) return;
   st.directoryPaths[directory] = true;
 
@@ -171,7 +155,7 @@ async function appendRows(st, directory, depth, rows, generation, call) {
   }
 }
 
-async function render(st, call) {
+async function render(st, call = tenon.intents) {
   if (!st || !st.root) return;
   var generation = ++st.renderGeneration;
   var rows = [];
@@ -179,16 +163,24 @@ async function render(st, call) {
   await appendRows(st, st.root, 0, rows, generation, call);
   if (generation !== st.renderGeneration) return;
   if (panes[st.id] !== st) return;
+  // The chrome header already names the pane; what goes beside that name is the root this
+  // pane is rooted at — truncated from the head, so a long path keeps the tail that says
+  // which directory it actually is — and the one control the view offers.
   tenon.views.set(VIEW, {
     title: tenon.path.basename(st.root),
-    subtitle: st.root,
-    actions: [
-      {
-        id: "reveal-root",
-        icon: "arrow.up.forward.app",
-        tooltip: "Reveal in Finder"
-      }
-    ],
+    header: {
+      leading: [
+        { type: "label", id: "root", text: st.root, color: "muted", truncation: "head" }
+      ],
+      trailing: [
+        {
+          type: "iconButton",
+          id: "reveal-root",
+          systemName: "arrow.up.forward.app",
+          tooltip: "Reveal in Finder"
+        }
+      ]
+    },
     items: rows
   }, st.id);
 }
@@ -357,16 +349,28 @@ tenon.views.onClose(VIEW, function (instanceID) {
 
 // Commands arrive without a pane; they mean the tree the human is looking at — the
 // instance owned by the selected workspace, or any instance when none is there.
-async function commandTarget(call) {
-  var result = call
-    ? await call.send("workspace.state.v1", { limit: 256 })
-    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
+// Bounds on one snapshot walk (invariant 10). `workspace.state.v1` pages at up to 256
+// nodes a reply, so MAX_STATE_PAGES reaches 4096 nodes — past any real workspace tree.
+var MAX_STATE_PAGES = 16;
+
+async function commandTarget(call = tenon.intents) {
+  // Every page, not just the first. `selected` is a flag on one node among all of them,
+  // so stopping at the default 128-node page silently retargeted the command to whatever
+  // tree happened to be on page one — the same defect `workspace.pane.owner.v1` removed
+  // from the pane→workspace join.
   var selected = null;
-  if (result.ok) {
+  var cursor = null;
+  for (var page = 0; page < MAX_STATE_PAGES && !selected; page++) {
+    var input = { limit: 256 };
+    if (cursor) input.cursor = cursor;
+    var result = await call.send("workspace.state.v1", input);
+    if (!result.ok) break;
     var nodes = result.value.nodes || [];
     for (var i = 0; i < nodes.length; i++) {
       if (nodes[i].kind === "workspace" && nodes[i].selected) selected = nodes[i].id;
     }
+    cursor = result.value.nextCursor;
+    if (!cursor) break;
   }
   var list = paneList();
   for (var j = 0; j < list.length; j++) {

@@ -44,6 +44,18 @@ final class AutomationRunHistoryTests: XCTestCase {
         )
     }
 
+    func testRecordsHaveStableDistinctIdentityEvenWhenEvidenceMatches() {
+        let first = record(schedule: "same", firedAt: t0)
+        let second = record(schedule: "same", firedAt: t0)
+
+        XCTAssertNotEqual(first.id, second.id)
+
+        var history = AutomationRunHistory()
+        history.record(first)
+        history.record(second)
+        XCTAssertEqual(history.records.map(\.id), [second.id, first.id])
+    }
+
     // MARK: - Helpers
 
     private func record(

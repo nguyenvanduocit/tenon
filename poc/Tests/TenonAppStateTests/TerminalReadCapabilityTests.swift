@@ -102,12 +102,16 @@ final class TerminalReadCapabilityTests: XCTestCase {
         let pool = SurfacePool(backendName: "Stub") { slotID, _ in
             registry.surface(for: slotID)
         }
+        let userInterface = PluginUIState()
         let runtime = try AppIntentRuntime(
-            stateRoot: stateRoot,
+            kernel: IntentKernelComponents(
+                persistence: try IntentSQLiteIdempotencyPersistence.inMemory(),
+                confirmationAuthorizer: userInterface.confirmationAuthorizer()
+            ),
             workspaceStore: store,
             terminalSurfaces: pool,
             webSurfaces: PluginWebSurfacePool(),
-            userInterface: PluginUIState()
+            userInterface: userInterface
         )
         let host = try PluginHost(
             pluginsRoot: plugins,

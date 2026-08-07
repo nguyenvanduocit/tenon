@@ -47,16 +47,14 @@ struct AgentLensCapabilities: OptionSet, Equatable, Sendable {
 }
 
 enum AgentLensMode: String, CaseIterable, Identifiable, Sendable {
-    case conversation
-    case activity
+    case session
     case terminal
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .conversation: "Conversation"
-        case .activity: "Activity"
+        case .session: "Session"
         case .terminal: "Terminal"
         }
     }
@@ -65,6 +63,7 @@ enum AgentLensMode: String, CaseIterable, Identifiable, Sendable {
 enum AgentEvidenceSource: String, Codable, Sendable {
     case transcript
     case nativeProtocol
+    case providerHook
     case terminalInput
     case terminalInference
 }
@@ -117,14 +116,35 @@ enum AgentMessageRole: String, Sendable {
     case assistant
     case reasoning
     case system
+    case developer
+}
+
+enum AgentMessageKind: String, Sendable {
+    case conversation
+    case instruction
+    case skill
 }
 
 struct AgentLensMessage: Identifiable, Equatable, Sendable {
     let id: String
     var role: AgentMessageRole
+    var kind: AgentMessageKind = .conversation
     var text: String
     var isStreaming: Bool
     var evidence: AgentEvidence
+}
+
+enum AgentToolKind: String, Sendable {
+    case generic
+    case command
+    case fileChange
+    case fileRead
+    case search
+    case webSearch
+    case plan
+    case skill
+    case subagent
+    case question
 }
 
 enum AgentToolState: String, Sendable {
@@ -137,6 +157,7 @@ enum AgentToolState: String, Sendable {
 struct AgentToolRun: Identifiable, Equatable, Sendable {
     let id: String
     var name: String
+    var kind: AgentToolKind = .generic
     var summary: String
     var detail: String
     var state: AgentToolState
@@ -155,11 +176,18 @@ enum AgentInteractionState: String, Sendable {
     case expired
 }
 
+struct AgentInteractionOption: Identifiable, Equatable, Sendable {
+    let id: String
+    let label: String
+    let detail: String
+}
+
 struct AgentInteractionRequest: Identifiable, Equatable, Sendable {
     let id: String
     let kind: AgentInteractionKind
     var title: String
     var detail: String
+    var options: [AgentInteractionOption] = []
     var state: AgentInteractionState
     var evidence: AgentEvidence
 }
@@ -188,23 +216,6 @@ enum AgentLensStatus: Equatable, Sendable {
     }
 }
 
-enum AgentActivityKind: String, Sendable {
-    case lifecycle
-    case message
-    case tool
-    case interaction
-    case diagnostic
-}
-
-struct AgentLensActivity: Identifiable, Equatable, Sendable {
-    let id: String
-    let kind: AgentActivityKind
-    let title: String
-    let detail: String
-    let occurredAt: Date
-    let evidence: AgentEvidence
-}
-
 enum AgentDiagnosticSeverity: String, Sendable {
     case info
     case warning
@@ -218,6 +229,81 @@ struct AgentLensDiagnostic: Identifiable, Equatable, Sendable {
     let evidence: AgentEvidence
 }
 
+struct AgentTimelineToolGroup: Identifiable, Equatable, Sendable {
+    let id: String
+    var tools: [AgentToolRun]
+
+    init(tool: AgentToolRun) {
+        id = "tools-\(tool.id)"
+        tools = [tool]
+    }
+
+    var kind: AgentToolKind { tools.first?.kind ?? .generic }
+
+    var title: String {
+        switch kind {
+        case .subagent: "Subagent workflow"
+        case .command: "Command"
+        case .fileChange: "File change"
+        case .webSearch: "Web search"
+        case .plan: "Plan"
+        default: tools.first?.name ?? "Tool"
+        }
+    }
+
+    var summary: String {
+        switch kind {
+        case .skill where tools.count > 1:
+            "Loaded \(tools.count) instruction chunks"
+        case .subagent:
+            "\(tools.count) coordinated \(tools.count == 1 ? "step" : "steps")"
+        case .plan:
+            "Execution checklist"
+        default:
+            tools.last(where: { !$0.summary.isEmpty })?.summary ?? ""
+        }
+    }
+
+    var state: AgentToolState {
+        if tools.contains(where: { $0.state == .failed }) { return .failed }
+        if tools.contains(where: { $0.state == .running }) { return .running }
+        if tools.contains(where: { $0.state == .declined }) { return .declined }
+        return .succeeded
+    }
+
+    var evidence: AgentEvidence? { tools.first?.evidence }
+
+    mutating func append(_ tool: AgentToolRun) {
+        tools.append(tool)
+    }
+
+    func canMerge(with tool: AgentToolRun) -> Bool {
+        switch (kind, tool.kind) {
+        case (.subagent, .subagent):
+            true
+        case (.skill, .skill):
+            tools.first?.name.caseInsensitiveCompare(tool.name) == .orderedSame
+        default:
+            false
+        }
+    }
+}
+
+enum AgentTimelineContent: Equatable, Sendable {
+    case message(AgentLensMessage)
+    case tools(AgentTimelineToolGroup)
+    case interaction(AgentInteractionRequest)
+    case diagnostic(AgentLensDiagnostic)
+}
+
+struct AgentTimelineItem: Identifiable, Equatable, Sendable {
+    let id: String
+    let occurredAt: Date
+    let sourceLocation: String
+    let sourceOffset: UInt64?
+    var content: AgentTimelineContent
+}
+
 struct AgentLensSnapshot: Equatable, Sendable {
     var provider: AgentProvider?
     var capabilities: AgentLensCapabilities = []
@@ -225,7 +311,6 @@ struct AgentLensSnapshot: Equatable, Sendable {
     var messages: [AgentLensMessage] = []
     var tools: [AgentToolRun] = []
     var interactions: [AgentInteractionRequest] = []
-    var activities: [AgentLensActivity] = []
     var diagnostics: [AgentLensDiagnostic] = []
     var transcriptPath: String?
     var earlierHistoryAvailable = false
@@ -233,6 +318,156 @@ struct AgentLensSnapshot: Equatable, Sendable {
     var renderRevision = 0
 
     static let empty = Self()
+
+    var contextMessages: [AgentLensMessage] {
+        messages.filter { $0.kind != .conversation }
+    }
+
+    var timelineItems: [AgentTimelineItem] {
+        var items: [AgentTimelineItem] = []
+        items.reserveCapacity(messages.count + tools.count + interactions.count + diagnostics.count)
+
+        for message in messages where message.kind == .conversation {
+            items.append(
+                AgentTimelineItem(
+                    id: "message-\(message.id)",
+                    occurredAt: message.evidence.capturedAt,
+                    sourceLocation: message.evidence.location,
+                    sourceOffset: message.evidence.byteOffset,
+                    content: .message(message)
+                )
+            )
+        }
+        for tool in tools {
+            items.append(
+                AgentTimelineItem(
+                    id: "tool-\(tool.id)",
+                    occurredAt: tool.evidence.capturedAt,
+                    sourceLocation: tool.evidence.location,
+                    sourceOffset: tool.evidence.byteOffset,
+                    content: .tools(AgentTimelineToolGroup(tool: tool))
+                )
+            )
+        }
+        for interaction in interactions {
+            items.append(
+                AgentTimelineItem(
+                    id: "interaction-\(interaction.id)",
+                    occurredAt: interaction.evidence.capturedAt,
+                    sourceLocation: interaction.evidence.location,
+                    sourceOffset: interaction.evidence.byteOffset,
+                    content: .interaction(interaction)
+                )
+            )
+        }
+        for diagnostic in diagnostics {
+            items.append(
+                AgentTimelineItem(
+                    id: "diagnostic-\(diagnostic.id)",
+                    occurredAt: diagnostic.evidence.capturedAt,
+                    sourceLocation: diagnostic.evidence.location,
+                    sourceOffset: diagnostic.evidence.byteOffset,
+                    content: .diagnostic(diagnostic)
+                )
+            )
+        }
+
+        items.sort { lhs, rhs in
+            if lhs.occurredAt != rhs.occurredAt { return lhs.occurredAt < rhs.occurredAt }
+            if lhs.sourceLocation != rhs.sourceLocation { return lhs.sourceLocation < rhs.sourceLocation }
+            if lhs.sourceOffset != rhs.sourceOffset {
+                return (lhs.sourceOffset ?? .max) < (rhs.sourceOffset ?? .max)
+            }
+            return lhs.id < rhs.id
+        }
+
+        var grouped: [AgentTimelineItem] = []
+        grouped.reserveCapacity(items.count)
+        for item in items {
+            guard case let .tools(nextGroup) = item.content,
+                  let nextTool = nextGroup.tools.first,
+                  let lastIndex = grouped.indices.last,
+                  case var .tools(previousGroup) = grouped[lastIndex].content,
+                  previousGroup.canMerge(with: nextTool)
+            else {
+                grouped.append(item)
+                continue
+            }
+            previousGroup.append(nextTool)
+            grouped[lastIndex].content = .tools(previousGroup)
+        }
+        return grouped
+    }
+
+    /// The Session view keeps completed execution history in the snapshot but projects
+    /// only the most recently started tool that is still running. Detailed execution
+    /// remains available in the terminal instead of accumulating in the conversation.
+    var sessionTimelineItems: [AgentTimelineItem] {
+        var items = timelineItems.filter { item in
+            guard case .tools = item.content else { return true }
+            return false
+        }
+        guard let tool = tools.last(where: { $0.state == .running }) else { return items }
+        items.append(
+            AgentTimelineItem(
+                id: "tool-\(tool.id)",
+                occurredAt: tool.evidence.capturedAt,
+                sourceLocation: tool.evidence.location,
+                sourceOffset: tool.evidence.byteOffset,
+                content: .tools(AgentTimelineToolGroup(tool: tool))
+            )
+        )
+        items.sort { lhs, rhs in
+            if lhs.occurredAt != rhs.occurredAt { return lhs.occurredAt < rhs.occurredAt }
+            if lhs.sourceLocation != rhs.sourceLocation { return lhs.sourceLocation < rhs.sourceLocation }
+            if lhs.sourceOffset != rhs.sourceOffset {
+                return (lhs.sourceOffset ?? .max) < (rhs.sourceOffset ?? .max)
+            }
+            return lhs.id < rhs.id
+        }
+        return items
+    }
+
+    var goalSummary: String {
+        guard let message = messages.last(where: {
+            $0.role == .user && $0.kind == .conversation
+        }) else { return "Waiting for your first instruction" }
+        return Self.summary(message.text, limit: 180)
+    }
+
+    var currentActionSummary: String {
+        if let request = interactions.last(where: { $0.state == .pending }) {
+            return request.title
+        }
+        if let tool = tools.last(where: { $0.state == .running }) {
+            return tool.summary.isEmpty ? tool.name : Self.summary(tool.summary, limit: 120)
+        }
+        if messages.last(where: { $0.role == .assistant })?.isStreaming == true {
+            return "Writing a response"
+        }
+        return switch status {
+        case .detecting: "Detecting the foreground agent"
+        case .unavailable: "Terminal is available"
+        case .ready: "Ready to work"
+        case .running: "Working"
+        case .waitingForUser: "Waiting for your decision"
+        case .completed: "Ready for a follow-up"
+        case .failed(let detail), .degraded(let detail): Self.summary(detail, limit: 120)
+        }
+    }
+
+    var pendingInteraction: AgentInteractionRequest? {
+        interactions.last(where: { $0.state == .pending })
+    }
+
+    private static func summary(_ value: String, limit: Int) -> String {
+        let normalized = value
+            .replacingOccurrences(of: "\n", with: " ")
+            .split(whereSeparator: \.isWhitespace)
+            .joined(separator: " ")
+        guard normalized.count > limit else { return normalized }
+        return String(normalized.prefix(limit)) + "…"
+    }
 }
 
 enum AgentLensEvent: Equatable, Sendable {
@@ -243,8 +478,12 @@ enum AgentLensEvent: Equatable, Sendable {
         transcriptPath: String?,
         evidence: AgentEvidence
     )
+    /// A transport proved itself at runtime — Claude Code's hooks only report tool
+    /// lifecycle and questions once they are actually installed and firing.
+    case capabilitiesGained(AgentLensCapabilities, evidence: AgentEvidence)
     case earlierHistoryAvailable(AgentEvidence)
     case userMessage(AgentLensMessage)
+    case contextMessage(AgentLensMessage)
     case assistantDelta(id: String, text: String, evidence: AgentEvidence)
     case assistantMessage(AgentLensMessage)
     case reasoning(AgentLensMessage)
@@ -271,14 +510,14 @@ enum AgentLensEvent: Equatable, Sendable {
 struct AgentLensReducer: Sendable {
     private static let messageCapacity = 600
     private static let toolCapacity = 240
-    private static let activityCapacity = 500
+    private static let interactionCapacity = 120
     private static let diagnosticCapacity = 40
 
     private(set) var snapshot = AgentLensSnapshot.empty
 
     mutating func apply(_ event: AgentLensEvent) {
         switch event {
-        case .reset(let source):
+        case .reset:
             let provider = snapshot.provider
             let capabilities = snapshot.capabilities
             let transcriptPath = snapshot.transcriptPath
@@ -287,44 +526,26 @@ struct AgentLensReducer: Sendable {
             snapshot.capabilities = capabilities
             snapshot.transcriptPath = transcriptPath
             snapshot.status = .degraded("Transcript was replaced; history reloaded")
-            appendActivity(
-                kind: .diagnostic,
-                title: "Transcript replaced",
-                detail: "The source restarted or rotated.",
-                evidence: source
-            )
 
-        case let .connected(provider, capabilities, transcriptPath, evidence):
+        case let .connected(provider, capabilities, transcriptPath, _):
             snapshot.provider = provider
             snapshot.capabilities = capabilities
             snapshot.transcriptPath = transcriptPath
             snapshot.status = .ready
             snapshot.canSend = capabilities.contains(.terminalInput) ||
                 capabilities.contains(.structuredInput)
-            appendActivity(
-                kind: .lifecycle,
-                title: "Connected to \(provider.displayName)",
-                detail: transcriptPath ?? "Native protocol",
-                evidence: evidence
-            )
 
-        case .earlierHistoryAvailable(let evidence):
+        case .capabilitiesGained(let capabilities, _):
+            snapshot.capabilities.formUnion(capabilities)
+
+        case .earlierHistoryAvailable:
             snapshot.earlierHistoryAvailable = true
-            appendActivity(
-                kind: .diagnostic,
-                title: "Earlier history available",
-                detail: "The live projection loaded a bounded recent window.",
-                evidence: evidence
-            )
 
         case .userMessage(let message):
             upsertMessage(message)
-            appendActivity(
-                kind: .message,
-                title: "User message",
-                detail: Self.preview(message.text),
-                evidence: message.evidence
-            )
+
+        case .contextMessage(let message):
+            upsertMessage(message)
 
         case let .assistantDelta(id, text, evidence):
             if let index = snapshot.messages.firstIndex(where: { $0.id == id }) {
@@ -350,31 +571,13 @@ struct AgentLensReducer: Sendable {
 
         case .assistantMessage(let message):
             upsertMessage(message)
-            appendActivity(
-                kind: .message,
-                title: "Assistant message",
-                detail: Self.preview(message.text),
-                evidence: message.evidence
-            )
 
         case .reasoning(let message):
             upsertMessage(message)
-            appendActivity(
-                kind: .message,
-                title: "Reasoning summary",
-                detail: Self.preview(message.text),
-                evidence: message.evidence
-            )
 
         case .toolStarted(let tool):
             upsertTool(tool)
             snapshot.status = .running
-            appendActivity(
-                kind: .tool,
-                title: "Started \(tool.name)",
-                detail: tool.summary,
-                evidence: tool.evidence
-            )
 
         case let .toolDelta(id, text, evidence):
             if let index = snapshot.tools.firstIndex(where: { $0.id == id }) {
@@ -387,47 +590,46 @@ struct AgentLensReducer: Sendable {
 
         case .toolFinished(let tool):
             upsertTool(tool)
-            appendActivity(
-                kind: .tool,
-                title: "\(tool.name) \(tool.state.rawValue)",
-                detail: tool.summary,
-                evidence: tool.evidence
-            )
 
         case .interactionRequested(let request):
             if let index = snapshot.interactions.firstIndex(where: { $0.id == request.id }) {
+                // The live hook raises a question the transcript describes again once the
+                // turn flushes. A decision already made is history, not a fresh prompt.
+                guard snapshot.interactions[index].state == .pending else {
+                    snapshot.interactions[index].evidence = stronger(
+                        snapshot.interactions[index].evidence,
+                        request.evidence
+                    )
+                    break
+                }
                 snapshot.interactions[index] = request
             } else {
                 snapshot.interactions.append(request)
+                if snapshot.interactions.count > Self.interactionCapacity {
+                    snapshot.interactions.removeFirst(
+                        snapshot.interactions.count - Self.interactionCapacity
+                    )
+                }
             }
             snapshot.status = .waitingForUser
-            appendActivity(
-                kind: .interaction,
-                title: request.title,
-                detail: request.detail,
-                evidence: request.evidence
-            )
 
         case let .interactionResolved(id, evidence):
-            if let index = snapshot.interactions.firstIndex(where: { $0.id == id }) {
-                snapshot.interactions[index].state = .answered
-                snapshot.interactions[index].evidence = stronger(
-                    snapshot.interactions[index].evidence,
-                    evidence
-                )
+            guard let index = snapshot.interactions.firstIndex(where: { $0.id == id }) else {
+                break
             }
-            if !snapshot.interactions.contains(where: { $0.state == .pending }) {
+            snapshot.interactions[index].state = .answered
+            snapshot.interactions[index].evidence = stronger(
+                snapshot.interactions[index].evidence,
+                evidence
+            )
+            if snapshot.status == .waitingForUser,
+               !snapshot.interactions.contains(where: { $0.state == .pending })
+            {
                 snapshot.status = .running
             }
 
-        case let .status(status, evidence):
+        case let .status(status, _):
             snapshot.status = status
-            appendActivity(
-                kind: .lifecycle,
-                title: status.title,
-                detail: Self.statusDetail(status),
-                evidence: evidence
-            )
 
         case .diagnostic(let diagnostic):
             snapshot.diagnostics.append(diagnostic)
@@ -439,12 +641,6 @@ struct AgentLensReducer: Sendable {
             if diagnostic.severity != .info {
                 snapshot.status = .degraded(diagnostic.message)
             }
-            appendActivity(
-                kind: .diagnostic,
-                title: diagnostic.severity.rawValue.capitalized,
-                detail: diagnostic.message,
-                evidence: diagnostic.evidence
-            )
         }
         snapshot.renderRevision &+= 1
     }
@@ -482,8 +678,24 @@ struct AgentLensReducer: Sendable {
     private mutating func upsertTool(_ tool: AgentToolRun) {
         if let index = snapshot.tools.firstIndex(where: { $0.id == tool.id }) {
             var replacement = tool
+            if replacement.kind == .generic, snapshot.tools[index].kind != .generic {
+                replacement.kind = snapshot.tools[index].kind
+            }
+            if replacement.name == "Tool", snapshot.tools[index].name != "Tool" {
+                replacement.name = snapshot.tools[index].name
+            }
             if replacement.detail.isEmpty {
                 replacement.detail = snapshot.tools[index].detail
+            }
+            if replacement.summary.isEmpty {
+                replacement.summary = snapshot.tools[index].summary
+            }
+            // The hook reports a call as it happens; the transcript describes the same call
+            // from its start, and arrives later. How a run ended is settled once.
+            if snapshot.tools[index].state != .running, replacement.state == .running {
+                replacement.state = snapshot.tools[index].state
+                replacement.exitCode = snapshot.tools[index].exitCode
+                if replacement.summary.isEmpty { replacement.summary = snapshot.tools[index].summary }
             }
             replacement.evidence = stronger(snapshot.tools[index].evidence, replacement.evidence)
             snapshot.tools[index] = replacement
@@ -495,44 +707,21 @@ struct AgentLensReducer: Sendable {
         }
     }
 
-    private mutating func appendActivity(
-        kind: AgentActivityKind,
-        title: String,
-        detail: String,
-        evidence: AgentEvidence
-    ) {
-        let identity = "\(kind.rawValue):\(evidence.location):\(evidence.byteOffset ?? 0):\(title)"
-        if snapshot.activities.last?.id == identity { return }
-        snapshot.activities.append(
-            AgentLensActivity(
-                id: identity,
-                kind: kind,
-                title: title,
-                detail: detail,
-                occurredAt: evidence.capturedAt,
-                evidence: evidence
-            )
-        )
-        if snapshot.activities.count > Self.activityCapacity {
-            snapshot.activities.removeFirst(snapshot.activities.count - Self.activityCapacity)
-        }
-    }
-
     private func stronger(_ current: AgentEvidence, _ candidate: AgentEvidence) -> AgentEvidence {
         if candidate.authority.rank > current.authority.rank { return candidate }
         if candidate.authority.rank < current.authority.rank { return current }
         if candidate.source == .nativeProtocol && current.source != .nativeProtocol {
             return candidate
         }
-        if current.source == .terminalInput && candidate.source == .transcript {
+        // The hook is first to know and the transcript is what a human can return to: it
+        // carries the byte offset and fingerprint that make a claim inspectable. So the
+        // durable record supersedes the live one for the same fact.
+        if candidate.source == .transcript,
+           current.source == .terminalInput || current.source == .providerHook
+        {
             return candidate
         }
         return current
-    }
-
-    private static func preview(_ value: String) -> String {
-        let normalized = value.replacingOccurrences(of: "\n", with: " ")
-        return capped(normalized, at: 180)
     }
 
     private static func capped(_ value: String, at limit: Int) -> String {
@@ -540,10 +729,4 @@ struct AgentLensReducer: Sendable {
         return String(value.prefix(limit)) + "…"
     }
 
-    private static func statusDetail(_ status: AgentLensStatus) -> String {
-        switch status {
-        case .failed(let detail), .degraded(let detail): detail
-        default: ""
-        }
-    }
 }

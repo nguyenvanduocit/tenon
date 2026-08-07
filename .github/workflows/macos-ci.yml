@@ -1,0 +1,55 @@
+name: macOS CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: macos-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  first-party:
+    runs-on: macos-15
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: poc
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Swift 6.2 toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app
+          swift --version
+
+      - name: Install project generator
+        run: brew install xcodegen
+
+      - name: Verify Ghostty setup integrity checks
+        run: scripts/test-setup-ghosttykit.sh
+
+      - name: Install verified Ghostty artifacts
+        run: scripts/setup-ghosttykit.sh
+
+      - name: Verify generated Xcode project is current
+        run: |
+          xcodegen generate
+          git diff --exit-code -- Tenon.xcodeproj
+
+      - name: Build first-party SwiftPM targets with warnings as errors
+        run: swift build
+
+      - name: Run headless test suite
+        run: swift test
+
+      - name: Build the Xcode application with warnings as errors
+        run: >-
+          xcodebuild build
+          -project Tenon.xcodeproj
+          -scheme Tenon
+          -configuration Debug
+          -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO

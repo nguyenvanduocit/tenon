@@ -1,4 +1,5 @@
 .build/
+build/
 GhosttyKit.xcframework/
 GhosttyKit/ghostty.h
 Resources/ghostty/

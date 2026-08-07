@@ -7,7 +7,10 @@ import TenonIntentCore
 /// instant, trigger, lateness — plus the host-side delivery outcome. That is the
 /// evidence a history row links back to: what was put on the wire, and whether a
 /// live generation took it.
-public struct AutomationRunRecord: Sendable, Equatable {
+public struct AutomationRunRecord: Identifiable, Sendable, Equatable {
+    /// Stable row identity for newest-first UI projections. Evidence fields are not a
+    /// safe identity: two manual firings may carry identical schedule and time values.
+    public let id: UUID
     public let pluginID: PluginID
     public let scheduleID: String
     public let scheduledFor: Date
@@ -17,6 +20,7 @@ public struct AutomationRunRecord: Sendable, Equatable {
     public let delivered: Bool
 
     public init(
+        id: UUID = UUID(),
         pluginID: PluginID,
         scheduleID: String,
         scheduledFor: Date,
@@ -25,6 +29,7 @@ public struct AutomationRunRecord: Sendable, Equatable {
         late: Bool,
         delivered: Bool
     ) {
+        self.id = id
         self.pluginID = pluginID
         self.scheduleID = scheduleID
         self.scheduledFor = scheduledFor

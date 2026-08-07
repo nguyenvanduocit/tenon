@@ -12,11 +12,17 @@ this is the product implementation, not a disposable browser prototype.
   swap, coupled resize, stale-transaction rejection, and Escape rollback.
 - Stable `TerminalSurface` ownership per slot UUID, backed by libghostty or a
   deterministic stub.
-- Built-in terminal, files, changes, docs, web preview, plugin-view, and empty
+- Built-in terminal, files, changes, docs, automation, web preview, plugin-view, and empty
   slot content.
 - An embedded JavaScriptCore plugin host with isolated runtimes, hot reload,
-  enable/disable, permissions, settings, storage, events, commands, status
-  items, declarative views, and workspace APIs.
+  durable enable/disable, capability policy and consent, intent invocation and
+  handling, events, bounded resources, scoped settings/storage/logging, status
+  items, declarative views, and palette contributions.
+- Fail-soft workspace catalog persistence. Layout/content/selection and terminal
+  title/working-directory placeholders restore across relaunch; restored
+  terminals start a fresh shell only when materialized.
+- A host-internal Agent Lens Session/Terminal projection for supported,
+  authoritatively bound agent evidence.
 
 ## Setup and build
 
@@ -59,14 +65,14 @@ Runtime overrides:
   meaningful process working directory, then the user's home directory when
   LaunchServices supplies `/`.
 - `TENON_PLUGINS_DIR` points at a development plugin catalog. Installed builds
-  copy bundled plugins to Application Support automatically. Plugins loaded from
-  this catalog ask before their gated actions run: the host grants silent
-  standing consent only to the inventory it controls, and an arbitrary user
-  directory is not that.
+  read the sealed bundled inventory alongside a writable user inventory. Plugins
+  loaded from an arbitrary writable catalog are untrusted. A newly discovered
+  plugin starts disabled and executes only after a human enables it.
 - `TENON_TRUST_PLUGIN_INVENTORY=1` stands a `TENON_PLUGINS_DIR` catalog in for
-  the app bundle, so plugins you are developing carry the same standing consent
-  the bundled ones do and stop prompting. The value is matched exactly — `1`
+  the app bundle for a controlled development fixture, so new plugins auto-enable
+  and carry bundled standing intent consent. The value is matched exactly — `1`
   grants it, every other value including `true` leaves the catalog untrusted.
+  The separate user-authored inventory is always untrusted.
 - `TENON_STUB_TERMINAL=1` replaces the PTY-backed surface with deterministic
   content for UI tests and shell smoke runs.
 
@@ -87,7 +93,7 @@ test targets. Run `xcodegen generate` after adding or moving source files.
 | Resize | Drag any slot edge or corner |
 | Cancel pointer transaction | `Esc` |
 
-**Add slot** opens terminal, files, diff, docs, and local web-preview choices.
+**Add slot** opens terminal, files, diff, docs, automation, and local web-preview choices.
 Closing the final slot keeps the tab alive and shows an **Add terminal** action.
 Closing an active tab selects its previous neighbor.
 
@@ -136,9 +142,11 @@ xcodebuild \
 swift test
 ```
 
-The current verified baseline is 159 non-UI tests: 138 core, 15 hosted spatial
-interaction, and 6 terminal integration tests. The default scheme also runs 6
-black-box XCUITest flows, for 165 tests total in a logged-in macOS GUI session.
+Do not copy test counts into durable documentation: they drift on every feature.
+The command output is the verification receipt and should identify the
+commit/worktree, destination, exit code, and failing tests. See
+[`../docs/operations.md`](../docs/operations.md) for the runner matrix and release
+checklist.
 
 ## Spatial model
 
@@ -164,64 +172,56 @@ snapshot at pointer-down. During drag it performs only grid math and frame
 updates. Content hosts and terminal surfaces are stable; filesystem, Git,
 documentation, and web work never runs in the pointer loop.
 
-## Plugin API v0.2
+## Plugin runtime
 
-Free surfaces:
-
-```js
-tenon.statusBar.set(text)
-tenon.commands.register(id, title, handler)
-tenon.events.on(event, handler)
-tenon.sidebar.set({ title, items })
-tenon.sidebar.onSelect(handler)
-tenon.views.register(viewId, { title })
-tenon.views.set(viewId, { title, items })
-tenon.views.onSelect(viewId, handler)
-tenon.settings.get(key)
-tenon.storage.get(key)
-tenon.storage.set(key, jsonValue)
-tenon.workspace.get()
-tenon.log(text)
-```
-
-Permission-gated surfaces:
+Finite cross-owner operations use one canonical request/reply API:
 
 ```js
-tenon.fs.readDir(path)                         // filesystem.read
-tenon.fs.readFile(path)                        // filesystem.read
-tenon.fs.exists(path)                          // filesystem.read
-tenon.fs.writeFile(path, content)              // filesystem.write
-tenon.process.exec(command, args, callback)    // process.exec
-tenon.terminal.write(text)                     // terminal.write
-tenon.workspace.newTab()                       // workspace.control
-tenon.workspace.split("horizontal"|"vertical") // workspace.control
-tenon.workspace.focusSlot(slotId)              // workspace.control
-tenon.workspace.closeSlot(slotId)              // workspace.control
+const result = await tenon.intents.send("workspace.state.v1", {});
+if (!result.ok) tenon.log(result.error.code);
 ```
 
-`tenon.workspace.get()` returns workspace/tab/slot structure with
-`activeWorkspaceId`, `activeTabId`, `activeSlotId`, `slotIds`, slot content, and
-grid rectangles. Terminal-title events use `{ title, slotId }`. Workspace events
-use `workspace.slot-*` and `workspace.slots-*`; `workspace.changed` reports
-workspace, tab, and slot totals.
+Every sent name is declared in `manifest.intents.uses`. Plugin-owned operations
+are declared as versioned contracts in `manifest.intents.provides` and bound once
+with `tenon.intents.handle`. Palette rows and registered product keybindings are
+metadata on those same contracts, not another command API.
 
-The permission names currently enforced are `terminal.read`, `terminal.write`,
-`filesystem.read`, `filesystem.write`, `process.exec`, and
-`workspace.control`. A blocked API call returns `{ ok: false, error }`, records
-one deduplicated violation, and leaves the runtime loaded.
+Immutable facts use declared `tenon.events.emit/on`; timers,
+`tenon.process.stream`, and `tenon.fs.watch` own bounded resource lifetimes;
+views, status, and dynamic palette results are declarative contributions. The
+only scoped plugin-private facilities are settings, storage, and log. Pure
+`tenon.path.*` helpers perform no I/O.
+
+The complete authoring guide is
+[`../docs/plugin-author-guide.md`](../docs/plugin-author-guide.md). Existing v0.2
+plugins must follow
+[`../docs/plugin-migration-v0.2.md`](../docs/plugin-migration-v0.2.md); the old
+helper, runtime-command, sidebar, and imperative workspace APIs have no
+compatibility shim. The exhaustive normative inventory is
+[`../docs/architecture-interaction-boundaries.md`](../docs/architecture-interaction-boundaries.md).
+
+JavaScriptCore runtimes are isolated by context/executor but remain in Tenon's
+process. This is not a hard sandbox: enabling an untrusted plugin grants
+process-level code execution trust. Capability, scope, audience, and consent
+checks still gate its access to host operations.
 
 ## Source map
 
 ```text
 Sources/
+  TenonIntentCore/
+    IntentContract.swift  canonical schemas, effects, audiences, errors
+    IntentDispatcher.swift policy, admission, provider lifecycle, settlement
+    IntentMailbox.swift   closed bounded execution lanes
   TenonCore/
     SpatialLayout.swift    pure grid operations and transactions
     Workspace.swift        catalog/workspace/tab/slot state and events
     WorkspaceStore.swift   observable mutation shell and plugin event bridge
-    PluginRuntime.swift    JavaScriptCore API and permission boundary
-    PluginHost.swift       runtime aggregation, lifecycle, and hot reload
+    CoreIntentCatalog.swift closed core intent inventory and lane map
+    PluginRuntime.swift    JavaScriptCore adapter and resource boundary
+    PluginHost.swift       inventories, installation lifecycle, hot reload
   TenonApp/
-    TenonApp.swift         app wiring, commands, plugin and surface lifecycle
+    TenonApp.swift         composition root, persistence, plugin/surface lifecycle
     ContentView.swift      sidebar, tab bar, canvas stage, status strip
     SpatialCanvasView.swift
                             AppKit cards and pointer coordinator
@@ -229,6 +229,8 @@ Sources/
     SurfacePool.swift      slot UUID to stable terminal surface
     GhosttySurface.swift   libghostty/AppKit integration
     TerminalSurface.swift protocol and deterministic stub
+  TenonCLI/
+    main.swift             ping/focus and intent list/describe/send adapter
 GhosttyKit/                thin C module shim
 GhosttyKit.xcframework/    downloaded prebuilt static artifact
 Resources/                 downloaded Ghostty shell integration and terminfo
@@ -239,12 +241,17 @@ project.yml                XcodeGen source of truth
 
 ## Current boundaries
 
-- Workspace and slot layout are in-memory; session restore is not implemented.
 - The application currently owns one window.
-- The JavaScriptCore capability gate is implemented, while runtime consent,
-  audit history, and stronger process isolation remain future hardening work.
+- Workspace structure restores, but terminal processes do not; restored terminal
+  panes lazily create fresh shells.
+- Capability policy, interactive consent, installation identity, and durable
+  enablement are implemented. JavaScriptCore still lacks hard process isolation,
+  safe preemption of runaway synchronous code, and per-plugin memory limits.
 - Built-in slot surfaces are native application features. The plugin content
   picker and public SDK are still evolving toward the same polished opening
   flow as built-in content.
 - Status items are aggregated by plugin name; ordering and alignment policies
   are intentionally small at this stage.
+
+See [`../docs/README.md`](../docs/README.md) for canonical document precedence and
+the current feature-status inventory.

@@ -6,7 +6,7 @@
 // never carved inline.
 //
 // Instanced (T-012 model): every pane owns an independent panel bound to the repo of the
-// workspace that OWNS the pane, resolved through `workspace.state.v1`. The status bar is
+// workspace that OWNS the pane, resolved through `workspace.pane.owner.v1`. The status bar is
 // one global surface, so it alone follows the selected workspace and the focused pane.
 //
 // Point "Repository path" at a repo in Settings (⌘,), or leave it on "~" and each panel
@@ -61,58 +61,60 @@ function settingRepo() {
   return s && s !== "~" ? s : null;
 }
 
-/// The workspace the user is currently in — what the status bar means by "the repo".
-async function workspacePath(call) {
-  var result = call
-    ? await call.send("workspace.state.v1", { limit: 256 })
-    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
-  if (!result.ok) return "";
-  var nodes = result.value.nodes || [];
-  for (var i = 0; i < nodes.length; i++) {
-    if (nodes[i].kind === "workspace" && nodes[i].selected) {
-      return nodes[i].path || "";
+// Bounds on one snapshot walk (invariant 10). `workspace.state.v1` pages at up to 256
+// nodes a reply, so MAX_STATE_PAGES reaches 4096 nodes — past any real workspace tree.
+var MAX_STATE_PAGES = 16;
+
+// The selected workspace node, or the first workspace when nothing is selected.
+//
+// This walks every page. Reading only the first one was a silent wrong answer: `selected`
+// is a flag on one node among all of them, so a workspace past node 128 (the default page
+// size) made this report the wrong repo rather than fail — the same defect
+// `workspace.pane.owner.v1` removed from the pane→workspace join.
+async function selectedWorkspace(call = tenon.intents) {
+  var firstWorkspace = null;
+  var cursor = null;
+  for (var page = 0; page < MAX_STATE_PAGES; page++) {
+    var input = { limit: 256 };
+    if (cursor) input.cursor = cursor;
+    var result = await call.send("workspace.state.v1", input);
+    if (!result.ok) return null;
+    var nodes = result.value.nodes || [];
+    for (var i = 0; i < nodes.length; i++) {
+      if (nodes[i].kind !== "workspace") continue;
+      if (nodes[i].selected) return nodes[i];
+      if (!firstWorkspace) firstWorkspace = nodes[i];
     }
+    cursor = result.value.nextCursor;
+    if (!cursor) break;
   }
-  for (var j = 0; j < nodes.length; j++) {
-    if (nodes[j].kind === "workspace") return nodes[j].path || "";
-  }
-  return "";
+  return firstWorkspace;
 }
 
-// The workspace that owns a pane: pane → tab → workspace, from the public state snapshot.
-async function owningWorkspace(instanceID, call) {
-  var result = call
-    ? await call.send("workspace.state.v1", { limit: 256 })
-    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
+/// The workspace the user is currently in — what the status bar means by "the repo".
+async function workspacePath(call = tenon.intents) {
+  var workspace = await selectedWorkspace(call);
+  return (workspace && workspace.path) || "";
+}
+
+// The workspace that owns a pane, resolved by the host.
+async function owningWorkspace(instanceID, call = tenon.intents) {
+  var result = await call.send("workspace.pane.owner.v1", { paneID: instanceID });
   if (!result.ok) return { id: null, path: "" };
-  var nodes = result.value.nodes || [];
-  var workspacePaths = {};
-  var tabWorkspace = {};
-  var paneTab = null;
-  for (var i = 0; i < nodes.length; i++) {
-    var node = nodes[i];
-    if (node.kind === "workspace") workspacePaths[node.id] = node.path || "";
-    if (node.kind === "tab") tabWorkspace[node.id] = node.workspaceID;
-    if (node.kind === "pane" && node.id === instanceID) paneTab = node.tabID;
-  }
-  var workspaceId = paneTab ? tabWorkspace[paneTab] : null;
-  if (!workspaceId) return { id: null, path: "" };
-  return { id: workspaceId, path: workspacePaths[workspaceId] || "" };
+  return { id: result.value.workspaceID, path: result.value.workspacePath };
 }
 
 function inlineText(value) {
   return value && value.kind === "inline" ? value.text || "" : "";
 }
 
-async function exec(command, argumentsValue, workingDirectory, call) {
+async function exec(command, argumentsValue, workingDirectory, call = tenon.intents) {
   var input = {
     command: command,
     arguments: argumentsValue,
     workingDirectory: workingDirectory || "/"
   };
-  var result = call
-    ? await call.send("process.exec.v1", input)
-    : await tenon.intents.send("process.exec.v1", input);
+  var result = await call.send("process.exec.v1", input);
   if (!result.ok) {
     return {
       ok: false,
@@ -134,7 +136,7 @@ async function exec(command, argumentsValue, workingDirectory, call) {
 // An explicit "Repository path" setting always wins; otherwise discover the repo that
 // contains the state's own base — a panel's owning workspace, the bar's selected one.
 // The setting is re-read on every call, so a slow discovery cannot answer for a stale path.
-async function resolveRepo(st, call) {
+async function resolveRepo(st, call = tenon.intents) {
   var explicit = settingRepo();
   if (explicit) { st.repoPath = explicit; return st.repoPath; }
   // A pane's project root outranks the cached discovery: the agent moved, so do we.
@@ -152,7 +154,7 @@ async function resolveRepo(st, call) {
   return st.repoPath;
 }
 
-async function git(st, args, call) {
+async function git(st, args, call = tenon.intents) {
   var repo = await resolveRepo(st, call);
   if (!repo) return { ok: false, status: 1, stdout: "", stderr: "no repository" };
   return await exec("/usr/bin/git", args, repo, call);
@@ -160,7 +162,7 @@ async function git(st, args, call) {
 
 // Runs a mutating command, reports the first error line as a toast, then refreshes the
 // acting state AND the status bar, which summarises whatever just changed.
-async function op(st, args, label, call) {
+async function op(st, args, label, call = tenon.intents) {
   var r = await git(st, args, call);
   if (!r.ok || r.status !== 0) {
     var msg = ((r.stderr || r.error || "") + "").trim().split("\n")[0];
@@ -168,8 +170,7 @@ async function op(st, args, label, call) {
       message: (label || "Git") + " failed" + (msg ? ": " + msg : ""),
       kind: "error"
     };
-    if (call) await call.send("ui.toast.v1", input);
-    else await tenon.intents.send("ui.toast.v1", input);
+    await call.send("ui.toast.v1", input);
   }
   await refresh(st, call);
   if (st !== bar) await refresh(bar, call);
@@ -234,7 +235,7 @@ function parseLog(out) {
 
 // --- refresh ---------------------------------------------------------------
 
-async function refresh(st, call) {
+async function refresh(st, call = tenon.intents) {
   var repo = await resolveRepo(st, call);
   if (!repo) {
     st.model = emptyModel();
@@ -299,6 +300,65 @@ function shortName(path) {
   return parts[parts.length - 1] || path;
 }
 
+// --- the pane's chrome header ----------------------------------------------
+
+function syncText(model) {
+  var parts = [];
+  if (model.ahead) parts.push("↑" + model.ahead);
+  if (model.behind) parts.push("↓" + model.behind);
+  return parts.join(" ");
+}
+
+function syncTooltip(model) {
+  var parts = [];
+  if (model.ahead) parts.push(model.ahead + " ahead");
+  if (model.behind) parts.push(model.behind + " behind");
+  return parts.join(", ") + " " + (model.upstream || "upstream");
+}
+
+// What a supervisor reads off a git panel WITHOUT reading it: which branch it is on, how
+// much is uncommitted, how far the branch has drifted, and one verb to re-read the repo.
+// Each of those left the body when it arrived here — the strip owns the pane's identity and
+// its measurement, the body owns the files.
+//
+// `leading` holds five items and folds from its LAST one backwards, so the order here is
+// urgency order: a three-column pane keeps the branch and the conflicts and gives up the
+// counts. Every badge says its word as well as its number, because a folded badge becomes
+// one line of its own text in the `…` menu and a bare "3" names nothing there.
+function headerNode(model) {
+  if (!model.isRepo) return null;
+  var leading = [
+    { type: "image", id: "branch-icon", systemName: "arrow.triangle.branch", tint: "muted" },
+    { type: "label", id: "branch", text: model.branch, weight: "medium", truncation: "middle" }
+  ];
+  if (model.merge.length) {
+    leading.push({ type: "badge", id: "conflicts", text: model.merge.length + " conflicted", tint: "red" });
+  }
+  if (model.staged.length) {
+    leading.push({ type: "badge", id: "staged", text: model.staged.length + " staged", tint: "green" });
+  }
+  if (model.changed.length) {
+    leading.push({ type: "badge", id: "changed", text: model.changed.length + " changed", tint: "amber" });
+  }
+  var trailing = [];
+  if (model.ahead || model.behind) {
+    trailing.push({
+      type: "badge",
+      id: "sync",
+      text: syncText(model),
+      tint: "amber",
+      tooltip: syncTooltip(model)
+    });
+  }
+  trailing.push({
+    type: "iconButton",
+    id: "refresh",
+    systemName: "arrow.clockwise",
+    tooltip: "Refresh"
+  });
+  return { leading: leading, trailing: trailing };
+}
+
 // Every action is an object the host hands back to onSelect exactly as written here.
 function btn(label, action, style) {
   return { type: "button", label: label, action: action, style: style || "plain" };
@@ -320,9 +380,11 @@ function fileRow(e, section) {
   return { type: "hstack", spacing: 6, children: children };
 }
 
+// The heading names its files; the count of them is a header badge. Two places saying
+// "3" is the two-row duplication the one-header rule deletes.
 function sectionCard(title, entries, section, bulkLabel, bulkAction) {
   var header = [
-    { type: "text", value: title + " (" + entries.length + ")", weight: "semibold", color: "text" },
+    { type: "text", value: title, weight: "semibold", color: "text" },
     { type: "spacer" },
   ];
   if (bulkLabel) header.push(btn(bulkLabel, bulkAction));
@@ -336,15 +398,15 @@ function render(st) {
   var model = st.model;
   var children = [];
 
-  // Branch + sync controls.
-  var branchRow = [btn(model.branch, { do: "switchBranch" }, "plain")];
-  if (model.ahead || model.behind) {
-    branchRow.push({ type: "badge", value: (model.ahead ? "↑" + model.ahead : "") + (model.behind ? " ↓" + model.behind : ""), tint: "amber" });
-  }
-  branchRow.push({ type: "spacer" });
-  branchRow.push(btn("Fetch", { do: "fetch" }));
-  branchRow.push(btn("Pull", { do: "pull" }));
-  branchRow.push(btn("Push", { do: "push" }));
+  // Which branch, and how far it has drifted, are read off the chrome header. What stays
+  // here is the row of verbs that act on it.
+  var branchRow = [
+    btn("Switch branch", { do: "switchBranch" }),
+    { type: "spacer" },
+    btn("Fetch", { do: "fetch" }),
+    btn("Pull", { do: "pull" }),
+    btn("Push", { do: "push" }),
+  ];
   children.push({ type: "card", children: [
     { type: "hstack", spacing: 8, children: branchRow },
     { type: "hstack", spacing: 8, children: [btn("Stash", { do: "stash" }), btn("Pop stash", { do: "stashPop" }), { type: "spacer" }] },
@@ -385,7 +447,15 @@ function render(st) {
     children = [{ type: "card", children: [{ type: "text", value: "No git repository. Set \"Repository path\" in Settings.", style: "caption", color: "muted" }] }];
   }
 
-  tenon.views.set(VIEW, { title: "Git", body: { type: "vstack", spacing: 10, children: children } }, st.id);
+  var specification = {
+    title: "Git",
+    body: { type: "vstack", spacing: 10, children: children }
+  };
+  // Omitting `header` clears the previous one, which is exactly what a panel that has lost
+  // its repository wants to say: there is no branch and nothing to count.
+  var header = headerNode(model);
+  if (header) specification.header = header;
+  tenon.views.set(VIEW, specification, st.id);
 }
 
 // --- actions ---------------------------------------------------------------
@@ -465,7 +535,7 @@ async function doCommit(st, includeAll) {
 }
 
 // The branch list, in the host's own pick list — the plugin describes it, the shell draws it.
-async function switchBranch(st, call) {
+async function switchBranch(st, call = tenon.intents) {
   var r = await git(st, ["branch", "--format=%(refname:short)"], call);
   var names = (r.stdout || "").split("\n").filter(Boolean);
   if (!names.length) {
@@ -473,8 +543,7 @@ async function switchBranch(st, call) {
       message: "No branches found",
       kind: "warning"
     };
-    if (call) await call.send("ui.toast.v1", toastInput);
-    else await tenon.intents.send("ui.toast.v1", toastInput);
+    await call.send("ui.toast.v1", toastInput);
     return;
   }
   var pickInput = {
@@ -488,9 +557,7 @@ async function switchBranch(st, call) {
     }),
     placeholder: "Switch branch"
   };
-  var choice = call
-    ? await call.send("ui.pick.v1", pickInput)
-    : await tenon.intents.send("ui.pick.v1", pickInput);
+  var choice = await call.send("ui.pick.v1", pickInput);
   var selected = choice.ok ? choice.value.selectedID : null;
   if (selected && selected !== st.model.branch) {
     await op(st, ["switch", selected], "Switch to " + selected, call);
@@ -499,10 +566,16 @@ async function switchBranch(st, call) {
 
 tenon.views.register(VIEW, { title: "Git", instanced: true });
 
-// The action arrives as the object the view declared — no packing, no splitting.
+// Whatever the view declared arrives back verbatim — no packing, no splitting.
 tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
   var st = panes[instanceID];
   if (!st) return;
+  // A header control reports the opaque id string this plugin chose for it; a body button
+  // reports the action object it was declared with. One handler, two shapes.
+  if (typeof action === "string") {
+    if (action === "refresh") await refresh(st);
+    return;
+  }
   switch (action.do) {
     case "open": await openDiff(st, action.section, action.path); break;
     case "stage": await op(st, ["add", "--", action.path], "Stage"); break;
@@ -552,17 +625,11 @@ tenon.views.onClose(VIEW, function (instanceID) {
 
 // Commands arrive without a pane; they mean the panel the human is looking at — the
 // instance owned by the selected workspace — and fall back to the status bar's repo.
-async function commandTarget(call) {
-  var result = call
-    ? await call.send("workspace.state.v1", { limit: 256 })
-    : await tenon.intents.send("workspace.state.v1", { limit: 256 });
-  var selected = null;
-  if (result.ok) {
-    var nodes = result.value.nodes || [];
-    for (var i = 0; i < nodes.length; i++) {
-      if (nodes[i].kind === "workspace" && nodes[i].selected) selected = nodes[i].id;
-    }
-  }
+async function commandTarget(call = tenon.intents) {
+  var workspace = await selectedWorkspace(call);
+  // Only a genuinely selected workspace may claim a pane; `selectedWorkspace` falls back
+  // to the first one it saw, and that fallback must not silently retarget a command.
+  var selected = workspace && workspace.selected ? workspace.id : null;
   var list = paneList();
   for (var j = 0; j < list.length; j++) {
     if (selected && list[j].workspaceId === selected) return list[j];
