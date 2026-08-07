@@ -106,6 +106,6 @@ static archive; they do not fail compilation or tests and are not Swift diagnost
 ## Merge recommendation
 
 **Do not claim hard plugin sandboxing or process-tree containment in the current release.**
-For a trusted-plugin pre-alpha, the tree is test-green and the local blockers from this review
+For a trusted-plugin deployment, the tree is test-green and the local blockers from this review
 are remediated. For arbitrary third-party plugin execution, complete the helper-process and
 POSIX process-group work first.

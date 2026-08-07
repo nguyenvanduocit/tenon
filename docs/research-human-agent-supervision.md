@@ -222,7 +222,7 @@ typed lifecycle signals.
 
 ## Implementation status
 
-**HIGH:** The current pre-alpha implements the native terminal workspace, spatial canvas,
+**HIGH:** Tenon implements the native terminal workspace, spatial canvas,
 libghostty surfaces, built-in slot surfaces, and plugin runtime described in
 [`../VISION.md`](../VISION.md). The Attention Inbox, evidence-linked context capsules,
 structured signal ingestion, and fan-out measurements in this document are product targets;

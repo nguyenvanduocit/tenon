@@ -6,7 +6,7 @@ selected every mechanism below; this document records the walk, not a new rule).
 
 ## The unit of automation is plugin JavaScript
 
-The studied prior art (Orca's Automations, `refrerences/orca/`) fixes its unit of work
+The studied prior art (Orca's Automations, `references/orca/`) fixes its unit of work
 as *one prompt string pasted into one TUI-agent PTY on a schedule*, guarded by at most
 one shell precheck whose output is discarded. Everything conditional, sequential, or
 data-dependent must be folded into the prompt text. Completion is inferred by
@@ -261,12 +261,12 @@ new public `tenon` member.
 
 ## A worked example: `examples/fleet-review`
 
-`poc/examples/fleet-review/` is the supervised-fleet story in about eighty lines: one
+`examples/fleet-review/` is the supervised-fleet story in about eighty lines: one
 palette command puts three reviewers on the same change, each in its own visible pane,
 waits for all of them, reads each transcript back, and publishes a one-line verdict.
 
 It lives in `examples/` rather than `plugins/` deliberately — a demo that runs an agent CLI
-does not belong in every user's palette by default. Copy the directory into `poc/plugins/`
+does not belong in every user's palette by default. Copy the directory into `plugins/`
 to try it.
 
 Two things in it are worth copying into your own automation:

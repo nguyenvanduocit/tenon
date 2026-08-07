@@ -382,9 +382,9 @@ empty-grid launcher placement — under an unchanged heading. A gate that counte
 entries would have passed that change without a word.
 
 "No plugin presentation surface existed" is refuted by shipped code and MUST NOT be offered
-as justification. `PluginViewModal` (`poc/Sources/TenonCore/PluginRuntimeModels.swift:81`)
+as justification. `PluginViewModal` (`Sources/TenonCore/PluginRuntimeModels.swift:81`)
 publishes a window-level sheet over the whole shell across the plugin boundary, and the
-bundled kanban plugin already uses it (`poc/plugins/kanban/main.js`, `specification.modal =
+bundled kanban plugin already uses it (`plugins/kanban/main.js`, `specification.modal =
 modal`). A justification must name what is missing, and that one is not.
 
 Removal is legitimate and is the direction this law wants: reclassifying a DIRECT behaviour
@@ -823,7 +823,7 @@ omit the hop the intent path necessarily pays, and would inflate the ratio for f
 validation, catalog and contract lookup, policy, capability and audience checks, the
 confirmation authorizer, provider selection, admission, mailbox enqueue and drain, and
 telemetry. Idempotency is **not** on this path: the fixture's `.pessimistic` effects declare
-`idempotency: .none` (`poc/Sources/TenonIntentCore/IntentEnvelope.swift:114`). The
+`idempotency: .none` (`Sources/TenonIntentCore/IntentEnvelope.swift:114`). The
 confirmation authorizer **is** on it, because `.pessimistic` declares `confirmation: .policy`
 (`:116`) — a read-shaped contract declaring `.never` pays less, so this ratio is the
 expensive end of the kernel, not its average.

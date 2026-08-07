@@ -361,5 +361,5 @@ lifecycle implementation is wrong.
 
 ## Sources
 
-Reference implementations remain under `refrerences/supacode`, `refrerences/muxy`, and
-`refrerences/orca`; the teardown is in `research-reference-terminals.md`.
+Reference implementations remain under `references/supacode`, `references/muxy`, and
+`references/orca`; the teardown is in `research-reference-terminals.md`.

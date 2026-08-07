@@ -42,7 +42,7 @@ to keep running.
 
 ## How the reference terminals handle it
 
-**Kero** — same libghostty backend, same language (`refrerences/kero/kero/TerminalSession.swift:126-183`):
+**Kero** — same libghostty backend, same language (`references/kero/kero/TerminalSession.swift:126-183`):
 
 ```swift
 func terminate() { … beginTeardown(processAlive: true, notifyExit: false) }
@@ -58,7 +58,7 @@ SIGHUP" — that is why the order is kill, then release. Its limit: it knows two
 background job in a third group survives there too.
 
 **Orca** — Electron + node-pty, PTY owned by a daemon rather than by the window
-(`refrerences/orca/src/main/pty/posix-pty-process-groups.ts:89-130`):
+(`references/orca/src/main/pty/posix-pty-process-groups.ts:89-130`):
 
 ```ts
 /** Force-kill every process group still attached to one POSIX PTY. */

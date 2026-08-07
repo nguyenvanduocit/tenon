@@ -35,7 +35,8 @@ metrics are documented in
 ## Repository
 
 - [`VISION.md`](VISION.md) — current product and architecture contract.
-- [`poc/`](poc/) — the current native app. The directory name is historical.
+- [`Sources/`](Sources/) — the native macOS app: `TenonIntentCore`, `TenonCore`,
+  `TenonApp`, and `TenonCLI`.
 - [`prototypes/spatial-layout/`](prototypes/spatial-layout/) — the structural
   design contract for component hierarchy, regions, and interactions.
 - [`docs/README.md`](docs/README.md) — canonical documentation map, precedence,
@@ -43,11 +44,10 @@ metrics are documented in
 
 ## Build
 
-Tenon requires macOS 14+, Xcode, XcodeGen 2.45.4+, and Bun is not required for
-the native app.
+Tenon requires macOS 14+, Xcode, and XcodeGen 2.45.4+. The native app builds
+without a JavaScript toolchain.
 
 ```bash
-cd poc
 ./scripts/setup-ghosttykit.sh
 xcodegen generate
 xcodebuild \
@@ -73,15 +73,15 @@ of its terminal surfaces. Without it, Tenon uses a meaningful launch directory
 and falls back to the user's home directory when LaunchServices starts the app
 at `/`.
 
-See [`poc/README.md`](poc/README.md) for controls, tests, the plugin runtime,
-and the libghostty packaging details.
+See [`docs/development.md`](docs/development.md) for controls, tests, the plugin
+runtime, and the libghostty packaging details.
 
-Status: pre-alpha. The native shell, spatial workspace model, libghostty
-embedding, workspace catalog persistence, built-in slot surfaces, governed
-intent/plugin runtime, CLI adapter, command palette, automations, and
-host-internal Agent Lens session projection are implemented. The repository has
-headless, hosted integration, and black-box macOS UI test layers; command output,
-not a hard-coded count in this README, is the verification receipt.
+The native shell, spatial workspace model, libghostty embedding, workspace
+catalog persistence, built-in slot surfaces, governed intent/plugin runtime, CLI
+adapter, command palette, automations, and host-internal Agent Lens session
+projection are implemented. The repository has headless, hosted integration, and
+black-box macOS UI test layers; command output, not a hard-coded count in this
+README, is the verification receipt.
 
 Production hardening remains open, most importantly a hard isolation boundary
 for untrusted plugin JavaScript, a signed/notarized release pipeline, and recorded

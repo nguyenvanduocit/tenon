@@ -415,26 +415,26 @@ retaining Orca's compact trigger-to-detail interaction.
 Production:
 
 - `docs/architecture-interaction-boundaries.md`
-- `poc/Sources/TenonCore/ProcessTelemetry.swift`
-- `poc/Sources/TenonCore/ProcessTelemetryCoordinator.swift`
-- `poc/Sources/TenonApp/TerminalSurface.swift`
-- `poc/Sources/TenonApp/GhosttySurface.swift`
-- `poc/Sources/TenonApp/SurfacePool.swift`
-- `poc/Sources/TenonApp/DarwinProcessSampler.swift`
-- `poc/Sources/TenonApp/ProcessTelemetryBridge.swift`
-- `poc/Sources/TenonApp/ResourceMonitorView.swift`
-- `poc/Sources/TenonApp/ShellTitleBar.swift`
-- `poc/Sources/TenonApp/TenonApp.swift`
+- `Sources/TenonCore/ProcessTelemetry.swift`
+- `Sources/TenonCore/ProcessTelemetryCoordinator.swift`
+- `Sources/TenonApp/TerminalSurface.swift`
+- `Sources/TenonApp/GhosttySurface.swift`
+- `Sources/TenonApp/SurfacePool.swift`
+- `Sources/TenonApp/DarwinProcessSampler.swift`
+- `Sources/TenonApp/ProcessTelemetryBridge.swift`
+- `Sources/TenonApp/ResourceMonitorView.swift`
+- `Sources/TenonApp/ShellTitleBar.swift`
+- `Sources/TenonApp/TenonApp.swift`
 
 Tests and fixtures:
 
-- `poc/Tests/TenonCoreTests/InteractionBoundaryFitnessTests.swift`
-- `poc/Tests/TenonCoreTests/ProcessTelemetryTests.swift`
-- `poc/Tests/TenonCoreTests/ProcessTelemetryCoordinatorTests.swift`
-- `poc/Tests/TenonAppTests/TerminalProcessProjectionTests.swift`
-- `poc/Tests/TenonIntegrationTests/GhosttyProcessTelemetrySmokeTests.swift`
-- `poc/Tests/TenonUITests/ProcessMonitorFlowUITests.swift`
-- a non-shipping deterministic process-tree/CPU/RSS fixture target in `poc/project.yml`.
+- `Tests/TenonCoreTests/InteractionBoundaryFitnessTests.swift`
+- `Tests/TenonCoreTests/ProcessTelemetryTests.swift`
+- `Tests/TenonCoreTests/ProcessTelemetryCoordinatorTests.swift`
+- `Tests/TenonAppStateTests/TerminalProcessProjectionTests.swift`
+- `Tests/TenonIntegrationTests/GhosttyProcessTelemetrySmokeTests.swift`
+- `Tests/TenonUITests/ProcessMonitorFlowUITests.swift`
+- a non-shipping deterministic process-tree/CPU/RSS fixture target in `project.yml`.
 
 ## Test-driven verification
 
@@ -487,7 +487,6 @@ own theme and title-bar architecture.
 ### Commands
 
 ```bash
-cd poc
 ./scripts/setup-ghosttykit.sh
 xcodegen generate
 
@@ -509,7 +508,7 @@ xcodebuild \
   -destination 'platform=macOS,arch=arm64' \
   -derivedDataPath .build/xcode \
   -clonedSourcePackagesDirPath .build \
-  -only-testing:TenonAppTests/TerminalProcessProjectionTests \
+  -only-testing:TenonAppStateTests/TerminalProcessProjectionTests \
   test
 
 xcodebuild \

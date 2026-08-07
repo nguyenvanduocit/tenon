@@ -10,7 +10,6 @@ contracts are indexed in [`README.md`](README.md).
 Prerequisites are macOS 14+, Xcode, and XcodeGen 2.45.4 or newer.
 
 ```sh
-cd poc
 ./scripts/setup-ghosttykit.sh
 xcodegen generate
 xcodebuild \
@@ -25,7 +24,6 @@ xcodebuild \
 Fast headless verification:
 
 ```sh
-cd poc
 swift build
 swift test
 ```
@@ -33,7 +31,6 @@ swift test
 Complete hosted verification:
 
 ```sh
-cd poc
 xcodegen generate
 xcodebuild test \
   -project Tenon.xcodeproj \
@@ -157,14 +154,14 @@ isolation boundary with termination and memory limits.
 Check internal Markdown links:
 
 ```sh
-ruby -e 'fs=["README.md","VISION.md","poc/README.md","poc/Tests/TenonUITests/README.md"]+Dir["docs/**/*.md"]; fs.each { |f| File.read(f).scan(/\[[^\]]*\]\((?!https?:|mailto:|#)([^)#]+)(?:#[^)]+)?\)/).flatten.each { |p| q=File.expand_path(p,File.dirname(f)); abort "#{f}: #{p}" unless File.exist?(q) } }'
+ruby -e 'fs=["README.md","VISION.md","Tests/TenonUITests/README.md"]+Dir["docs/**/*.md"]; fs.each { |f| File.read(f).scan(/\[[^\]]*\]\((?!https?:|mailto:|#)([^)#]+)(?:#[^)]+)?\)/).flatten.each { |p| q=File.expand_path(p,File.dirname(f)); abort "#{f}: #{p}" unless File.exist?(q) } }'
 ```
 
 Check that deleted v0.2 runtime names did not return:
 
 ```sh
 rg -n 'tenon\.(commands|sidebar|workspace|terminal|fs\.(readDir|readFile|exists|writeFile)|process\.exec)' \
-  poc/Sources/TenonCore poc/plugins poc/examples docs README.md VISION.md poc/README.md \
+  Sources/TenonCore plugins examples docs README.md VISION.md \
   --glob '*.swift' --glob '*.js' --glob '*.md'
 ```
 

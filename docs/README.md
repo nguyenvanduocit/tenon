@@ -34,8 +34,8 @@ one reviewed change.
 | [`plugin-migration-v0.2.md`](plugin-migration-v0.2.md) | migration from deleted helper/command/sidebar APIs | current |
 | [`operations.md`](operations.md) | build, test, state, troubleshooting, release verification | current |
 | [`tdd.md`](tdd.md) | test-layer placement and runner coverage | current |
-| [`../poc/README.md`](../poc/README.md) | native app setup, controls, source map, runtime overview | current |
-| [`../poc/Tests/TenonUITests/README.md`](../poc/Tests/TenonUITests/README.md) | XCUITest accessibility identifiers and GUI requirements | current |
+| [`development.md`](development.md) | native app setup, controls, source map, runtime overview | current |
+| [`../Tests/TenonUITests/README.md`](../Tests/TenonUITests/README.md) | XCUITest accessibility identifiers and GUI requirements | current |
 
 ## Accepted architecture and designs
 

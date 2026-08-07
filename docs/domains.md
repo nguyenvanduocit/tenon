@@ -17,7 +17,7 @@ checks is a tag layer that lies within weeks.
 
 ## How to tag
 
-Every source file under `poc/Sources/` carries one file tag, on its own line, above the imports:
+Every source file under `Sources/` carries one file tag, on its own line, above the imports:
 
 ```swift
 // @domain: plugin-host, plugin-events

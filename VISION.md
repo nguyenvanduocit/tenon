@@ -167,8 +167,8 @@ capture time, freshness, and authority level. Traceability errors and claims
 unsupported by their cited evidence are measured separately, with zero accepted
 in the reviewed experiment sample.
 
-The current pre-alpha implements the native terminal workspace, spatial canvas,
-catalog persistence, libghostty integration, built-in slot surfaces, governed
+Tenon implements the native terminal workspace, spatial canvas, catalog
+persistence, libghostty integration, built-in slot surfaces, governed
 plugin/intent runtime, CLI adapter, command palette, automations, and a
 host-internal Agent Lens. Agent Lens can bind supported provider evidence to one
 live terminal-surface incarnation and render one chronological Session timeline;

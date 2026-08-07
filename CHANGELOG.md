@@ -1,7 +1,23 @@
 # Changelog
 
-This file records notable changes to Tenon. The project is pre-alpha and does not yet
-publish versioned releases, so entries are grouped by date.
+This file records notable changes to Tenon. The project does not yet publish versioned
+releases, so entries are grouped by date.
+
+## 2026-08-08 — Repository structure
+
+### Changed
+
+- Moved the Swift package from `poc/` to the repository root, so `Package.swift`, `Sources/`,
+  `Tests/`, `plugins/`, `scripts/`, `Resources/`, `Vendor/`, `GhosttyKit/` and
+  `Tenon.xcodeproj` sit where SwiftPM expects them. Every build, test and run command now
+  executes from the root; the Xcode project's Swift package name changed from `poc` to
+  `tenon` accordingly.
+- Moved the package README to [`docs/development.md`](docs/development.md), the design system
+  to [`docs/designs.md`](docs/designs.md), and the dated review artifacts to `docs/reports/`.
+  Corrected the vendored reference checkout path to `references/`.
+- Rewrote the documentation set, the agent instruction files and the task board to describe
+  Tenon as the macOS application it is, replacing the proof-of-concept framing the tree
+  carried from its first commit.
 
 ## 2026-08-07 — Runtime hardening and architecture consolidation
 

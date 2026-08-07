@@ -1198,7 +1198,7 @@ lifecycle, outcome, and backpressure semantics.
 The former handwritten finite-capability and command paths are deleted and architecture
 fitness tests hold the closed inventories.
 
-**MEDIUM:** the interaction model is ready for continued pre-alpha use, not for executing
+**MEDIUM:** the interaction model is ready for continued use, not for executing
 untrusted plugins as if sandboxed. Production readiness still requires a hard runtime
 isolation/termination decision and recorded release-performance evidence. A green unit test
 suite alone does not answer either question.

@@ -9,13 +9,13 @@
 > superseded.
 
 **Date:** 2026-07-24
-**Scope:** Engineering-level lessons for **Tenon** drawn from two reference macOS terminals vendored under `refrerences/`: **kero** (`egoist`, indexed commit `a250a52`) and **muxy** (`muxy-app`, indexed commit `a32a179`). Focus: ghostty embedding, workspace/split model, terminal surface lifecycle, and (for muxy) the plugin/permission system — framed as *reuse / adapt / avoid* for Tenon.
+**Scope:** Engineering-level lessons for **Tenon** drawn from two reference macOS terminals vendored under `references/`: **kero** (`egoist`, indexed commit `a250a52`) and **muxy** (`muxy-app`, indexed commit `a32a179`). Focus: ghostty embedding, workspace/split model, terminal surface lifecycle, and (for muxy) the plugin/permission system — framed as *reuse / adapt / avoid* for Tenon.
 
 **Companion doc:** `research-plugin-runtimes.md` §1 is a deeper teardown of muxy's runtime & sandboxing at an earlier commit (`f520289`). This doc does **not** repeat it; it adds kero (not covered there), muxy's terminal/workspace engineering, a cross-validation against the two repos, and the open architectural decisions that fall out. Read §1 there for the runtime/sandbox detail; read this for the decision-oriented synthesis.
 
 **Confidence labels:** `HIGH` (verified by reading source via repowise or raw read), `MEDIUM` (inferred from a pattern in verified code), `LOW` (guess; verify before depending on it).
 
-**Citations:** files under kero are relative to `refrerences/kero/`, files under muxy relative to `refrerences/muxy/`, files under `poc/` are Tenon itself.
+**Citations:** files under kero are relative to `references/kero/`, files under muxy relative to `references/muxy/`. Six bare Swift filenames are Tenon's own, under `Sources/`: `PluginRuntime.swift`, `PluginManifest.swift`, `SurfacePool.swift`, `GhosttySurface.swift`, `ContentView.swift`, `SyntaxHighlightPlugin.swift`. Every other bare filename names a file inside kero or muxy, and the line numbers against Tenon's own files are the ones read on the date above — the tree has moved since.
 
 ---
 
@@ -137,7 +137,7 @@ Runtime shape (detail in companion §1): each extension is a `MuxyExtensionHost`
 
 muxy relies on the **process boundary**: a runtime error kills the child, the host lives. `handleTermination` classifies exit, sets `status.lastError`, logs, and `scheduleCrashRestart` with backoff up to **5 attempts**, resetting the counter after a stability window (`ExtensionStore.swift:1008-1071`). Load errors (name/dir mismatch, duplicate name) are caught and marked `lastError` without killing the host (`:846-870`). A JS exception inside the host goes to `context.exceptionHandler` → stderr (`MuxyExtensionHost/main.swift:94-97`).
 
-→ Tenon reaches the same guarantee **in-process**: a JS exception routes to `context.exceptionHandler` → log, never thrown out to the host (`PluginRuntime.swift:123-125`), and the watcher reloads on fix. Tenon lacks crash-restart-with-cap (it has no process to crash) but should **borrow `lastError`/status + a load-time attempt cap** for plugins that keep throwing at load. muxy's genuine edge here is real crash isolation; Tenon trades it for simplicity — an acceptable trade at pre-alpha.
+→ Tenon reaches the same guarantee **in-process**: a JS exception routes to `context.exceptionHandler` → log, never thrown out to the host (`PluginRuntime.swift:123-125`), and the watcher reloads on fix. Tenon lacks crash-restart-with-cap (it has no process to crash) but should **borrow `lastError`/status + a load-time attempt cap** for plugins that keep throwing at load. muxy's genuine edge here is real crash isolation; Tenon trades it for simplicity — an acceptable trade while a JS exception stays contained by `context.exceptionHandler` and the watcher reloads on fix.
 
 ### 4.4 Consent / grant / audit — the implementation blueprint (VISION §5) (HIGH)
 
@@ -228,7 +228,7 @@ single intent policy path; they MUST NOT create handwritten capability bridges o
 public invocation routes. Section 4.4 records the source evidence and §4.6 P1–P2 the
 candidate policy features.
 
-**(c) In-process (Tenon) vs out-of-process (muxy).** muxy isolates crash/CPU/memory better but pays heavily (socket protocol, base64-JSON framing, 8-concurrent-command cap, token handshake, backpressure, `ParentDeathMonitor`). For a pre-alpha, out-of-process is premature. The recommended middle ground is #6 above (per-plugin thread + watchdog): most of the isolation benefit, none of the IPC cost, still in-process.
+**(c) In-process (Tenon) vs out-of-process (muxy).** muxy isolates crash/CPU/memory better but pays heavily (socket protocol, base64-JSON framing, 8-concurrent-command cap, token handshake, backpressure, `ParentDeathMonitor`). Out-of-process is premature for a single-runtime host that already contains JS exceptions in-process. The recommended middle ground is #6 above (per-plugin thread + watchdog): most of the isolation benefit, none of the IPC cost, still in-process.
 
 ---
 

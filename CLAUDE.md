@@ -10,37 +10,36 @@ Tenon preserves shared context, directs scarce human attention, and returns ever
 claim to inspectable evidence. Its independently installable, hot-reloadable JavaScript
 plugin boundary adapts changing agent tools without moving their execution semantics into
 the host. Host-native terminal, workspace, surface, and settings behavior uses typed Swift
-services; plugins extend that product through the canonical public boundary. Pre-alpha;
-Phase 0 (plugin-host spike) is complete.
+services; plugins extend that product through the canonical public boundary.
 **VISION.md is the product north star; `docs/architecture-interaction-boundaries.md` is
 normative for interaction mechanism selection.**
 
-- `poc/` — Phase 0 spike: Swift package proving the plugin loop (host + manifest + hot reload + plugins driving UI).
+- `Sources/`, `Tests/`, `plugins/` — the macOS application: host + manifest + hot reload + plugins driving UI. `docs/development.md` covers its layout, setup, and build.
 - `docs/research-plugin-runtimes.md` — historical runtime/sandbox evidence written under
   the former name “Tessera.” Its old architecture recommendations are non-normative.
 - `docs/naming.md` — naming decision record. If a new name is ever needed for anything public (packages, orgs, domains), run the sweep battery there before proposing.
 
 ## Commands
 
-All commands run from `poc/`:
+All commands run from the repository root:
 
 ```bash
 ./scripts/setup-ghosttykit.sh   # once per clone: downloads the pinned GhosttyKit.xcframework (~130 MB)
 swift run tenon         # build + launch the app (opens a window; needs a GUI session)
-swift test              # headless test suite, ~1s — the evidence bar for the PoC
+swift test              # headless test suite, ~1s — the evidence bar for every change
 swift test --filter testFailedReloadRetainsActiveSessionAndContributions   # single test by name
 swift build             # compile check only
 ```
 
 Environment variables: `TENON_STUB_TERMINAL=1` (stub terminal pane, no PTY — plugin loop unchanged), `TENON_PLUGINS_DIR=/path` (point the host at a different plugin folder), `TENON_TRUST_PLUGIN_INVENTORY=1` (stand that folder in for the app bundle so its plugins carry bundled standing consent instead of prompting; matched exactly — `true` leaves it untrusted). Standing consent is host-owned: the bundled inventory has it, a directory named by `TENON_PLUGINS_DIR` earns it only through that flag.
 
-Builds live in two trees inside the gitignored `poc/.build`: `arm64-apple-macosx/`
+Builds live in two trees inside the gitignored `.build`: `arm64-apple-macosx/`
 (SwiftPM) and `xcode/` — one derived data path shared by every configuration. The
 dependency graph is checked out once, into `checkouts/` + `repositories/`, which every
 `xcodebuild` invocation reads by carrying `-clonedSourcePackagesDirPath .build`; omit
 that flag and Xcode silently clones a second 616 MB copy. `./scripts/prune-build-cache.sh`
 collects any other build tree that appears (`DEEP=1` drops both real ones too, keeping
-the dependencies), and `../dev.sh` / `../install.sh` run it before they build, so the
+the dependencies), and `./dev.sh` / `./install.sh` run it before they build, so the
 cache stops at a few gigabytes instead of growing without bound.
 
 No lint/format configuration exists yet.
@@ -73,7 +72,7 @@ CONTRIBUTION → EVENT → RESOURCE/STREAM/TASK → same-owner DIRECT → exact 
 allowlist → cross-principal finite INTENT. `docs/design-intent-bus.md` specifies the kernel
 only after the law selects INTENT.
 
-A plugin is a directory under `poc/plugins/` with a stable full `id`, `manifest.json`, and
+A plugin is a directory under `plugins/` with a stable full `id`, `manifest.json`, and
 `main.js`. Its manifest declares permissions, `intents.uses`, `intents.provides`, settings,
 automation schedules (wall-clock cadence fired back as the owner-scoped `automation.fired` event),
 and presentation metadata before JavaScript evaluation. Hot reload stages a replacement
@@ -107,7 +106,7 @@ has no handwritten plugin helper; it uses declared canonical intents.
 `DomainTagFitnessTests` enforces every rule below. Read it before adding a source file or
 editing a tagged one.
 
-Every file under `poc/Sources/` carries one tag above its imports. A file over 400 lines
+Every file under `Sources/` carries one tag above its imports. A file over 400 lines
 (60 of 173 today, longest 2641) tags every `// MARK:` section too, on the MARK line:
 
 ```swift
@@ -202,7 +201,7 @@ Because several agents run in parallel on that one working tree:
 - **Overlap → coordinate, don't collide.** If a file you need is already claimed in another `Doing` task, take different work, wait for the claim to clear, or split the change so your edits and theirs don't overwrite each other. Two agents editing the same lines on one branch is exactly the collision this protocol exists to prevent — check first, then write.
 - **Release when done.** When your task leaves `Doing`, the claim is gone: clear its `Owner / files` list (or archive the task) so those files are free again, and update `.kanban/board.md` per the session-end step below.
 - **Moving a task is a delete plus an insert.** A task line lives in exactly one column. Adding your line to `Doing` without removing the one you left behind puts the same task in two columns, and the stale copy reads as free work — another agent will pick up what you are already doing. Grep the board for your task id after you move it; the answer must be `1`.
-- **Keep the shared test target compiling, even mid-red.** TDD here means a test that *fails*, not a test that fails to *build*. `poc/Tests/` is one target shared by every concurrent agent, so a test naming a type that does not exist yet takes `swift test` down for everyone and destroys their evidence, not just yours. Land the type and its empty or throwing members in the same edit as the test that names them, then let the assertions be the red.
+- **Keep the shared test target compiling, even mid-red.** TDD here means a test that *fails*, not a test that fails to *build*. `Tests/` is one target shared by every concurrent agent, so a test naming a type that does not exist yet takes `swift test` down for everyone and destroys their evidence, not just yours. Land the type and its empty or throwing members in the same edit as the test that names them, then let the assertions be the red.
 - **A new source file ships with its `@domain:` tag.** `DomainTagFitnessTests` holds the untagged count at zero, so an untagged new file turns the suite red for every concurrent agent — the fix is one line above the imports, and the rules are in `docs/domains.md`.
 
 Rule of thumb: the working tree is always live and shared, so read `.kanban/` before you write, keep it current while you work, and clear it when you finish.

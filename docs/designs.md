@@ -1,8 +1,8 @@
 # Tenon design system
 
 - **Status:** normative for host-native UI
-- **Scope:** `poc/Sources/TenonApp` and every built-in macOS surface
-- **Product anchor:** [`VISION.md`](VISION.md)
+- **Scope:** `Sources/TenonApp` and every built-in macOS surface
+- **Product anchor:** [`VISION.md`](../VISION.md)
 
 Tenon is a dense native supervision tool for people operating several terminal and agent
 workstreams. It is not a marketing site, a mobile app enlarged for desktop, or a gallery of

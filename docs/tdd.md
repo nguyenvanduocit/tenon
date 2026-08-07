@@ -41,7 +41,7 @@ on first compile → `SurfacePool`/`ContentView`/`TenonApp` wired with zero new 
 ## Which runner covers which directory
 
 `swift test` is the evidence bar, so every directory it cannot reach has to earn the
-exclusion out loud. `poc/Tests/` holds five directories:
+exclusion out loud. `Tests/` holds five directories:
 
 | Directory | `swift test` | `xcodebuild test` | Why |
 |---|---|---|---|

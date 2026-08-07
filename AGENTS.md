@@ -4,7 +4,7 @@
 
 ## Mandatory native design system
 
-Read [`designs.md`](designs.md) before adding or changing host-native UI. Its density,
+Read [`docs/designs.md`](docs/designs.md) before adding or changing host-native UI. Its density,
 typography, semantic-color, geometry, component, accessibility, and visual-verification
 rules are normative. External products and prototypes may inform structure and workflow;
 they do not override Tenon's visual language or authorize feature-local design tokens.
@@ -49,7 +49,7 @@ superseded-path deletion in the same reviewed change. Never weaken only the test
 Read [`docs/domains.md`](docs/domains.md) before adding a source file or editing a tagged
 one. It is the only place a domain may be declared, and `DomainTagFitnessTests` enforces it.
 
-Every file under `poc/Sources/` carries one tag above its imports; a file over 400 lines
+Every file under `Sources/` carries one tag above its imports; a file over 400 lines
 tags every `// MARK:` section as well, on the MARK line:
 
 ```swift
@@ -115,17 +115,17 @@ The MCP tools below serve pre-verified docs, symbols, history, and health from t
 **Compose them:** low-confidence `get_answer` then read `best_guesses[0].file`; `get_context` shows `hotspot: true` then `get_risk` before editing; `decision_records` titles then `get_why(targets=[...])`; PR review then `get_risk(targets, changed_files)` and read `directive` first. A `tombstone` error means the file moved, so follow `successor_paths`.
 
 ### Architecture
-I’ll trace the Swift host, app lifecycle, plugin manifests, and JavaScript entry points, then synthesize the onboarding overview from the repository’s actual execution paths. Tenon is a native macOS terminal workspace that consumes user input, terminal events, workspace mutations, and manifest-backed JavaScript plugins; processes them through a Swift workspace model, isolated JavaScriptCore runtimes, capability gates, and hot-reload orchestration; and renders libghostty terminals alongside plugin-contributed pane views and status items. The repository is a pre-alpha proof of concept for an architecture in which product features can be implemented as replaceable plugins. Its primary implementation lives under poc/, while docs/ contains design decisions and prototypes/ contains interface experiments.
+I’ll trace the Swift host, app lifecycle, plugin manifests, and JavaScript entry points, then synthesize the onboarding overview from the repository’s actual execution paths. Tenon is a native macOS terminal workspace that consumes user input, terminal events, workspace mutations, and manifest-backed JavaScript plugins; processes them through a Swift workspace model, isolated JavaScriptCore runtimes, capability gates, and hot-reload orchestration; and renders libghostty terminals alongside plugin-contributed pane views and status items. The repository implements an architecture in which product features can be implemented as replaceable plugins. Its implementation lives in Sources/ and plugins/, while docs/ contains design decisions and prototypes/ contains interface experiments.
 
 ### Entry points
-- `poc/Sources/TenonCLI/main.swift`
-- `poc/plugins/browser/main.js`
-- `poc/plugins/claude-sessions/main.js`
-- `poc/plugins/clock/main.js`
-- `poc/plugins/core-commands/main.js`
-- `poc/plugins/file-explorer/main.js`
+- `Sources/TenonCLI/main.swift`
+- `plugins/browser/main.js`
+- `plugins/claude-sessions/main.js`
+- `plugins/clock/main.js`
+- `plugins/core-commands/main.js`
+- `plugins/file-explorer/main.js`
 
 ### Code health
-Three co-equal signals: defect risk 9.76/10 avg, hotspot health 9.76/10 (stable), worst `poc/Vendor/TreeSitterTSX/Sources/TreeSitterTSX/src/common/scanner.h` at 6.0/10 · maintainability 9.8/10 · performance risk 0 open static I/O-in-loop / N+1 findings. Detail: `get_health()`.
+Three co-equal signals: defect risk 9.76/10 avg, hotspot health 9.76/10 (stable), worst `Vendor/TreeSitterTSX/Sources/TreeSitterTSX/src/common/scanner.h` at 6.0/10 · maintainability 9.8/10 · performance risk 0 open static I/O-in-loop / N+1 findings. Detail: `get_health()`.
 
 <!-- REPOWISE_AGENTS:END -->
