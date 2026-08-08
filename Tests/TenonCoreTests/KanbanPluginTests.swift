@@ -1092,6 +1092,7 @@ final class KanbanPluginTests: XCTestCase {
                 .contains { $0.hasPrefix("T-101") }
         }
         await bridge.resetReadCount()
+        let armedBefore = await runtime.resourceCounts.timers
 
         // Driven at the plugin's own debounce entry point rather than through the file
         // system. Writing eight files and counting reads measured FSEvents' coalescing,
@@ -1106,14 +1107,29 @@ final class KanbanPluginTests: XCTestCase {
             })()
             """
         )
-        try? await Task.sleep(for: .milliseconds(600))
 
-        let reads = await bridge.readCount()
+        // T-074: the rule is "a burst arms one refresh", and the generation's live timer
+        // count says so outright. The burst is a single synchronous evaluation, so no timer
+        // can fire inside it — the reading below is a fact about the plugin's bookkeeping,
+        // not a race against a debounce window. The earlier version slept 600 ms and counted
+        // reads, which measured how busy the machine was: a late FSEvent from the fixture's
+        // own board write lands as a second read, and a slow turn leaves the first one
+        // unfired. It failed about one full-suite run in three for those reasons.
+        //
+        // Counted as a delta because the pane also holds a repeating tracking timer, which
+        // is not this rule's business.
+        let armedAfter = await runtime.resourceCounts.timers
         XCTAssertEqual(
-            reads,
+            armedAfter - armedBefore,
             1,
-            "eight watch events produced \(reads) board reads — they must collapse into one"
+            "eight refresh requests armed \(armedAfter - armedBefore) timers — they must "
+                + "collapse into one"
         )
+
+        // And the one that survives does refresh the board. Waiting on the fact rather than
+        // on a duration: `>=` because a stray filesystem event may legitimately add another.
+        let refreshed = await eventually { await bridge.readCount() >= 1 }
+        XCTAssertTrue(refreshed, "the surviving debounce timer never re-read the board")
     }
 
     /// Invariant 10: a retired generation owns nothing. A watcher that outlived its pane

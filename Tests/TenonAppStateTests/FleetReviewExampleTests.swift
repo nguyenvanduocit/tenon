@@ -42,7 +42,7 @@ final class FleetReviewExampleTests: XCTestCase {
             return XCTFail("the palette command failed: \(result)")
         }
 
-        let published = await eventually(attempts: 1600) {
+        let published = await eventually {
             host.statusItems.contains {
                 $0.text.hasPrefix("review:") && $0.text.contains("tests=")
             }
@@ -150,11 +150,15 @@ final class FleetReviewExampleTests: XCTestCase {
         )
     }
 
+    /// T-074: a deadline, not a turn count. See the note on the identical helper in
+    /// `AgentFleetIntegrationTests` — an attempt count buys an amount of wall time that
+    /// depends on how busy the machine is, which is exactly what a wait must not depend on.
     private func eventually(
-        attempts: Int,
+        within timeout: Duration = .seconds(60),
         operation: () async -> Bool
     ) async -> Bool {
-        for _ in 0 ..< attempts {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
             if await operation() { return true }
             try? await Task.sleep(for: .milliseconds(5))
         }

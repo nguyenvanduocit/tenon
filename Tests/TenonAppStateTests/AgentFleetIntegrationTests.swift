@@ -34,7 +34,7 @@ final class AgentFleetIntegrationTests: XCTestCase {
             payload: .object(["workspaceId": .string(UUID().uuidString)])
         )
 
-        let published = await eventually(attempts: 1600) {
+        let published = await eventually {
             host.statusItems.contains { $0.text.hasPrefix("fleet:") }
         }
         XCTAssertTrue(
@@ -143,11 +143,23 @@ final class AgentFleetIntegrationTests: XCTestCase {
         )
     }
 
+    /// T-074: waits until a deadline, not for a fixed number of turns.
+    ///
+    /// The attempt count this replaces read as eight seconds and was not: it is 1600 turns
+    /// of "check, then sleep 5 ms", and how much wall time that buys depends entirely on how
+    /// fast the turns run. On a busy machine the fleet needs longer than the loop lasts, and
+    /// the test failed at 7.0 s against 0.95 s on a quiet one — a wait bound, not a
+    /// disagreement about behaviour.
+    ///
+    /// The deadline is deliberately far past any real run. It is not a tolerance for slowness:
+    /// a passing run returns the moment the fact appears and never spends it. Its only job is
+    /// to fail a genuinely hung test instead of hanging the suite behind it.
     private func eventually(
-        attempts: Int,
+        within timeout: Duration = .seconds(60),
         operation: () async -> Bool
     ) async -> Bool {
-        for _ in 0 ..< attempts {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
             if await operation() { return true }
             try? await Task.sleep(for: .milliseconds(5))
         }

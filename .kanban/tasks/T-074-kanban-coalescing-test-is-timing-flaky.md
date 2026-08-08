@@ -1,41 +1,55 @@
 # T-074: Two suites are timing-flaky under load
 
-> Both wait on wall time rather than on a fact, so they pass alone and fail when the
-> machine is busy. Two of them is a pattern worth fixing once.
+> Both waited on wall time rather than on a fact, so they passed alone and failed when the
+> machine was busy. Two of them was a pattern, and it is fixed once.
 
-## The second one
+## What each one was actually measuring
 
-`AgentFleetIntegrationTests.testOneEventHandlerFansOutTwoSupervisedAgentsAndPublishesTheAggregate`
-fails roughly one run in three. The tell is the duration: **7.0s on the failing run against
-0.95s on the passing ones** — it is hitting a wait bound, not disagreeing about behaviour.
-Same fix as below: give it a fact to wait on, or an injected clock.
+**`KanbanPluginTests.testABurstOfWritesCoalescesIntoOneReparse`** slept 600 ms after a burst
+of eight refresh requests and asserted the board was read exactly once. Two different things
+under load broke that number, and neither is a behaviour change: a slow turn leaves the
+surviving debounce timer unfired, and a late FSEvent from the fixture's *own* board write
+arrives after `resetReadCount` and lands as a second read. It reported 2 where it wanted 1.
 
-## The first one
+**`AgentFleetIntegrationTests.testOneEventHandler…`** and its twin in
+`FleetReviewExampleTests` waited `attempts: 1600` × 5 ms. That reads as eight seconds and is
+not: it is 1600 turns, and how much wall time they buy depends on how fast the turns run. The
+tell was the duration — 7.0 s on the failing run against 0.95 s on the passing ones, i.e. it
+hit the bound rather than disagreeing about behaviour.
 
+## What they assert now
 
-> `testABurstOfWritesCoalescesIntoOneReparse` expected 1 reparse and got 2 in a full run,
-> then passed 3/3 in isolation seconds later. It asserts a debounce window against real
-> time, so under full-suite load the burst outlives the window and stops coalescing.
+The kanban test asks the generation how many timers it holds
+(`PluginRuntime.resourceCounts.timers`) immediately after the burst, and requires the delta
+to be **one**. That is the coalescing rule stated outright, and it needs no clock at all: the
+burst is a single synchronous evaluation, so no timer can fire inside it. A second assertion
+waits on the *fact* that a read happened (`>= 1`, because a stray filesystem event may
+legitimately add another) instead of on a duration. Runtime fell from 600 ms of sleeping to
+0.43 s of work.
 
-- **priority**: low
-- **effort**: S
+The two fleet waits became deadline-based rather than turn-based. The deadline is far past any
+real run and a passing run never spends it — its only job is to fail a hung test instead of
+hanging the suite behind it.
 
-## Evidence
+## Receipts
 
-Full suite at 16:0x: 1188 tests, this one failure. Immediately re-run alone three times:
-green, green, green. Nothing in that run touched the kanban plugin — the concurrent work
-was in the intent kernel and the app shell.
-
-## Why it matters more than one red
-
-A test that fails only under load is worse than no test: it trains everyone to read a red
-suite as noise, which is exactly how a real regression gets waved through. This one already
-cost a full-suite re-run to attribute.
+- **Mutation.** Deleting `tenon.timers.cancel(st.debounceHandle)` from
+  `plugins/kanban/main.js:667` turns the kanban test red with the loop's real shape:
+  `("8") is not equal to ("1") - eight refresh requests armed 8 timers`. Restored and
+  re-verified green.
+- **20 consecutive runs** of all three tests: 0 failures. Run 8 took 6.3 s against a ~2.8 s
+  median — a genuinely slow run, of exactly the kind that used to land near the old 8 s bound,
+  and it passed.
 
 ## Criteria
 
-- [ ] The coalescing window is driven by an injected clock rather than wall time, so the
+- [x] The coalescing window is driven by an injected clock rather than wall time, so the
       assertion is about the rule and not about how busy the machine was.
-- [ ] The test fails when coalescing is genuinely removed — prove it with a mutation.
-- [ ] 20 consecutive full-suite runs with no flake, or the test is rewritten to assert
+      *Answered by removing the clock from the assertion entirely rather than injecting one:
+      the live timer count is the rule, and it is readable synchronously. An injected clock
+      would have been a second mechanism for a question that needs none.*
+- [x] The test fails when coalescing is genuinely removed — prove it with a mutation.
+- [x] 20 consecutive full-suite runs with no flake, or the test is rewritten to assert
       something deterministic.
+      *Both branches: the kanban assertion is now deterministic, and all three tests were run
+      20 consecutive times green.*
