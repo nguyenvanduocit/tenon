@@ -165,6 +165,15 @@ is the header strip (→ `pane-chrome`), the right of a plugin to publish rows a
 `plugin-contributions`), and how the data in the rows was obtained (a git read, a directory
 listing), which belongs to whoever owns that source.
 
+Also excluded: **a list that is part of a form.** The git panel lists files, but it is a form —
+commit box, branch controls, bulk actions — and its file rows carry a visible verb each
+(`Stage`, `Unstage`, `Discard`). A row here is a thing you look at and pick; a row there is a
+control you operate. Migrating the second into this vocabulary would mean either hiding those
+verbs behind a right-click, which changes how the panel is OPERATED, or growing the row
+vocabulary a trailing-button field for one call site. Neither is worth it while the product's
+answer for the git panel is "it is a view" (T-086, user-directed): a form's list stays with its
+form, and `body` is the vocabulary for a form.
+
 ## field-draft
 
 Who owns the characters in a control while a person is typing in it, and when the control's
