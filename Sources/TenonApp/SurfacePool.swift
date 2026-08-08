@@ -68,6 +68,22 @@ final class SurfacePool {
     /// builds its surface on the next SwiftUI render, so `terminal.run.v1` would otherwise
     /// write into nothing; the text waits here and flushes the moment the surface is built.
     @ObservationIgnored private var pendingText: [UUID: String] = [:]
+    /// True only while `focusSurface` is moving the responder chain on the model's orders.
+    /// The responder change that call causes is not news — the workspace already believes
+    /// that pane is focused — so reporting it back would let one focus command manufacture
+    /// the event that re-issues it (T-088).
+    @ObservationIgnored private var isApplyingModelFocus = false
+    /// True while a host overlay — the launcher popover — owns the key window.
+    ///
+    /// Presenting and dismissing an overlay both move the responder chain: AppKit hands
+    /// first responder back to whoever held it before the overlay appeared. That is a fact
+    /// about AppKit's restoration, not about which pane a person chose, and it arrives
+    /// *after* a launcher has already created and focused a new pane. Adopting it would
+    /// hand focus back to the pane the person was leaving (T-088, criterion 3).
+    ///
+    /// Idempotent on purpose: the canvas can lower it on any of the several paths that end a
+    /// popover without having to prove exactly one of them ran.
+    var isOverlayOwningFocus = false
     init(
         backendName: String,
         makeSurface: @escaping (UUID, URL) -> TerminalSurface
@@ -114,12 +130,23 @@ final class SurfacePool {
                 for: slotID
             )
         }
+        // Focus is a fact of the responder chain, not of the emulator, so every backend
+        // reports it through the same seam — which is what lets the stub reproduce the
+        // focus cycle headlessly. A responder change this pool asked for is filtered here
+        // rather than at the far end: only the caller knows whether the window server or
+        // the workspace moved focus.
+        surface.onFocusGained = { [weak self] in
+            guard let self,
+                  !self.isApplyingModelFocus,
+                  !self.isOverlayOwningFocus
+            else { return }
+            self.onSlotFocusGained?(slotID)
+        }
         if let ghostty = surface as? GhosttySurface {
             ghostty.onProcessExit = { [weak self] in self?.onShellExited?(slotID) }
             ghostty.onNewTab = { [weak self] in self?.onNewTab?() }
             ghostty.onNewSplit = { [weak self] axis in self?.onNewSplit?(axis) }
             ghostty.onGotoSplit = { [weak self] in self?.onFocusNextSlot?() }
-            ghostty.onFocusGained = { [weak self] in self?.onSlotFocusGained?(slotID) }
         }
         surfaces[slotID] = surface
         if let queued = pendingText.removeValue(forKey: slotID) {
@@ -242,8 +269,14 @@ final class SurfacePool {
     }
 
     /// Route keyboard focus to an existing slot's surface.
+    ///
+    /// `makeFirstResponder` delivers resign/become synchronously, so the whole responder
+    /// change happens inside this call and the suppression window closes with it.
     func focusSurface(for slotID: UUID) {
-        surfaces[slotID]?.focus()
+        guard let surface = surfaces[slotID] else { return }
+        isApplyingModelFocus = true
+        defer { isApplyingModelFocus = false }
+        surface.focus()
     }
 
     /// Deliver `terminal.write.v1` text into a slot's PTY, through the seam so every

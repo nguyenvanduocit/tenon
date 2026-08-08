@@ -388,6 +388,10 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             }
         ))
         launcherPopover = popover
+        // The popover owns the key window from here until it closes, so every responder
+        // change in between was caused by presenting or dismissing it. None of them is a
+        // person choosing a pane, and the launcher is about to create one (T-088).
+        pool.isOverlayOwningFocus = true
         popover.show(relativeTo: anchor, of: self, preferredEdge: .minY)
     }
 
@@ -396,6 +400,21 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
               closed === launcherPopover
         else { return }
         launcherPopover = nil
+        releaseOverlayFocus(reassertingModelFocus: true)
+    }
+
+    /// Hands the responder chain back to whichever pane the workspace now considers active,
+    /// then lets ordinary focus reports through again.
+    ///
+    /// Re-asserting is what settles focus on a pane the launcher just created: AppKit would
+    /// otherwise restore the pane the person was leaving. It emits nothing, because a
+    /// host-driven focus is not reported back.
+    private func releaseOverlayFocus(reassertingModelFocus: Bool) {
+        guard let pool else { return }
+        if reassertingModelFocus, let activeSlotID = store?.catalog.activeSlotID {
+            pool.focusSurface(for: activeSlotID)
+        }
+        pool.isOverlayOwningFocus = false
     }
 
     private func makeCard(slotID: UUID) -> SpatialSlotCardView {
@@ -1047,6 +1066,9 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         }
         launcherPopover?.performClose(nil)
         launcherPopover = nil
+        // Leaving the window is not a moment to move focus anywhere; the claim is simply
+        // dropped so a canvas going away cannot leave reports muted for the next one.
+        releaseOverlayFocus(reassertingModelFocus: false)
     }
 
     /// Ends all gesture-owned state before the canvas leaves its window. AppKit can

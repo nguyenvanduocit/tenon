@@ -21,6 +21,13 @@ protocol TerminalSurface: AnyObject {
     /// below and the pane simply holds the directory it started in.
     var onPwdChange: ((String) -> Void)? { get set }
 
+    /// The pane took keyboard focus from the window server — a person clicked into it, or
+    /// AppKit restored it as first responder. It is a FACT about the responder chain and
+    /// belongs to every backend, not only the emulator one: `SurfacePool` turns it into the
+    /// workspace's active pane, so a backend that cannot report it leaves the model's focus
+    /// where it was. A backend keeps the discard default below unless it declares storage.
+    var onFocusGained: (() -> Void)? { get set }
+
     /// The SwiftUI view for this surface.
     func makeView() -> AnyView
 
@@ -71,6 +78,12 @@ extension TerminalSurface {
         set {}
     }
 
+    /// A backend with no responder chain of its own, on the same opt-in terms.
+    var onFocusGained: (() -> Void)? {
+        get { nil }
+        set {}
+    }
+
     func focus() {}
     func sendText(_ text: String) {}
     func terminate() {}
@@ -92,6 +105,11 @@ final class StubTerminalSurface: TerminalSurface {
     /// The stub has no PTY to emit OSC 7, but it carries the hook so the pane-directory
     /// rule can be driven — and asserted — without a terminal.
     var onPwdChange: ((String) -> Void)?
+    /// The stub has no responder chain, but it carries the hook and fires it from `focus()`
+    /// exactly as `GhosttySurface.becomeFirstResponder` does. That is what makes the
+    /// model→surface→model focus cycle reproducible without a window (T-088): a stub that
+    /// swallowed the callback would let the cycle pass a headless test it cannot survive.
+    var onFocusGained: (() -> Void)?
     private(set) var focusCount = 0
     /// Everything delivered to the (nonexistent) PTY, in order — the lifecycle tests
     /// assert the first frame after materialization loses nothing that was queued.
@@ -109,6 +127,7 @@ final class StubTerminalSurface: TerminalSurface {
 
     func focus() {
         focusCount += 1
+        onFocusGained?()
     }
 
     func sendText(_ text: String) {

@@ -1066,11 +1066,13 @@ private extension AppComposition {
                 }
             }
             for event in events {
-                if case let .slotFocused(slotID, _, _) = event {
-                    Task { @MainActor [weak terminalSurfaces] in
-                        await Task.yield()
-                        terminalSurfaces?.focusSurface(for: slotID)
-                    }
+                if case let .slotFocused(slotID, _, _) = event,
+                   let store, let terminalSurfaces {
+                    PaneFocusRouting.scheduleFocusCommand(
+                        for: slotID,
+                        store: store,
+                        surfaces: terminalSurfaces
+                    )
                 }
             }
             // Coalesced catalog persistence: every mutation notes the full state; the
@@ -1113,9 +1115,7 @@ private extension AppComposition {
         terminalSurfaces.onFocusNextSlot = {
             [weak store] in store?.focusNextSlot()
         }
-        terminalSurfaces.onSlotFocusGained = {
-            [weak store] slotID in store?.focusSlot(slotID)
-        }
+        PaneFocusRouting.connect(store: store, surfaces: terminalSurfaces)
         terminalSurfaces.onShellExited = {
             [weak store] slotID in store?.closeSlot(slotID)
         }
