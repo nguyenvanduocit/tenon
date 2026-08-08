@@ -117,50 +117,14 @@ enum DiffSnapshot {
         size: CGSize,
         to path: String
     ) {
-        _ = NSApplication.shared
-        NSApp.appearance = NSAppearance(named: .darkAqua)
-
-        let hosting = NSHostingView(
-            rootView: AnyView(
-                PaneChromePreview(
-                    slot: slot,
-                    title: title,
-                    headerStore: headerStore
-                ) { view }
-            )
+        PaneViewSnapshotWriter.write(
+            view,
+            slot: slot,
+            title: title,
+            headerStore: headerStore,
+            size: size,
+            to: path
         )
-        hosting.frame = NSRect(origin: .zero, size: size)
-        let layoutStart = Date()
-        hosting.layoutSubtreeIfNeeded()
-        let firstLayout = Date().timeIntervalSince(layoutStart)
-        // Give SwiftUI real runloop turns to lay out its ScrollView content and
-        // commit its layer before the offscreen capture.
-        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
-        hosting.layoutSubtreeIfNeeded()
-
-        guard let rep = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) else {
-            FileHandle.standardError.write(Data("snapshot: no bitmap rep\n".utf8))
-            exit(2)
-        }
-        let captureStart = Date()
-        hosting.cacheDisplay(in: hosting.bounds, to: rep)
-        let capture = Date().timeIntervalSince(captureStart)
-        FileHandle.standardError.write(
-            Data(String(format: "snapshot: layout %.0f ms, capture %.0f ms\n",
-                        firstLayout * 1000, capture * 1000).utf8)
-        )
-        guard let png = rep.representation(using: .png, properties: [:]) else {
-            FileHandle.standardError.write(Data("snapshot: png encode failed\n".utf8))
-            exit(3)
-        }
-        do {
-            try png.write(to: URL(fileURLWithPath: path))
-            FileHandle.standardError.write(Data("snapshot: wrote \(path)\n".utf8))
-            exit(0)
-        } catch {
-            FileHandle.standardError.write(Data("snapshot: write failed: \(error)\n".utf8))
-            exit(3)
-        }
     }
 }
 
@@ -195,7 +159,7 @@ enum PaneChromeMetrics {
     static let closeInset: CGFloat = 27
 }
 
-private struct PaneChromePreview<Content: View>: View {
+struct PaneChromePreview<Content: View>: View {
     let slot: WorkspaceSlot
     let title: String
     var headerStore: PaneHeaderStore

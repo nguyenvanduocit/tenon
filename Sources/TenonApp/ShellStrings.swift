@@ -11,8 +11,15 @@ import Foundation
 /// This is the one door they go through, so a sentence a person hears is in the catalog for the
 /// same reason a sentence they read is.
 enum Shell {
+    #if SWIFT_PACKAGE
+    private static let localizationBundle = Bundle.module
+    #else
+    // Xcode compiles the catalog into the app itself; only SwiftPM synthesizes Bundle.module.
+    private static let localizationBundle = Bundle.main
+    #endif
+
     static func text(_ key: String.LocalizationValue) -> String {
-        String(localized: key, bundle: .module)
+        String(localized: key, bundle: localizationBundle)
     }
 
     /// Interpolated text — the key keeps its placeholders, so a translation may reorder them.
@@ -20,6 +27,6 @@ enum Shell {
         _ key: String.LocalizationValue,
         comment: StaticString
     ) -> String {
-        String(localized: key, bundle: .module, comment: comment)
+        String(localized: key, bundle: localizationBundle, comment: comment)
     }
 }

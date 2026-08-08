@@ -188,7 +188,19 @@ Two enabling constraints keep those product surfaces changeable:
 
 ## Verification
 
-The GUI cannot be screenshotted from a headless shell, so `swift build` + `swift test` are the evidence bar. `ShippedPluginsTests` copies the real `plugins/` directory into a temp dir and exercises the actual shipped `clock` and `hello-palette` JS — including a genuine on-disk edit that must propagate through FSEvents into host state. When you change plugin-host behavior, extend those tests rather than relying on manual app runs.
+`swift build` + `swift test` are the evidence bar. `ShippedPluginsTests` copies the real `plugins/` directory into a temp dir and exercises the actual shipped `clock` and `hello-palette` JS — including a genuine on-disk edit that must propagate through FSEvents into host state. When you change plugin-host behavior, extend those tests rather than relying on manual app runs.
+
+A **window** cannot be screenshotted from a headless shell — this process has no Screen Recording grant and `screencapture` fails with "could not create image from window". An offscreen **view** can, and that is a different bar worth clearing, because a passing test says a view tree has the right *shape* and nothing about its geometry. `PaneViewSnapshotWriter` renders any pane's content to a PNG with `NSHostingView` + `cacheDisplay`, no window and no permission:
+
+```bash
+TENON_PLUGINS_DIR=plugins TENON_TRUST_PLUGIN_INVENTORY=1 \
+TENON_VIEW_SNAPSHOT='dev.tenon.kanban/board:/tmp/board.png' \
+TENON_VIEW_SNAPSHOT_WORKSPACE="$PWD" swift run tenon     # any plugin view
+TENON_DIFF_SNAPSHOT=/tmp/diff.png swift run tenon        # the diff view
+TENON_CHANGES_SNAPSHOT=/tmp/changes.png swift run tenon  # the changes panel
+```
+
+The plugin form boots the real host over the real inventory and mounts the same `PluginSlotView` a pane mounts, so the picture is what the pane shows. `docs/design-plugin-views.md` has the worked example. Reach for it when a change moves layout: T-055 shipped a board that passed 24 tests and rendered as scattered cards floating at different heights, and the adversarial review panel that read the diff found none of it.
 
 ## Workflow — one branch, many agents on `main`
 

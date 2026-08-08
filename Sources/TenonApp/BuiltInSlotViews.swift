@@ -371,7 +371,11 @@ private struct DocsSlotView: View {
 /// Renders a plugin's declarative rows (`TreeRowItem`) as an indented tree. The
 /// disclosure chevron, container-accented icon, and dotfile dimming are all driven
 /// off the row's own fields — no knowledge of any specific plugin (VISION §6).
-private struct PluginSlotView: View {
+///
+/// Internal rather than private because `PluginViewSnapshot` mounts this exact view offscreen
+/// (T-063). A snapshot that rendered a second opinion of a plugin pane would be worth nothing:
+/// the point is to see what the pane shows.
+struct PluginSlotView: View {
     let pluginID: PluginID
     let viewID: String
     let slotID: UUID

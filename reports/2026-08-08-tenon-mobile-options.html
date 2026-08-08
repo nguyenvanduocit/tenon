@@ -1,0 +1,950 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Tenon Mobile — phương án, quyết định và lộ trình</title>
+  <style>
+    :root {
+      --bg: #f7f7f5;
+      --surface: #ffffff;
+      --surface-soft: #f0f0ed;
+      --ink: #171714;
+      --muted: #66665f;
+      --line: #deded8;
+      --accent: #a86414;
+      --accent-soft: #f5e8d2;
+      --good: #217a48;
+      --good-soft: #e3f2e9;
+      --warn: #966710;
+      --warn-soft: #f8edcf;
+      --risk: #a33838;
+      --risk-soft: #f6e4e4;
+      --blue: #2f64a5;
+      --blue-soft: #e7eef8;
+      --shadow: 0 8px 30px rgba(26, 24, 18, .07);
+      --radius: 14px;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #10100f;
+        --surface: #191918;
+        --surface-soft: #222220;
+        --ink: #efefe9;
+        --muted: #aaa9a0;
+        --line: #343430;
+        --accent: #e2a04c;
+        --accent-soft: #3a2b19;
+        --good: #75c997;
+        --good-soft: #193527;
+        --warn: #e2ba5f;
+        --warn-soft: #3b311b;
+        --risk: #ef8d8d;
+        --risk-soft: #3b2020;
+        --blue: #83b4ef;
+        --blue-soft: #1c2d43;
+        --shadow: none;
+      }
+    }
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      background: var(--bg);
+      color: var(--ink);
+      font: 15.5px/1.65 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+    a { color: var(--blue); text-underline-offset: 3px; }
+    code, .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      font-size: .92em;
+    }
+    .topbar {
+      position: sticky;
+      top: 0;
+      z-index: 20;
+      border-bottom: 1px solid var(--line);
+      background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(18px);
+    }
+    .topbar-inner {
+      max-width: 1180px;
+      margin: auto;
+      padding: 10px 22px;
+      display: flex;
+      align-items: center;
+      gap: 18px;
+    }
+    .brand {
+      font-weight: 760;
+      letter-spacing: -.02em;
+      white-space: nowrap;
+    }
+    nav { display: flex; gap: 7px; overflow-x: auto; scrollbar-width: none; }
+    nav::-webkit-scrollbar { display: none; }
+    nav a {
+      flex: 0 0 auto;
+      padding: 4px 9px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      color: var(--muted);
+      text-decoration: none;
+      font-size: 12px;
+    }
+    nav a:hover { color: var(--ink); background: var(--surface); }
+    main { max-width: 1180px; margin: 0 auto; padding: 24px 22px 76px; }
+    section { scroll-margin-top: 82px; margin-top: 52px; }
+    h1, h2, h3 { line-height: 1.2; letter-spacing: -.025em; }
+    h1 { margin: 0; font-size: clamp(29px, 5vw, 48px); max-width: 900px; }
+    h2 { font-size: clamp(22px, 3vw, 30px); margin: 0 0 9px; }
+    h3 { font-size: 17px; margin: 0 0 7px; }
+    p { margin: 0 0 12px; }
+    ul, ol { margin: 8px 0 0; padding-left: 21px; }
+    li + li { margin-top: 5px; }
+    .eyebrow {
+      color: var(--accent);
+      text-transform: uppercase;
+      letter-spacing: .11em;
+      font-size: 11px;
+      font-weight: 800;
+      margin-bottom: 10px;
+    }
+    .hero {
+      display: grid;
+      grid-template-columns: minmax(0, 1.65fr) minmax(280px, .75fr);
+      gap: 24px;
+      align-items: stretch;
+      margin-top: 6px;
+    }
+    .hero-main, .verdict-card {
+      border: 1px solid var(--line);
+      border-radius: 18px;
+      background: var(--surface);
+      box-shadow: var(--shadow);
+    }
+    .hero-main { padding: clamp(24px, 5vw, 48px); }
+    .lede { color: var(--muted); font-size: 17px; max-width: 780px; margin: 16px 0 0; }
+    .meta-row { display: flex; gap: 9px; flex-wrap: wrap; margin-top: 24px; }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+      padding: 4px 10px;
+      color: var(--muted);
+      font-size: 12px;
+      background: var(--bg);
+    }
+    .verdict-card { padding: 22px; display: flex; flex-direction: column; justify-content: space-between; }
+    .verdict-card .score { color: var(--good); font-size: 38px; font-weight: 800; line-height: 1; }
+    .verdict-card .label { color: var(--muted); font-size: 12px; }
+    .verdict-card .decision { font-size: 18px; font-weight: 760; margin: 18px 0 7px; }
+    .verdict-card .next { border-top: 1px solid var(--line); padding-top: 14px; margin-top: 20px; }
+    .summary-strip {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-top: 16px;
+    }
+    .summary-strip > div {
+      background: var(--surface-soft);
+      border-radius: 10px;
+      padding: 12px;
+    }
+    .summary-strip strong { display: block; font-size: 14px; }
+    .summary-strip span { color: var(--muted); font-size: 12px; }
+    .section-head { max-width: 790px; margin-bottom: 20px; }
+    .section-head p { color: var(--muted); }
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 14px 16px;
+      border-radius: 0 10px 10px 0;
+      margin: 18px 0;
+    }
+    .callout strong { display: block; margin-bottom: 3px; }
+    .option-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 16px;
+    }
+    .option-card {
+      border: 1px solid var(--line);
+      background: var(--surface);
+      border-radius: var(--radius);
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+      min-width: 0;
+    }
+    .option-card.recommended { border-color: color-mix(in srgb, var(--good) 65%, var(--line)); }
+    .option-card.full { grid-column: 1 / -1; }
+    .tag {
+      width: max-content;
+      max-width: 100%;
+      border-radius: 999px;
+      padding: 3px 8px;
+      font-size: 10.5px;
+      font-weight: 800;
+      letter-spacing: .06em;
+      text-transform: uppercase;
+    }
+    .tag.good { color: var(--good); background: var(--good-soft); }
+    .tag.warn { color: var(--warn); background: var(--warn-soft); }
+    .tag.risk { color: var(--risk); background: var(--risk-soft); }
+    .tag.blue { color: var(--blue); background: var(--blue-soft); }
+    .option-card p { color: var(--muted); }
+    .facts { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px; }
+    .facts div { border-top: 1px solid var(--line); padding-top: 8px; }
+    .facts span { display: block; color: var(--muted); font-size: 11px; }
+    .facts strong { font-size: 13px; }
+    details { border-top: 1px solid var(--line); padding-top: 10px; }
+    summary { cursor: pointer; color: var(--blue); font-weight: 650; }
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); }
+    table { border-collapse: collapse; width: 100%; min-width: 840px; font-size: 13px; }
+    th, td { text-align: left; vertical-align: top; padding: 10px 12px; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); background: var(--surface-soft); font-size: 11px; text-transform: uppercase; letter-spacing: .05em; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td:first-child { font-weight: 700; }
+    .score-chip {
+      display: inline-flex; min-width: 36px; justify-content: center;
+      border-radius: 999px; padding: 2px 7px; font-weight: 800;
+    }
+    .s-high { color: var(--good); background: var(--good-soft); }
+    .s-mid { color: var(--warn); background: var(--warn-soft); }
+    .s-low { color: var(--risk); background: var(--risk-soft); }
+    .diagram {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: var(--surface);
+      overflow: hidden;
+      padding: 12px;
+    }
+    svg { display: block; width: 100%; height: auto; }
+    .legend { display: flex; gap: 14px; flex-wrap: wrap; margin: 10px 4px 2px; color: var(--muted); font-size: 11px; }
+    .legend i { width: 9px; height: 9px; border-radius: 50%; display: inline-block; margin-right: 5px; }
+    .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .panel { border: 1px solid var(--line); border-radius: var(--radius); padding: 18px; background: var(--surface); }
+    .panel p { color: var(--muted); }
+    .boundary-list { display: grid; gap: 10px; }
+    .boundary-row {
+      display: grid;
+      grid-template-columns: 128px minmax(0, 1fr);
+      gap: 12px;
+      padding: 11px 0;
+      border-bottom: 1px solid var(--line);
+    }
+    .boundary-row:last-child { border-bottom: 0; }
+    .boundary-row .mechanism { font-weight: 800; font-size: 12px; }
+    .boundary-row p { margin: 0; color: var(--muted); }
+    .steps { counter-reset: step; display: grid; gap: 12px; }
+    .step {
+      counter-increment: step;
+      display: grid;
+      grid-template-columns: 36px minmax(0, 1fr);
+      gap: 12px;
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      background: var(--surface);
+      padding: 14px;
+    }
+    .step::before {
+      content: counter(step);
+      display: grid;
+      place-items: center;
+      width: 30px; height: 30px;
+      border-radius: 50%;
+      background: var(--accent-soft);
+      color: var(--accent);
+      font-weight: 800;
+    }
+    .step h3 { margin-top: 3px; }
+    .step p { color: var(--muted); margin-bottom: 5px; overflow-wrap: anywhere; }
+    .gate-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
+    .gate { border-top: 3px solid var(--blue); background: var(--surface); border-radius: 7px 7px 12px 12px; padding: 15px; }
+    .gate.stop { border-top-color: var(--risk); }
+    .gate.measure { border-top-color: var(--good); }
+    .gate p { color: var(--muted); font-size: 13px; }
+    .evidence-grid { display: grid; grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .evidence {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 13px;
+      background: var(--surface);
+      min-width: 0;
+    }
+    .evidence .source { color: var(--muted); font-size: 11px; margin-top: 5px; overflow-wrap: anywhere; }
+    .evidence strong { display: block; }
+    .note { color: var(--muted); font-size: 12px; }
+    footer { margin-top: 60px; border-top: 1px solid var(--line); padding-top: 18px; color: var(--muted); font-size: 12px; }
+    @media (max-width: 820px) {
+      .hero, .two-col { grid-template-columns: 1fr; }
+      .summary-strip, .gate-grid { grid-template-columns: 1fr; }
+      .option-grid { grid-template-columns: 1fr; }
+      .option-card.full { grid-column: auto; }
+      .evidence-grid { grid-template-columns: 1fr; }
+    }
+    @media (max-width: 520px) {
+      .topbar-inner { padding: 8px 14px; display: block; }
+      .brand { display: block; margin-bottom: 7px; }
+      main { padding: 16px 14px 54px; }
+      .hero-main, .verdict-card { padding: 18px; }
+      .facts { grid-template-columns: 1fr; }
+      .boundary-row { grid-template-columns: 1fr; gap: 3px; }
+      section { margin-top: 40px; }
+    }
+    @media print {
+      .topbar { position: static; backdrop-filter: none; }
+      nav { display: none; }
+      body { background: white; color: black; font-size: 11pt; }
+      main { max-width: none; padding: 0; }
+      .hero-main, .verdict-card, .panel, .option-card, .diagram, .table-wrap, .step, .gate, .evidence {
+        box-shadow: none; break-inside: avoid;
+      }
+      section { break-before: auto; }
+      a { color: black; text-decoration: underline; }
+    }
+  </style>
+</head>
+<body>
+  <header class="topbar">
+    <div class="topbar-inner">
+      <div class="brand">Tenon Mobile</div>
+      <nav aria-label="Mục lục">
+        <a href="#verdict">Kết luận</a>
+        <a href="#options">Phương án</a>
+        <a href="#reuse">Tái sử dụng</a>
+        <a href="#architecture">Kiến trúc</a>
+        <a href="#experience">Trải nghiệm</a>
+        <a href="#roadmap">Lộ trình</a>
+        <a href="#evidence">Bằng chứng</a>
+      </nav>
+    </div>
+  </header>
+
+  <main>
+    <section class="hero" id="verdict">
+      <div class="hero-main">
+        <div class="eyebrow">Khuyến nghị · 08/08/2026 · codebase live</div>
+        <h1>Làm mobile như một lớp giám sát native; giữ execution trên Mac.</h1>
+        <p class="lede">
+          Hướng tốt nhất là một app SwiftUI cho iPhone và iPad, bắt đầu bằng Attention Inbox,
+          Agent Session và các phản hồi hữu hạn. Không port canvas 12×12, plugin runtime hay local
+          PTY vào phiên bản đầu. Kiến trúc nên đi từ LAN-only vertical slice đến relay có mã hóa đầu-cuối,
+          chỉ thêm terminal client sau khi dữ liệu sử dụng chứng minh nhu cầu.
+        </p>
+        <div class="meta-row">
+          <span class="pill">Ưu tiên: iPhone + iPad</span>
+          <span class="pill">UI: native SwiftUI</span>
+          <span class="pill">Mac: authority + execution</span>
+          <span class="pill">Mobile: supervision + intervention</span>
+        </div>
+        <div class="summary-strip">
+          <div><strong>MVP nội bộ</strong><span>LAN, read-only trước; 4–7 tuần*</span></div>
+          <div><strong>V1 TestFlight</strong><span>Pairing, actions, notifications; 8–14 tuần*</span></div>
+          <div><strong>Không làm trước</strong><span>Local agents, full canvas, mobile plugins</span></div>
+        </div>
+      </div>
+      <aside class="verdict-card" aria-label="Kết luận quyết định">
+        <div>
+          <div class="score">GO</div>
+          <div class="label">cho companion supervision</div>
+          <div class="decision">GO có điều kiện</div>
+          <p>
+            Chỉ mở implementation khi boundary law có inventory cho paired user, resource stream
+            và remote actions; CLI Unix socket hiện tại không được tái sử dụng làm network server.
+          </p>
+        </div>
+        <div class="next">
+          <strong>Vertical slice đầu tiên</strong>
+          <div class="note">Mac → snapshot Attention Inbox → iPhone, không command, không cloud, không terminal.</div>
+        </div>
+      </aside>
+    </section>
+
+    <div class="callout">
+      <strong>Phân biệt cốt lõi</strong>
+      “Ghostty có iOS slice” chỉ chứng minh renderer có đường build iOS. Nó không làm iOS trở thành môi trường
+      chạy Codex/Claude/local shell. Giá trị sản phẩm của Tenon trên mobile đến từ dữ liệu supervision đã có,
+      không đến từ việc tái tạo máy Mac trong một app iOS.
+    </div>
+
+    <section id="options">
+      <div class="section-head">
+        <div class="eyebrow">Ma trận lựa chọn</div>
+        <h2>Năm phương án, một trình tự hợp lý</h2>
+        <p>
+          Điểm tổng hợp dùng trọng số: product fit 25%, time-to-value 20%, code reuse 15%,
+          security/reliability 15%, remote reach 10%, distribution 10%, reversibility 5%.
+          Đây là thang quyết định 1–5, không phải số liệu đo runtime.
+        </p>
+      </div>
+
+      <div class="option-grid">
+        <article class="option-card recommended">
+          <span class="tag good">Khởi đầu khuyến nghị · 4.1/5</span>
+          <h3>A. Native companion, LAN-first</h3>
+          <p>
+            App SwiftUI khám phá Mac bằng Bonjour, pair bằng QR/one-time code, nhận snapshot/delta
+            khi foreground. V1 chỉ Inbox, Session, evidence summary và một số action được kiểm soát.
+          </p>
+          <div class="facts">
+            <div><span>Nỗ lực</span><strong>M</strong></div>
+            <div><span>Rủi ro</span><strong>Thấp–vừa</strong></div>
+            <div><span>Reversible</span><strong>Cao</strong></div>
+          </div>
+          <details>
+            <summary>Vì sao đứng đầu</summary>
+            <ul>
+              <li>Kiểm chứng đúng wedge Attention Inbox trong VISION mà chưa mang chi phí cloud.</li>
+              <li>Tận dụng trực tiếp model attention, Agent Lens và Swift/Observation.</li>
+              <li>LAN privacy prompt và pairing vẫn là việc thật, nhưng blast radius được giữ nhỏ.</li>
+            </ul>
+          </details>
+        </article>
+
+        <article class="option-card">
+          <span class="tag blue">Đích V1 · 4.0/5</span>
+          <h3>B. Native companion + E2EE relay/APNs</h3>
+          <p>
+            Giữ native client như A, thêm relay để dùng ngoài LAN, đồng bộ resume cursor và dùng APNs
+            như tín hiệu đánh thức. Payload nhạy cảm được mã hóa ở ứng dụng trước khi qua relay.
+          </p>
+          <div class="facts">
+            <div><span>Nỗ lực</span><strong>L</strong></div>
+            <div><span>Rủi ro</span><strong>Vừa–cao</strong></div>
+            <div><span>Remote</span><strong>Đầy đủ</strong></div>
+          </div>
+          <details>
+            <summary>Khi nào nâng từ A lên B</summary>
+            <ul>
+              <li>Người dùng thật mở app ngoài cùng LAN đủ thường xuyên.</li>
+              <li>Inbox read-only đã chứng minh giảm reorientation theo metric của VISION.</li>
+              <li>Đã có threat model, revocation và audit cho paired devices.</li>
+            </ul>
+          </details>
+        </article>
+
+        <article class="option-card">
+          <span class="tag warn">Phase sau · 3.3/5</span>
+          <h3>C. iPad terminal client nối về Mac/SSH</h3>
+          <p>
+            Dùng iPad như terminal frontend; execution vẫn ở Mac hoặc remote host. Artifact Ghostty hiện có
+            UIKit slices, nhưng chưa có wrapper iOS trong Tenon và đường input/output remote chưa được chứng minh.
+          </p>
+          <div class="facts">
+            <div><span>Nỗ lực</span><strong>L</strong></div>
+            <div><span>Rủi ro</span><strong>Cao</strong></div>
+            <div><span>Giá trị</span><strong>Power user</strong></div>
+          </div>
+          <details>
+            <summary>Điều kiện mở spike</summary>
+            <ul>
+              <li>Thực hiện spike link/render/input trên device thật trước mọi cam kết roadmap.</li>
+              <li>Chứng minh không phụ thuộc vào local subprocess/PTY bị iOS sandbox chặn.</li>
+              <li>Chỉ tiếp tục nếu hành vi sử dụng cho thấy Session/Inbox không đủ để can thiệp.</li>
+            </ul>
+          </details>
+        </article>
+
+        <article class="option-card">
+          <span class="tag warn">Prototype nhanh · 3.7/5</span>
+          <h3>D. Responsive web/PWA</h3>
+          <p>
+            Mac hoặc relay phục vụ UI web cho Inbox/Session. Nhanh để test information architecture,
+            nhưng background delivery, local discovery, credential storage và cảm giác native yếu hơn.
+          </p>
+          <div class="facts">
+            <div><span>Nỗ lực</span><strong>S–M</strong></div>
+            <div><span>Rủi ro</span><strong>Vừa</strong></div>
+            <div><span>Reuse Swift</span><strong>Thấp</strong></div>
+          </div>
+          <details>
+            <summary>Vai trò phù hợp</summary>
+            <p>Dùng như prototype UX hoặc fallback cross-platform, không dùng làm nền chính nếu iOS là thị trường đầu.</p>
+          </details>
+        </article>
+
+        <article class="option-card full">
+          <span class="tag risk">Không khuyến nghị · 1.6/5</span>
+          <h3>E. Port “full Tenon” chạy cục bộ trên iOS/iPadOS</h3>
+          <p>
+            Mang plugin host, local process execution, filesystem workspace, canvas và PTY sang mobile.
+            Hướng này xung đột với sandbox/App Review, làm mất product contract “agents giữ native CLI harnesses
+            và real PTYs”, đồng thời tái sử dụng UI thực tế rất thấp vì 37 file AppKit và canvas NSView.
+          </p>
+          <div class="facts">
+            <div><span>Nỗ lực</span><strong>XL</strong></div>
+            <div><span>App Store</span><strong>Rủi ro cao</strong></div>
+            <div><span>Quyết định</span><strong>NO-GO</strong></div>
+          </div>
+        </article>
+      </div>
+
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead>
+            <tr>
+              <th>Tiêu chí</th><th>A. LAN native</th><th>B. Relay native</th><th>C. iPad terminal</th><th>D. PWA</th><th>E. Full local</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr><td>Product fit</td><td>5</td><td>5</td><td>4</td><td>4</td><td>2</td></tr>
+            <tr><td>Time-to-value</td><td>4</td><td>3</td><td>2</td><td>5</td><td>1</td></tr>
+            <tr><td>Tái sử dụng Swift/domain</td><td>4</td><td>4</td><td>3</td><td>2</td><td>3</td></tr>
+            <tr><td>Security/reliability</td><td>4</td><td>3</td><td>3</td><td>3</td><td>1</td></tr>
+            <tr><td>Dùng ngoài LAN</td><td>2</td><td>5</td><td>5</td><td>4</td><td>1</td></tr>
+            <tr><td>Distribution/App Review</td><td>4</td><td>4</td><td>3</td><td>3</td><td>1</td></tr>
+            <tr><td>Khả năng quay đầu</td><td>5</td><td>4</td><td>3</td><td>5</td><td>1</td></tr>
+            <tr><td>Tổng trọng số</td><td><span class="score-chip s-high">4.1</span></td><td><span class="score-chip s-high">4.0</span></td><td><span class="score-chip s-mid">3.3</span></td><td><span class="score-chip s-mid">3.7</span></td><td><span class="score-chip s-low">1.6</span></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="reuse">
+      <div class="section-head">
+        <div class="eyebrow">Codebase fit</div>
+        <h2>Tái sử dụng theo lớp, không theo target</h2>
+        <p>
+          Package hiện chỉ xuất hai executable và khai báo macOS 14; các module không phải SDK công khai.
+          Vì vậy “share code” đúng nghĩa là tách một package nội bộ nhỏ, có contract versioned, thay vì cho app iOS
+          import toàn bộ <code>TenonCore</code> hay <code>TenonApp</code>.
+        </p>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Lớp hiện tại</th><th>Bằng chứng live</th><th>Mức reuse</th><th>Đề xuất</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>TenonIntentCore</td>
+              <td>23 Swift files; chủ yếu Foundation, bounded <code>IntentValue</code>, schema, idempotency và wire codec.</td>
+              <td><span class="score-chip s-high">Cao</span></td>
+              <td>Tái sử dụng value/schema primitives có chọn lọc. Không bê CLI action vocabulary sang mobile.</td>
+            </tr>
+            <tr>
+              <td>TenonCore</td>
+              <td>63 files; không AppKit/SwiftUI nhưng có JavaScriptCore, CoreServices, Process, Network, Security và filesystem semantics.</td>
+              <td><span class="score-chip s-mid">Chọn lọc</span></td>
+              <td>Share <code>Workspace</code>, <code>SpatialLayout</code>, <code>PaneActivity</code>, paging/value reducers. Giữ providers/plugin host ở Mac.</td>
+            </tr>
+            <tr>
+              <td>TenonApp</td>
+              <td>89 files; 37 import AppKit, 41 import SwiftUI; canvas và terminal seam gắn với NSView/AppKit.</td>
+              <td><span class="score-chip s-low">UI thấp</span></td>
+              <td>Reuse concepts và domain snapshots. Extract Foundation-only <code>AgentLensDomain</code>/<code>AgentLensDecoders</code> ra shared model nếu cần.</td>
+            </tr>
+            <tr>
+              <td>Agent supervision</td>
+              <td><code>AgentLensSnapshot</code> đã có status, messages, tools, interactions, evidence fingerprint/freshness và render revision.</td>
+              <td><span class="score-chip s-high">Rất cao</span></td>
+              <td>Đây là payload tự nhiên cho Session detail; thêm Codable/versioning và projection giới hạn dữ liệu.</td>
+            </tr>
+            <tr>
+              <td>Attention</td>
+              <td><code>PaneActivity</code> là pure state machine, Sendable, clock-injected, testable; có unseen/working/finished/exited.</td>
+              <td><span class="score-chip s-high">Rất cao</span></td>
+              <td>Dùng làm nguồn duy nhất cho Inbox và notification; mobile không tự suy diễn “busy”.</td>
+            </tr>
+            <tr>
+              <td>GhosttyKit</td>
+              <td>XCFramework có macOS, <code>ios-arm64</code> và simulator slices; header khai báo UIKit surface.</td>
+              <td><span class="score-chip s-mid">Chưa chứng minh</span></td>
+              <td>Giữ cho terminal spike riêng. Không đặt vào critical path của Inbox V1.</td>
+            </tr>
+            <tr>
+              <td>CLI transport</td>
+              <td>Unix socket local-trust, directory 0700/socket 0600, one request/one response, tối đa 8 connections.</td>
+              <td><span class="score-chip s-low">Không reuse server</span></td>
+              <td>Chỉ reuse bounded JSON/value codec. Remote transport phải có pairing, crypto, replay defense và device revocation.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <strong>Shared package đề xuất: <code>TenonSupervisionModel</code></strong>
+        Chỉ chứa Codable/Sendable DTO, IDs/generation tokens, attention state, evidence references,
+        snapshot/delta envelopes và domain errors. Không chứa UI, filesystem URLs có authority, plugin runtime,
+        network transport hay typed services của Mac.
+      </div>
+    </section>
+
+    <section id="architecture">
+      <div class="section-head">
+        <div class="eyebrow">Kiến trúc khuyến nghị</div>
+        <h2>Mac là authority; mobile là projection có quyền hữu hạn</h2>
+        <p>
+          Nội bộ Mac tiếp tục gọi typed services DIRECT. Mobile là public adapter/semantic owner độc lập:
+          data liên tục đi qua RESOURCE/STREAM, còn một phản hồi của người dùng là INTENT.
+        </p>
+      </div>
+
+      <div class="diagram" role="img" aria-label="Sơ đồ kiến trúc Tenon mobile">
+        <svg viewBox="0 0 1050 430" xmlns="http://www.w3.org/2000/svg">
+          <defs>
+            <style>
+              .box{fill:var(--surface-soft);stroke:var(--line);stroke-width:1.3}
+              .mac{fill:var(--accent-soft);stroke:var(--accent);stroke-width:1.6}
+              .mob{fill:var(--blue-soft);stroke:var(--blue);stroke-width:1.6}
+              .safe{fill:var(--good-soft);stroke:var(--good);stroke-width:1.4}
+              .t{fill:var(--ink);font:600 16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+              .s{fill:var(--muted);font:13px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+              .m{fill:var(--ink);font:12px ui-monospace,SFMono-Regular,Menlo,monospace}
+              .a{stroke:var(--muted);stroke-width:1.7;fill:none;marker-end:url(#arrow)}
+              .r{stroke:var(--good);stroke-width:2;fill:none;marker-end:url(#arrowGood)}
+            </style>
+            <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--muted)"/></marker>
+            <marker id="arrowGood" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" fill="var(--good)"/></marker>
+          </defs>
+
+          <rect class="mac" x="24" y="28" width="430" height="370" rx="18"/>
+          <text class="t" x="48" y="62">Tenon trên Mac · execution authority</text>
+          <text class="s" x="48" y="84">PTYs · agents · filesystem · plugins · intent kernel</text>
+
+          <rect class="box" x="48" y="110" width="176" height="82" rx="11"/>
+          <text class="t" x="65" y="139">Nguồn sự thật</text>
+          <text class="s" x="65" y="162">WorkspaceCatalog</text>
+          <text class="s" x="65" y="181">PaneActivity · AgentLens</text>
+
+          <rect class="box" x="252" y="110" width="178" height="82" rx="11"/>
+          <text class="t" x="269" y="139">Typed services</text>
+          <text class="s" x="269" y="162">workspace · agent input</text>
+          <text class="s" x="269" y="181">evidence · focus</text>
+
+          <rect class="safe" x="48" y="226" width="382" height="138" rx="12"/>
+          <text class="t" x="67" y="255">Mobile adapter mới</text>
+          <text class="m" x="67" y="282">Snapshot projector + redaction</text>
+          <text class="m" x="67" y="305">Pairing / session / resume control plane</text>
+          <text class="m" x="67" y="328">RESOURCE stream + user INTENT adapter</text>
+          <text class="m" x="67" y="351">Audit · idempotency · stale fail-closed</text>
+
+          <rect class="box" x="498" y="126" width="176" height="198" rx="14"/>
+          <text class="t" x="519" y="158">Transport</text>
+          <text class="s" x="519" y="184">Phase 1: LAN + Bonjour</text>
+          <text class="s" x="519" y="206">Phase 2: E2EE relay</text>
+          <line x1="519" y1="224" x2="651" y2="224" stroke="var(--line)"/>
+          <text class="m" x="519" y="250">bounded frames</text>
+          <text class="m" x="519" y="273">monotonic revision</text>
+          <text class="m" x="519" y="296">resume or full resync</text>
+
+          <rect class="mob" x="718" y="28" width="308" height="370" rx="18"/>
+          <text class="t" x="742" y="62">Tenon Mobile · paired user</text>
+          <text class="s" x="742" y="84">Native SwiftUI · Keychain · APNs signal</text>
+
+          <rect class="box" x="742" y="110" width="260" height="74" rx="11"/>
+          <text class="t" x="760" y="139">MobileStore</text>
+          <text class="s" x="760" y="162">cached snapshot · deltas · connectivity</text>
+
+          <rect class="box" x="742" y="209" width="120" height="119" rx="11"/>
+          <text class="t" x="760" y="239">iPhone</text>
+          <text class="s" x="760" y="264">Inbox</text>
+          <text class="s" x="760" y="284">Session</text>
+          <text class="s" x="760" y="304">Respond</text>
+
+          <rect class="box" x="882" y="209" width="120" height="119" rx="11"/>
+          <text class="t" x="900" y="239">iPad</text>
+          <text class="s" x="900" y="264">Split view</text>
+          <text class="s" x="900" y="284">Timeline</text>
+          <text class="s" x="900" y="304">Evidence</text>
+
+          <path class="r" d="M430 270 C465 270 469 225 498 225"/>
+          <path class="r" d="M674 225 C695 225 704 147 742 147"/>
+          <path class="a" d="M742 300 C704 300 700 287 674 287"/>
+          <path class="a" d="M498 287 C468 287 464 324 430 324"/>
+          <path class="a" d="M224 151 L252 151"/>
+        </svg>
+        <div class="legend">
+          <span><i style="background:var(--accent)"></i>Mac ownership</span>
+          <span><i style="background:var(--good)"></i>Snapshot/resource flow</span>
+          <span><i style="background:var(--muted)"></i>Finite user action</span>
+          <span><i style="background:var(--blue)"></i>Mobile ownership</span>
+        </div>
+      </div>
+
+      <div class="two-col" style="margin-top:16px">
+        <div class="panel">
+          <h3>Ánh xạ interaction boundary</h3>
+          <div class="boundary-list">
+            <div class="boundary-row"><div class="mechanism">DIRECT</div><p>Built-in Mac UI và mobile provider adapter gọi cùng typed application services ở Mac.</p></div>
+            <div class="boundary-row"><div class="mechanism">EVENT</div><p><code>agent waiting</code>, <code>pane finished</code>, workspace facts đã xảy ra; publisher không chờ mobile.</p></div>
+            <div class="boundary-row"><div class="mechanism">RESOURCE/STREAM</div><p>Mobile mở một snapshot/delta stream có lifetime, resume cursor, capacity, overflow và cancel.</p></div>
+            <div class="boundary-row"><div class="mechanism">INTENT</div><p>Answer, approve/deny, focus/open trên Mac là finite unicast request/reply qua public adapter.</p></div>
+            <div class="boundary-row"><div class="mechanism">CONTROL PLANE</div><p>Pair, revoke, negotiate version, open/resume/cancel stream; tuyệt đối không giấu domain verbs.</p></div>
+          </div>
+        </div>
+
+        <div class="panel">
+          <h3>Architecture tax bắt buộc</h3>
+          <ul>
+            <li>Không gọi mobile là generic “app principal”. Dùng principal <code>user</code> với semantics paired gesture, hoặc sửa law để khai báo audience mới.</li>
+            <li>Core intents hiện chỉ có hai audience profiles; mobile action cần thay đổi normative inventory + source inventory + fitness tests trong cùng change.</li>
+            <li>Không expose thẳng low-level <code>workspace.*</code>/<code>terminal.*</code> cho mobile. Tạo high-level supervision contracts và least authority.</li>
+            <li>Resource stream phải khai báo owner, capacity, overflow, cancellation, terminal state và teardown khi device revoke/app stop.</li>
+            <li>Mọi action mang expected generation/revision/evidence fingerprint; stale state phải fail closed.</li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="callout">
+        <strong>Không mở <code>CLISocketServer</code> ra TCP.</strong>
+        Server hiện dựa vào quyền Unix filesystem và local-trust. Remote adapter phải là implementation mới,
+        nhưng có thể tái sử dụng bounded value codec, intent dispatcher và typed services phía sau adapter.
+      </div>
+    </section>
+
+    <section id="experience">
+      <div class="section-head">
+        <div class="eyebrow">Native product design</div>
+        <h2>Mobile không phải canvas bị thu nhỏ</h2>
+        <p>
+          Design system hiện tại là normative cho host-native macOS và chính nó nói Tenon không phải mobile app phóng lớn.
+          Mobile cần một hệ metric riêng cho touch/Dynamic Type nhưng giữ chung semantics: compact, calm, technical,
+          evidence-first, accent có tiết chế và một nguồn attention state.
+        </p>
+      </div>
+
+      <div class="two-col">
+        <article class="panel">
+          <h3>iPhone: attention-first</h3>
+          <ol>
+            <li><strong>Inbox</strong> là root: needs input, approval, failed, completed-unseen; không hiển thị idle trước.</li>
+            <li><strong>Session detail</strong>: goal, current action, pending interaction, condensed timeline, freshness.</li>
+            <li><strong>Respond</strong>: choices hoặc composer; session identity được guard ở Mac trước khi gửi.</li>
+            <li><strong>Evidence</strong>: fetch theo nhu cầu, bounded, provenance rõ; không auto-sync toàn transcript.</li>
+          </ol>
+        </article>
+        <article class="panel">
+          <h3>iPad: supervision workspace</h3>
+          <ol>
+            <li><strong>NavigationSplitView</strong>: workspaces/filters → sessions → timeline/evidence.</li>
+            <li>Inspector cho metadata/freshness ở regular width; tự chuyển sheet khi compact.</li>
+            <li>Keyboard shortcuts chỉ cho focused-view local controls, không tự biến thành product intents.</li>
+            <li>Terminal là optional phase, không phải tab mặc định hay điều kiện để app có giá trị.</li>
+          </ol>
+        </article>
+      </div>
+
+      <div class="two-col" style="margin-top:16px">
+        <article class="panel">
+          <h3>SwiftUI shape</h3>
+          <ul>
+            <li>iOS 17+ <code>@Observable</code> + view-owned <code>@State</code>; model chạy <code>@MainActor</code>.</li>
+            <li>Snapshot/delta types Equatable để tránh invalidation khi revision không đổi.</li>
+            <li>Type-safe <code>NavigationStack</code>/<code>NavigationSplitView</code>; item-driven sheets.</li>
+            <li><code>Button</code> cho mọi tappable action; Dynamic Type, VoiceOver grouping và non-color attention vocabulary.</li>
+          </ul>
+        </article>
+        <article class="panel">
+          <h3>Không đưa vào V1</h3>
+          <ul>
+            <li>12×12 drag/resize canvas, tab/split editing hoặc full desktop chrome.</li>
+            <li>Plugin execution, downloaded JS features, arbitrary command palette.</li>
+            <li>Raw terminal streaming liên tục, file editor, browser surface hoặc repository writes.</li>
+            <li>Sensitive transcript text trong push notification/lock screen.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="security">
+      <div class="section-head">
+        <div class="eyebrow">Security & delivery</div>
+        <h2>Pairing là product boundary, không phải màn setup phụ</h2>
+        <p>
+          Mobile được quyền nhìn code, transcript và gửi input vào agent. Đây là authority nhạy cảm hơn nhiều so với
+          local CLI socket; threat model và revoke path phải có trước action đầu tiên.
+        </p>
+      </div>
+      <div class="gate-grid">
+        <div class="gate">
+          <h3>Pair & identity</h3>
+          <p>QR chứa host public key + one-time challenge; device key nằm trong Keychain; mỗi pair có ID, scope, created/last-used và revoke.</p>
+        </div>
+        <div class="gate">
+          <h3>Transport</h3>
+          <p>TLS/pinned keys trên LAN; application-layer E2EE khi qua relay. Challenge/nonce và monotonic request sequence chống replay.</p>
+        </div>
+        <div class="gate">
+          <h3>Least data</h3>
+          <p>Sync summaries và evidence references trước; full body pull-based và bounded. Không gửi secrets, raw env hoặc filesystem authority.</p>
+        </div>
+        <div class="gate">
+          <h3>Action safety</h3>
+          <p>Idempotency key + expected revision + opaque session generation. Mac xác minh foreground agent trước mọi input.</p>
+        </div>
+        <div class="gate">
+          <h3>Backpressure</h3>
+          <p>Bounded per-device stream, coalesce facts, gap → full resync. Device chậm không được giữ publisher hay main actor.</p>
+        </div>
+        <div class="gate">
+          <h3>Background</h3>
+          <p>Không dựa vào socket sống khi app suspended. APNs chỉ báo “có thay đổi”; foreground/background fetch tải ciphertext mới.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="roadmap">
+      <div class="section-head">
+        <div class="eyebrow">Execution blueprint</div>
+        <h2>Lộ trình theo vertical slices và stop conditions</h2>
+        <p>
+          Ước lượng giả định một Swift engineer giàu kinh nghiệm, codebase hiện tại, iOS 17+, không Android,
+          không account/billing, relay tối giản và chưa tính security audit ngoài. Dùng band để lập kế hoạch, không dùng như cam kết ngày giao.
+        </p>
+      </div>
+
+      <div class="steps">
+        <article class="step">
+          <div>
+            <h3>RFC + boundary fitness · 3–5 ngày</h3>
+            <p>Chốt owner/principal/cardinality/lifetime/authority/failure/backpressure; inventory resource stream và mobile actions.</p>
+            <strong>Exit:</strong> review có thể phân loại mọi message mà không dùng “RPC” như một cơ chế kiến trúc.
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>Shared model extraction · 3–5 ngày</h3>
+            <p>Tạo <code>TenonSupervisionModel</code>: versioned DTO, snapshot/delta, evidence ref, domain errors; thêm round-trip/size-limit tests.</p>
+            <strong>Exit:</strong> build cho macOS + iOS simulator, không import AppKit/JSCore/Process/filesystem providers.
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>Read-only LAN vertical slice · 2–3 tuần</h3>
+            <p>Mac projector + Bonjour/TLS pairing + iPhone Inbox/Session + revisioned full resync. Không action, không cloud.</p>
+            <strong>Exit:</strong> 3–5 live agents, không stale/mixed snapshot, UI vẫn responsive khi client chậm/rớt mạng.
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>Paired user actions · 2–4 tuần</h3>
+            <p>Answer choice/text, approve/deny và focus-on-Mac qua canonical intents; audit, revoke, idempotency và generation guards.</p>
+            <strong>Exit:</strong> mutation tests chứng minh stale session/action không bao giờ chạm PTY sai.
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>Remote relay + APNs · 3–6 tuần</h3>
+            <p>E2EE relay, reconnect/resume, device lifecycle, push-as-signal, privacy controls và TestFlight hardening.</p>
+            <strong>Exit:</strong> relay không đọc plaintext; force-quit/throttle không làm app tin rằng push là nguồn sự thật.
+          </div>
+        </article>
+        <article class="step">
+          <div>
+            <h3>Optional terminal spike · 1–2 tuần trước estimation</h3>
+            <p>Link iOS Ghostty slice trên device, kiểm tra rendering/input/IME/selection và remote byte transport.</p>
+            <strong>Stop:</strong> nếu cần private APIs/local subprocess hoặc không có đường feed remote output ổn định.
+          </div>
+        </article>
+      </div>
+
+      <h3 style="margin-top:26px">Product gates</h3>
+      <div class="gate-grid" style="margin-top:10px">
+        <div class="gate measure">
+          <h3>Đo</h3>
+          <p>Median context-reorientation giảm ≥30%, false-attention &lt;10%, đúng theo VISION; pairing thành công không cần debug support.</p>
+        </div>
+        <div class="gate measure">
+          <h3>Tiếp tục</h3>
+          <p>Người dùng xử lý pending input/approval trên phone và quay lại đúng evidence; app có giá trị dù không có terminal.</p>
+        </div>
+        <div class="gate stop">
+          <h3>Dừng/chuyển hướng</h3>
+          <p>Nếu nhu cầu chính là gõ terminal kéo dài, chuyển trọng tâm sang option C; nếu chỉ dùng cùng bàn làm việc, hoãn relay.</p>
+        </div>
+      </div>
+    </section>
+
+    <section id="evidence">
+      <div class="section-head">
+        <div class="eyebrow">Evidence ledger</div>
+        <h2>Quan sát, nguồn chính thức và phần còn chưa biết</h2>
+        <p>Freshness: source tree live ngày 08/08/2026; tài liệu Apple/Ghostty được truy cập cùng ngày.</p>
+      </div>
+
+      <div class="evidence-grid">
+        <div class="evidence">
+          <strong>Package là macOS-only và không xuất SDK</strong>
+          <div>Chỉ có hai executable; <code>TenonCore</code>/<code>TenonIntentCore</code> là internal targets.</div>
+          <div class="source"><code>Package.swift:17, 20–33, 61–88</code></div>
+        </div>
+        <div class="evidence">
+          <strong>CLI server là local-trust</strong>
+          <div>Unix socket + filesystem permissions; one request/reply và bounded physical exposure.</div>
+          <div class="source"><code>Sources/TenonApp/CLISocketServer.swift:6–27, 89–115</code></div>
+        </div>
+        <div class="evidence">
+          <strong>Attention machine đã portable</strong>
+          <div>Foundation-only, pure, clock-injected; state/unseen là source of truth.</div>
+          <div class="source"><code>Sources/TenonCore/PaneActivity.swift:1–45, 62–173</code></div>
+        </div>
+        <div class="evidence">
+          <strong>Agent Lens đã có mobile-shaped data</strong>
+          <div>Status, tools, messages, interactions, evidence fingerprint/freshness và revision.</div>
+          <div class="source"><code>Sources/TenonApp/AgentLensDomain.swift:93–219, 300–383</code></div>
+        </div>
+        <div class="evidence">
+          <strong>Ghostty artifact có iOS slices</strong>
+          <div><code>ios-arm64</code>, simulator và UIKit platform union tồn tại; Tenon hiện chỉ link macOS archive.</div>
+          <div class="source"><code>GhosttyKit.xcframework/Info.plist</code>; <code>GhosttyKit/ghostty.h:492–511</code>; <code>Package.swift:110–113</code></div>
+        </div>
+        <div class="evidence">
+          <strong>Interaction law bắt buộc boundary mới</strong>
+          <div>Multi-result/lifetime → RESOURCE; cross-owner finite action → INTENT; new audience/control operation cần inventory + fitness tests.</div>
+          <div class="source"><code>docs/architecture-interaction-boundaries.md</code>, “Ordered decision law” và “Change protocol”</div>
+        </div>
+        <div class="evidence">
+          <strong>App Store không cho local dynamic execution tùy ý</strong>
+          <div>Guideline 2.5.2 giới hạn download/install/execute code thay đổi functionality; 2.5.4 giới hạn background modes.</div>
+          <div class="source"><a href="https://developer.apple.com/app-store/review/guidelines/">Apple App Review Guidelines</a> · cập nhật 08/06/2026</div>
+        </div>
+        <div class="evidence">
+          <strong>LAN discovery cần privacy permission</strong>
+          <div>Bonjour/local unicast cần usage description; Network.framework có thể chờ permission/connectivity.</div>
+          <div class="source"><a href="https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy">Apple TN3179</a> · cập nhật 17/02/2026</div>
+        </div>
+        <div class="evidence">
+          <strong>Background push không phải delivery guarantee</strong>
+          <div>Apple có thể throttle, giữ bản mới nhất, bỏ khi force-quit; app chỉ có thời gian ngắn để fetch.</div>
+          <div class="source"><a href="https://developer.apple.com/documentation/usernotifications/pushing-background-updates-to-your-app">Apple: Pushing background updates</a></div>
+        </div>
+        <div class="evidence">
+          <strong>Ghostty upstream chưa hứa iOS product support</strong>
+          <div>Upstream công bố libghostty cross-platform, nhưng danh sách <code>libghostty-vt</code> nêu macOS/Linux/Windows/Wasm, không nêu iOS.</div>
+          <div class="source"><a href="https://github.com/ghostty-org/ghostty">ghostty-org/ghostty</a>, “Cross-platform libghostty”</div>
+        </div>
+      </div>
+
+      <div class="two-col" style="margin-top:16px">
+        <div class="panel">
+          <h3>Giả định đã dùng</h3>
+          <ul>
+            <li>Apple-first; Android không phải yêu cầu trong 12 tháng đầu.</li>
+            <li>Mobile app phục vụ người đã có Tenon trên Mac.</li>
+            <li>Giá trị đầu là supervision/attention, không phải thay laptop.</li>
+            <li>Mac có thể chạy khi người dùng rời bàn; remote internet là phase sau LAN.</li>
+          </ul>
+        </div>
+        <div class="panel">
+          <h3>Unknowns cần spike</h3>
+          <ul>
+            <li>Ghostty iOS slice có đường remote byte transport được support hay chỉ local-process fork.</li>
+            <li>App Review sẽ đánh giá mức phụ thuộc vào companion Mac theo 4.2.3 ra sao; TestFlight trước, review notes rõ.</li>
+            <li>LAN-only có đủ giá trị hay “away from Mac” là yêu cầu số một.</li>
+            <li>Người dùng cần answer/approval hay cần full interactive terminal.</li>
+          </ul>
+        </div>
+      </div>
+    </section>
+
+    <footer>
+      <strong>Quyết định đề xuất:</strong> bắt đầu với option A, thiết kế protocol để nâng lên B, giữ C sau một spike riêng,
+      dùng D chỉ để test UX và loại E khỏi roadmap. Báo cáo này là research/decision artifact; chưa thay đổi source app hay public boundary.
+    </footer>
+  </main>
+</body>
+</html>

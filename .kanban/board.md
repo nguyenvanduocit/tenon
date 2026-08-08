@@ -7,7 +7,6 @@
 - [T-087](tasks/T-087-default-pane-max-width.md) New panes respect the default max width — medium/M
 - [T-086](tasks/T-086-the-git-panel-draws-its-own-rows.md) The git panel draws its own rows — low/S — the last hand-built file list after T-085 (`plugins/git/main.js:366-383`). Deliberately left out, because its rows carry inline `Stage`/`Unstage`/`Discard` buttons that `TreeRowItem` does not express: the honest translation moves them to right-click, which changes how the panel is OPERATED. Three named options in the task file, including "leave it — the git panel is a form that contains a list", which is a legitimate close.
 - [T-056](tasks/T-056-plugin-view-drag-and-drop.md) Drag-and-drop capability for plugin view trees — medium/L — depends on T-055 (now unblocked)
-- [T-063](tasks/T-063-headless-plugin-view-snapshots.md) A headless snapshot of a plugin view tree, so layout bugs stop shipping green — medium/S — the T-055 layout defects passed 24 tests and a 3-lens review; one offscreen render showed all three
 
 ## Todo
 
@@ -17,6 +16,7 @@
 
 
 ## Done
+- [T-063](tasks/T-063-headless-plugin-view-snapshots.md) A headless snapshot of a plugin view tree — medium/S — **DONE + VERIFIED 13:0x, session b063b41f; ALL LOCKS RELEASED.** `TENON_VIEW_SNAPSHOT=<plugin-id>/<view-id>:<path>` boots the real host over the real inventory and mounts the same `PluginSlotView` a pane mounts. Rendered this repo's own board (layout 115ms, capture 55ms). Found two real defects on the way in. Suite 1515 / 0.
 - [T-074](tasks/T-074-kanban-coalescing-test-is-timing-flaky.md) Two suites are timing-flaky under load — low/S — **DONE + VERIFIED 12:48, session b063b41f; ALL LOCKS RELEASED.** Kanban coalescing now asserts the live timer count (no clock at all, 600ms sleep gone); both fleet waits are deadline-based rather than turn-based. Mutation red (8 vs 1), 20/20 consecutive runs green.
 - [T-088](tasks/T-088-new-pane-focus-stops-oscillating.md) New pane focus stops oscillating — high/M — **DONE + VERIFIED 12:44, session b063b41f; ALL LOCKS RELEASED.** Root cause reproduced headlessly for the first time: the model→responder and responder→model focus edges formed a cycle with no fixed point (`A, B, A, B, …`, 49 writes in 50 turns with the bounds removed). `PaneFocusRouting` owns both edges; three rules, each proved load-bearing by mutation. Suite 1510 / 0.
 

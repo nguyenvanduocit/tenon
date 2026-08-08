@@ -151,3 +151,50 @@ with several published, the first in publish order wins.
   contribution surface and plugin principal rules.
 - **Core owns the rules.** `PluginViewNode` is a pure value tree in `TenonCore`,
   asserted in `PluginViewsTests` without a window. `TenonApp` only paints it.
+
+## Seeing a view, without a window (T-063)
+
+`PluginViewsTests` proves a tree's *shape*. Nothing in `swift test` proves its *geometry*,
+and that gap has already shipped a defect: T-055's board passed 24 tests and rendered as
+scattered cards floating at different heights, because `hstack` maps to `HStack`, whose
+default alignment is `.center`. An empty column collapsed to the width of its own heading and
+card titles wrapped into a column of single words. An adversarial review panel read that diff
+and found none of it. One offscreen render showed all three at once.
+
+So render it:
+
+```bash
+TENON_PLUGINS_DIR=plugins TENON_TRUST_PLUGIN_INVENTORY=1 \
+TENON_VIEW_SNAPSHOT='dev.tenon.kanban/board:/tmp/board.png' \
+TENON_VIEW_SNAPSHOT_WORKSPACE="$PWD" \
+TENON_VIEW_SNAPSHOT_SIZE=1400x900 \
+swift run tenon
+```
+
+```
+snapshot: layout 115 ms, capture 55 ms
+snapshot: wrote /tmp/board.png
+```
+
+The argument is `<plugin-id>/<view-id>:<output-path>`. `TENON_VIEW_SNAPSHOT_SIZE=WxH` sets the
+pane size (default 900×620) and `TENON_VIEW_SNAPSHOT_WORKSPACE` sets the workspace the plugin
+reads; both are optional. The run writes the PNG and exits before any window opens.
+
+**What it actually renders.** The real host over the real inventory — the same
+`AppStatePaths.resolve`, the same manifests, the same JavaScript, a real `AppIntentRuntime` so
+the plugin's own intents resolve, and the same `PluginSlotView` a pane mounts, inside the same
+`PaneChromePreview` header. A snapshot that drew a second opinion of a plugin pane would be
+worth nothing. Only the plugin *state* root is a throwaway, so taking a picture never mutates
+what the running app has saved.
+
+**No window and no permission.** `NSHostingView` + `layoutSubtreeIfNeeded` + `cacheDisplay`,
+which is `PaneViewSnapshotWriter` — one writer shared with `TENON_DIFF_SNAPSHOT` and
+`TENON_CHANGES_SNAPSHOT`, so every pane's picture is taken the same way and the stderr timings
+mean the same thing. `screencapture` is NOT an option: a headless shell has no Screen Recording
+grant and it fails with "could not create image from window".
+
+**When the picture is empty.** The view's section has to appear before the capture, and the
+wait is on that fact rather than on a duration. A plugin that contributed nothing fails with
+the list of views that did load, which is usually a plugin id typo or a view whose `onOpen`
+threw. A plugin whose intents fail renders its own error state — that is the pane's real
+answer, and worth seeing.

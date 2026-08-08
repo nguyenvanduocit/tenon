@@ -19,6 +19,7 @@ struct TenonApp: App {
 
     init() {
         DiffSnapshot.renderIfRequested()
+        PluginViewSnapshot.renderIfRequested()
     }
 
     var body: some Scene {
