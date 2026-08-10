@@ -18,6 +18,13 @@ Vendor/*/build/
 /GhosttyKit/ghostty.h
 /Resources/
 
+# Local release configuration — the signing identity, team, and Apple ID this machine
+# cuts releases with. Tracked as .env.example with the values removed; the real file
+# stays here. Secrets proper (the notarization password) live in the keychain profile
+# .env names, not in .env itself. See docs/releasing.md.
+.env
+.env.local
+
 # Cloned external codebases studied during design (each is its own git repo;
 # ~672 MB). Read for reference; never this project's source. Distinct from
 # Vendor/, which is tracked and compiled into the app.

@@ -14,7 +14,11 @@
 # Usage:
 #   ./scripts/release-sign.sh path/to/Tenon.app
 #
-# Overrides (env):
+# Configuration comes from `.env` at the repository root, which is gitignored; copy
+# `.env.example` to start one. Anything already exported wins over the file, so a one-off
+# override on the command line still works.
+#
+# Overrides (env or .env):
 #   SIGN_IDENTITY="Developer ID Application: ... (TEAMID)"
 #                          # default: the only Developer ID Application identity in the
 #                          # keychain; ambiguity is an error rather than a guess
@@ -22,10 +26,28 @@
 #   SKIP_NOTARIZE=1        # sign and verify only; produces a signed app that Gatekeeper
 #                          # still blocks on a machine that did not build it
 #
-# Credentials never appear here or in the environment. Store them once:
+# The notarization password is in none of those places. It lives in the keychain profile,
+# encrypted by macOS; `.env` only names the profile. Store it once:
 #   xcrun notarytool store-credentials tenon-notary \
 #     --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific-password>
 set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+# Read before the arguments are checked, so a misconfigured file is reported by the same
+# run that would have used it. `set -a` exports what the file defines, which is how
+# release.sh's child processes inherit it; the pre-existing values are restored afterwards
+# so an explicit override on the command line is never overwritten by the file.
+if [ -f "$REPO_ROOT/.env" ]; then
+    ENV_FILE_SIGN_IDENTITY="${SIGN_IDENTITY:-}"
+    ENV_FILE_NOTARY_PROFILE="${NOTARY_PROFILE:-}"
+    set -a
+    # shellcheck disable=SC1091  # generated per machine from .env.example
+    . "$REPO_ROOT/.env"
+    set +a
+    [ -z "$ENV_FILE_SIGN_IDENTITY" ] || SIGN_IDENTITY="$ENV_FILE_SIGN_IDENTITY"
+    [ -z "$ENV_FILE_NOTARY_PROFILE" ] || NOTARY_PROFILE="$ENV_FILE_NOTARY_PROFILE"
+fi
 
 APP="${1:-}"
 if [ -z "$APP" ] || [ ! -d "$APP" ]; then
@@ -35,7 +57,6 @@ fi
 APP="$(cd "$APP" && pwd)"
 
 NOTARY_PROFILE="${NOTARY_PROFILE:-tenon-notary}"
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 ENTITLEMENTS="$REPO_ROOT/Tenon.entitlements"
 [ -f "$ENTITLEMENTS" ] || {
     echo "error: $ENTITLEMENTS is missing; the app would harden without a JIT exception" >&2

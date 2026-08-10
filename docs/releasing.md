@@ -56,6 +56,23 @@ The password is an **app-specific password** from <https://appleid.apple.com>, n
 Apple ID password. `tenon-notary` is the profile name the scripts default to; override
 with `NOTARY_PROFILE`.
 
+### 3. `.env`, so the configuration is in one readable place
+
+```sh
+cp .env.example .env      # then fill in the identity, team, and profile name
+```
+
+`scripts/release-sign.sh` reads it, and `scripts/release.sh` reaches it through that. It is
+gitignored, and an explicit value in the environment still beats the file, so a one-off
+`SIGN_IDENTITY=… ./scripts/release.sh` continues to work.
+
+What `.env` deliberately does not hold is the notarization password. It names
+`NOTARY_PROFILE`, and the profile created in step 2 holds the Apple ID and app-specific
+password inside the keychain, where macOS encrypts them. Moving that password into a
+dotfile would take a real secret out of the keychain and put it somewhere backups, editors
+and greps can reach — the file exists to collect configuration, not to become the place
+secrets live.
+
 ## Cutting a release
 
 ```sh
