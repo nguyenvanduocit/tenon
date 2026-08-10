@@ -27,9 +27,16 @@ enum SidebarSnapshot {
 
         let store = WorkspaceStore()
         // Long names on purpose: a workspace whose name is clipped at 110 pt is the case
-        // where a footer that also clips would be easy to miss.
+        // where a footer that also clips would be easy to miss. A full column of them on
+        // purpose too — a sidebar is judged by whether one row can be picked out of the
+        // others at a glance, which one or two rows cannot show.
         store.addWorkspace(name: "supervision-experiments", path: folder("supervision"))
         store.addWorkspace(name: "tenon", path: folder("tenon"))
+        store.addWorkspace(name: "payments", path: folder("payments"))
+        store.addWorkspace(name: "docs-site", path: folder("docs-site"))
+        store.addWorkspace(name: "infra", path: folder("infra"))
+        store.addWorkspace(name: "carlens", path: folder("carlens"))
+        store.addWorkspace(name: "invest", path: folder("invest"))
 
         PaneViewSnapshotWriter.write(
             bare: WorkspaceSidebarView(

@@ -131,7 +131,7 @@ private struct WorkspaceRow: View {
     var body: some View {
         Button(action: select) {
             HStack(spacing: 8) {
-                WorkspaceMark(workspace: workspace, isActive: isActive)
+                WorkspaceMark(workspace: workspace)
                     .frame(width: 29, height: 29)
 
                 VStack(alignment: .leading, spacing: 3) {

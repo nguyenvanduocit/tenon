@@ -55,27 +55,32 @@ final class WorkspaceIdentityFormTests: XCTestCase {
         )
     }
 
-    /// Every tint offered, including "follow the app accent", is one control with a name.
-    func testTheTintVocabularyOffersTheAppAccentAndEveryNamedColour() {
+    /// Every tint offered, including Automatic, is one control with a name.
+    func testTheTintVocabularyOffersAutomaticAndEveryNamedColour() {
         let offered: [AccentColor?] = [nil] + AccentColor.allCases.map { $0 }
 
         XCTAssertEqual(offered.count, AccentColor.allCases.count + 1)
         XCTAssertTrue(AccentColor.allCases.allSatisfy { !$0.label.isEmpty })
     }
 
-    /// A workspace with no tint of its own is drawn in the app accent, so an uncustomised
-    /// sidebar looks exactly as it did before a workspace could carry a colour.
-    func testAnUntintedWorkspaceFollowsTheAppAccent() {
-        ThemeRuntime.setAccent(.amber)
+    /// A workspace nobody has tinted is drawn in the colour its own folder derives, so a
+    /// catalog that has never been customised still reads as a set of distinct workspaces.
+    func testAnUntintedWorkspaceCarriesTheColourItsFolderDerives() throws {
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(path: projectPath))
+        let plain = try XCTUnwrap(store.catalog.activeWorkspace)
 
-        XCTAssertEqual(TenonTheme.accentColor(nil), TenonTheme.amber)
-        XCTAssertNotEqual(TenonTheme.accentColor(.pink), TenonTheme.amber)
+        XCTAssertEqual(
+            WorkspaceMark.tint(for: plain),
+            Color(tintHex: WorkspaceTint.derived(forPath: projectPath))
+        )
+        XCTAssertNotEqual(WorkspaceMark.tint(for: plain), TenonTheme.muted)
     }
 
-    /// The mark shows the workspace's own tint when that workspace is the selected one, and
-    /// stays quiet otherwise — a sidebar of tinted rows would be noise, not orientation.
-    func testTheMarkShowsItsOwnTintOnlyForTheSelectedWorkspace() throws {
-        ThemeRuntime.setAccent(.amber)
+    /// The mark carries the workspace's colour on every row, selected or not: a colour that
+    /// appeared only on selection appeared only once it was no longer needed. Selection is
+    /// the row's job — the fill and the text say it, and the counts and the mark's own word
+    /// still say what it is without leaning on hue.
+    func testEveryRowShowsItsOwnTintWhetherOrNotItIsSelected() throws {
         let store = WorkspaceStore(catalog: WorkspaceCatalog(path: projectPath))
         store.setWorkspaceAppearance(
             store.catalog.activeWorkspaceID,
@@ -84,18 +89,40 @@ final class WorkspaceIdentityFormTests: XCTestCase {
         let tinted = try XCTUnwrap(store.catalog.activeWorkspace)
 
         XCTAssertEqual(
-            WorkspaceMark.tint(for: tinted, isActive: true),
-            TenonTheme.accentColor(.green)
+            WorkspaceMark.tint(for: tinted),
+            Color(tintHex: AccentColor.green.hex),
+            "a chosen colour is the colour, wherever the row sits in the selection"
         )
-        XCTAssertEqual(
-            WorkspaceMark.tint(for: tinted, isActive: false),
-            TenonTheme.muted
+    }
+
+    /// The whole path from a workspace's folder to the colour the mark is drawn in, end to
+    /// end: two uncustomised workspaces reach the shell as two different colours. How often
+    /// that holds across a full sidebar is the core suite's question; that it holds at all
+    /// through the view is this one's.
+    func testTwoUncustomisedWorkspacesReachTheShellAsDifferentColours() throws {
+        let payments = WorkspaceStore(
+            catalog: WorkspaceCatalog(
+                path: URL(fileURLWithPath: "/tmp/payments", isDirectory: true)
+            )
+        )
+        let docs = WorkspaceStore(
+            catalog: WorkspaceCatalog(
+                path: URL(fileURLWithPath: "/tmp/docs-site", isDirectory: true)
+            )
         )
 
-        store.setWorkspaceAppearance(store.catalog.activeWorkspaceID, to: .default)
-        let plain = try XCTUnwrap(store.catalog.activeWorkspace)
+        XCTAssertNotEqual(
+            WorkspaceMark.tint(for: try XCTUnwrap(payments.catalog.activeWorkspace)),
+            WorkspaceMark.tint(for: try XCTUnwrap(docs.catalog.activeWorkspace))
+        )
+    }
 
-        XCTAssertEqual(WorkspaceMark.tint(for: plain, isActive: true), TenonTheme.amber)
+    /// `WorkspaceTintTests` asserts the palette's contrast against a number, because the
+    /// core suite imports no AppKit and cannot read `TenonTheme`. This is the other end of
+    /// that assumption: if the sidebar's chrome ever changes, the contrast the core suite
+    /// proves stops being contrast against anything the shell draws.
+    func testTheSidebarChromeTheCoreSuiteAssumesIsTheOneTheShellDraws() {
+        XCTAssertEqual(TenonTheme.chromeNS, NSColor(hex: 0x11_14_19))
     }
 
     /// The whole ordinary form is visible without scrolling: `docs/designs.md` caps a

@@ -2,6 +2,15 @@
 import SwiftUI
 import TenonCore
 
+extension Color {
+    /// A `WorkspaceTint` value as something SwiftUI can draw. The tint vocabulary is plain
+    /// numbers in `TenonCore`, which is what keeps its palette and contrast assertable
+    /// without AppKit; this is the one place that crosses back.
+    init(tintHex: UInt32) {
+        self.init(nsColor: NSColor(hex: tintHex))
+    }
+}
+
 /// The density budget this popover is composed from, derived from the compact surfaces
 /// `docs/designs.md` names — the Launcher's popover width, `PluginUIPrompt`'s 30 pt field
 /// and footer buttons — and kept in one pure place so a regression test can read it.
@@ -39,24 +48,25 @@ enum WorkspaceIdentityFormMetrics {
 /// that workspace. Kept as one view so the mark, its size, and its tint are decided once.
 struct WorkspaceMark: View {
     let workspace: Workspace
-    /// The active workspace shows its tint; the rest stay muted, exactly as the row read
-    /// before a workspace could carry a colour of its own.
-    let isActive: Bool
     var size: CGFloat = 11
 
-    /// Which colour a mark is drawn in. A function rather than an expression buried in the
-    /// body, because it is a rule two things depend on — that an unselected row stays quiet,
-    /// and that a selected one shows the workspace's own tint rather than the app accent.
-    static func tint(for workspace: Workspace, isActive: Bool) -> Color {
-        isActive
-            ? TenonTheme.accentColor(workspace.appearance.accent)
-            : TenonTheme.muted
+    /// Which colour a mark is drawn in — every workspace in its own, whether or not it is
+    /// the selected one.
+    ///
+    /// Recognition serves the workspace a person is *not* in yet, so a colour that appears
+    /// only on selection appears only once it is no longer needed. Selection is carried by
+    /// the row's fill and its text, the way every native sidebar on this platform carries
+    /// it; holding the unselected marks back instead costs contrast the mark cannot spare
+    /// (at 72% opacity the darkest hue reaches 2.89:1 on `tenonChrome`, under the 3:1 WCAG
+    /// asks of a graphical object).
+    static func tint(for workspace: Workspace) -> Color {
+        Color(tintHex: WorkspaceTint.hex(for: workspace.appearance.accent, at: workspace.path))
     }
 
     var body: some View {
         Image(systemName: workspace.appearance.symbol.systemName)
             .font(.system(size: size, weight: .medium))
-            .foregroundStyle(Self.tint(for: workspace, isActive: isActive))
+            .foregroundStyle(Self.tint(for: workspace))
             .accessibilityHidden(true)
     }
 }
@@ -117,7 +127,7 @@ struct WorkspaceIdentityForm: View {
         .padding(.vertical, WorkspaceIdentityFormMetrics.inset)
         .frame(width: WorkspaceIdentityFormMetrics.width)
         .background(TenonTheme.chromeRaised)
-        .tint(TenonTheme.accentColor(workspace.appearance.accent))
+        .tint(WorkspaceMark.tint(for: workspace))
         .onDisappear(perform: commitName)
         .accessibilityIdentifier("tenon.workspaceIdentityForm")
     }
@@ -200,7 +210,7 @@ struct WorkspaceIdentityForm: View {
     private var tints: some View {
         section("Colour") {
             HStack(spacing: WorkspaceIdentityFormMetrics.swatchSpacing) {
-                tintButton(nil, label: "App accent")
+                tintButton(nil, label: "Automatic")
                 ForEach(AccentColor.allCases, id: \.self) { accent in
                     tintButton(accent, label: accent.label)
                 }
@@ -222,28 +232,35 @@ struct WorkspaceIdentityForm: View {
             store.setWorkspaceAppearance(workspace.id, to: appearance)
         } content: {
             ZStack {
-                // "Follow the app accent" is drawn as an outline, not as a dimmer version of
-                // the accent: two dots of the same hue would be told apart by brightness
-                // alone, and the option means *inherited*, which is a shape, not a colour.
+                // Automatic shows the colour it will actually use, so the choice is made
+                // against the thing itself rather than against a promise. Its dashed edge
+                // is what says *derived* — a shape, because two dots of one hue would
+                // otherwise be told apart by nothing but the fill reaching the border.
+                Circle()
+                    .fill(swatchColour(accent))
+                    .frame(width: 14, height: 14)
                 if accent == nil {
                     Circle()
                         .strokeBorder(
-                            TenonTheme.amber,
+                            TenonTheme.text,
                             style: StrokeStyle(lineWidth: 1.5, dash: [2.5, 2.5])
                         )
-                        .frame(width: 14, height: 14)
-                } else {
-                    Circle()
-                        .fill(TenonTheme.accentColor(accent))
-                        .frame(width: 14, height: 14)
+                        .frame(width: 18, height: 18)
                 }
                 if isChosen {
                     Image(systemName: "checkmark")
                         .font(.system(size: 8, weight: .bold))
-                        .foregroundStyle(accent == nil ? TenonTheme.amber : TenonTheme.ink)
+                        .foregroundStyle(TenonTheme.ink)
                 }
             }
         }
+    }
+
+    /// What one tint swatch is filled with — a named accent by its own hex, and Automatic
+    /// by the colour this workspace's folder derives, so the swatch is a preview and not a
+    /// symbol standing for one.
+    private func swatchColour(_ accent: AccentColor?) -> Color {
+        Color(tintHex: WorkspaceTint.hex(for: accent, at: workspace.path))
     }
 
     private func swatchButton(
@@ -295,7 +312,7 @@ struct WorkspaceIdentityForm: View {
                 )
                 .disabled(!workspace.hasCustomIdentity)
                 .opacity(workspace.hasCustomIdentity ? 1 : 0.45)
-                .help("Restore the folder name, the default icon, and the app accent")
+                .help("Restore the folder name, the default icon, and the automatic colour")
                 .accessibilityIdentifier("tenon.workspaceIdentityReset")
 
             Spacer()

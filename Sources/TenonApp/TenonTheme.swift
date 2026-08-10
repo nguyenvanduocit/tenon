@@ -41,16 +41,6 @@ enum TenonTheme {
     @MainActor
     static var amberNS: NSColor { .tenonAmber }
 
-    /// The colour something carrying its own tint is drawn in. A `nil` tint is not a
-    /// colour: it means "follow the accent the person chose in Settings", which is why an
-    /// uncustomised surface keeps looking exactly as it did and the app-wide preference
-    /// keeps its meaning. One rule, so no surface spells a tint its own way.
-    @MainActor
-    static func accentColor(_ accent: AccentColor?) -> Color {
-        guard let accent else { return amber }
-        return Color(nsColor: NSColor(hex: accent.hex))
-    }
-
     static let sidebarWidth: CGFloat = 232
     // Kept close to the 28-pt band macOS lays the traffic lights out in, so the tab
     // strip reads as one row with them instead of floating below their centre line.

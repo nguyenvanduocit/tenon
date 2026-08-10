@@ -223,9 +223,9 @@ restart to preserve the map of work even when live processes themselves cannot s
 
 1. Customize Workspace opens a native popover on the row.
 2. The user may type a name, choose one of twelve curated marks, and choose a semantic
-   accent or follow the app accent.
+   accent or leave the colour automatic — the swatch shows the colour Automatic will use.
 3. Clearing the name means use the derived folder name; Reset restores derived name,
-   default folder mark, and inherited app accent.
+   default folder mark, and the automatic colour.
 4. UUID, path, tabs, panes, selections, and plugin scope remain unchanged.
 
 ### Relaunch and recovery flow
@@ -284,7 +284,9 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-FR-013` | A bare launch **MUST** restore the catalog as saved; an explicit launch directory **MUST** select its canonical-folder match or add it without replacing restored work; absent restore **MUST** seed from the explicit directory or home fallback. | must | shipped | `@req-ws-fr-013` |
 | `WS-FR-014` | Restore **MUST NOT** promise PTY or scrollback continuity and **MUST NOT** eagerly construct unseen pane resources; a restored terminal starts a fresh shell on demand using a valid saved cwd placeholder or workspace root fallback. | must | shipped | `@req-ws-fr-014` |
 | `WS-FR-015` | Workspace naming **MUST** trim and collapse whitespace, cap at 60 characters, treat empty input as the derived folder name, permit duplicate display names, and leave UUID/root/tree/plugin scope unchanged. | must | shipped | `@req-ws-fr-015` |
-| `WS-FR-016` | Workspace appearance **MUST** use the closed twelve-mark vocabulary and existing semantic accent vocabulary; Reset **MUST** restore the derived name, folder mark, and inherited app accent without recreating the workspace. | must | shipped | `@req-ws-fr-016` |
+| `WS-FR-016` | Workspace appearance **MUST** use the closed twelve-mark vocabulary and existing semantic accent vocabulary; Reset **MUST** restore the derived name, folder mark, and the automatic colour without recreating the workspace. | must | shipped | `@req-ws-fr-016` |
+| `WS-FR-023` | A workspace with no chosen accent **MUST** be drawn in a colour derived from its canonical folder by a rule that is stable across launches, equal for every spelling of one folder, and beaten by an explicitly chosen accent; the derived palette **MUST** hold every entry to 3:1 against the sidebar chrome and keep its colours perceptually apart. | must | shipped | `@req-ws-fr-023` |
+| `WS-FR-024` | Every workspace row **MUST** draw its own colour whether or not it is the selected row, and selection **MUST** remain legible from the row's fill, text weight, and spoken state rather than from the mark's colour. | must | shipped | `@req-ws-fr-024` |
 | `WS-FR-017` | A real identity change **MUST** persist compatibly, update every existing host representation through shared formatting, and publish exactly one `workspace.identity-changed` fact; a no-op **MUST** publish nothing. | must | shipped | `@req-ws-fr-017` |
 | `WS-FR-018` | Recently opened content **MUST** be recorded against the workspace ID named by the mutation's own events, read only by an explicitly supplied workspace ID, deduplicate/order independently, cap each bucket at six and the store at 32 workspaces, and clear one bucket without changing another. | must | shipped | `@req-ws-fr-018` |
 | `WS-FR-019` | On launch, a stale recent-content bucket **MAY** be adopted only by an unclaimed live workspace with the same canonical root; legacy app-global rows **MUST** be discarded rather than guessed into a workspace. | must | shipped | `@req-ws-fr-019` |
@@ -342,8 +344,9 @@ intent.
 
 - Use `TenonTheme` semantic values and the density hierarchy in [`designs.md`](../designs.md).
 - The titlebar is 36 points; footer is 34; compact controls are 28 with six-point radius.
-- Unselected workspace tints stay visually quiet; marks, labels, selected state, and counts
-  carry identity without depending on hue.
+- Every workspace mark carries its own hue; marks, labels, selected state, and counts still
+  carry identity without depending on hue, so colour is added as a channel and never the
+  only one.
 - No arbitrary SF Symbol string or hex is accepted from a workspace customization field.
 - Respect Reduce Motion for sidebar transitions and preserve native system window dragging.
 
@@ -411,6 +414,7 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | WS-FR-018…019 | shipped | `RecentStore`, event-derived attribution, explicit `workspaceID` threading | `RecentStoreTests`, `WorkspaceRecentLauncherTests` | SwiftUI invalidation timing is structurally covered, not separately instrumented |
 | WS-FR-020 | shipped | `SidebarFooter`, `AppVersion`, Settings About | `SidebarFooterTests`, sidebar snapshots | Settings About placement lacks a window screenshot |
 | WS-FR-022, WS-NFR-004, 007 | shipped | `plugins/workspace-status`, workspace event projection | `ShippedPluginsTests`, interaction/direct inventory fitness | payload privacy remains source-contract tested, not telemetry monitored |
+| WS-FR-023…024 | shipped | `WorkspaceTint`, `WorkspaceMark`, identity form Automatic swatch | `WorkspaceTintTests`, `WorkspaceIdentityFormTests`, sidebar snapshots at both bounds | a pure path→colour rule cannot keep a whole sidebar distinct: eight workspaces collide about once, and the popover is the remedy |
 
 ### Phases
 
@@ -463,6 +467,9 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | 2026-08-09 | Legacy app-global recent rows are discarded. | their workspace cannot be inferred without recreating leakage | speculative migration |
 | 2026-08-09 | Sidebar layout remains in app preferences, not catalog persistence. | one owner per semantic | T-027 wording that could imply duplication |
 | 2026-08-09 | Only explicit `WindowDragArea` moves the window. | interactive titlebar/tab gestures retain pointer ownership | T-034's older implicit background-drag account |
+| 2026-08-10 | Every row draws its workspace's colour, selected or not. | recognition serves the workspace one is not in yet, so a colour shown only on selection is shown only once it is no longer needed; selection is carried by fill and text as it is in every native sidebar, and holding unselected marks back costs contrast they cannot spare (2.89:1 at 72% opacity) | "unselected workspace tints stay visually quiet" |
+| 2026-08-10 | An unchosen accent means automatic — a colour derived from the workspace's folder — rather than the app accent. | differentiation that must be assigned by hand, and then remembered as a mapping, is still something to remember; a derived default makes an uncustomised catalog already distinct, and the five named accents remain for anyone settling a colour deliberately | nil accent inherits the Settings accent |
+| 2026-08-10 | The derived palette is ten hues spaced by eye, not twelve spaced evenly. | an even wheel puts three hues in the greens where discrimination is weakest; the snapshot showed them reading as one colour while every count- and contrast-based test passed. ΔE 25.1 against 16.7, for about a third of a workspace more collisions | evenly spaced twelve-hue wheel |
 
 ## 13. Verification receipts
 
@@ -475,6 +482,12 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   canonical paths, filtering order, isolation, adoption, clearing, and hosted launcher scope.
 - `WorkspaceIdentityTests` and `WorkspaceIdentityFormTests` cover name/appearance invariants,
   migration, hosted geometry, symbols, and spoken projections.
+- 2026-08-10, T-112: `WorkspaceTintTests` pins the derived colours against relaunch, folder
+  spelling, palette coverage, WCAG 3:1 on the sidebar chrome, and a CIELAB floor between any
+  two palette entries; `WorkspaceIdentityFormTests` carries the end-to-end path→mark colour
+  and the chrome value the core suite assumes. Full suite green. The palette's shape came
+  from a sidebar snapshot, not from a test: an evenly spaced twelve-hue wheel passed every
+  assertion while drawing three greens that read as one colour.
 - `SidebarFooterTests` and sidebar snapshots cover destinations, geometry, accessible names,
   minimum width, and removal of version from the sidebar.
 - `MainWindowSingletonTests`, interaction/direct-inventory fitness tests, and native window

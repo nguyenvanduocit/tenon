@@ -276,8 +276,30 @@ Feature: Resume work in a stable native workspace shell
       Given a workspace has a custom name, mark, and accent
       When the operator resets its identity
       Then the name is derived from its folder
-      And the folder mark and inherited app accent are restored
+      And the folder mark and the automatic colour are restored
       And its stable identity, root, tabs, panes, and selections are unchanged
+
+    @req-ws-fr-023 @appearance
+    Scenario: A workspace nobody has tinted already has a colour of its own
+      Given two workspaces rooted at different folders and never customised
+      When their rows are drawn
+      Then each is drawn in a colour derived from its own canonical folder
+      And that colour is the same colour after the app is relaunched
+      And every spelling of one folder derives one colour
+      And an explicitly chosen accent is used in place of the derived colour
+
+    @req-ws-fr-023 @req-ws-nfr-005 @appearance
+    Scenario: The derived palette can be seen and told apart
+      Given the palette a derived colour is chosen from
+      Then every colour in it reaches 3:1 against the sidebar chrome
+      And no two of its colours are close enough to read as one colour
+
+    @req-ws-fr-024 @req-ws-nfr-005 @appearance
+    Scenario: Every row shows its colour, and the selected row is still obvious
+      Given a sidebar holding several workspaces
+      When one of them is the selected workspace
+      Then every row draws its own workspace colour
+      And the selected row is told apart by its fill, its text, and its spoken state
 
     @req-ws-fr-017 @req-ws-nfr-007 @events
     Scenario: A real identity edit publishes one fact through the existing boundary
