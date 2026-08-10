@@ -7,6 +7,11 @@
 # sources that ARE tracked (6.2 MB of it).
 Vendor/*/build/
 
+# Release artifacts built by scripts/release.sh — a signed app, its archive, checksums
+# and the generated cask. They are outputs of a tagged commit, published to GitHub
+# Releases rather than committed; a few hundred MB of them would otherwise land here.
+/dist/
+
 # Prebuilt GhosttyKit — downloaded by scripts/setup-ghosttykit.sh, never committed.
 # Only the script and GhosttyKit/module.modulemap are tracked (see CLAUDE.md).
 /GhosttyKit.xcframework/

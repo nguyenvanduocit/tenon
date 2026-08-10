@@ -6,8 +6,8 @@
 - **priority**: high
 - **effort**: S
 - **prd**: TENON-PRD-015 (release identity), TENON-PRD-007 (CLI/socket channel identity)
-- **blocked on**: T-113 — it owns `install.sh` and `scripts/install-replace.sh`, both of
-  which hard-code the identifier
+- **was blocked on**: T-113, which owned `install.sh` and `scripts/install-replace.sh`;
+  it finished and released both mid-task, so this landed in the same session
 
 ## Why now and not later
 
@@ -46,26 +46,45 @@ Free to change:
   `Tests/TenonAppStateTests/CLISocketServerTests.swift` (2)
 - `install-staging.sh` (1), `docs/prds/diagnostics-and-resource-monitor.feature` (1)
 
-Held by T-113 — this task cannot start until they are released:
+Were held by T-113, released mid-session and changed here:
 
-- `install.sh` (4), including the `case` that accepts only `com.firegroup.tenon` and
+- `install.sh` (4), including the `case` that accepted only `com.firegroup.tenon` and
   `com.firegroup.tenon.staging` as install identifiers
 - `scripts/install-replace.sh` (1)
 
 ## Criteria
 
-- [ ] No `com.firegroup` remains anywhere outside git history: `rg 'com\.firegroup'` is empty
-- [ ] `install.sh`'s identifier allowlist accepts the new pair and nothing else
-- [ ] The CLI control socket path and single-instance channel still agree between app and
+- [x] No `com.firegroup` remains anywhere outside git history: `rg 'com\.firegroup'` is empty
+- [x] `install.sh`'s identifier allowlist accepts the new pair and nothing else
+- [x] The CLI control socket path and single-instance channel still agree between app and
       CLI after the rename (`CLISocketServerTests`, `AppInstanceChannel`)
 - [ ] A staging install and a normal install can still both be present at once
-- [ ] `make-cask.sh`'s `zap` paths follow the new identifier — it derives them from the
+- [x] `make-cask.sh`'s `zap` paths follow the new identifier — it derives them from the
       artifact, so this should need no edit, and that is worth confirming rather than assuming
 - [ ] One install on this machine, verified: app launches, CLI connects, old
       `com.firegroup.tenon` bundle removed from `/Applications` so LaunchServices stops
       offering two identities
-- [ ] PRD-015 records the decision; PRD-007 records the socket/channel identity change
+- [x] PRD-015 records the decision; PRD-007 records the socket/channel identity change
+
+## Evidence
+
+TDD ran in the right order by accident of where the identifier was pinned: rewriting the
+two test files first turned five assertions red, and those assertions **named every
+remaining file** — `AppInstanceChannel.swift`, `install.sh`, `install-staging.sh` — so the
+fitness tests doubled as the work list. Full suite **1872 / 0** afterwards, and
+`rg 'com\.firegroup'` is empty across the tree.
+
+Two criteria are deliberately unchecked. Both need an install that replaces the running
+app, and this session is running *inside* Tenon:
+
+- a staging install alongside a normal one;
+- removing the old `com.firegroup.tenon` bundle from `/Applications`, without which
+  LaunchServices keeps offering two identities for the same product.
+
+The second matters more than it looks: until that bundle is deleted, `open -b
+com.firegroup.tenon` still resolves and the old app can be launched by anything holding
+that identifier.
 
 ## Owner / files (agent lock)
 
-Unclaimed — waiting on T-113.
+Session `407fc72f` — released 2026-08-10 22:1x.

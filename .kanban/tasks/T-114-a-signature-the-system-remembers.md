@@ -42,17 +42,35 @@ widening cascade (`allow-jit` → `allow-unsigned-executable-memory` →
 
 ## Criteria
 
-- [ ] `Tenon.entitlements` grants `com.apple.security.cs.allow-jit` and nothing wider — no
+- [x] `Tenon.entitlements` grants `com.apple.security.cs.allow-jit` and nothing wider — no
       `allow-unsigned-executable-memory`, `disable-executable-page-protection`,
       `disable-library-validation`, `allow-dyld-environment-variables`, or `get-task-allow`
-- [ ] A fitness test asserts that exact set, so a later widening turns the suite red
-- [ ] Release builds enable Hardened Runtime and carry the entitlements file
-- [ ] **Live receipt, not an assertion**: the hardened Release app launches, a bundled plugin
-      evaluates JavaScript, and the Resource Monitor still attributes PTY processes —
-      captured as command output
-- [ ] `scripts/notarize.sh` submits, staples, and verifies, reading credentials from a
-      `notarytool` keychain profile so no secret enters the repo or the environment
-- [ ] PRD-015 gains the requirements; PRD-016's decision log records what the receipt proved
+- [x] A fitness test asserts that exact set, so a later widening turns the suite red —
+      `AppSigningFitnessTests`, 4 assertions, all red first against a missing file
+- [x] Release builds enable Hardened Runtime and carry the entitlements file
+- [x] **Live receipt, not an assertion**: under Developer ID + Hardened Runtime the bundled
+      Kanban plugin's JavaScript rendered **byte-identical** to the unhardened control, and
+      a probe making the sampler's exact `libproc` calls returned identical results signed
+      both ways
+- [x] `scripts/release-sign.sh` (named for what it does — sign *and* notarize is one job:
+      make a bundle distributable) submits, staples, and verifies, reading credentials from
+      a `notarytool` keychain profile so no secret enters the repo or the environment
+- [x] PRD-015 gains `ENQ-FR-035…039` + `ENQ-NFR-013`; PRD-016's receipt table and lifecycle
+      record what was proved
+
+Delivered beyond the original list, because the user extended the scope mid-task to
+"docs, install, publish, Homebrew, repo":
+
+- [x] `scripts/release.sh` — universal build, inside-out sign, notarize, staple, package,
+      then verify a copy **extracted from the archive** rather than the bundle in place
+- [x] `scripts/make-cask.sh` — derives version, checksum, bundle id and minimum macOS from
+      the artifact; reports a private repository rather than letting the first `brew
+      install` discover it
+- [x] `.github/workflows/release.yml` — tag-triggered, ephemeral signing keychain, dry-run
+      mode
+- [x] `docs/releasing.md` — procedure, one-time setup, CI secrets, and the measured facts
+- [x] `scripts/install-replace.sh` signs inside-out too, with the ad-hoc/hardened
+      incompatibility recorded where someone would otherwise "fix" it
 
 ## Blocked on T-113 — deliberately out of scope here
 

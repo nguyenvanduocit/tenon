@@ -33,6 +33,7 @@ one reviewed change.
 | [`plugin-author-guide.md`](plugin-author-guide.md) | authoring against the shipped JavaScript runtime | current |
 | [`plugin-migration-v0.2.md`](plugin-migration-v0.2.md) | migration from deleted helper/command/sidebar APIs | current |
 | [`operations.md`](operations.md) | build, test, state, troubleshooting, release verification | current |
+| [`releasing.md`](releasing.md) | signing, notarization, packaging, Homebrew, and what each was measured to require | current |
 | [`tdd.md`](tdd.md) | test-layer placement and runner coverage | current |
 | [`development.md`](development.md) | native app setup, controls, source map, runtime overview | current |
 | [`../Tests/TenonUITests/README.md`](../Tests/TenonUITests/README.md) | XCUITest accessibility identifiers and GUI requirements | current |
