@@ -44,9 +44,22 @@ metrics are documented in
 
 ## Install
 
-There is no published release yet, so there is nothing to download and nothing
-for a package manager to fetch. Building from source is the only way to run
-Tenon today.
+Download the latest build from
+[Releases](https://github.com/nguyenvanduocit/tenon/releases), unzip it, and move
+`Tenon.app` to `/Applications`. It is universal, requires macOS 14 or later, and is
+signed with a Developer ID certificate, hardened, notarized, and stapled — so a
+machine that has never seen Tenon verifies it offline, with no right-click-to-open
+step. Check what you downloaded before running it:
+
+```bash
+shasum -a 256 Tenon-*-macos.zip        # compare against SHA256SUMS on the release
+spctl --assess -vv /Applications/Tenon.app   # accepted / source=Notarized Developer ID
+```
+
+Releases are marked pre-release while the product is pre-alpha and its interfaces
+still change between builds.
+
+To run the code you are working on instead:
 
 ```bash
 ./scripts/setup-ghosttykit.sh   # once per clone
@@ -58,12 +71,9 @@ just compiled itself. `./install-staging.sh` puts a second copy beside it under
 its own identity, so a candidate build can be exercised without replacing the
 one you are working in.
 
-Once releases are published, installation becomes:
-
-```bash
-brew tap <owner>/tap
-brew install --cask tenon
-```
+A Homebrew cask is generated with each release (`scripts/make-cask.sh`), and
+`brew install --cask` starts working once the repository is reachable without
+credentials — Homebrew fetches anonymously.
 
 [`docs/releasing.md`](docs/releasing.md) covers signing, notarization, and the
 Homebrew cask — including why the distributed build is hardened and the local

@@ -1,7 +1,39 @@
 # Changelog
 
-This file records notable changes to Tenon. The project does not yet publish versioned
-releases, so entries are grouped by date.
+This file records notable changes to Tenon. Entries below the first release are grouped by
+date, which is how they were written before there was a version to group them under.
+
+## 0.1.0 — 2026-08-11
+
+The first published build:
+[v0.1.0](https://github.com/nguyenvanduocit/tenon/releases/tag/v0.1.0), universal, signed
+with a Developer ID certificate, hardened, notarized (submission
+`b387df71-b3c6-41d7-9527-59aa5580ec95`, Accepted) and stapled, built from commit `46d9592`
+in a clean checkout.
+
+### Fixed
+
+- `Resources/terminfo` is compiled by [`scripts/setup-ghosttykit.sh`](scripts/setup-ghosttykit.sh)
+  from [`scripts/ghostty.terminfo`](scripts/ghostty.terminfo) rather than expected to exist.
+  `project.yml` requires the directory, `.gitignore` excludes it, and nothing created it —
+  so it lived on one developer machine, and every CI run since 2026-08-07 failed in spec
+  validation while a tagged release would have failed at the same command. The committed
+  entry declares the same 268 capabilities as the pinned Ghostty's own definition, and
+  `tic -x` reproduces the previously shipped files byte for byte.
+
+### Added
+
+- `.env` (gitignored, from `.env.example`) collects the signing identity, team, and
+  notarization profile a release needs. The app-specific password stays in the keychain
+  profile that file names.
+
+### Known limitations
+
+- The artifact was built and signed on a developer machine. The release workflow runs on a
+  tag but cannot sign yet: the repository has no signing secrets, so notarization
+  credentials exist only in a local keychain profile.
+- `brew install --cask` does not work while the repository is private, because Homebrew
+  fetches anonymously.
 
 ## 2026-08-10 — Release identity and signing
 
