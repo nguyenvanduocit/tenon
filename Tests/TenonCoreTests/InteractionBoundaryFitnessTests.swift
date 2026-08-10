@@ -25,7 +25,7 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "enum AppInstanceChannel: String, CaseIterable, Sendable",
                 "case production",
                 "case staging",
-                "static let stagingBundleIdentifier = \"com.firegroup.tenon.staging\"",
+                "static let stagingBundleIdentifier = \"dev.tenon.app.staging\"",
                 "case Self.stagingBundleIdentifier: .staging",
                 "unrecognizedInstalledBundleIdentifier(identifier",
                 "case .production: \"tenon-",
@@ -76,12 +76,12 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
         assertContains(
             stableInstaller,
-            ["INSTALL_BUNDLE_ID:-com.firegroup.tenon"],
+            ["INSTALL_BUNDLE_ID:-dev.tenon.app"],
             file: "install.sh"
         )
         assertContains(
             stagingInstaller,
-            ["INSTALL_BUNDLE_ID=\"com.firegroup.tenon.staging\""],
+            ["INSTALL_BUNDLE_ID=\"dev.tenon.app.staging\""],
             file: "install-staging.sh"
         )
     }

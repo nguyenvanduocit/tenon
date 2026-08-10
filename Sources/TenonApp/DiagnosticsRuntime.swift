@@ -467,15 +467,15 @@ final class DiagnosticsRuntime: @unchecked Sendable {
 
     private var observer: CFRunLoopObserver?
     private var probeTimer: DispatchSourceTimer?
-    private let probeQueue = DispatchQueue(label: "com.firegroup.tenon.diagnostics.watchdog")
+    private let probeQueue = DispatchQueue(label: "dev.tenon.diagnostics.watchdog")
     /// Sampling is deliberately not on the watchdog queue. A wedged `/usr/bin/sample` must not
     /// blind escalation and recovery detection after the initial stall receipt.
-    private let captureQueue = DispatchQueue(label: "com.firegroup.tenon.diagnostics.capture")
+    private let captureQueue = DispatchQueue(label: "dev.tenon.diagnostics.capture")
     private let captureDrainQueue = DispatchQueue(
-        label: "com.firegroup.tenon.diagnostics.capture-drain",
+        label: "dev.tenon.diagnostics.capture-drain",
         qos: .utility
     )
-    private let recordQueue = DispatchQueue(label: "com.firegroup.tenon.diagnostics.records")
+    private let recordQueue = DispatchQueue(label: "dev.tenon.diagnostics.records")
 
     /// How often the watchdog looks. Frequent enough that a stall is noticed while it is
     /// still worth sampling, rare enough to cost nothing.

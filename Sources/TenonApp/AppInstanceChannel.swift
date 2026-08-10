@@ -23,8 +23,8 @@ enum AppInstanceChannel: String, CaseIterable, Sendable {
     case production
     case staging
 
-    static let productionBundleIdentifier = "com.firegroup.tenon"
-    static let stagingBundleIdentifier = "com.firegroup.tenon.staging"
+    static let productionBundleIdentifier = "dev.tenon.app"
+    static let stagingBundleIdentifier = "dev.tenon.app.staging"
 
     static func resolve(
         bundleIdentifier: String? = Bundle.main.bundleIdentifier,

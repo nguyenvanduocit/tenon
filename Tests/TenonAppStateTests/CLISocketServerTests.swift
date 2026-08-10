@@ -17,14 +17,14 @@ final class CLISocketServerTests: XCTestCase {
         XCTAssertEqual(AppInstanceChannel.allCases, [.production, .staging])
         XCTAssertEqual(
             try AppInstanceChannel.resolve(
-                bundleIdentifier: "com.firegroup.tenon",
+                bundleIdentifier: "dev.tenon.app",
                 isApplicationBundle: true
             ),
             .production
         )
         XCTAssertEqual(
             try AppInstanceChannel.resolve(
-                bundleIdentifier: "com.firegroup.tenon.staging",
+                bundleIdentifier: "dev.tenon.app.staging",
                 isApplicationBundle: true
             ),
             .staging

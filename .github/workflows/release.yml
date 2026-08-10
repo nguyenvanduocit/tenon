@@ -1,0 +1,122 @@
+name: Release
+
+# Cutting a release from CI rather than from a laptop means the artifact people install
+# was built from a commit anyone can check out, by a machine with nothing else on it.
+# The signing identity is the one thing CI cannot produce for itself, so it is imported
+# into a keychain that exists for the length of the job and is destroyed with it.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: "Build and sign, but do not notarize or publish"
+        type: boolean
+        default: true
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write # creating the GitHub release and uploading its assets
+
+jobs:
+  release:
+    runs-on: macos-15
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # release notes and `git describe` need history
+
+      - name: Select Swift 6.2 toolchain
+        run: |
+          sudo xcode-select --switch /Applications/Xcode_26.2.app
+          swift --version
+
+      - name: Install project generator
+        run: brew install xcodegen
+
+      - name: Install verified Ghostty artifacts
+        run: |
+          scripts/test-setup-ghosttykit.sh
+          scripts/setup-ghosttykit.sh
+
+      # A temporary keychain, not the login keychain: the job gets exactly the identity it
+      # needs, `codesign` can use it without an interactive unlock, and it leaves nothing
+      # behind on a runner that is reused.
+      - name: Import the signing identity
+        if: ${{ !inputs.dry_run }}
+        env:
+          CERTIFICATE_P12: ${{ secrets.MACOS_CERTIFICATE_P12 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.MACOS_CERTIFICATE_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/release.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security set-keychain-settings -lut 3600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+
+          echo "$CERTIFICATE_P12" | base64 --decode > "$RUNNER_TEMP/certificate.p12"
+          security import "$RUNNER_TEMP/certificate.p12" \
+            -k "$KEYCHAIN" -P "$CERTIFICATE_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security
+          rm -f "$RUNNER_TEMP/certificate.p12"
+
+          # Without this, codesign blocks on a UI prompt that no one is there to answer.
+          security set-key-partition-list -S apple-tool:,apple: -s \
+            -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" >/dev/null
+
+          # Search order, so `security find-identity` and codesign see it.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
+      - name: Store notarization credentials
+        if: ${{ !inputs.dry_run }}
+        run: |
+          xcrun notarytool store-credentials tenon-notary \
+            --apple-id "${{ secrets.NOTARY_APPLE_ID }}" \
+            --team-id "${{ secrets.NOTARY_TEAM_ID }}" \
+            --password "${{ secrets.NOTARY_PASSWORD }}"
+
+      - name: Build, sign, notarize, package
+        env:
+          SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          NOTARY_PROFILE: tenon-notary
+          # A dry run still proves the build, the universal slices, the inside-out
+          # signature and the packaging — everything except Apple's verdict.
+          SKIP_NOTARIZE: ${{ inputs.dry_run && '1' || '' }}
+        run: ./scripts/release.sh
+
+      - name: Write the Homebrew cask
+        run: ./scripts/make-cask.sh
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: tenon-release
+          path: |
+            dist/*.zip
+            dist/*.sha256
+            dist/SHA256SUMS
+            dist/tenon.rb
+          retention-days: 14
+
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') && !inputs.dry_run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/*.zip dist/SHA256SUMS \
+            --title "Tenon ${GITHUB_REF_NAME#v}" \
+            --generate-notes \
+            --prerelease
+        # --prerelease is deliberate and stays until the README stops describing Tenon as
+        # pre-alpha. A release that presents unfinished work as finished is the one thing
+        # this step can get wrong by itself.
+
+      - name: Destroy the signing keychain
+        if: always() && !inputs.dry_run
+        run: security delete-keychain "$RUNNER_TEMP/release.keychain-db" || true

@@ -52,7 +52,7 @@ targets:
         product: JSONSchema
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.intent-core
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.intent-core
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
@@ -69,7 +69,7 @@ targets:
       - target: TenonIntentCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.core
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.core
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
@@ -133,13 +133,25 @@ targets:
       - sdk: libsqlite3.tbd
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.app
         PRODUCT_NAME: Tenon
         PRODUCT_MODULE_NAME: TenonApp
         INFOPLIST_FILE: Tenon-Info.plist
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         COMBINE_HIDPI_IMAGES: YES
+        # JavaScriptCore needs a JIT exception the moment the runtime is hardened, and
+        # the entitlement is inert when it is not — so both configurations carry the
+        # same file and Release alone changes what enforces it.
+        CODE_SIGN_ENTITLEMENTS: Tenon.entitlements
+      configs:
+        # Notarization requires the Hardened Runtime, so the distributed artifact is
+        # built with it rather than acquiring it at signing time. Debug stays unhardened
+        # on purpose: it is the configuration XCUITest drives and several agents build
+        # concurrently, and hardening it would change how they attach without proving
+        # anything about the artifact that actually ships.
+        Release:
+          ENABLE_HARDENED_RUNTIME: YES
 
   TenonCoreTests:
     type: bundle.unit-test
@@ -155,7 +167,7 @@ targets:
       - target: TenonCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.core-tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.core-tests
         GENERATE_INFOPLIST_FILE: YES
 
   TenonIntentCoreTests:
@@ -171,7 +183,7 @@ targets:
       - target: TenonIntentCore
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.intent-core-tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.intent-core-tests
         GENERATE_INFOPLIST_FILE: YES
 
   # The headless app-layer bundle. It carries the same name and directory as the
@@ -191,7 +203,7 @@ targets:
       - target: Tenon
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.app-state-tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.app-state-tests
         GENERATE_INFOPLIST_FILE: YES
 
   TenonIntegrationTests:
@@ -207,7 +219,7 @@ targets:
       - target: Tenon
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.integration-tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.integration-tests
         GENERATE_INFOPLIST_FILE: YES
 
   # Black-box end-to-end tests that drive the real app through the Accessibility
@@ -229,7 +241,7 @@ targets:
       - target: Tenon
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.firegroup.tenon.ui-tests
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.ui-tests
         GENERATE_INFOPLIST_FILE: YES
         TEST_TARGET_NAME: Tenon
 

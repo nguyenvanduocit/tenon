@@ -397,3 +397,43 @@ Feature: Produce fast honest evidence for domain rules and real native interacti
       When the developer runs the default feedback loop
       Then the relevant headless test and build return without GUI startup
       And hosted, GUI, performance, or manual suites run only when their boundary is changed or at their scheduled gate
+
+  Rule: A distributed build carries an identity macOS can remember, and nothing wider
+
+    @req-enq-fr-035 @req-enq-fr-038 @signing
+    Scenario: The published archive is what gets verified
+      Given a release is cut from the current tree
+      When the app, its embedded frameworks, and the bundled CLI are signed innermost-first with one Developer ID identity
+      Then the signature carries the runtime flag rather than only the build setting that asked for it
+      And the archive is unpacked again and that extracted copy is the one verified, stapled, and assessed
+      And a signature produced with a recursive deep sign is refused as a distribution artifact
+
+    @req-enq-fr-036 @signing @plugin-runtime
+    Scenario: Plugin JavaScript keeps its compiler under a hardened runtime
+      Given the distribution build hardens the runtime
+      When a bundled plugin evaluates JavaScript in the host runtime
+      Then the view it renders is identical to the same build running unhardened
+      And the only runtime exception granted is the narrowest one that permits mapping JIT pages
+      And no entitlement granting unsigned executable memory, disabling page protection, disabling library validation, permitting dyld environment variables, or allowing debugger attach is present
+
+    @req-enq-fr-037 @signing @developer-experience
+    Scenario: A local install needs no certificate
+      Given several agents build in one shared working tree
+      When one of them installs the app it just built
+      Then the install completes with an ad-hoc signature and an unhardened runtime
+      And no signing identity is required of it
+      And the hardened runtime is not applied to that path, because library validation would refuse the app's own embedded frameworks
+
+    @req-enq-fr-039 @release-metadata
+    Scenario: Distribution metadata is derived rather than transcribed
+      Given a signed archive has been produced
+      When the package manager definition is written
+      Then version, checksum, bundle identifier, and minimum macOS are read out of the built artifact
+      And a definition pointing at an unreachable download is reported before it is published rather than by the first install
+
+    @req-enq-nfr-013 @credentials
+    Scenario: Signing credentials never enter the repository or the environment
+      Given a release is cut locally or on a shared runner
+      When the artifact is signed and submitted for notarization
+      Then credentials are read from a stored keychain profile rather than from repository files, command arguments, or logged environment variables
+      And a runner imports the identity into a keychain it creates for the job and destroys afterwards

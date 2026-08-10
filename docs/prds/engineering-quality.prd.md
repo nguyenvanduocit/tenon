@@ -149,6 +149,11 @@ along product responsibility while behavior tests remain unchanged.
 | `ENQ-FR-032` | The package **MUST** declare a base language and String Catalog; AppKit/SwiftUI accessibility labels, spoken states, menu titles, and user-visible diagnostics **MUST** use localization rather than raw literals. | shipped/continuous | `@req-enq-fr-032` |
 | `ENQ-FR-033` | Animation and transition behavior **MUST** respect Reduce Motion while preserving state/focus/outcome. | shipped/continuous | `@req-enq-fr-033` |
 | `ENQ-FR-034` | The native-testing strategy **MUST** complete representative hosted, black-box, accessibility-audit, and visual spikes; compare tools/runners with measured cost/flake/diagnostics; and publish the feature-author routing/runner/artifact contract. | planned (T-090) | `@req-enq-fr-034` |
+| `ENQ-FR-035` | A distributed artifact **MUST** be signed with one Developer ID identity covering the app, every embedded framework, and the bundled CLI, signed innermost-first; `--deep` **MUST NOT** be used to sign, and remains valid only for verification. | shipped (T-114) | `@req-enq-fr-035` |
+| `ENQ-FR-036` | A distribution build **MUST** enable the Hardened Runtime and **MUST** grant `com.apple.security.cs.allow-jit` and no wider exception; `allow-unsigned-executable-memory`, `disable-executable-page-protection`, `disable-library-validation`, `allow-dyld-environment-variables`, and `get-task-allow` **MUST** be absent. | shipped (T-114) | `@req-enq-fr-036` |
+| `ENQ-FR-037` | The local install path **MUST** stay ad-hoc and unhardened and **MUST NOT** require a certificate, because Library Validation refuses this app's embedded frameworks under an ad-hoc signature. | shipped (T-114) | `@req-enq-fr-037` |
+| `ENQ-FR-038` | Release packaging **MUST** produce a universal artifact, notarize and staple it, and verify a copy extracted back out of the published archive rather than the bundle verified in place. | shipped (T-114) | `@req-enq-fr-038` |
+| `ENQ-FR-039` | Distribution metadata — version, checksum, bundle identifier, minimum macOS — **MUST** be derived from the built artifact rather than transcribed into a cask or release note by hand. | shipped (T-114) | `@req-enq-fr-039` |
 
 ### Non-functional requirements
 
@@ -166,10 +171,11 @@ along product responsibility while behavior tests remain unchanged.
 | `ENQ-NFR-010` | change safety | Refactors **MUST** preserve behavior receipts and independently search symbol edges; unrelated dirty worktree changes **MUST** remain untouched. | shipped process | `@req-enq-nfr-010` |
 | `ENQ-NFR-011` | developer velocity | A quality step **MUST** remain only when it catches a named class of failure at proportionate cost; redundant or vacuous ceremony **MUST** be removed. | continuous | `@req-enq-nfr-011` |
 | `ENQ-NFR-012` | reproducibility | Verification commands and environments **MUST** be rerunnable from generated project and SwiftPM paths with captured tool/OS/destination where results depend on them. | partial/continuous | `@req-enq-nfr-012` |
+| `ENQ-NFR-013` | credential hygiene | Signing and notarization credentials **MUST** be read from a stored keychain profile rather than repository files, command arguments, or logged environment; a shared runner **MUST** import the identity into a keychain it creates for the job and destroys afterwards. | shipped (T-114) | `@req-enq-nfr-013` |
 
 ## 6. Acceptance and delivery
 
-[`engineering-quality.feature`](engineering-quality.feature) maps all 46 requirements. Evidence is
+[`engineering-quality.feature`](engineering-quality.feature) maps all 52 requirements. Evidence is
 the quality system itself: tests that reach each runner, mutation receipts, deterministic waits,
 source fitness gates, cache scripts, localization/catalog artifacts, hosted/XCUITest suites, CI
 configuration, and the pending T-090 spikes.
@@ -181,6 +187,7 @@ configuration, and the pending T-090 spikes.
 | 024…030 | domain vocabulary/fitness, decomposed coordinators and typed phases | shipped/continuous |
 | 031…033 | design system, accessibility/localization/remediation and UI tests | shipped/continuous |
 | 034 and NFR-003/005/007/012 | T-090 research/spikes/decision matrix/GUI artifact contract | planned/partial |
+| 035…039 and NFR-013 | entitlements file and its fitness test, `release-sign.sh`/`release.sh`/`make-cask.sh`, release workflow, [`releasing.md`](../releasing.md) | shipped (T-114); notarization submission not yet exercised against Apple |
 
 Risks are testing mocks instead of boundaries, flaky XCUITest sprawl, pixel snapshots tied to OS/font
 noise, inaccessible test-only selectors, vacuous assertions, stale manifests, over-tagging, and
@@ -202,5 +209,10 @@ planned rather than being implied by existing UI tests.
 | T-043/T-074/T-082 | runner/mutation/flake/domain receipts | dead test directory repaired; timing rules made fact-based; five domain-gate mutations fired |
 | 2026-08-07 | system audit | historical build and 1,379-test receipt green; not a current frozen count |
 | 2026-08-09 | documentation audit | current quality sources/tasks mapped; T-090 remains pending |
+| 2026-08-10 (T-114) | `swift test` after adding `AppSigningFitnessTests` | 1872 / 0; four assertions red first against a missing entitlements file, then green |
+| 2026-08-10 (T-114) | ad-hoc + `--options runtime` on the real bundle | app fails in dyld: embedded frameworks rejected, "mapping process and mapped file (non-platform) have different Team IDs". Hardened Runtime and ad-hoc are mutually exclusive here; the local install path stays unhardened (ENQ-FR-037) |
+| 2026-08-10 (T-114) | Developer ID signature, `release-sign.sh`, then `TENON_VIEW_SNAPSHOT` over the bundled Kanban plugin | `flags=0x10000(runtime)`, `allow-jit` attached, plugin JavaScript rendered byte-identical to the unhardened control |
+| 2026-08-10 (T-114) | one probe binary signed twice, differing only in the runtime flag | `libproc` results identical (638 pids; 419 readable; 219 EPERM; 635 paths) — closes PRD-016's signed-app feasibility question |
+| 2026-08-10 (T-114) | `CODE_SIGNING_REQUIRED=NO` Release build | no `codesign` step runs at all, so `ENABLE_HARDENED_RUNTIME` has no effect and the `flags=0x2(adhoc)` present comes from the linker; the signing script, not the build setting, is the authority for a distributed artifact |
 
 Initial canonical PRD created 2026-08-09.

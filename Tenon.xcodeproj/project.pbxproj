@@ -50,6 +50,7 @@
 		157DBA5EDAD508DE54B4D246 /* PluginSettingsSchemaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 994C253B8265943526CBBBFE /* PluginSettingsSchemaTests.swift */; };
 		15B0393AA1BB8F74CE897F97 /* ProcessTelemetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = FBF14507B5035F39286AB9E1 /* ProcessTelemetryTests.swift */; };
 		15B71617CF204CAE06B96B89 /* FileSlotView.swift in Sources */ = {isa = PBXBuildFile; fileRef = DBA24513F07B88D6B0EC95CD /* FileSlotView.swift */; };
+		161914999C9E898C50C985FF /* WorkspaceTintTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 173B0460EF12202145347E02 /* WorkspaceTintTests.swift */; };
 		167715B4DAFA7AAEAD0E373B /* AgentFleetIntegrationTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79250E8DFFA21C0236E9C2C8 /* AgentFleetIntegrationTests.swift */; };
 		169723CBCFB80B38BF6D433F /* OrderedCollections in Frameworks */ = {isa = PBXBuildFile; productRef = 08A4BBA2636E27CC5482F817 /* OrderedCollections */; };
 		16D5074EF79B3CC447A3A74C /* AgentSessionTimelineTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83064CE82AFE8A46DB66123A /* AgentSessionTimelineTests.swift */; };
@@ -226,6 +227,7 @@
 		847897275F1FBBC09AB79CE3 /* IntentTelemetryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 04D4B5FF943A9234C859901F /* IntentTelemetryTests.swift */; };
 		85C9574E8C2029512361B4B7 /* PaneHeaderCommand.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2730CBD57AC9B324C7FBDB7C /* PaneHeaderCommand.swift */; };
 		85F8A97A22DCE0CC198CD4DC /* CoreAudio.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = AB93C5655A19F059996B2ABD /* CoreAudio.framework */; };
+		86AE749E4508CBD1888C94EB /* SamplerMemoryFigureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EADA08F6ACD4F3368C587783 /* SamplerMemoryFigureTests.swift */; };
 		8786D2B48385F07997785C35 /* FilePaneKind.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8CF01E8382AD7D695F40125F /* FilePaneKind.swift */; };
 		87A6CB923ED1180619C3E97A /* StallSampleCaptureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 83F616BF92E8C01DAB6D4558 /* StallSampleCaptureTests.swift */; };
 		87D8869A7296C7A0F4B1CBEF /* NetworkIntentProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BD954C018E1A9DE4A617860E /* NetworkIntentProviderTests.swift */; };
@@ -239,6 +241,7 @@
 		8EE8E58264A42A6DF334AFCA /* IOKit.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6576C0ECAC52B479D21D31E /* IOKit.framework */; };
 		8F53B0BF2A944B33BC57C64D /* ProviderRegistryTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 32AFBEEC80F4C898002524E8 /* ProviderRegistryTests.swift */; };
 		8F70EBF1B129A9B428ED487A /* IntentDispatchRule.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6A2C29414F79C2735ACC038A /* IntentDispatchRule.swift */; };
+		908DD55BD5021FC71F0F2BF7 /* AppSigningFitnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 422F8AEF5E2EDECD2F7C7505 /* AppSigningFitnessTests.swift */; };
 		916675AC07619282E24FF9F5 /* PaletteDisplayModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 227771EDC82BA7C217EC84BC /* PaletteDisplayModelTests.swift */; };
 		9181B28CFD2C098A7F61D698 /* DiffRequest.swift in Sources */ = {isa = PBXBuildFile; fileRef = DF6772329A2BC6C05538056B /* DiffRequest.swift */; };
 		9189437C8E7407BFE6E311D3 /* LazyListSizingFitnessTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 574436EF1900710DCAAD292B /* LazyListSizingFitnessTests.swift */; };
@@ -256,6 +259,7 @@
 		9B77FB08DD3F77821A3FD6FA /* CLIProtocol.swift in Sources */ = {isa = PBXBuildFile; fileRef = F289D53CB3AA89C13AC9EA48 /* CLIProtocol.swift */; };
 		9E940709141680391A3ECBD0 /* PaneHeaderSchemaTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 7F5D899B78B25414D7B1251D /* PaneHeaderSchemaTests.swift */; };
 		9F0957F91F22E8939DA0871C /* SurfacePool.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9F4702C8910563CDFC9FA0B0 /* SurfacePool.swift */; };
+		9F8A12757122D290FCD9CEBF /* TerminalProcessTreeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 82271F56D00C9B4025F190CD /* TerminalProcessTreeTests.swift */; };
 		A03B7D17C0E4150509B8E2DA /* plugins in Resources */ = {isa = PBXBuildFile; fileRef = BB2AE978B85DD02EFDD44D32 /* plugins */; };
 		A196D1C2E5C0AA33574F0979 /* PluginEventBackpressureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8DFC4C583C0D374D57926373 /* PluginEventBackpressureTests.swift */; };
 		A205AD69B9E857C9B70E9CF8 /* AgentConsentScopeTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5FC012C5A9150B1E43854DB8 /* AgentConsentScopeTests.swift */; };
@@ -384,6 +388,7 @@
 		E1AF88885BBE52D0C610CFAE /* WorkspaceDuplicateSlotTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEA1114FE942DFBB65C100C5 /* WorkspaceDuplicateSlotTests.swift */; };
 		E1CAB8AC3B6293D34BE37B19 /* WorkspaceIntentProviderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 98CC43BDE1083B454AE6CBCB /* WorkspaceIntentProviderTests.swift */; };
 		E2076C05CD38D5A25B14EEF3 /* PaneHeaderProjection.swift in Sources */ = {isa = PBXBuildFile; fileRef = A6D50307CA2D376059BACFC1 /* PaneHeaderProjection.swift */; };
+		E23497394E806AD869D74601 /* TelemetryMemoryFigureTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6E557C305C2FEEB8E1497B93 /* TelemetryMemoryFigureTests.swift */; };
 		E2CF391CF2CF957A475EB8B7 /* TerminalReadCapabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C3927CCA268C14FA88841A58 /* TerminalReadCapabilityTests.swift */; };
 		E302EA54ACDB8D07FC32A194 /* DiffSnapshot.swift in Sources */ = {isa = PBXBuildFile; fileRef = E83B357BABFE7E8CE6EEE653 /* DiffSnapshot.swift */; };
 		E31B3A07D4B4B2A3CF5B9943 /* PluginRuntimeBootstrap.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6379909A83EF79EAFB4E8570 /* PluginRuntimeBootstrap.swift */; };
@@ -547,6 +552,7 @@
 		155BC5B81C7F0D8B42E046E1 /* FrecencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FrecencyTests.swift; sourceTree = "<group>"; };
 		1619BCC66C955E4A84BB9630 /* libc++.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = "libc++.tbd"; path = "usr/lib/libc++.tbd"; sourceTree = SDKROOT; };
 		1714916DD1734DA146742D8B /* SurfaceLifecycleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SurfaceLifecycleTests.swift; sourceTree = "<group>"; };
+		173B0460EF12202145347E02 /* WorkspaceTintTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceTintTests.swift; sourceTree = "<group>"; };
 		176B7BFCC97F9292156E4E9A /* ScrollbarStyleTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScrollbarStyleTests.swift; sourceTree = "<group>"; };
 		19433E5F21916D081A947E88 /* WorkspaceScopedViewStateTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WorkspaceScopedViewStateTests.swift; sourceTree = "<group>"; };
 		196702A209446A5222D05FDC /* CLIIntentBusBoundaryTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLIIntentBusBoundaryTests.swift; sourceTree = "<group>"; };
@@ -610,6 +616,7 @@
 		3EF92ADC71D19C9A63B72EAF /* DarwinProcessSampler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DarwinProcessSampler.swift; sourceTree = "<group>"; };
 		411B80D31C12371F729B7966 /* EditorPaneState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditorPaneState.swift; sourceTree = "<group>"; };
 		421EBDB8EF10438967881609 /* PaneActivityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneActivityTests.swift; sourceTree = "<group>"; };
+		422F8AEF5E2EDECD2F7C7505 /* AppSigningFitnessTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppSigningFitnessTests.swift; sourceTree = "<group>"; };
 		42A649BCC3CFADDAF1925CC3 /* CLICommandExecutor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CLICommandExecutor.swift; sourceTree = "<group>"; };
 		42ADFD93F75EB4DA5E4DB024 /* IntentIdempotencyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentIdempotencyTests.swift; sourceTree = "<group>"; };
 		42EB287E32F8C0E21659CCBD /* FileDocumentIOTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FileDocumentIOTests.swift; sourceTree = "<group>"; };
@@ -687,6 +694,7 @@
 		6DB938BDA8AAB88B6D8FB0B0 /* NewPaneSizing.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NewPaneSizing.swift; sourceTree = "<group>"; };
 		6E22E35AA409CCFEB5B03399 /* AutomationSlotViewTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationSlotViewTests.swift; sourceTree = "<group>"; };
 		6E4BAA2B7704C1E3F3031FCC /* PaneTarget.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneTarget.swift; sourceTree = "<group>"; };
+		6E557C305C2FEEB8E1497B93 /* TelemetryMemoryFigureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TelemetryMemoryFigureTests.swift; sourceTree = "<group>"; };
 		6E5DBD19BFBF5DAC3135C0DA /* PluginHostModels.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginHostModels.swift; sourceTree = "<group>"; };
 		6E87A25EC950363B55F3241E /* IntentResultTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentResultTests.swift; sourceTree = "<group>"; };
 		6F6A2D760E83E91EBDCF80A3 /* RestoredPluginPanesTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RestoredPluginPanesTests.swift; sourceTree = "<group>"; };
@@ -732,6 +740,7 @@
 		80DF19405F89B6019D267984 /* Tenon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tenon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		80F2A904F91D5E261C453DE1 /* PaneUpdateTurnBoundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneUpdateTurnBoundTests.swift; sourceTree = "<group>"; };
 		816ABDCC5FE3AB2D1C159370 /* PluginOpenHandlerCandidacyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginOpenHandlerCandidacyTests.swift; sourceTree = "<group>"; };
+		82271F56D00C9B4025F190CD /* TerminalProcessTreeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalProcessTreeTests.swift; sourceTree = "<group>"; };
 		82A49C3C43D25D41BFE929F7 /* TenonIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TenonIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		83064CE82AFE8A46DB66123A /* AgentSessionTimelineTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentSessionTimelineTests.swift; sourceTree = "<group>"; };
 		8368AA8BB1B54C3C0862AB15 /* ChangesPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChangesPanelView.swift; sourceTree = "<group>"; };
@@ -888,6 +897,7 @@
 		E83B357BABFE7E8CE6EEE653 /* DiffSnapshot.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = DiffSnapshot.swift; sourceTree = "<group>"; };
 		E99B8DE2C504C61A6CDD430A /* PaneHeaderBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneHeaderBar.swift; sourceTree = "<group>"; };
 		E9A4FD74A4E25B0F8EE2DEBD /* WebUserAgent.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WebUserAgent.swift; sourceTree = "<group>"; };
+		EADA08F6ACD4F3368C587783 /* SamplerMemoryFigureTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SamplerMemoryFigureTests.swift; sourceTree = "<group>"; };
 		EB22879F3CA5675FD92E6AB1 /* IntentProviderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentProviderTests.swift; sourceTree = "<group>"; };
 		EBA8ADDB6C57C662E0CCC28C /* ShippedPluginsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShippedPluginsTests.swift; sourceTree = "<group>"; };
 		EBB249D8703636764D511539 /* IntentMailboxTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentMailboxTests.swift; sourceTree = "<group>"; };
@@ -1114,6 +1124,7 @@
 				67CFD0025858C738AA8F93A8 /* PluginWebSurfacePoolTests.swift */,
 				453A5827AF1C0D3B58317876 /* QuickCommandTests.swift */,
 				6F6A2D760E83E91EBDCF80A3 /* RestoredPluginPanesTests.swift */,
+				EADA08F6ACD4F3368C587783 /* SamplerMemoryFigureTests.swift */,
 				176B7BFCC97F9292156E4E9A /* ScrollbarStyleTests.swift */,
 				4A2AD56F1C6268056C7E05DB /* SidebarFooterTests.swift */,
 				BF616F2AB39FA2C3D6FB07AD /* SidebarResizeTests.swift */,
@@ -1427,6 +1438,7 @@
 			children = (
 				5A4BA184031D9A3F29EE5482 /* AgentsRunTests.swift */,
 				2E49FE293F17FE7E13CE39F6 /* AppPreferencesTests.swift */,
+				422F8AEF5E2EDECD2F7C7505 /* AppSigningFitnessTests.swift */,
 				A65D19B54A38E0C44AB725AD /* AutomationEventDeliveryTests.swift */,
 				9F5001A89CA695FD02CA2F71 /* AutomationRunHistoryTests.swift */,
 				CF3518DFE532F7C730791214 /* AutomationSchedulerTests.swift */,
@@ -1505,7 +1517,9 @@
 				0B6D544F6BE2677E70DF2580 /* SpatialLayoutTests.swift */,
 				886B09EDC23ED246314FE73A /* TabContextPlacementTests.swift */,
 				882CA7924D28436F417C4274 /* TabReorderTests.swift */,
+				6E557C305C2FEEB8E1497B93 /* TelemetryMemoryFigureTests.swift */,
 				6409696ABB9131C96F840D05 /* TerminalJobTerminationTests.swift */,
+				82271F56D00C9B4025F190CD /* TerminalProcessTreeTests.swift */,
 				8716A9CEEBD5A61392FD0449 /* TreeRowItemTests.swift */,
 				E56E5467C95C7A2801F8C804 /* WorkspaceCatalogPersistenceTests.swift */,
 				10126BD05DF2ED711496A02D /* WorkspaceDefaultContentTests.swift */,
@@ -1515,6 +1529,7 @@
 				19433E5F21916D081A947E88 /* WorkspaceScopedViewStateTests.swift */,
 				4ACA286D19391DF40A4A9CDF /* WorkspaceTabOrderTests.swift */,
 				DB6E612418F757638F9226CF /* WorkspaceTests.swift */,
+				173B0460EF12202145347E02 /* WorkspaceTintTests.swift */,
 			);
 			name = TenonCoreTests;
 			path = Tests/TenonCoreTests;
@@ -1771,6 +1786,7 @@
 			files = (
 				DC69575C5BDCAC9C55041D1E /* AgentsRunTests.swift in Sources */,
 				2BFE74EC549CB06425D1B4F9 /* AppPreferencesTests.swift in Sources */,
+				908DD55BD5021FC71F0F2BF7 /* AppSigningFitnessTests.swift in Sources */,
 				738C774BA54F6F1AA0616865 /* AutomationEventDeliveryTests.swift in Sources */,
 				2114CA77F0EB1577E2BA44DB /* AutomationRunHistoryTests.swift in Sources */,
 				FE4BAE615AFE057FFFC8274B /* AutomationScheduleTests.swift in Sources */,
@@ -1849,7 +1865,9 @@
 				4F33FC2DFADA15FB583F2742 /* SpatialLayoutTests.swift in Sources */,
 				D3127F56E8BF5416422C22BF /* TabContextPlacementTests.swift in Sources */,
 				0BD63C14540D7C99AB87E518 /* TabReorderTests.swift in Sources */,
+				E23497394E806AD869D74601 /* TelemetryMemoryFigureTests.swift in Sources */,
 				AE0349F04A5F945E7930CC0C /* TerminalJobTerminationTests.swift in Sources */,
+				9F8A12757122D290FCD9CEBF /* TerminalProcessTreeTests.swift in Sources */,
 				8C0B63977659A9171D45B953 /* TreeRowItemTests.swift in Sources */,
 				DF6C861573511C14AF6C6860 /* WorkspaceCatalogPersistenceTests.swift in Sources */,
 				B999142A7CC3CE168D7A7D51 /* WorkspaceDefaultContentTests.swift in Sources */,
@@ -1859,6 +1877,7 @@
 				70AD8300E693D2E9117AAC8F /* WorkspaceScopedViewStateTests.swift in Sources */,
 				1F516084916BE8553508FFDE /* WorkspaceTabOrderTests.swift in Sources */,
 				557177278A07AD1323CCC7B9 /* WorkspaceTests.swift in Sources */,
+				161914999C9E898C50C985FF /* WorkspaceTintTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -2140,6 +2159,7 @@
 				0936217296AE6699F94DB9B6 /* PluginWebSurfacePoolTests.swift in Sources */,
 				D1982DC1565888BD6D0B6D86 /* QuickCommandTests.swift in Sources */,
 				AECBC523B66D87335C77BFAC /* RestoredPluginPanesTests.swift in Sources */,
+				86AE749E4508CBD1888C94EB /* SamplerMemoryFigureTests.swift in Sources */,
 				BF7538829FC164C73685E871 /* ScrollbarStyleTests.swift in Sources */,
 				3C28176B9FF1F4C85C941471 /* SidebarFooterTests.swift in Sources */,
 				51B5F52EF8C44B6B4A7E63FA /* SidebarResizeTests.swift in Sources */,
@@ -2258,7 +2278,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.app-state-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.app-state-tests";
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
 			};
@@ -2276,7 +2296,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.intent-core-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.intent-core-tests";
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -2293,7 +2313,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.integration-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.integration-tests";
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
 			};
@@ -2316,7 +2336,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon.core;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tenon.core;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -2335,7 +2355,7 @@
 					"@loader_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.ui-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.ui-tests";
 				SDKROOT = macosx;
 				TEST_TARGET_NAME = Tenon;
 			};
@@ -2353,7 +2373,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.core-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.core-tests";
 				SDKROOT = macosx;
 			};
 			name = Debug;
@@ -2370,7 +2390,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.core-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.core-tests";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -2392,7 +2412,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.intent-core";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.intent-core";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -2474,7 +2494,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.intent-core";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.intent-core";
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -2493,7 +2513,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.integration-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.integration-tests";
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
 			};
@@ -2511,7 +2531,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.app-state-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.app-state-tests";
 				SDKROOT = macosx;
 				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Tenon.app/Contents/MacOS/Tenon";
 			};
@@ -2529,7 +2549,7 @@
 					"@loader_path/Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.ui-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.ui-tests";
 				SDKROOT = macosx;
 				TEST_TARGET_NAME = Tenon;
 			};
@@ -2547,7 +2567,7 @@
 					"@loader_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = "com.firegroup.tenon.intent-core-tests";
+				PRODUCT_BUNDLE_IDENTIFIER = "dev.tenon.intent-core-tests";
 				SDKROOT = macosx;
 			};
 			name = Release;
@@ -2634,7 +2654,7 @@
 					"@executable_path/../Frameworks",
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon.core;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tenon.core;
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				VERSIONING_SYSTEM = "apple-generic";
@@ -2645,6 +2665,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Tenon.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				FRAMEWORK_SEARCH_PATHS = (
@@ -2658,7 +2679,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tenon.app;
 				PRODUCT_MODULE_NAME = TenonApp;
 				PRODUCT_NAME = Tenon;
 				SDKROOT = macosx;
@@ -2669,8 +2690,10 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Tenon.entitlements;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_HARDENED_RUNTIME = YES;
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(inherited)",
 					"\".\"",
@@ -2682,7 +2705,7 @@
 				);
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.1.0;
-				PRODUCT_BUNDLE_IDENTIFIER = com.firegroup.tenon;
+				PRODUCT_BUNDLE_IDENTIFIER = dev.tenon.app;
 				PRODUCT_MODULE_NAME = TenonApp;
 				PRODUCT_NAME = Tenon;
 				SDKROOT = macosx;

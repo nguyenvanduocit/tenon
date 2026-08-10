@@ -138,13 +138,17 @@ the newest transcript by directory and modification time.
    and XCUITest in a logged-in GUI session. Keep command receipts rather than copying a test
    count into docs.
 5. Run the internal-link and removed-surface sweeps below.
-6. Build the Release configuration, inspect embedded plugins/resources, sign the app and
-   nested code, verify with `codesign --verify --deep --strict`, then notarize and staple the
-   distributed artifact.
+6. Run `./scripts/release.sh`. It builds Release universal, signs the app, its three
+   embedded frameworks and the bundled CLI inside-out, notarizes, staples, packages, and
+   then verifies a copy extracted back out of the archive. [`releasing.md`](releasing.md)
+   is the full procedure, including the one-time certificate and notarization setup and
+   the measured reasons the signing shape is what it is.
 7. Install the produced artifact on a clean user account. Verify first launch, single
    instance focus, workspace restore, plugin enable/disable, consent, hot reload, terminal
    creation, and Agent Lens degradation behavior.
 8. Publish checksums and release notes that distinguish implemented capability from roadmap.
+9. Update the Homebrew cask with `./scripts/make-cask.sh`, which derives every value from
+   the artifact rather than repeating it by hand.
 
 Do not describe the app as sandboxing untrusted plugins until JavaScript runs behind a hard
 isolation boundary with termination and memory limits.

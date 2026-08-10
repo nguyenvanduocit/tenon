@@ -14,6 +14,22 @@ Feature: Control the correct local Tenon instance through canonical intents
       Then an executable tenon-cli is copied to the user's .local/bin directory
       And it does not depend on a framework inside the app or checkout
 
+    @req-cli-nfr-009 @packaging
+    Scenario: The app can be replaced from a terminal running inside it
+      Given the installer is run from a pane of the app it is about to replace
+      Then it says the app will quit and reopen before it starts building
+      And the replacement runs outside that pane's terminal session
+      And the app's job teardown does not reach the running installer
+      And the old app has exited before its bundle is deleted
+      And the app is reopened afterwards without being asked to launch
+
+    @req-cli-nfr-009 @req-cli-nfr-006 @packaging
+    Scenario: Installing from anywhere else is unchanged
+      Given the installer is run from a terminal outside the app being replaced
+      Then the replacement runs in that terminal with its output on standard output
+      And it uses the same replacement implementation as the detached path
+      And the bundled command is verified after copying and after signing
+
     @req-cli-fr-002 @channel
     Scenario: Staging cannot replace the neutral global command
       Given both production and staging are installed

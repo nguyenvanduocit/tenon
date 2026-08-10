@@ -191,6 +191,7 @@ panes keep that channel's intended path rather than falling back.
 | `CLI-NFR-004` | architecture | CLI domain work **MUST** cross Intent Bus; only ping and app focus are direct lifecycle control. | shipped | `@req-cli-nfr-004` |
 | `CLI-NFR-005` | compatibility | Production legacy socket path and neutral-shell behavior **MUST** remain compatible; protocol versions **MUST** reject rather than guess. | shipped | `@req-cli-nfr-005` |
 | `CLI-NFR-006` | packaging | Release verification **MUST** prove bundled CLI exists, is executable, signed in bundle order, and links only OS libraries/frameworks. | shipped for `install.sh` | `@req-cli-nfr-006` |
+| `CLI-NFR-009` | packaging | Installing **MUST** be possible from a terminal inside the app being replaced: the installer **MUST** detect that case from its own process ancestry, run the replacement outside the caller's terminal session so the app's own job teardown cannot reach it, wait for the old app to exit before deleting its bundle, and reopen the app afterwards. Both paths **MUST** use one replacement implementation, and it **MUST** keep the `CLI-NFR-006` verification order. | shipped | `@req-cli-nfr-009` |
 | `CLI-NFR-007` | observability | Control degradation and structured failures **MUST** identify actionable cause without exposing secrets. | shipped | `@req-cli-nfr-007` |
 | `CLI-NFR-008` | lifecycle | Disconnect need not cancel dispatch early, but every abandoned request **MUST** terminate by its deadline/watchdog. | shipped | `@req-cli-nfr-008` |
 
@@ -250,6 +251,7 @@ intent contract. Protocol v4 requires exact migration/rejection tests; current v
 | 2026-07-31 | Disconnect cancellation is optional optimization; deadline is correctness bound. | avoids unbounded work without premature kqueue design | original T-050 checkbox |
 | 2026-08-06 | Only ping and app focus directly control the app; domain work is intents. | interaction boundary law | old domain CLI verbs |
 | 2026-08-09 | Current wire is v3. | `CLIProtocol.version == 3` and current tests | `design-cli.md` wire-v2 text |
+| 2026-08-10 | The installer detaches its replacement half when run from inside the app it replaces, rather than refusing. | the only terminal a person working on Tenon has open is a Tenon pane, and refusing would send them to another app to install this one. Detaching is not a preference: `TerminalJobTerminator.sweep` lists victims with `ps -t <tty>` and escalates to SIGKILL, so leaving the terminal session is the one thing that survives — measured, a `nohup` child is still listed and dies, a `setsid` child is not listed and completes | installing only from outside the app |
 
 Open operational question: if Xcode Archive becomes a supported release path, it must gain an
 equivalent self-contained SwiftPM CLI build/copy/verification step rather than a dynamic target.
@@ -259,6 +261,7 @@ equivalent self-contained SwiftPM CLI build/copy/verification step rather than a
 | Date | Worktree | Scope | Result | Exclusions |
 |---|---|---|---|---|
 | 2026-08-09 | current dirty tree, docs audit | current CLI/channel/socket/parser/executor/installer source and task receipts | canonical v3 behavior mapped | no live socket or installed button run in this pass |
+| 2026-08-10 | current tree, T-113 | `CLI-NFR-009` self-install: ancestry detection, detached survival, and the whole replace path | detection returned self-install for `/Applications/Tenon.app` and ordinary for two other bundles, run from a real Tenon pane; in a `forkpty` PTY, a `nohup` child was listed by `ps -t <tty>` and killed by a simulated sweep while a `setsid` child was absent from the list and ran to completion; a foreground staging install went build → quit → wait → replace → sign → verify → `exit=0`; a forced-branch copy of the installer, differing from the real one by the single `if` line, handed off to the detached installer, which quit staging, waited, replaced, signed, verified, and reopened it after its caller had exited | the detached path was proved against `Tenon Staging.app`, not against `Tenon.app` — a real self-install kills the session doing the verifying, so the one thing not directly observed is a live Tenon replacing itself |
 
 ## 14. Change history
 

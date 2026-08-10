@@ -18,6 +18,6 @@ REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
 
 export INSTALL_APP_NAME="Tenon Staging.app"
 export INSTALL_DISPLAY_NAME="Tenon Staging"
-export INSTALL_BUNDLE_ID="com.firegroup.tenon.staging"
+export INSTALL_BUNDLE_ID="dev.tenon.app.staging"
 
 exec "$REPO_ROOT/install.sh" "$@"

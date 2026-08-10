@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- PluginRuntime evaluates every plugin generation in JavaScriptCore. Under the
+	     Hardened Runtime a Developer ID release requires, JSC cannot map the MAP_JIT
+	     pages it compiles into without this exception, and falls back to interpretation.
+	     This is the narrowest entitlement in the widening cascade documented at
+	     docs/research-plugin-runtimes.md:994; the two wider ones grant arbitrary RWX
+	     memory and are not what a JavaScript engine needs.
+
+	     Nothing else belongs here. Plugins are JavaScript rather than Mach-O, so no
+	     library-validation exception is involved; the only embedded third-party binary
+	     is GhosttyKit, which ships as a static archive linked at build time. -->
+	<key>com.apple.security.cs.allow-jit</key>
+	<true/>
+</dict>
+</plist>

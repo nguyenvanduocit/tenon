@@ -3,3 +3,9 @@
 # well-known constant in public source, not a credential.
 Vendor/STTextView-Plugin-Neon/Sources/STPluginNeonAppKit/TokenName.swift:generic-api-key:5
 Vendor/STTextView-Plugin-Neon/Sources/STPluginNeonUIKit/TokenName.swift:generic-api-key:5
+# The same two files under the path they had before the package moved to the repository
+# root. A history scan reads the paths as they were committed, so the entries above match
+# the working tree and these match every commit made before the move — which is what a
+# pre-publication scan of the full history actually walks.
+poc/Vendor/STTextView-Plugin-Neon/Sources/STPluginNeonAppKit/TokenName.swift:generic-api-key:5
+poc/Vendor/STTextView-Plugin-Neon/Sources/STPluginNeonUIKit/TokenName.swift:generic-api-key:5

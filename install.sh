@@ -6,6 +6,10 @@
 # `Bundle.main.resourceURL`. Xcode builds that resource-bearing app bundle;
 # SwiftPM builds the standalone CLI that the installer embeds into it.
 #
+# Run it from anywhere, including a Tenon pane: replacing the app the caller is running
+# inside is detected here and handed to a detached installer, since these steps kill that
+# caller. See scripts/install-replace.sh.
+#
 # Usage:
 #   ./install.sh            # build Release, install to /Applications, replace old
 #   ./install.sh --launch   # ...and open Tenon after installing
@@ -17,7 +21,7 @@
 #   CLEAN=1                 # discard both build trees first (dependencies survive)
 #   INSTALL_APP_NAME=...    # installed bundle name (default Tenon.app)
 #   INSTALL_DISPLAY_NAME=... # installed app name (default Tenon)
-#   INSTALL_BUNDLE_ID=...   # installed bundle identifier (default com.firegroup.tenon)
+#   INSTALL_BUNDLE_ID=...   # installed bundle identifier (default dev.tenon.app)
 set -euo pipefail
 
 REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
@@ -38,7 +42,7 @@ DERIVED_DATA="$REPO_ROOT/.build/xcode"     # inside the gitignored .build/
 BUILT_APP_NAME="Tenon.app"
 APP_NAME="${INSTALL_APP_NAME:-Tenon.app}"
 DISPLAY_NAME="${INSTALL_DISPLAY_NAME:-Tenon}"
-BUNDLE_ID="${INSTALL_BUNDLE_ID:-com.firegroup.tenon}"
+BUNDLE_ID="${INSTALL_BUNDLE_ID:-dev.tenon.app}"
 
 case "$APP_NAME" in
     */*)
@@ -56,9 +60,9 @@ if [ -z "$DISPLAY_NAME" ]; then
     exit 1
 fi
 case "$BUNDLE_ID" in
-    com.firegroup.tenon|com.firegroup.tenon.staging) ;;
+    dev.tenon.app|dev.tenon.app.staging) ;;
     *)
-        echo "error: INSTALL_BUNDLE_ID must be com.firegroup.tenon or com.firegroup.tenon.staging" >&2
+        echo "error: INSTALL_BUNDLE_ID must be dev.tenon.app or dev.tenon.app.staging" >&2
         exit 1
         ;;
 esac
@@ -79,7 +83,45 @@ esac
 LAUNCH=0
 [ "${1:-}" = "--launch" ] && LAUNCH=1
 
+DEST_APP="$APP_DEST/$APP_NAME"
+
 step() { printf '\n\033[1;34m==> %s\033[0m\n' "$1"; }
+
+# Is this shell a descendant of the very app that is about to be replaced?
+#
+# Asked of the process tree rather than of an environment variable, because an env marker
+# is inherited by anything the pane later spawns — an ssh session, a container, a shell
+# that outlived the app — and would claim a self-install where there is none. Ancestry is
+# the actual question: only a real descendant dies when that process is killed.
+running_inside_target_bundle() {
+    local target="$DEST_APP/Contents/MacOS/Tenon"
+    local pid=$$ comm
+
+    while [ -n "$pid" ] && [ "$pid" -gt 1 ]; do
+        comm="$(ps -o comm= -p "$pid" 2>/dev/null || true)"
+        [ "$comm" = "$target" ] && return 0
+        pid="$(ps -o ppid= -p "$pid" 2>/dev/null | tr -d ' ')"
+    done
+    return 1
+}
+
+SELF_INSTALL=0
+if running_inside_target_bundle; then
+    SELF_INSTALL=1
+    # Forced, not offered: the caller's own app is about to be quit, and leaving it shut
+    # would strand the person who asked for the install with no window to come back to.
+    LAUNCH=1
+    # Beside the control socket, for the same reason it is there: a stable per-user path
+    # that can be named before the app restarts and still found afterwards, from a pane
+    # that did not exist when the install began.
+    INSTALL_LOG_DIR="/tmp/tenon-$(id -u)"
+    INSTALL_LOG="$INSTALL_LOG_DIR/install.log"
+    mkdir -p "$INSTALL_LOG_DIR"
+    printf '\n\033[1;33m==> This shell is running inside %s\033[0m\n' "$DEST_APP"
+    echo "    The install replaces that app, so $DISPLAY_NAME will quit and reopen."
+    echo "    Terminal panes do not survive it; the workspace layout is restored on launch."
+    echo "    Building first — the replacement runs detached, logging to $INSTALL_LOG"
+fi
 
 cd "$REPO_ROOT"
 
@@ -156,87 +198,42 @@ BUILT_APP="$DERIVED_DATA/Build/Products/$CONFIGURATION/$BUILT_APP_NAME"
 step "Bundling standalone tenon-cli"
 install -m 755 "$BUILT_CLI" "$BUILT_APP/Contents/MacOS/tenon-cli"
 
-# --- 7. Replace the installed copy -------------------------------------------
-DEST_APP="$APP_DEST/$APP_NAME"
-
-step "Quitting any running $DISPLAY_NAME"
-osascript -e "quit app id \"$BUNDLE_ID\"" >/dev/null 2>&1 || true
-# Give it a beat to release the bundle, then hard-kill leftovers.
-ps -axo pid=,comm= | while read -r pid executable_path; do
-    if [ "$executable_path" = "$DEST_APP/Contents/MacOS/Tenon" ]; then
-        kill "$pid" >/dev/null 2>&1 || true
-    fi
-done
-
-step "Installing to $DEST_APP (replacing old)"
-mkdir -p "$APP_DEST"
-rm -rf "$DEST_APP"
-# ditto preserves bundle metadata/symlinks more faithfully than cp -R.
-ditto "$BUILT_APP" "$DEST_APP"
-
-# A named install variant uses the exact same compiled artifact, but owns a distinct
-# LaunchServices identity. This is deliberately done on the installed copy: changing
-# the shared build product would poison a later normal install from the same cache.
-if [ "$APP_NAME" != "$BUILT_APP_NAME" ] || \
-   [ "$DISPLAY_NAME" != "Tenon" ] || \
-   [ "$BUNDLE_ID" != "com.firegroup.tenon" ]; then
-    INFO_PLIST="$DEST_APP/Contents/Info.plist"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleIdentifier $BUNDLE_ID" "$INFO_PLIST"
-    /usr/libexec/PlistBuddy -c "Set :CFBundleName $DISPLAY_NAME" "$INFO_PLIST"
-    if ! /usr/libexec/PlistBuddy -c "Set :CFBundleDisplayName $DISPLAY_NAME" \
-        "$INFO_PLIST" 2>/dev/null; then
-        /usr/libexec/PlistBuddy -c "Add :CFBundleDisplayName string $DISPLAY_NAME" \
-            "$INFO_PLIST"
-    fi
-fi
-
-# --- 8. Make it launchable (ad-hoc sign + clear quarantine) ------------------
-step "Signing (ad-hoc) and clearing quarantine"
-xattr -dr com.apple.quarantine "$DEST_APP" 2>/dev/null || true
-codesign --force --deep --sign - "$DEST_APP"
-
-# --- 9. Verify ---------------------------------------------------------------
-step "Verifying install"
-codesign --verify --deep --strict "$DEST_APP" && echo "signature: valid (ad-hoc)"
-
-# The CLI is the one payload the app cannot rebuild for itself: Settings ▸ CLI ▸ Install
-# copies this exact file into ~/.local/bin, so it has to survive leaving the bundle. Check
-# the artifact that ships rather than the one that was built — this runs after ditto and
-# after codesign, so it also catches a copy that arrived but did not survive them.
-INSTALLED_CLI="$DEST_APP/Contents/MacOS/tenon-cli"
-[ -x "$INSTALLED_CLI" ] || {
-    echo "error: $INSTALLED_CLI is missing or not executable — Settings ▸ CLI ▸ Install would have nothing to copy" >&2
-    exit 1
-}
-# Relocatable means: nothing outside the OS. A link into /Users, the checkout, the build
-# tree, or the bundle's own Frameworks would work here and break in ~/.local/bin — the app
-# binary beside it genuinely links @rpath/TenonCore.framework, so this is the difference
-# that matters, not a hypothetical.
-#
-# Tested on content rather than on grep's exit status: BSD `grep -qv` reports no match here
-# where `grep -v` prints three lines, so the -q form would have waved a broken binary
-# through — the exact failure this check exists to catch.
-FOREIGN_LINKS="$(otool -L "$INSTALLED_CLI" | tail -n +2 |
-    grep -vE '^[[:space:]]+(/usr/lib/|/System/Library/Frameworks/)' || true)"
-if [ -n "$FOREIGN_LINKS" ]; then
-    echo "error: bundled tenon-cli links something outside the OS, so it will not run once copied out of the bundle:" >&2
-    echo "$FOREIGN_LINKS" >&2
-    exit 1
-fi
-echo "tenon-cli: bundled, signed, and self-contained"
-INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
-    "$DEST_APP/Contents/Info.plist" 2>/dev/null || echo '?')"
-echo "installed: $DEST_APP (version $INSTALLED_VERSION, id $BUNDLE_ID)"
-
 # Keep Xcode's object files and build database. Removing Intermediates.noindex
 # here forces the next install to compile the app from scratch; CLEAN=1 remains
 # the explicit escape hatch when a from-scratch build is actually wanted.
 echo "build cache kept for fast incremental installs: $(du -sh "$REPO_ROOT/.build" | cut -f1)"
 
-if [ "$LAUNCH" -eq 1 ]; then
-    step "Launching Tenon"
-    open "$DEST_APP"
-else
-    echo
-    echo "Done. Launch it with:  open \"$DEST_APP\""
+# --- 7. Replace the installed copy -------------------------------------------
+# Everything from here kills the app, so it lives in one script that can run either in
+# this shell or detached from it — see scripts/install-replace.sh.
+export BUILT_APP DEST_APP APP_DEST APP_NAME BUILT_APP_NAME DISPLAY_NAME BUNDLE_ID LAUNCH
+REPLACE="$REPO_ROOT/scripts/install-replace.sh"
+
+if [ "$SELF_INSTALL" -eq 0 ]; then
+    exec bash "$REPLACE"
 fi
+
+# The caller is inside the app being replaced, and the app's own teardown reaches every
+# process on this pane's tty: `TerminalJobTerminator.sweep` lists them with `ps -t <tty>`
+# and signals their process groups, escalating to SIGKILL. Backgrounding is not enough —
+# a `nohup`-ed child keeps the controlling terminal, is listed, and is killed; SIGKILL
+# cannot be ignored. So the installer leaves the terminal session entirely before the app
+# is asked to quit. `setsid(2)` is what does that, and macOS ships no setsid(1).
+step "Handing off to a detached installer"
+# Said before the handoff, not after: once the installer starts, this pane has only as long
+# as an osascript quit takes, and a message printed into a dead terminal helps nobody.
+echo "    $DISPLAY_NAME will quit and reopen; this pane ends with it."
+echo "    Follow the rest from a new pane with:"
+echo "        tail -f \"$INSTALL_LOG\""
+/usr/bin/python3 -c '
+import os, sys
+
+os.setsid()
+log = open(sys.argv[1], "wb", 0)
+os.dup2(log.fileno(), 1)
+os.dup2(log.fileno(), 2)
+os.dup2(os.open(os.devnull, os.O_RDONLY), 0)
+os.execv("/bin/bash", ["bash", sys.argv[2]])
+' "$INSTALL_LOG" "$REPLACE" &
+
+echo "    installer detached (pid $!)"

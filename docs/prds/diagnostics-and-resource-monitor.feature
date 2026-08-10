@@ -171,7 +171,7 @@ Feature: Retain local health evidence and inspect live process resources honestl
     Scenario: App-owned diagnostics are filterable without scattered NSLog calls
       Given diagnostics, terminal, or CLI emits an app health message
       When unified logging records it
-      Then subsystem com.firegroup.tenon carries one of the bounded owned categories
+      Then subsystem dev.tenon.app carries one of the bounded owned categories
 
     @req-drm-fr-018 @req-drm-nfr-008 @teardown
     Scenario: Stopping diagnostics ends both observation resources
