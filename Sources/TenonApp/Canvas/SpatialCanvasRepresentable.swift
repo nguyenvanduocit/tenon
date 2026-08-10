@@ -11,6 +11,10 @@ import TenonIntentCore
 
 struct SpatialCanvasView: NSViewRepresentable {
     let tab: TenonCore.Tab
+    /// Which workspace this canvas belongs to. Passed down beside `workspacePath` because an
+    /// empty pane's launcher offers that workspace's recents and nothing else; a pane must
+    /// be told its workspace rather than reading whichever one is selected when it draws.
+    let workspaceID: UUID
     let workspacePath: URL
     let allLiveSlotIDs: Set<UUID>
     let activeSlotID: UUID?
@@ -47,6 +51,7 @@ struct SpatialCanvasView: NSViewRepresentable {
     func updateNSView(_ view: SpatialCanvasNSView, context: Context) {
         view.configure(
             tab: tab,
+            workspaceID: workspaceID,
             workspacePath: workspacePath,
             allLiveSlotIDs: allLiveSlotIDs,
             activeSlotID: activeSlotID,

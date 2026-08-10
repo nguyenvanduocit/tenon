@@ -36,10 +36,10 @@ final class WorkspaceDefaultContentTests: XCTestCase {
     func testAddWorkspaceOpensWithTheRequestedContent() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
 
-        catalog.addWorkspace(name: "Two", path: projectPath, content: .docs)
+        catalog.addWorkspace(name: "Two", path: projectPath, content: .automation)
 
         let slot = try XCTUnwrap(catalog.activeTab?.slots.first)
-        XCTAssertEqual(slot.content, .docs)
+        XCTAssertEqual(slot.content, .automation)
     }
 
     func testInitialWorkspaceInitOpensWithTheRequestedContent() throws {
@@ -76,12 +76,12 @@ final class WorkspaceDefaultContentTests: XCTestCase {
 
     func testStoreSplitSlotUsesTheSplitProvider() throws {
         let store = WorkspaceStore(catalog: WorkspaceCatalog(name: "One", path: projectPath))
-        store.newSplitContentProvider = { .docs }
+        store.newSplitContentProvider = { .automation }
         let target = try XCTUnwrap(store.catalog.activeSlotID)
 
         store.splitSlot(target, .vertical)
 
-        XCTAssertEqual(store.catalog.activeTab?.activeSlot?.content, .docs)
+        XCTAssertEqual(store.catalog.activeTab?.activeSlot?.content, .automation)
     }
 
     func testStoreAddWorkspaceUsesTheWorkspaceProvider() throws {

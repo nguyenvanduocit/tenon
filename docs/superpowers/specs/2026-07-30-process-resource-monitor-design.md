@@ -1,8 +1,104 @@
 # Process Resource Monitor Design
 
-**Status:** Ready for user review
-**Date:** 2026-07-30
+**Status:** Revalidated and implemented — see the revalidation record below before reading further
+**Date:** 2026-07-30, revalidated 2026-08-10 (T-100)
 **Baseline:** `de0de44c760e94f5650185272c0cdba6d8106ebb`
+
+## Revalidation record — 2026-08-10 (T-100, `DRM-FR-044`)
+
+Everything below this section is the original July design. It was measured against the current
+source and against macOS itself before any of it was built, and it survived mostly intact. What
+follows is what the measurements changed. Where this section and the original text disagree,
+**this section is normative**.
+
+### The feasibility spike (criterion 3)
+
+Four probes, run on this machine (Darwin 25.4, arm64, `mach_timebase` 125/3, 637 live PIDs).
+The scripts are throwaway; their results are not:
+
+| Figure | Public API | Verdict |
+|---|---|---|
+| CPU | `PROC_PIDTASKINFO` cumulative user+system, or `rusage_info_v4.ri_user_time`/`ri_system_time` | **supported**, p95 0.71 µs / 1.00 µs per process |
+| Resident memory | `pti_resident_size` / `ri_resident_size` | **supported** |
+| Process identity | `rusage_info_v4.ri_proc_start_abstime` | **supported**, distinct per process, cheap |
+| Disk I/O | `ri_diskio_bytesread` / `ri_diskio_byteswritten` | **supported**, cumulative, arrives free in the rusage call already needed for identity |
+| **Network per process** | none | **UNSUPPORTED — removed from scope** |
+
+Network was measured, not assumed. `rusage_info_v4` has 36 fields and `proc_taskinfo` 18; none
+carries a network counter. `PROC_PIDFDSOCKETINFO` was read on a live socket-holding process and
+exposes `sbi_cc` / `sbi_hiwat` / `sbi_mbcnt` / `sbi_mbmax` / `sbi_lowat` / `sbi_flags` /
+`sbi_timeo` — *current buffer occupancy*, not bytes transferred, so no delta can be taken from
+it. The only user-space source is `nettop`, which cost **5,243 ms** for a single sample: two and
+a half thousand times the entire per-sample budget, for a subprocess, at a two-second cadence.
+
+The decision this forces: **there is no network column.** The absence is stated once in the
+popover footer and carried in the model as `TelemetryValue<Never2>`, a type that can only ever
+be `.unavailable(.noPublicPerProcessAPI)`. A column of em dashes would have read as "no
+traffic", which is the exact failure this task's criteria forbid.
+
+### What the original design got wrong
+
+1. **`proc_listchildpids` returns an entry count; `proc_listpids` returns a byte count.** The
+   original text treats them as one API. Dividing the former by `MemoryLayout<pid_t>.size`
+   turns three children into zero — a shell's whole subtree silently vanishing while the root
+   still renders. Measured directly: a shell with five live descendants reported
+   `attached-but-not-reached: [5 pids]` under the wrong convention and `[]` under the right one.
+2. **A dead process returns `0` from `proc_pidinfo`, not a negative, and leaves the struct
+   zeroed** (`rc=0, errno=ESRCH`, measured). The design's error handling assumed failure was
+   detectable as a bad return. Only `rc == MemoryLayout<T>.size` means the read happened; a
+   `rc >= 0` check reports an exited process as live, idle, and using no memory.
+3. **`e_tdev` is `UInt32.max` when there is no controlling terminal**, not `0`.
+4. **The title bar has no "Add Slot" control.** The design places the trigger "immediately
+   before the existing Add Slot control"; `rightZone` today holds the tab strip, a drag area,
+   and `QuickCommandControl`. The trigger sits before `QuickCommandControl` — same intent
+   (host chrome, trailing, never `WorkspaceStatusBar`), a control that exists.
+5. **The popover was specified at 460 pt wide, which belongs to no band in `designs.md`** —
+   compact popovers are 300–320 pt and focused panels 480–560 pt. 460 was a feature-local
+   number. It is **480 pt**, the low bound of the band it actually belongs to, which is what
+   criterion 7's "no feature-local geometry tokens" asks for.
+6. **Traversal is tree-local, not a machine-wide sweep.** Both were measured: walking only the
+   panes' own trees costs p50 0.064 ms / p95 0.132 ms, and simulating 32 panes' worth of roots
+   costs p95 0.195 ms — against a 50 ms budget. A full `PROC_ALL_PIDS` sweep costs p50 0.90 ms
+   / p95 1.26 ms on an idle machine and was measured at **p95 56 ms** under concurrent build
+   load, because its cost scales with everything running rather than with Tenon's panes. Of 637
+   PIDs, 202 are unreadable (other users) — a sweep would also have to explain 202 rows it
+   cannot read.
+7. **CPU needs no `mach_timebase_info` conversion where the design says it does.**
+   `proc_pid_rusage` reports `ri_user_time`/`ri_system_time` already in nanoseconds. Applying
+   the conversion to them would scale every CPU figure by ~41 on Apple silicon. The conversion
+   is only needed for `PROC_PIDTASKINFO`'s mach-absolute ticks, which this implementation does
+   not use for CPU.
+
+### What the original design got right and is kept
+
+PTY provenance from `ghostty_surface_tty_name` (confirmed present at `ghostty.h:1166`, freed
+exactly once through `defer`); `(pid, start abstime)` identity; direct-TTY-then-nearest-root
+ownership with a slot-UUID tie-break; one global claim set; the app row sampling `getpid()`
+alone; interval CPU uncapped and allowed above 100%; RSS with checked addition; the seven-state
+model; sixty history samples on aggregates only; one sample in flight with one coalesced
+follow-up; generation and provenance-revision rejection; the 2/4/8/16/30 backoff ladder; the
+4,096-identity cap; DIRECT classification with no public surface.
+
+### Additions the original design did not have
+
+- **Disk I/O columns**, because the spike proved they are free and reliable.
+- **An explicit `hostShared` group.** The original text says non-terminal slots simply do not
+  appear; T-100's criteria require unattributable processes to be *visible* and named as
+  shared. They are now a group of their own rather than an omission.
+- **A unanimous-reason rule for aggregates.** An aggregate of children that all failed the same
+  way keeps that reason instead of flattening to a vague "unreadable" — found by a test that
+  caught a pane reporting `unreadable` when the truth was `firstObservation`.
+
+### Still outstanding after this pass
+
+- No signed **Release** benchmark receipt: the numbers above are `swiftc -O` probes, and the
+  app is ad-hoc signed with no sandbox and no hardened runtime (`codesign -dv` shows
+  `flags=0x2(adhoc)` only, no entitlements file in the tree), so no entitlement can restrict
+  `libproc` here. That reasoning is sound but is not the same thing as a Release receipt.
+- **No `setsid`-detached case was exercised**: macOS ships no `/usr/bin/setsid`, so the
+  "reachable but not TTY-attached" branch is covered by unit tests over synthetic sample sets
+  rather than by a real detached process.
+- No XCUITest, and no live multi-workspace topology comparison against `ps`.
 
 ## Goal
 

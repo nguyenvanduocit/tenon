@@ -161,7 +161,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             let reply = try! await self.invoke(
                 .workspaceTabCreate,
                 input: .object([
-                    "content": .object(["kind": .string("docs")])
+                    "content": .object(["kind": .string("changes")])
                 ]),
                 scope: scope,
                 bindings: bindings
@@ -177,7 +177,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
         XCTAssertFalse(
             fixture.store.catalog.activeWorkspace?.tabs
                 .flatMap(\.slots)
-                .contains { $0.content == .docs } ?? false
+                .contains { $0.content == .changes } ?? false
         )
     }
 
@@ -202,7 +202,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             let reply = try! await self.invoke(
                 .workspaceContentOpen,
                 input: .object([
-                    "content": .object(["kind": .string("docs")])
+                    "content": .object(["kind": .string("changes")])
                 ]),
                 scope: scope,
                 bindings: bindings
@@ -217,7 +217,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             fixture.store.catalog.workspaces.first { $0.id == sourceWorkspaceID }
         )
         XCTAssertTrue(source.tabs.flatMap(\.slots).contains {
-            $0.rect == target && $0.content == .docs
+            $0.rect == target && $0.content == .changes
         })
     }
 
@@ -236,7 +236,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             let reply = try! await self.invoke(
                 .workspaceContentOpen,
                 input: .object([
-                    "content": .object(["kind": .string("docs")])
+                    "content": .object(["kind": .string("changes")])
                 ]),
                 scope: scope,
                 bindings: bindings
@@ -261,7 +261,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             guard let reply = try? await self.invoke(
                 .workspaceTabCreate,
                 input: .object([
-                    "content": .object(["kind": .string("docs")])
+                    "content": .object(["kind": .string("changes")])
                 ]),
                 scope: scope,
                 bindings: bindings
@@ -273,7 +273,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             return XCTFail("the tab-create intent should succeed")
         }
         XCTAssertEqual(store.catalog.activeWorkspace?.tabs.count, originalTabCount + 1)
-        XCTAssertEqual(store.catalog.activeTab?.slots.map(\.content), [.docs])
+        XCTAssertEqual(store.catalog.activeTab?.slots.map(\.content), [.changes])
     }
 
     func testDifferentGestureCannotConsumeTheTitleBarPlusReservation() async throws {
@@ -321,7 +321,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             let secondReply = try? await self.invoke(
                 .workspaceTabCreate,
                 input: .object([
-                    "content": .object(["kind": .string("docs")])
+                    "content": .object(["kind": .string("changes")])
                 ]),
                 scope: scope,
                 bindings: bindings
@@ -332,7 +332,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
         let tabs = try XCTUnwrap(store.catalog.activeWorkspace?.tabs)
         XCTAssertEqual(tabs.count, originalTabCount + 2)
         XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .empty })
-        XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .docs })
+        XCTAssertTrue(tabs.flatMap(\.slots).contains { $0.content == .changes })
     }
 
     func testReservationConsumptionPreservesNewerWorkspaceNavigation() async throws {
@@ -352,7 +352,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             guard let reply = try? await self.invoke(
                 .workspaceTabCreate,
                 input: .object([
-                    "content": .object(["kind": .string("docs")])
+                    "content": .object(["kind": .string("changes")])
                 ]),
                 scope: scope,
                 bindings: bindings
@@ -365,7 +365,7 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             store.catalog.workspaces.first { $0.id == sourceWorkspaceID }?.tabs
         )
         XCTAssertEqual(sourceTabs.count, 2)
-        XCTAssertTrue(sourceTabs.flatMap(\.slots).contains { $0.content == .docs })
+        XCTAssertTrue(sourceTabs.flatMap(\.slots).contains { $0.content == .changes })
     }
 
     func testOpeningAFileReusesThePaneAndNeverOpensATab() async throws {
@@ -499,6 +499,63 @@ final class WorkspaceIntentProviderTests: XCTestCase {
             .domain(try IntentDomainErrorCode("dev.tenon.core.pane-not-found"))
         )
         XCTAssertEqual(filePaths(store), [], "nothing was placed")
+    }
+
+    func testTabFocusSelectsTheExactCopiedTabID() async throws {
+        let store = WorkspaceStore()
+        let firstTabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        store.newTab()
+        let targetTabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        store.selectTab(firstTabID)
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        _ = try successReply(
+            await invoke(
+                .workspaceTabFocus,
+                input: .object([:]),
+                scope: InvocationScope(tabID: targetTabID),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(store.catalog.activeTab?.id, targetTabID)
+    }
+
+    func testContentOpenUsesTheExactCopiedTabIDWithoutAPane() async throws {
+        let store = WorkspaceStore()
+        let firstTabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        store.newTab()
+        let targetTabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        store.selectTab(firstTabID)
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        _ = try successReply(
+            await invoke(
+                .workspaceContentOpen,
+                input: .object([
+                    "content": .object([
+                        "kind": .string("file"),
+                        "path": .string("target-tab.swift"),
+                    ])
+                ]),
+                scope: InvocationScope(tabID: targetTabID),
+                bindings: bindings
+            )
+        )
+
+        let first = try XCTUnwrap(
+            store.catalog.activeWorkspace?.tabs.first { $0.id == firstTabID }
+        )
+        let target = try XCTUnwrap(
+            store.catalog.activeWorkspace?.tabs.first { $0.id == targetTabID }
+        )
+        XCTAssertFalse(first.slots.contains {
+            $0.content == .file(path: "target-tab.swift")
+        })
+        XCTAssertTrue(target.slots.contains {
+            $0.content == .file(path: "target-tab.swift")
+        })
+        XCTAssertEqual(store.catalog.activeTab?.id, targetTabID)
     }
 }
 

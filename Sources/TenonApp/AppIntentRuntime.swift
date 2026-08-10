@@ -88,6 +88,9 @@ final class AppIntentRuntime {
                 state: userInterface
             ).bindings()
         )
+        collected.append(
+            contentsOf: try AgentIntentProvider().bindings()
+        )
         bindings = collected
     }
 
@@ -227,6 +230,7 @@ final class AppIntentRuntime {
             as: caller,
             scope: InvocationScope(
                 workspaceID: workspaceStore.catalog.activeWorkspaceID,
+                tabID: workspaceStore.catalog.activeTab?.id,
                 paneID: workspaceStore.catalog.activeSlotID,
                 userGestureID: userGestureID
             ),

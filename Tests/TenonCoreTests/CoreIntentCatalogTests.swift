@@ -38,10 +38,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 43, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 43)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 43)
-        XCTAssertEqual(compiled.dispatchRules.count, 43)
+        XCTAssertEqual(revisions, Array(repeating: 46, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 46)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 46)
+        XCTAssertEqual(compiled.dispatchRules.count, 46)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -65,8 +65,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 43)
-        XCTAssertEqual(actualNames.count, 43)
+        XCTAssertEqual(Set(actualNames).count, 46)
+        XCTAssertEqual(actualNames.count, 46)
 
         let forbiddenFragments = [
             "tenon.",
@@ -786,7 +786,7 @@ final class CoreIntentCatalogTests: XCTestCase {
             openContractNames
         )
 
-        XCTAssertEqual(CoreIntentName.allCases.count, 43)
+        XCTAssertEqual(CoreIntentName.allCases.count, 46)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -835,6 +835,7 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .workspaceState,
                 .workspacePaneOwner,
                 .workspaceTabCreate,
+                .workspaceTabFocus,
                 .workspacePaneSplit,
                 .workspacePaneFocus,
                 .workspacePaneClose,
@@ -862,6 +863,7 @@ final class CoreIntentCatalogTests: XCTestCase {
             .userPrompt: [.uiPick, .uiPrompt, .uiConfirm],
             .userNotification: [.uiToast],
             .secrets: [.secretsGet, .secretsSet, .secretsDelete],
+            .agentImmediate: [.agentInventory, .agentCommand],
         ]
         XCTAssertEqual(
             Set(expectedExecutionLanes.keys),
@@ -1148,6 +1150,7 @@ private extension CoreIntentCatalogTests {
                 output: [],
                 requiredOutput: []
             ),
+            .workspaceTabFocus: emptyShape(),
             .workspacePaneSplit: SchemaShape(
                 ["axis"],
                 required: ["axis"],
@@ -1177,6 +1180,23 @@ private extension CoreIntentCatalogTests {
                 required: ["url", "method"],
                 output: ["status", "headers", "body"],
                 requiredOutput: ["status", "headers", "body"]
+            ),
+            .agentInventory: SchemaShape(
+                [],
+                required: [],
+                output: ["agents"],
+                requiredOutput: ["agents"]
+            ),
+            .agentCommand: SchemaShape(
+                ["agent", "prompt", "session", "includeUserOptions"],
+                required: ["agent"],
+                output: ["agent", "commandLine", "arguments", "handoff"],
+                requiredOutput: [
+                    "agent",
+                    "commandLine",
+                    "arguments",
+                    "handoff",
+                ]
             ),
         ]
     }
@@ -1222,6 +1242,7 @@ private extension CoreIntentCatalogTests {
             .workspaceState: [],
             .workspacePaneOwner: [],
             .workspaceTabCreate: ["workspace.control"],
+            .workspaceTabFocus: ["workspace.control"],
             .workspacePaneSplit: ["workspace.control"],
             .workspacePaneFocus: ["workspace.control"],
             .workspacePaneClose: ["workspace.control"],
@@ -1232,6 +1253,10 @@ private extension CoreIntentCatalogTests {
             .workspacePaneFocusNext: ["workspace.control"],
             .workspaceSelect: ["workspace.control"],
             .networkFetch: ["network"],
+            // Knowing which agent a person runs, and composing the line that would run it,
+            // grant nothing a caller that may already write to a terminal did not have.
+            .agentInventory: ["terminal.write"],
+            .agentCommand: ["terminal.write"],
         ]
     }
 

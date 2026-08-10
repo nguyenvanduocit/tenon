@@ -20,6 +20,8 @@ struct TenonApp: App {
     init() {
         DiffSnapshot.renderIfRequested()
         PluginViewSnapshot.renderIfRequested()
+        AgentTimelineSnapshot.renderIfRequested()
+        SidebarSnapshot.renderIfRequested()
     }
 
     var body: some Scene {
@@ -44,6 +46,7 @@ struct TenonApp: App {
                     quickCommands: composition.quickCommands,
                     pluginUI: composition.userInterface,
                     automation: composition.automationScheduler,
+                    resourceMonitor: composition.resourceMonitor,
                     automationSchedulesEnabled:
                         composition.prefs.preferences.automationSchedulesEnabled,
                     automationActions: AutomationPaneActions(
@@ -167,7 +170,7 @@ private struct AppStartupPreparation: Sendable {
     let codexHookInstallResult: AgentHookInstallResult
     let claudeHookInstallResult: AgentHookInstallResult
     let launch: RestoredWorkspaceCatalog
-    let recentViews: [SlotContent]
+    let recentViews: [WorkspaceRecentViews]
     let recentWorkspaces: [RecentWorkspaceStore.Entry]
     let kernel: IntentKernelComponents
     let pluginPersistence: PluginHostPersistence
@@ -348,6 +351,12 @@ final class AppComposition {
     let prefs: AppPreferencesStore
     let store: WorkspaceStore
     let terminalSurfaces: SurfacePool
+    /// T-100: the read-only process resource monitor. Its sampler, coordinator, and bridge are
+    /// host-private — no intent, no principal, no `tenon` member — so the whole feature enters
+    /// composition as this one typed value.
+    let resourceMonitor: ResourceMonitorModel
+    /// Held so shutdown can cancel sampling demand and wait for quiescence.
+    @ObservationIgnored let telemetryCoordinator: ProcessTelemetryCoordinator
     let agentLens: AgentLensPool
     let agentSessionRegistry: AgentSessionRegistry
     let agentHookServer: AgentHookServer
@@ -425,11 +434,15 @@ final class AppComposition {
         NSApplication.shared.setActivationPolicy(.regular)
 
         let paths = prepared.paths
-        // T-092: constructed before anything else can stall, so a freeze during startup is
-        // still recorded. Armed in `performStart`.
+        // T-092: constructed immediately after startup preparation and armed first in
+        // `performStart`, before plugin runtime loading or restored-pane reconciliation.
+        // Preparation — including catalog loading — is outside this readiness-scoped monitor.
         let diagnosticsJournal = DiagnosticsJournal(fileURL: paths.diagnosticsJournalFile)
         self.diagnosticsJournal = diagnosticsJournal
-        self.diagnostics = DiagnosticsRuntime(journal: diagnosticsJournal)
+        self.diagnostics = DiagnosticsRuntime(
+            journal: diagnosticsJournal,
+            channel: paths.instanceChannel.rawValue
+        )
         let pluginsRoot = paths.pluginInventoryRoot
         let catalogStore = WorkspaceCatalogStore(
             fileURL: paths.workspaceCatalogFile
@@ -444,7 +457,14 @@ final class AppComposition {
             catalog: prepared.launch.catalog,
             recent: RecentStore(
                 fileURL: recentViewsURL,
-                preloaded: prepared.recentViews
+                preloaded: prepared.recentViews,
+                // The catalog just restored is what the persisted lists are matched against:
+                // a launch that had to decline the catalog document mints fresh workspace
+                // ids for the same folders, and this is where a list finds its workspace
+                // again instead of silently reading as empty.
+                liveWorkspaces: prepared.launch.catalog.workspaces.map {
+                    WorkspaceRoot(id: $0.id, path: $0.path)
+                }
             ),
             recentWorkspaces: RecentWorkspaceStore(
                 fileURL: recentWorkspacesURL,
@@ -574,6 +594,7 @@ final class AppComposition {
                 }
                 return InvocationScope(
                     workspaceID: store.catalog.activeWorkspaceID,
+                    tabID: store.catalog.activeTab?.id,
                     paneID: store.catalog.activeSlotID
                 )
             }
@@ -588,6 +609,23 @@ final class AppComposition {
         self.prefs = prefs
         self.store = store
         self.terminalSurfaces = terminalSurfaces
+        // T-100. Built here because the bridge needs both the catalog and the surface pool,
+        // and nothing samples until a monitor surface is actually visible.
+        let telemetryBridge = ProcessTelemetryBridge(store: store, surfaces: terminalSurfaces)
+        let telemetryCoordinator = ProcessTelemetryCoordinator(
+            sampler: DarwinProcessSampler(),
+            clock: SystemTelemetryClock(),
+            ticker: TaskSleepTicker(),
+            physicalMemory: ProcessInfo.processInfo.physicalMemory,
+            provenance: { @Sendable in await MainActor.run { telemetryBridge.snapshot() } }
+        )
+        let monitor = ResourceMonitorModel(
+            coordinator: telemetryCoordinator,
+            bridge: telemetryBridge
+        )
+        monitor.revealPane = { [weak store] slotID in store?.focusSlot(slotID) }
+        self.resourceMonitor = monitor
+        self.telemetryCoordinator = telemetryCoordinator
         self.agentLens = agentLens
         self.agentSessionRegistry = prepared.agentSessionRegistry
         self.agentHookServer = prepared.agentHookServer
@@ -748,6 +786,7 @@ final class AppComposition {
             startupError = String(describing: error)
         }
         isStarted = false
+        diagnostics.stop()
     }
 }
 
@@ -976,8 +1015,8 @@ private extension AppComposition {
 
     func performStart() async {
         // First, so the watchdog is already running while the rest of startup happens —
-        // plugin loading and catalog restore are exactly the kind of work that could wedge
-        // the main runloop, and a detector armed afterwards would miss it.
+        // plugin runtime loading and restored-pane reconciliation can wedge the main runloop,
+        // and a detector armed afterwards would miss them.
         diagnostics.start()
         do {
             try Task.checkCancellation()
@@ -1156,6 +1195,9 @@ private extension AppComposition {
         }
         store.newWorkspaceContentProvider = {
             prefs.preferences.newWorkspaceContent.slotContent()
+        }
+        store.newPaneSizingProvider = {
+            NewPaneSizing(maximumWidth: prefs.preferences.newPaneMaximumWidth)
         }
     }
 }

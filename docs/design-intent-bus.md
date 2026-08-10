@@ -441,7 +441,8 @@ struct IntentEnvelope: Sendable {
   AppKit object, or runtime handle.
 - `caller`, IDs, deadline, grants, and the final validated envelope are host-minted
   metadata; payload fields cannot overwrite them.
-- A caller may explicitly designate `workspaceID`/`paneID` through `options.scope`.
+- A caller may explicitly designate `workspaceID`/`tabID`/`paneID` through
+  `options.scope`.
   Designation is not authority: policy authorizes the resolved resource before constructing
   the final `InvocationScope`. `userGestureID` is host-minted only.
 - A nested provider call preserves causal scope by default. It may explicitly retarget only

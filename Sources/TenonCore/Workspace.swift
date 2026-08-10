@@ -5,7 +5,6 @@ import TenonIntentCore
 public enum SlotContent: Equatable, Sendable {
     case terminal
     case changes
-    case docs
     /// The host-native automation operations surface: armed schedules, Run Now,
     /// authoring, and recent delivery evidence.
     case automation
@@ -29,7 +28,6 @@ public enum SlotContent: Equatable, Sendable {
             return true
         case (.terminal, .terminal),
              (.changes, .changes),
-             (.docs, .docs),
              (.automation, .automation),
              (.file, .file),
              (.diff, .diff):
@@ -49,8 +47,6 @@ public enum SlotContent: Equatable, Sendable {
             return "file:\(path)"
         case .changes:
             return "changes"
-        case .docs:
-            return "docs"
         case .automation:
             return "automation"
         case .pluginView(let pluginID, let viewID):
@@ -84,10 +80,24 @@ public struct Tab: Equatable, Identifiable, Sendable {
     public internal(set) var slots: [WorkspaceSlot]
     public internal(set) var activeSlotID: UUID?
 
+    /// The number this tab is called by until its content names itself — `Terminal 3`.
+    ///
+    /// It belongs to the tab, not to the tab's place in the strip. Numbering by position is
+    /// what made a working reorder invisible: drag one unnamed tab past another and the chips
+    /// swap while the labels swap back, leaving the strip reading exactly as before (T-105).
+    ///
+    /// Assigned once, by `WorkspaceCatalog` when the tab joins a workspace, and never changed
+    /// after that: closing the middle of three tabs leaves `1` and `3`, and the next tab is
+    /// `4`. Gaps are the price of a name that stays put, and they are the cheaper half of
+    /// that trade. What a number may do is come back once no tab holds it — see
+    /// `Workspace.nextTabNumber`, which says exactly how far the promise reaches.
+    public internal(set) var number: Int
+
     public init(
         id: UUID = UUID(),
         slots: [WorkspaceSlot],
-        activeSlotID: UUID?
+        activeSlotID: UUID?,
+        number: Int = 1
     ) {
         precondition(
             activeSlotID == nil || slots.contains(where: { $0.id == activeSlotID }),
@@ -105,19 +115,29 @@ public struct Tab: Equatable, Identifiable, Sendable {
         self.id = id
         self.slots = slots
         self.activeSlotID = activeSlotID
+        self.number = number
     }
 
-    public init(id: UUID = UUID(), content: SlotContent = .terminal) {
+    /// A tab holding one pane. The pane fills the canvas unless `sizing` caps it, in which
+    /// case the width it does not take is empty canvas the person can fill.
+    public init(
+        id: UUID = UUID(),
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited,
+        number: Int = 1
+    ) {
         let slot = WorkspaceSlot(
-            rect: GridRect(
-                x: 0,
-                y: 0,
-                width: SpatialLayout.columns,
-                height: SpatialLayout.rows
+            rect: sizing.fitting(
+                GridRect(
+                    x: 0,
+                    y: 0,
+                    width: SpatialLayout.columns,
+                    height: SpatialLayout.rows
+                )
             ),
             content: content
         )
-        self.init(id: id, slots: [slot], activeSlotID: slot.id)
+        self.init(id: id, slots: [slot], activeSlotID: slot.id, number: number)
     }
 
     public var activeSlot: WorkspaceSlot? {
@@ -133,6 +153,9 @@ public struct Workspace: Equatable, Identifiable, Sendable {
     public let id: UUID
     public internal(set) var name: String
     public internal(set) var path: URL
+    /// How this workspace is marked and tinted. Presentation only: `id` is the identity, so
+    /// customising this never disturbs the tree below it. See `WorkspaceIdentity.swift`.
+    public internal(set) var appearance: WorkspaceAppearance
     public internal(set) var tabs: [Tab]
     public internal(set) var activeTabID: UUID
 
@@ -140,6 +163,7 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         id: UUID = UUID(),
         name: String,
         path: URL,
+        appearance: WorkspaceAppearance = .default,
         tabs: [Tab],
         activeTabID: UUID
     ) {
@@ -151,6 +175,7 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         self.id = id
         self.name = name
         self.path = path
+        self.appearance = appearance
         self.tabs = tabs
         self.activeTabID = activeTabID
     }
@@ -159,16 +184,46 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         id: UUID = UUID(),
         name: String,
         path: URL,
-        content: SlotContent = .terminal
+        appearance: WorkspaceAppearance = .default,
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited
     ) {
-        let tab = Tab(content: content)
+        let tab = Tab(content: content, sizing: sizing)
         self.init(
             id: id,
             name: name,
             path: path,
+            appearance: appearance,
             tabs: [tab],
             activeTabID: tab.id
         )
+    }
+
+    /// The name a person chose, or nil while this workspace still carries the one Tenon
+    /// derived from its folder. A name field starts from this, so an unnamed workspace opens
+    /// with an empty field whose placeholder is the derived name — the same state Reset
+    /// produces, spelled once.
+    public var customName: String? {
+        name == WorkspaceName.derived(for: path) ? nil : name
+    }
+
+    /// The number the next tab to join this workspace is called by: one past the highest any
+    /// tab here currently holds.
+    ///
+    /// The promise this keeps is the one T-105 is about — **no tab's name ever changes** — and
+    /// it is deliberately not the stronger "no number is ever handed out twice". Close the
+    /// highest-numbered tab and the next one takes that number back; no tab holds it, so no
+    /// name moves and no two chips read alike. Buying strict monotonicity would mean a
+    /// counter persisted per workspace, which is durable state earning nothing a person can
+    /// see.
+    public var nextTabNumber: Int {
+        (tabs.map(\.number).max() ?? 0) + 1
+    }
+
+    /// Whether anything about how this workspace is presented was chosen by a person. Drives
+    /// the reset affordance: there is nothing to restore when the answer is no.
+    public var hasCustomIdentity: Bool {
+        !appearance.isDefault || customName != nil
     }
 
     public var activeTab: Tab? {
@@ -198,6 +253,9 @@ public enum WorkspaceEvent: Equatable, Sendable {
     case workspaceAdded(UUID)
     case workspaceRemoved(UUID)
     case workspaceSelected(UUID)
+    /// A workspace's name, mark, or tint changed. Nothing below it moved — this is the one
+    /// workspace fact that leaves every tab, pane, and selection exactly where it was.
+    case workspaceIdentityChanged(UUID)
     case tabOpened(tab: UUID, workspace: UUID)
     case tabClosed(tab: UUID, workspace: UUID)
     case tabSelected(tab: UUID, workspace: UUID)
@@ -231,21 +289,32 @@ public enum WorkspaceEvent: Equatable, Sendable {
         toTab: UUID,
         workspace: UUID
     )
+    /// A tab took a different place in its own workspace's order (T-096). It carries both
+    /// indices because the fact is the *move*: an observer holding a tab list can apply it
+    /// without re-reading the catalog, and "from 2 to 2" is not a fact this event can state.
+    case tabMoved(tab: UUID, from: Int, to: Int, workspace: UUID)
 }
 
 public struct WorkspaceCatalog: Equatable, Sendable {
     public private(set) var workspaces: [Workspace]
     public private(set) var activeWorkspaceID: UUID
 
+    /// The first workspace. An unnamed one takes the name Tenon derives from its folder —
+    /// the same rule every later workspace already opened with, so the very first workspace
+    /// stops being the only one carrying a generic label.
     public init(
-        name: String = "Workspace 1",
+        name: String? = nil,
         path: URL = URL(
             fileURLWithPath: FileManager.default.currentDirectoryPath,
             isDirectory: true
         ),
         content: SlotContent = .terminal
     ) {
-        let workspace = Workspace(name: name, path: path, content: content)
+        let workspace = Workspace(
+            name: name ?? WorkspaceName.derived(for: path),
+            path: path,
+            content: content
+        )
         self.workspaces = [workspace]
         self.activeWorkspaceID = workspace.id
     }
@@ -350,9 +419,10 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     public mutating func addWorkspace(
         name: String,
         path: URL,
-        content: SlotContent = .terminal
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
-        let workspace = Workspace(name: name, path: path, content: content)
+        let workspace = Workspace(name: name, path: path, content: content, sizing: sizing)
         let tab = workspace.tabs[0]
         let slot = tab.slots[0]
         workspaces.append(workspace)
@@ -366,6 +436,49 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             .tabSelected(tab: tab.id, workspace: workspace.id),
             .slotFocused(slot: slot.id, tab: tab.id, workspace: workspace.id),
         ]
+    }
+
+    /// Name this workspace. A name that carries no characters asks for the derived default
+    /// back, so clearing the field and pressing Reset agree instead of being two states.
+    ///
+    /// The workspace is addressed by `id` throughout, which is what makes duplicate display
+    /// names safe: nothing here reads a name to find a workspace.
+    @discardableResult
+    public mutating func renameWorkspace(
+        _ id: UUID,
+        to typed: String
+    ) -> [WorkspaceEvent] {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return [] }
+        let name = WorkspaceName.sanitized(typed)
+            ?? WorkspaceName.derived(for: workspaces[index].path)
+        guard name != workspaces[index].name else { return [] }
+        workspaces[index].name = name
+        return [.workspaceIdentityChanged(id)]
+    }
+
+    /// Mark and tint this workspace.
+    @discardableResult
+    public mutating func setWorkspaceAppearance(
+        _ id: UUID,
+        _ appearance: WorkspaceAppearance
+    ) -> [WorkspaceEvent] {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }),
+              workspaces[index].appearance != appearance
+        else { return [] }
+        workspaces[index].appearance = appearance
+        return [.workspaceIdentityChanged(id)]
+    }
+
+    /// Give this workspace Tenon's default appearance back. The workspace itself survives
+    /// untouched — this restores how it is presented, it does not close and reopen it.
+    @discardableResult
+    public mutating func resetWorkspaceIdentity(_ id: UUID) -> [WorkspaceEvent] {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }),
+              workspaces[index].hasCustomIdentity
+        else { return [] }
+        workspaces[index].name = WorkspaceName.derived(for: workspaces[index].path)
+        workspaces[index].appearance = .default
+        return [.workspaceIdentityChanged(id)]
     }
 
     @discardableResult
@@ -423,10 +536,17 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     }
 
     @discardableResult
-    public mutating func newTab(content: SlotContent = .terminal) -> [WorkspaceEvent] {
+    public mutating func newTab(
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited
+    ) -> [WorkspaceEvent] {
         guard let workspaceIndex = activeWorkspaceIndex else { return [] }
         let workspaceID = workspaces[workspaceIndex].id
-        let tab = Tab(content: content)
+        let tab = Tab(
+            content: content,
+            sizing: sizing,
+            number: workspaces[workspaceIndex].nextTabNumber
+        )
         let slot = tab.slots[0]
 
         workspaces[workspaceIndex].tabs.append(tab)
@@ -508,9 +628,41 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         return events
     }
 
+    /// Moves a tab to a different place in the **active** workspace's order (T-096).
+    ///
+    /// Scoping it to the active workspace is what makes "a reorder moves no tab between
+    /// workspaces" a property of the operation rather than of the caller: there is no
+    /// parameter that could name another workspace, and a tab id belonging to one returns
+    /// no events. Everything else about the tab is left alone — its identity, its slots,
+    /// its own active pane, and the workspace's `activeTabID` — so which tab is selected
+    /// survives its neighbours moving around it.
     @discardableResult
-    public mutating func addSlot(content: SlotContent = .terminal) -> [WorkspaceEvent] {
-        openSlot(content: content, near: activeTab?.activeSlotID)
+    public mutating func moveTab(_ id: UUID, to index: Int) -> [WorkspaceEvent] {
+        guard let workspaceIndex = activeWorkspaceIndex else { return [] }
+        var tabs = workspaces[workspaceIndex].tabs
+        guard let from = tabs.firstIndex(where: { $0.id == id }),
+              index >= 0, index < tabs.count, index != from
+        else { return [] }
+
+        tabs.insert(tabs.remove(at: from), at: index)
+        workspaces[workspaceIndex].tabs = tabs
+
+        return [
+            .tabMoved(
+                tab: id,
+                from: from,
+                to: index,
+                workspace: workspaces[workspaceIndex].id
+            ),
+        ]
+    }
+
+    @discardableResult
+    public mutating func addSlot(
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited
+    ) -> [WorkspaceEvent] {
+        openSlot(content: content, near: activeTab?.activeSlotID, sizing: sizing)
     }
 
     /// Adds one pane at the exact empty grid rectangle selected by the caller. This is
@@ -590,10 +742,13 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     /// anchored on the duplicated pane rather than the focused one, so duplicating a pane
     /// nobody is looking at never resizes the pane they are.
     @discardableResult
-    public mutating func duplicateSlot(_ id: UUID) -> [WorkspaceEvent] {
+    public mutating func duplicateSlot(
+        _ id: UUID,
+        sizing: NewPaneSizing = .unlimited
+    ) -> [WorkspaceEvent] {
         guard let content = activeTab?.slots.first(where: { $0.id == id })?.content
         else { return [] }
-        return openSlot(content: content, near: id)
+        return openSlot(content: content, near: id, sizing: sizing)
     }
 
     /// Whether `duplicateSlot(_:)` would produce a pane: free canvas exists, or the pane is
@@ -613,7 +768,8 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     @discardableResult
     private mutating func openSlot(
         content: SlotContent,
-        near anchor: UUID?
+        near anchor: UUID?,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
         guard let location = activeTabLocation else { return [] }
         let current = workspaces[location.workspace].tabs[location.tab]
@@ -622,7 +778,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         if current.slots.isEmpty {
             let slot = WorkspaceSlot(
                 id: newSlotID,
-                rect: fullGridRect,
+                rect: sizing.fitting(fullGridRect),
                 content: content
             )
             workspaces[location.workspace].tabs[location.tab].slots = [slot]
@@ -645,7 +801,11 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             in: current.spatialSlots,
             near: anchor
         ) {
-            let slot = WorkspaceSlot(id: newSlotID, rect: rect, content: content)
+            let slot = WorkspaceSlot(
+                id: newSlotID,
+                rect: sizing.fitting(rect),
+                content: content
+            )
             workspaces[location.workspace].tabs[location.tab].slots.append(slot)
             workspaces[location.workspace].tabs[location.tab].activeSlotID = slot.id
             return [
@@ -670,16 +830,17 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             anchorSlot.rect.height >= SpatialLayout.minimumHeight * 2
                 ? .vertical
                 : .horizontal
-        return splitSlot(anchor, axis, content: content)
+        return splitSlot(anchor, axis, content: content, sizing: sizing)
     }
 
     @discardableResult
     public mutating func splitActiveSlot(
         _ axis: SplitAxis,
-        content: SlotContent = .terminal
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
         guard let activeSlotID = activeTab?.activeSlotID else { return [] }
-        return splitSlot(activeSlotID, axis, content: content)
+        return splitSlot(activeSlotID, axis, content: content, sizing: sizing)
     }
 
     /// Split a specific slot in the active tab, mirroring `closeSlot(_:)`'s
@@ -689,7 +850,8 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     public mutating func splitSlot(
         _ id: UUID,
         _ axis: SplitAxis,
-        content: SlotContent = .terminal
+        content: SlotContent = .terminal,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
         guard let location = activeTabLocation else { return [] }
         let tab = workspaces[location.workspace].tabs[location.tab]
@@ -699,7 +861,8 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             tab.spatialSlots,
             slotID: id,
             newSlotID: newSlotID,
-            axis: axis
+            axis: axis,
+            newSlotMaximumWidth: sizing.maximumColumns
         ) else { return [] }
 
         let rects = Dictionary(
@@ -870,7 +1033,11 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             rect: fullGridRect,
             content: detached.slot.content
         )
-        let newTab = Tab(slots: [movedSlot], activeSlotID: movedSlot.id)
+        let newTab = Tab(
+            slots: [movedSlot],
+            activeSlotID: movedSlot.id,
+            number: workspaces[source.workspace].nextTabNumber
+        )
         workspaces[source.workspace].tabs.append(newTab)
         workspaces[source.workspace].activeTabID = newTab.id
 

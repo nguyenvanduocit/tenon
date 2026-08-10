@@ -31,6 +31,7 @@ final class CLIActionParserTests: XCTestCase {
 
     func testIntentSendPreservesTypedInputAndCallerSelectableScope() throws {
         let workspaceID = UUID()
+        let tabID = UUID()
         let paneID = UUID()
         let intentID = try IntentID("terminal.wait.v1")
         let providerID = try ProviderID("dev.tenon.core")
@@ -46,6 +47,7 @@ final class CLIActionParserTests: XCTestCase {
                     "input": input,
                     "scope": .object([
                         "workspaceID": .string(workspaceID.uuidString),
+                        "tabID": .string(tabID.uuidString),
                         "paneID": .string(paneID.uuidString),
                     ]),
                     "target": .string(providerID.rawValue),
@@ -59,6 +61,7 @@ final class CLIActionParserTests: XCTestCase {
                     input: input,
                     scope: InvocationScope(
                         workspaceID: workspaceID,
+                        tabID: tabID,
                         paneID: paneID
                     ),
                     target: providerID,

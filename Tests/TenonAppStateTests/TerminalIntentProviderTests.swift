@@ -31,6 +31,33 @@ final class TerminalIntentProviderTests: XCTestCase {
         )
     }
 
+    func testWriteWithCopiedTabIDTargetsThatTabsTerminal() async throws {
+        let fixture = try makeMultiPaneFixture()
+        let targetTabID = try XCTUnwrap(fixture.store.catalog.activeTab?.id)
+        let targetPaneID = fixture.paneID
+
+        fixture.store.newTab(content: .terminal)
+        let otherPaneID = try XCTUnwrap(fixture.store.catalog.activeSlotID)
+        _ = fixture.pool.surface(
+            for: otherPaneID,
+            workspacePath: fixture.workspacePath
+        )
+
+        let reply = try await invoke(
+            .terminalWrite,
+            input: .object(["text": .string("exact target")]),
+            scope: InvocationScope(tabID: targetTabID),
+            bindings: fixture.bindings
+        )
+
+        _ = try successValue(reply)
+        XCTAssertEqual(
+            fixture.registry.bySlot[targetPaneID]?.sentText,
+            "exact target"
+        )
+        XCTAssertEqual(fixture.registry.bySlot[otherPaneID]?.sentText, "")
+    }
+
     func testWaitReturnsOneResultWhenConditionIsMet() async throws {
         let fixture = try makeFixture()
         let surface = fixture.surface
@@ -576,6 +603,24 @@ private extension TerminalIntentProviderTests {
             by: .seconds(5)
         )
     ) async throws -> IntentProviderReply {
+        try await invoke(
+            name,
+            input: input,
+            scope: InvocationScope(paneID: paneID),
+            bindings: bindings,
+            deadline: deadline
+        )
+    }
+
+    func invoke(
+        _ name: CoreIntentName,
+        input: IntentValue,
+        scope: InvocationScope,
+        bindings: [IntentProviderBinding],
+        deadline: ContinuousClock.Instant = .now.advanced(
+            by: .seconds(5)
+        )
+    ) async throws -> IntentProviderReply {
         let intentID = try name.intentID
         let binding = try XCTUnwrap(
             bindings.first { $0.intentID == intentID }
@@ -591,7 +636,7 @@ private extension TerminalIntentProviderTests {
                 kind: .cli,
                 sessionRevision: 1
             ),
-            scope: InvocationScope(paneID: paneID),
+            scope: scope,
             deadline: deadline,
             target: nil,
             idempotencyKey: nil

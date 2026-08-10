@@ -35,4 +35,11 @@ enum PaneHeaderCommand: String, CaseIterable, Sendable {
     /// No value. The pane shows or hides its context-and-evidence panel; the toggle's `isOn`
     /// reports which of those it currently is.
     case agentLensInspector = "agentLens.inspector"
+    /// Value: an `AgentLensAccount` raw value — "chat" or "timeline".
+    ///
+    /// A second picker rather than three more segments on the first one, because the two answer
+    /// different questions: `agentLensPresentation` chooses WHICH renderer the pane shows, and
+    /// this chooses which reading of the session the Session renderer draws. Folding them would
+    /// make a Terminal/Timeline combination expressible, and there is no such thing.
+    case agentLensAccount = "agentLens.account"
 }

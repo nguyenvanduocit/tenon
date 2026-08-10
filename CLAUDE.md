@@ -107,12 +107,18 @@ has no handwritten plugin helper; it uses declared canonical intents.
 editing a tagged one.
 
 Every file under `Sources/` carries one tag above its imports. A file over 400 lines
-(60 of 173 today, longest 2641) tags every `// MARK:` section too, on the MARK line:
+(65 of 200 today, longest 2545) tags every `// MARK:` section too, on the MARK line:
 
 ```swift
 // @domain: plugin-host, plugin-events
 // MARK: - Loading and hot reload  @domain: plugin-host
 ```
+
+Know what that second rule does *not* reach: it can only check a file that has MARK
+sections, and 49 of those 65 long files have none — 41,879 lines, including the five
+longest in the tree. There, one file tag stands for the whole file and locates nothing
+inside it. A long file with no MARK is not a file that passed the rule; it is a file the
+rule cannot see.
 
 Why this layer exists at all: a call graph says who calls whom and a compiler keeps it
 honest, but nothing in the source says which *product* concern a file serves — that is a
@@ -129,21 +135,38 @@ Use the fewest domains that are true. **More than two on one file is a split can
 not a well-labelled file: those tag boundaries are the decomposition the file has not had.
 `PluginHost.swift` carries five and is the standing example.
 
-Retrieval is two steps, and the second is not optional:
+**When you are about to locate the code for a change, run step 1 before you grep a symbol
+name.** That is the moment the layer pays, and the moment it is usually skipped: measured
+across every session in this repo since the tags landed, 1 of 1766 Claude searches and 11 of
+1228 Codex searches used a tag to find code, while 84% of every command that touched a tag
+was maintaining the tag layer rather than querying it.
 
 ```
 1. rg -l '@domain:.*plugin-host'                          → starting set
 2. for each symbol that set touches: rg '\bSymbolName\b'   → the edges Swift hides
 ```
 
-No check detects a domain a file *should* carry but does not — which is exactly the failure
-tagging exists to reduce. A tag narrows where to start; it never certifies completeness, and
-stopping at step 1 trades a silent omission for a confident one.
+Expect what it actually delivers, so you neither skip it nor trust it. Scored against what
+76 sessions really edited, step 1 hands you a median **13% of the tree** containing **54% of
+the files you will end up changing** — better than any free heuristic (same directory reaches
+61% but drags in 80 files; a filename-prefix grep reaches 28%). It is also why **step 2 is not
+optional: 46% of what you need is outside the starting set.** No check detects a domain a file
+*should* carry but does not — exactly the failure tagging exists to reduce — so a tag narrows
+where to start and never certifies completeness. Stopping at step 1 trades a silent omission
+for a confident one.
 
 Adding a domain means adding it to `docs/domains.md` with an Excludes line in the same change
 as the file that uses it; a declared domain matching no file fails the suite. Every source file
 is tagged today and `untaggedFileBudget` is **0** — a new file without its tag turns the suite
 red for every concurrent agent, and the fix is one line above the imports.
+
+Two of the seven assertions are ratchets, both at their current count and both meant to reach
+zero: `isolatedTagBudget` (**8**) holds files whose domain appears in nothing they reference
+and nothing referencing them, and `unsectionedLongFileBudget` (**49**) holds long files with
+no MARK to tag. Neither can prove a tag is *right* — one of the three false tags T-106 found
+by hand is all the isolation check catches, because a file can share code with a domain it
+has no business claiming. Reading the file against `docs/domains.md` is still the only thing
+that settles it.
 
 ## Invariants — tests enforce these; do not weaken them
 
@@ -186,6 +209,43 @@ Two enabling constraints keep those product surfaces changeable:
   corrupting host state. The terminal workspace remains useful with no optional plugins
   installed.
 
+## Nothing is grandfathered — old code keeps its place by earning it
+
+Code, schemas, and structures hold their place because they still serve VISION.md and the
+owning PRD, not because they were written first. When a foundation stops carrying the
+direction the product is going, the foundation is what changes: a new layer stacked on a wrong
+one is debt paying interest to itself, and every later change pays it again. This repository
+has already done the harder version of that — the v0.2 capability helpers, command registry,
+sidebar surface, and imperative workspace namespace were deleted outright, with no
+compatibility shim and a migration guide written to carry plugin authors across
+(`docs/plugin-migration-v0.2.md`).
+
+- **Root cause, not the way around it.** A workaround buys today's diff at the price of every
+  future diff in that area. When the honest fix is the bigger edit, take the bigger edit and
+  record why in the owning PRD's decision log.
+- **Understand it, then remove it.** `git blame`, `git log -S`, the commit that introduced it,
+  and the test still covering it explain why a thing exists. Explain it and the deletion is
+  clean. Unable to explain it → say what you don't understand and leave it standing; that is
+  the one case where old code wins, and it wins only until someone reads it properly.
+- **Replacement finishes.** No shim, no deprecated alias, no dead branch kept "just in case",
+  no second code path shadowing the real one. What the tree owes is to read as if the new
+  design had always been there. Documents follow their own rule in `docs/prds/README.md` — a
+  superseded doc becomes a pointer or clearly labelled history, because how we got here is
+  worth keeping in a way a dead code path never is.
+- **Structural smells get named and split.** More than two `@domain:` tags on a file is the
+  decomposition that file has not had, and `PluginHost.swift` carries five as the standing
+  example. The same goes for a function that needs "and" to describe it, two public paths
+  doing one semantic job (invariant 6), and indirection that saves five lines of writing and
+  costs ten minutes of reading.
+- **A rewrite is claimed like any other work.** Several agents share this tree, so a broad
+  restructuring goes into `.kanban/` with its files listed before the first edit, and its
+  rationale into the owning PRD. An unclaimed heroic refactor overwrites work in flight, which
+  adds debt rather than clearing it.
+
+What makes this safe rather than reckless is already in place: a suite that runs in about a
+second, tests that assert behavior instead of shape, and a PRD that states what must stay
+true through the change. Rewriting something old is then an ordinary Tuesday, not a gamble.
+
 ## Verification
 
 `swift build` + `swift test` are the evidence bar. `ShippedPluginsTests` copies the real `plugins/` directory into a temp dir and exercises the actual shipped `clock` and `hello-palette` JS — including a genuine on-disk edit that must propagate through FSEvents into host state. When you change plugin-host behavior, extend those tests rather than relying on manual app runs.
@@ -198,9 +258,74 @@ TENON_VIEW_SNAPSHOT='dev.tenon.kanban/board:/tmp/board.png' \
 TENON_VIEW_SNAPSHOT_WORKSPACE="$PWD" swift run tenon     # any plugin view
 TENON_DIFF_SNAPSHOT=/tmp/diff.png swift run tenon        # the diff view
 TENON_CHANGES_SNAPSHOT=/tmp/changes.png swift run tenon  # the changes panel
+TENON_TIMELINE_SNAPSHOT=/tmp/timeline.png swift run tenon # Agent Lens' Timeline account
+TENON_SIDEBAR_SNAPSHOT=/tmp/sidebar.png swift run tenon  # the workspace sidebar and its footer
 ```
 
+The Timeline form takes `TENON_TIMELINE_SNAPSHOT_STATE=idle|running|ready|failed|insufficient`,
+`TENON_TIMELINE_SNAPSHOT_SIZE=WxH` for the narrow-pane reflow, and
+`TENON_TIMELINE_SNAPSHOT_EVIDENCE=1` to open every milestone's anchors. Its reading goes
+through the real decoder and validator, so what it photographs is what survived them — the
+first fixture written for it was refused for claiming `settled` over a still-running command.
+
+The sidebar form takes `TENON_SIDEBAR_SNAPSHOT_SIZE=WxH` and is worth taking at both of the
+sidebar's own bounds — `110x420` (`SidebarResize.minWidth`, the narrowest it stays open at)
+and the 232 pt default — because a footer that fits one can still clip at the other. It
+mounts the real `WorkspaceSidebarView` over a real `WorkspaceStore`, with no pane chrome
+around it, since the sidebar is not a pane.
+
 The plugin form boots the real host over the real inventory and mounts the same `PluginSlotView` a pane mounts, so the picture is what the pane shows. `docs/design-plugin-views.md` has the worked example. Reach for it when a change moves layout: T-055 shipped a board that passed 24 tests and rendered as scattered cards floating at different heights, and the adversarial review panel that read the diff found none of it.
+
+There is one behaviour the suite provably cannot reach, and it has its own probe:
+
+```bash
+swift scripts/drag-region-probe.swift   # the title bar's drag region, on-screen, exit 0 = rule holds
+```
+
+The window server takes a press in the title-bar band from a **drag region** AppKit uploads
+ahead of time, and `NSWindow.sendEvent` injects below that server — so a test can drive a whole
+press-drag-release successfully while a hardware drag still moves the window. That gap cost
+T-101 three shipped fixes. `TabStripReorderTests` closes it by reading the region back for the
+real bar — a chip's centre must be outside it, the empty chrome inside — and the probe isolates
+the AppKit rule underneath. When a change touches what owns the pointer up there, run both.
+
+## PRD first — the spec is read before the code is touched
+
+Every change that alters what an operator can observe belongs to exactly one PRD under
+`docs/prds/`, and that PRD is read before the first edit. Start from the catalog in
+`docs/prds/README.md`: its table maps all seventeen capability boundaries to an owning PRD ID
+and lists the tasks each one absorbed. Find the row covering the surface you are about to
+change, then open both of its files — `<slug>.prd.md` for the requirements, delivery matrix,
+and decision log, and `<slug>.feature` for the acceptance examples that say what working
+means. Requirements carry stable IDs (`<SLUG>-FR-###`, `<SLUG>-NFR-###`); name the ones your
+change implements in the task file and the commit message, so the code stays traceable to the
+promise it keeps.
+
+- **A boundary with no PRD gets its PRD before it gets code.** Ten of the seventeen have their
+  pair on disk today; the other seven have a catalog row and nothing behind it. Landing in one
+  of those means writing `<slug>.prd.md` and `<slug>.feature` from `templates/` first, and
+  passing the quality gate in `templates/README.md`. The requirements come before the diff,
+  not as a write-up after it.
+- **The PRD is updated by the same change that ships against it.** Move its delivery-matrix
+  row to `shipped`, map the requirement to its source and smallest relevant test seam, and
+  append a dated verification receipt. Exact test counts live in receipts; requirements stay
+  true as the suite grows.
+- **Current source and current tests win a disagreement.** A PRD that no longer matches the
+  tree gets corrected — mark the stale claim superseded in its decision log — and the code
+  keeps the behavior its tests prove. A PRD records audited intent; it is not an oracle that
+  overrides the working tree.
+- **Behavior no requirement covers earns a requirement.** Give it an ID and a scenario in the
+  same change, tagged `@prd-TENON_PRD_NNN` and `@req-<requirement-id>`, so the next reader
+  finds the promise where the promises live.
+- **The exemption is narrow**: typo fixes, build-cache and tooling hygiene, internal renames,
+  and tests that pin existing behavior without changing it. Anything an operator could notice
+  sits inside the gate.
+
+The point of the gate is the reading, not the paperwork. `docs/prds/README.md` records why it
+exists: one capability was routinely split across several task files, and post-shipping
+corrections left old tasks telling a story the code had stopped matching. A task file is
+evidence of what one session did. The PRD is the current statement of what the product
+promises, which is the thing a change has to keep true.
 
 ## Workflow — one branch, many agents on `main`
 

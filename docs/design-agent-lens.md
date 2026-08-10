@@ -49,6 +49,8 @@ Presentation follows these rules:
 | Clicking a file the agent cited in its prose | DIRECT | `AgentFileLinks` resolves the written path; the click calls the typed `WorkspaceStore.openContent(.file(path:))` |
 | Transcript watch | RESOURCE/STREAM | one `AgentTranscriptTailer` stream per attached transcript |
 | Native provider frame ingestion | RESOURCE/STREAM | `CodexProtocolIngress` over caller-owned transport frames |
+| Choosing the Chat or Timeline account | DIRECT | `AgentLensViewModel.account`, published into the pane's ONE header as `PaneHeaderCommand.agentLensAccount` |
+| Synthesizing the session into milestones | RESOURCE/TASK | `AgentTimelineSynthesizer` run owned by the pane, arbitrated by `AgentTimelineRunLedger` |
 
 There is no Tenon-level duplex channel for conversation embedded in PTY bytes. PTY input
 continues through the existing terminal surface. Semantic output is an independent,
@@ -87,6 +89,22 @@ oldest-first policy. A producer that would lose a semantic event terminates with
 continuing with a silently incomplete conversation. Transcript records are capped at
 2 MB, tool output at 64 KB, the initial transcript window at 8 MB, and projected
 collections have reducer-owned capacities.
+
+That window is measured in bytes and opened in meaning. A Claude turn spans records — the
+call is named in an `assistant` record and answered in the next `user` record — so a seek
+that lands between them would hand the reducer a `tool_result` whose call is on the far side
+of the cut, which the decoder can only render as an unnamed finished `Tool`. The tailer
+therefore skips forward to the first record `AgentTranscriptDecoder.opensHistoryWindow`
+admits: a record holding only tool results opens nothing. One rule covers a record split by
+the seek and a record stranded by it, because both are the tail of something whose beginning
+is gone. Wherever the visible history begins, `AgentLensSnapshot.earlierHistory` carries the
+transcript and byte offset it begins at, so the notice above the conversation states the
+boundary instead of merely admitting one exists; in-memory trimming answers with the oldest
+message still on screen.
+
+A full attach over a real 5.03 MB transcript measures 96 ms (2,376 records: 28.4 ms
+splitting, 61.3 ms JSON, 6.6 ms fingerprints), so re-reading from the window start on every
+attachment is cheaper than any cache that would have to be invalidated.
 
 Every resource installs `continuation.onTermination` to cancel its producer. Poll sleeps
 propagate cancellation, file handles close with `defer`, the input queue resumes pending
@@ -144,6 +162,83 @@ fingerprint where available, capture time, and freshness. Unknown protocol metho
 ignored; malformed, missing, rotated, oversized, and overflowed sources become explicit
 diagnostics. Terminal remains the escape hatch for every degraded state.
 
+## Two accounts of one session: Chat and Timeline
+
+Chat is the verbatim conversational record. **Timeline is an interpretation layer**: an agent
+reads the session's evidence and writes the few moments where it materially changed direction
+or state — "reproduced the focus loop", "found the competing focus writers", "verified the
+fix". It is not one row per prompt, tool call, file edit or hook event, and a reading that is
+one row per fact is refused rather than rendered.
+
+The choice is local host UI state. It changes no attachment, restarts no process, sends
+nothing to the PTY, and is independent of Session/Terminal/Split — a person can read the
+Timeline of a pane that is currently showing both renderers. The picker publishes into the
+pane's one chrome header beside the renderer picker and appears only while the Session
+renderer is on screen.
+
+### What the model is allowed to decide, and what it is not
+
+The synthesis chooses **grouping and judgement**: which facts belong together, what to call
+that, what changed, why it mattered, and whether the work settled. Everything a reader could
+check stays the host's answer:
+
+- **anchors** are `AgentTimelineItem` ids copied from the digest. A cited id that is not in
+  this session is refused, so a return path never goes nowhere;
+- **anchor labels** are written by the host from its own fact, never by the model — a
+  citation whose words came from the synthesis could describe evidence that does not say that;
+- **time spans** are computed from the anchored facts, so a milestone cannot claim a period
+  the evidence does not cover;
+- **grouping is a partition.** One fact belongs to one milestone; two milestones claiming the
+  same run is double counting, and it is how a reading grows back to the length of the
+  transcript;
+- **`settled` is checkable and checked.** A milestone standing on a tool the host can see is
+  still running, or a question still waiting, cannot claim the work finished;
+- **the timeline carries no session-level verdict at all.** Whether the agent is still
+  working is `AgentLensSnapshot.status` — observed, live, already on screen — so a reading can
+  be stale but never falsely complete.
+
+### Bounds, and failing visibly
+
+Evidence in: at most 320 facts and 96 KiB, newest-first, instructions and loaded skills
+excluded as the session's setting rather than events in it. Reading out: at most 12
+milestones, at least three facts per milestone, an 80-character title and two
+400-character sentences, refused above 64 KiB before parsing. A malformed or out-of-bounds
+reading becomes a named failure a person can act on — never partial UI, and never a silent
+empty state.
+
+A session with fewer than six facts is reported as too short to be worth reading. An empty
+or unattached one says so. None of them spends a model call to rediscover it.
+
+### Newest wins, and the person asks
+
+A reading is explicit: it costs the person a model call, so it happens when they press the
+button, and Chat stays live and usable while it runs. A session grows while it is being read,
+so two refreshes settle in whatever order the model finishes them — `AgentTimelineRunLedger`
+makes newest-wins a property of the run rather than of arrival order, and cancelling advances
+past the run in flight so its result can never land afterwards. New facts mark an existing
+reading **stale**, which is said on screen; the last true reading is kept until a newer one
+replaces it.
+
+The reading itself is produced by the person's own installed agent CLI, run headlessly in a
+scratch directory with one turn and no interactive input. `AgentTimelineSynthesizer` is the
+seam, so the whole validation half is asserted in `AgentSessionTimelineTests` without a model
+call.
+
+The run is read as a stream (`--output-format stream-json`), which decides three things at
+once. The pane shows what the run has actually done — connected, then characters written —
+because duration and a spinner both keep moving for a process that has died, and the only
+question a person is asking is whether this is working. The deadline becomes **silence**
+(45 s) under a ceiling (600 s), since a run still writing is alive by observation rather than
+by assumption, and the two expiries are told apart on screen. And the run drops the operator's
+own environment (`--safe-mode --no-session-persistence`): its one job is to answer in the
+schema the host validates, so a custom output style is a hazard to it rather than a help, and
+a reading is not a session anybody resumes. Measured 2026-08-10 on a trivial prompt, that
+takes a run from 8.1 s wall / 11.3 s CPU with ten of the operator's SessionStart hooks and 120
+tools loaded, to 4.5 s / 1.3 s without them.
+
+`AgentCLIStreamReader` is the whole knowledge of the CLI's shape, one line at a time and pure,
+so the format is pinned against recorded fixtures instead of a live login.
+
 ## Input safety
 
 For PTY-backed sessions, the composer records the foreground PID at attachment. Each
@@ -173,3 +268,13 @@ and idempotent hook installation that preserves unrelated user hooks.
 `InteractionBoundaryFitnessTests` asserts that hook ingress remains EVENT, transcript
 tailing remains RESOURCE/STREAM, and Agent Lens stays on typed DIRECT calls without
 opening a public intent dispatch path.
+
+`AgentSessionTimelineTests` covers the Timeline account: what the digest carries and drops,
+grouping, host-written anchor labels and spans, the invented and shared anchor refusals, the
+`settled`-over-open-work refusal, field and output bounds, the CLI envelope, newest-wins and
+cancellation, the account picker's place in the pane header, and — the load-bearing one — that
+a transcript re-emitted one row per fact is refused as a reading of it. Each of those rules was
+falsified against a mutated `Sources/`: twelve mutations, each caught by the assertion that
+names it. The thirteenth, `cancel()` marking the run settled without advancing the token, is an
+equivalent mutant — both forms refuse the in-flight result — and is recorded rather than
+"fixed".

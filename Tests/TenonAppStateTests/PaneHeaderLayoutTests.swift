@@ -167,7 +167,7 @@ final class PaneHeaderLayoutTests: XCTestCase {
                 leading: [button("back"), button("forward"), button("reload")],
                 trailing: [textfield("go", flex: true)]
             ),
-            // Docs: nothing but progress.
+            // Trailing only: nothing but progress.
             PaneHeader(trailing: [spinner("loading")]),
             // Both slots at their caps, every kind represented.
             PaneHeader(

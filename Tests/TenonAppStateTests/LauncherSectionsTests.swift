@@ -13,7 +13,7 @@ final class LauncherSectionsTests: XCTestCase {
             match("browser.open", "Open Browser", category: "Open"),
             match("core.new-tab", "New Tab", category: "New"),
             match("core.new-terminal", "New Terminal", category: "New"),
-            match("core.open-docs", "Open Docs", category: "Open"),
+            match("core.open-changes", "Open Changes", category: "Open"),
         ]
     }
 
@@ -48,7 +48,7 @@ final class LauncherSectionsTests: XCTestCase {
         XCTAssertEqual(order.sections.map(\.startIndex), [0, 2])
         XCTAssertEqual(
             order.displayed.map(\.id),
-            ["browser.open", "core.open-docs", "core.new-tab", "core.new-terminal"]
+            ["browser.open", "core.open-changes", "core.new-tab", "core.new-terminal"]
         )
     }
 
@@ -58,7 +58,7 @@ final class LauncherSectionsTests: XCTestCase {
         let order = LauncherSections(ranked: interleavedRanking(), query: "")
 
         XCTAssertEqual(order.displayed[0].id, "browser.open")
-        XCTAssertEqual(order.displayed[1].id, "core.open-docs")
+        XCTAssertEqual(order.displayed[1].id, "core.open-changes")
     }
 
     func testATypedQueryKeepsRelevanceOrderAndDoesNotGroup() {
@@ -76,4 +76,5 @@ final class LauncherSectionsTests: XCTestCase {
         XCTAssertTrue(order.sections.isEmpty)
         XCTAssertTrue(order.displayed.isEmpty)
     }
+
 }

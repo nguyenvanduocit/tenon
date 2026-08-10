@@ -193,7 +193,7 @@ final class KanbanPluginTests: XCTestCase {
         XCTAssertEqual(columns.count, 3)
         var widths: [Double?] = []
         for column in columns {
-            guard case let .box(_, _, _, width, parts) = column else {
+            guard case let .box(_, _, _, width, parts) = Self.unwrapped(column) else {
                 XCTFail("a column must be a box — a vstack claims only its content's width")
                 continue
             }
@@ -215,11 +215,12 @@ final class KanbanPluginTests: XCTestCase {
         )
 
         // The Todo column's first card: id line, then the title on its own line.
-        guard case let .box(_, _, _, _, todo) = columns[0] else { return }
-        let card = try XCTUnwrap(todo.first {
-            if case .card = $0 { return true }
-            return false
-        })
+        guard case let .box(_, _, _, _, todo) = Self.unwrapped(columns[0]) else { return }
+        let card = try XCTUnwrap(todo.compactMap { part -> PluginViewNode? in
+            let node = Self.unwrapped(part)
+            if case .card = node { return node }
+            return nil
+        }.first)
         let cardParts = Self.children(of: card)
         guard case .hstack = cardParts.first else {
             return XCTFail("a card opens with its id line")
@@ -487,7 +488,7 @@ final class KanbanPluginTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "board",
             instanceID: Fixture.paneA,
-            itemID: "start:T-101"
+            itemID: "start:claude:T-101"
         )
 
         let tracking = await eventually(attempts: 400) {
@@ -538,7 +539,7 @@ final class KanbanPluginTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "board",
             instanceID: Fixture.paneA,
-            itemID: "start:T-101"
+            itemID: "start:claude:T-101"
         )
 
         let sent = await eventually {
@@ -548,23 +549,108 @@ final class KanbanPluginTests: XCTestCase {
         }
         XCTAssertTrue(sent, "Start must reach terminal.open.v1")
 
+        // The brief is what the board owns, and it travels as a prompt to the host rather
+        // than as a command line this plugin assembled.
+        let composed = await bridge.requests().last {
+            $0.intentID.rawValue == "agent.command.v1"
+        }
+        let ask = try XCTUnwrap(composed?.input.objectValue)
+        XCTAssertEqual(ask["agent"]?.stringValue, "claude")
+        let prompt = try XCTUnwrap(ask["prompt"]?.stringValue)
+        XCTAssertTrue(prompt.contains("T-101"), prompt)
+        XCTAssertTrue(
+            prompt.contains(".kanban/tasks/T-101-first.md"),
+            "the prompt must point the agent at the task file: \(prompt)"
+        )
+        XCTAssertTrue(
+            prompt.contains("CLAUDE.md"),
+            "the prompt must send the agent to the workflow protocol: \(prompt)"
+        )
+
         let opens = await bridge.requests().filter {
             $0.intentID.rawValue == "terminal.open.v1"
         }
         let request = try XCTUnwrap(opens.last)
         let input = try XCTUnwrap(request.input.objectValue)
         let command = try XCTUnwrap(input["command"]?.stringValue)
-        XCTAssertTrue(command.hasPrefix("claude "), command)
-        XCTAssertTrue(command.contains("T-101"), command)
-        XCTAssertTrue(
-            command.contains(".kanban/tasks/T-101-first.md"),
-            "the prompt must point the agent at the task file: \(command)"
-        )
-        XCTAssertTrue(
-            command.contains("CLAUDE.md"),
-            "the prompt must send the agent to the workflow protocol: \(command)"
+        XCTAssertEqual(
+            command,
+            "/opt/bin/claude --model opus '\(prompt)'",
+            "the pane runs the host's line, so this person's own options survive a Start"
         )
         XCTAssertEqual(input["workingDirectory"]?.stringValue, Self.rootA)
+    }
+
+    /// A card is 260 points wide and names no agent, so its Start has to resolve one. With a
+    /// single agent installed there is no choice to make and it starts.
+    ///
+    /// This is the case a picture of the board found and twenty-nine passing tests did not:
+    /// the sheet's per-agent buttons were rewired first, and the card's Start — the one most
+    /// people actually press — kept sending an action nobody handled any more.
+    func testTheCardsStartUsesTheOnlyAgentThisMachineHas() async throws {
+        let bridge = makeBridge()
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: "start:T-101"
+        )
+
+        let started = await eventually {
+            await bridge.requests().contains {
+                $0.intentID.rawValue == "terminal.open.v1"
+            }
+        }
+        XCTAssertTrue(started, "one installed agent is not a choice — the card starts it")
+        let asked = await bridge.requests().last {
+            $0.intentID.rawValue == "agent.command.v1"
+        }
+        XCTAssertEqual(
+            asked?.input.objectValue?["agent"]?.stringValue,
+            "claude"
+        )
+    }
+
+    /// Two agents is a choice, and a card has nowhere to put it. Starting the first one
+    /// would quietly hand the task to whichever the inventory happened to list first, so the
+    /// card opens the sheet, where each agent has its own named button.
+    func testTheCardsStartAsksWhenThisMachineHasTwoAgents() async throws {
+        let bridge = makeBridge()
+        await bridge.setInstalledAgents([
+            (id: "codex", label: "Codex"),
+            (id: "claude", label: "Claude Code"),
+        ])
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: "start:T-101"
+        )
+
+        let asked = await eventually {
+            await Self.texts(in: self.modal(of: runtime, instance: Fixture.paneA)?.body)
+                .contains { $0.contains("No agent started for this task yet") }
+        }
+        XCTAssertTrue(asked, "the sheet is where the choice between two agents is made")
+        let labels = Self.texts(
+            in: await modal(of: runtime, instance: Fixture.paneA)?.body
+        )
+        XCTAssertTrue(labels.contains("Start Codex"), "\(labels)")
+        XCTAssertTrue(labels.contains("Start Claude Code"), "\(labels)")
+        let opened = await bridge.requests().contains {
+            $0.intentID.rawValue == "terminal.open.v1"
+        }
+        XCTAssertFalse(opened, "nothing may start until the person picks an agent")
     }
 
     /// T-036's rule, for this plugin: the board belongs to the workspace that owns the
@@ -1040,6 +1126,149 @@ final class KanbanPluginTests: XCTestCase {
         )
     }
 
+    // MARK: - The drag (T-056)
+
+    /// The board publishes the gesture: every card is something a pointer may pick up, every
+    /// column is something it may be dropped on, and the ◀ ▶ buttons stay — a drag is the
+    /// pointer's way to say what they already say, and it is the one route a keyboard and
+    /// VoiceOver cannot take.
+    func testEveryCardCanBePickedUpAndEveryColumnCanReceiveIt() async throws {
+        let runtime = try await makeStartedRuntime(bridge: makeBridge())
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+        let rendered = await body(of: runtime, instance: Fixture.paneA)
+        let body = try XCTUnwrap(rendered)
+        let row = try XCTUnwrap(Self.columnRow(in: body))
+
+        var dropActions: [String] = []
+        for column in Self.children(of: row) {
+            guard case let .dropTarget(action, children) = column else {
+                XCTFail("every column receives a card; got \(column)")
+                continue
+            }
+            dropActions.append(action)
+            XCTAssertEqual(children.count, 1, "the wrapper is transparent, not a layout")
+        }
+        XCTAssertEqual(
+            dropActions,
+            ["drop-into:0", "drop-into:1", "drop-into:2"],
+            "a column names itself by position, so a drop needs no second lookup"
+        )
+
+        let payloads = Self.dragPayloads(in: body)
+        XCTAssertEqual(
+            payloads.sorted(),
+            ["T-101", "T-102", "T-103"],
+            "a card carries its own task id and nothing else"
+        )
+        XCTAssertTrue(
+            Self.buttons(in: body).contains { $0.action == "move-right:T-101" },
+            "the buttons stay as the route a keyboard can take"
+        )
+    }
+
+    /// End to end through the shipped JS with the host's real admission rule in the middle:
+    /// the card publishes a payload, the host encodes it for this pane and decodes it back
+    /// for the same pane, and only then does the column's action fire. The board moves.
+    func testDroppingACardOnAColumnMovesItThere() async throws {
+        let boardPath = Self.rootA + "/.kanban/board.md"
+        let bridge = makeBridge()
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+
+        let t101 = "- [T-101](tasks/T-101-first.md) First thing — high/M"
+        let expected = Fixture.board
+            .replacingOccurrences(of: "\n" + t101, with: "")
+            .replacingOccurrences(of: "## Done", with: "## Done\n" + t101)
+
+        let delivered = try XCTUnwrap(
+            Self.deliverDrop(payload: "T-101", into: Self.scopeA),
+            "a card picked up in this pane is admitted by this pane"
+        )
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: "drop-into:2",
+            value: .string(delivered)
+        )
+
+        let written = await eventually {
+            await bridge.fileContents(boardPath) == expected
+        }
+        let contents = await bridge.fileContents(boardPath)
+        XCTAssertTrue(
+            written,
+            "the card lands in the column it was dropped on, two columns over; got:\n"
+                + (contents ?? "nil")
+        )
+    }
+
+    /// A drop is absolute, not a step: the destination is the column the pointer chose, so
+    /// releasing a card back where it started changes nothing — and writes nothing, because
+    /// rewriting the board to produce the bytes it already holds would wake every watcher.
+    func testACardDroppedOnItsOwnColumnWritesNothing() async throws {
+        let bridge = makeBridge()
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+        let readsBefore = await bridge.reads()
+
+        let delivered = try XCTUnwrap(Self.deliverDrop(payload: "T-101", into: Self.scopeA))
+        _ = try await runtime.invokeViewSelect(
+            viewID: "board",
+            instanceID: Fixture.paneA,
+            itemID: "drop-into:0",
+            value: .string(delivered)
+        )
+
+        // A move reads the board, decides, and re-reads it to re-render — so the SECOND
+        // read is what marks the whole path finished, and any write would already sit
+        // between the two. Waiting for the first read instead would assert "nothing was
+        // written" before the write it is looking for could possibly have happened.
+        let settled = await eventually { await bridge.reads() >= readsBefore + 2 }
+        XCTAssertTrue(settled, "the drop runs to completion")
+        let writes = await bridge.requests().filter {
+            $0.intentID.rawValue == "filesystem.file.write.v1"
+        }
+        XCTAssertTrue(writes.isEmpty, "a move that moves nothing writes nothing")
+        let contents = await bridge.fileContents(Self.rootA + "/.kanban/board.md")
+        XCTAssertEqual(contents, Fixture.board, "and the board is byte-identical")
+    }
+
+    /// The same board open in two panes is two scopes. A card picked up in the other pane
+    /// never becomes a payload here, so the column's action never fires and this board is
+    /// untouched — the host refuses before the plugin is ever asked.
+    func testACardPickedUpInAnotherPaneNeverReachesThisBoard() async throws {
+        let bridge = makeBridge()
+        let runtime = try await makeStartedRuntime(bridge: bridge)
+        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
+        _ = await eventually {
+            await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
+        }
+
+        let elsewhere = PluginViewDragScope(
+            pluginID: Self.kanbanID,
+            viewID: "board",
+            instanceID: Fixture.paneB
+        )
+        XCTAssertNil(
+            Self.deliverDrop(payload: "T-101", from: elsewhere, into: Self.scopeA),
+            "the host admits a drop only inside the instance the drag started in"
+        )
+
+        let writes = await bridge.requests().filter {
+            $0.intentID.rawValue == "filesystem.file.write.v1"
+        }
+        XCTAssertTrue(writes.isEmpty, "and nothing was written on its behalf")
+    }
+
     // MARK: - The watcher
 
     /// A real edit on a real disk through real FSEvents — the same bar `ShippedPluginsTests`
@@ -1311,7 +1540,7 @@ final class KanbanPluginTests: XCTestCase {
             // A column is a `box`: the node that claims the full width offered to it, so
             // every column takes an equal share of the pane and an empty one still holds
             // its place instead of collapsing to the width of its heading.
-            guard case let .box(_, _, _, _, parts) = columnNode,
+            guard case let .box(_, _, _, _, parts) = Self.unwrapped(columnNode),
                   let headerNode = parts.first,
                   case let .hstack(_, header) = headerNode
             else {
@@ -1326,7 +1555,7 @@ final class KanbanPluginTests: XCTestCase {
             var cardIDs: [String] = []
             var more: String?
             for part in parts.dropFirst() {
-                switch part {
+                switch Self.unwrapped(part) {
                 case let .card(children):
                     if let id = Self.cardID(children) { cardIDs.append(id) }
                 case let .text(value, _, _, _):
@@ -1345,7 +1574,7 @@ final class KanbanPluginTests: XCTestCase {
     private static func columnRow(in node: PluginViewNode) -> PluginViewNode? {
         if case .hstack = node, !children(of: node).isEmpty,
            children(of: node).allSatisfy({
-               if case .box = $0 { return true }
+               if case .box = unwrapped($0) { return true }
                return false
            })
         {
@@ -1372,12 +1601,62 @@ final class KanbanPluginTests: XCTestCase {
         switch node {
         case let .vstack(_, children), let .hstack(_, children), let .card(children),
              let .grid(_, _, children), let .field(_, children),
-             let .scroll(_, children):
+             let .scroll(_, children),
+             let .dragSource(_, children), let .dropTarget(_, children):
             return children
         case let .box(_, _, _, _, children):
             return children
         default:
             return []
+        }
+    }
+
+    private static let kanbanID: PluginID = "dev.tenon.kanban"
+
+    /// The scope pane A's board renders under — what `BuiltInSlotViews` builds from the
+    /// section it is mounting.
+    private static let scopeA = PluginViewDragScope(
+        pluginID: kanbanID,
+        viewID: "board",
+        instanceID: Fixture.paneA
+    )
+
+    /// What the host does between the card being picked up and the column's action firing:
+    /// encode the payload for the scope the drag started in, then admit it — or not — into
+    /// the scope the drop landed in. `nil` is a refused drag, and a refused drag fires
+    /// nothing at all.
+    private static func deliverDrop(
+        payload: String,
+        from source: PluginViewDragScope? = nil,
+        into target: PluginViewDragScope
+    ) -> String? {
+        guard let dragged = PluginViewDrag.encode(
+            payload: payload,
+            from: source ?? target
+        ) else {
+            return nil
+        }
+        return PluginViewDrag.decode(dragged, into: target)
+    }
+
+    private static func dragPayloads(in node: PluginViewNode) -> [String] {
+        var out: [String] = []
+        if case let .dragSource(payload, _) = node { out.append(payload) }
+        for child in children(of: node) {
+            out.append(contentsOf: dragPayloads(in: child))
+        }
+        return out
+    }
+
+    /// Both drag wrappers are transparent by construction (T-056): they add a gesture and
+    /// nothing to the layout. Every structural assertion looks through them, exactly as
+    /// the renderer does — a card is still a card whether or not you can pick it up.
+    private static func unwrapped(_ node: PluginViewNode) -> PluginViewNode {
+        switch node {
+        case let .dragSource(_, children), let .dropTarget(_, children):
+            return children.count == 1 ? unwrapped(children[0]) : node
+        default:
+            return node
         }
     }
 
@@ -1523,6 +1802,9 @@ private actor KanbanBridge: KanbanIntentBridge {
     static let agentPaneID = "CCCCCCCC-3333-0000-0000-000000000041"
     private var viewportText = ""
     private var viewportExited = false
+    private var installedAgents: [(id: String, label: String)] = [
+        (id: "claude", label: "Claude Code")
+    ]
 
     init(
         workspaces: [Workspace],
@@ -1544,6 +1826,12 @@ private actor KanbanBridge: KanbanIntentBridge {
 
     func requests() -> [PluginIntentSendRequest] { recorded }
 
+    /// How many board reads have happened — the clock a test can wait on when the thing it
+    /// wants to prove is that something did NOT happen.
+    func reads() -> Int {
+        recorded.filter { $0.intentID.rawValue == "filesystem.file.read.v1" }.count
+    }
+
     func fileContents(_ path: String) -> String? { files[path] }
 
     func setViewport(text: String, exited: Bool = false) {
@@ -1552,6 +1840,12 @@ private actor KanbanBridge: KanbanIntentBridge {
     }
 
     func setFile(_ path: String, to text: String) { files[path] = text }
+
+    /// Which agents this machine reports. Two of them is the case where a card cannot
+    /// choose for the person.
+    func setInstalledAgents(_ agents: [(id: String, label: String)]) {
+        installedAgents = agents
+    }
 
     func send(_ request: PluginIntentSendRequest) -> IntentResult {
         recorded.append(request)
@@ -1600,6 +1894,33 @@ private actor KanbanBridge: KanbanIntentBridge {
             }
         case "filesystem.file.write.v1":
             return write(request)
+        case "agent.inventory.v1":
+            value = .object([
+                "agents": .array(installedAgents.map { agent in
+                    .object([
+                        "id": .string(agent.id),
+                        "label": .string(agent.label),
+                        "arguments": .array([.string("--model"), .string("opus")]),
+                        "habit": .string("Model opus"),
+                    ])
+                })
+            ])
+        case "agent.command.v1":
+            // The host is the only place that knows this person runs `--model opus`. What
+            // the board proves is that it asks, and then runs the answer unedited.
+            let prompt = request.input.objectValue?["prompt"]?.stringValue ?? ""
+            value = .object([
+                "agent": .string("claude"),
+                "commandLine": .string(
+                    "/opt/bin/claude --model opus '\(prompt)'"
+                ),
+                "arguments": .array([
+                    .string("--model"),
+                    .string("opus"),
+                    .string(prompt),
+                ]),
+                "handoff": .bool(false),
+            ])
         case "terminal.open.v1":
             value = .object(["paneID": .string(Self.agentPaneID)])
         case "terminal.viewport.read.v1":

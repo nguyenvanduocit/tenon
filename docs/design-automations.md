@@ -200,7 +200,7 @@ recorded in T-048.
 ## The operations surface (T-060, moved to Canvas)
 
 Automation has a host-native Canvas control center. It is operational workspace content,
-alongside Changes and Docs, rather than a settings form: a person can keep what runs next,
+alongside Changes, rather than a settings form: a person can keep what runs next,
 what needs attention, and the exact delivery evidence visible next to the terminals they
 supervise. Settings ▸ Automation contains configuration only. Its global **Enable scheduled
 automations** preference is persisted, defaults on when an older preferences document lacks

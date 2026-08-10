@@ -3,6 +3,9 @@
 # runs without -derivedDataPath. See scripts/prune-build-cache.sh.
 .build/
 /build/
+# The vendored grammar compiles in place, so its object tree lands beside the
+# sources that ARE tracked (6.2 MB of it).
+Vendor/*/build/
 
 # Prebuilt GhosttyKit — downloaded by scripts/setup-ghosttykit.sh, never committed.
 # Only the script and GhosttyKit/module.modulemap are tracked (see CLAUDE.md).

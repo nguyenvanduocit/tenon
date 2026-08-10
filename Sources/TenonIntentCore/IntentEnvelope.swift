@@ -52,15 +52,18 @@ public struct IntentPrincipal: Sendable, Equatable, Hashable, Codable {
 
 public struct InvocationScope: Sendable, Equatable, Hashable, Codable {
     public let workspaceID: UUID?
+    public let tabID: UUID?
     public let paneID: UUID?
     public let userGestureID: UUID?
 
     public init(
         workspaceID: UUID? = nil,
+        tabID: UUID? = nil,
         paneID: UUID? = nil,
         userGestureID: UUID? = nil
     ) {
         self.workspaceID = workspaceID
+        self.tabID = tabID
         self.paneID = paneID
         self.userGestureID = userGestureID
     }
@@ -69,24 +72,31 @@ public struct InvocationScope: Sendable, Equatable, Hashable, Codable {
 /// Caller-selectable entity retargeting for an intent invocation.
 ///
 /// The user-gesture token is intentionally absent: only the host can mint or
-/// preserve that proof. Retargeting a workspace without also naming a pane
-/// clears the inherited pane so an old pane cannot leak into a new workspace.
+/// preserve that proof. Scope follows the workspace → tab → pane hierarchy:
+/// retargeting a workspace clears an inherited tab and pane, while retargeting
+/// a tab clears an inherited pane.
 public struct InvocationScopeOverride: Sendable, Equatable, Hashable, Codable {
     public let workspaceID: UUID?
+    public let tabID: UUID?
     public let paneID: UUID?
 
     public init(
         workspaceID: UUID? = nil,
+        tabID: UUID? = nil,
         paneID: UUID? = nil
     ) {
         self.workspaceID = workspaceID
+        self.tabID = tabID
         self.paneID = paneID
     }
 
     public func applying(to inherited: InvocationScope) -> InvocationScope {
         InvocationScope(
             workspaceID: workspaceID ?? inherited.workspaceID,
-            paneID: paneID ?? (workspaceID == nil ? inherited.paneID : nil),
+            tabID: tabID ?? (workspaceID == nil ? inherited.tabID : nil),
+            paneID: paneID ?? (
+                workspaceID == nil && tabID == nil ? inherited.paneID : nil
+            ),
             userGestureID: inherited.userGestureID
         )
     }

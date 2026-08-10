@@ -6,8 +6,8 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
     func testInstallChannelsKeepSingletonAndDurableStateIsolationClosed() throws {
         let channel = try source("TenonApp/AppInstanceChannel.swift")
         let paths = try source("TenonApp/AppStatePaths.swift")
-        let socket = try source("TenonApp/CLISocketServer.swift")
         let app = try source("TenonApp/TenonApp.swift")
+        let socket = try source("TenonApp/CLISocketServer.swift")
         let hooks = try source("TenonApp/AgentSessionHooks.swift")
         let cliInstaller = try source("TenonApp/CLICommandInstaller.swift")
         let stableInstaller = try String(
@@ -580,6 +580,9 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "case .fillEmptyGrid: host.commandIndex.paneFillersOnly",
                 "var agentSuggestions: [AgentLaunchSuggestion]",
                 "var launchAgent: ((AgentLaunchSuggestion) -> LauncherOutcome)?",
+                "var copyTabID: (() -> Void)?",
+                "Button(\"Copy Tab ID\", systemImage: \"doc.on.doc\")",
+                "tenon.launcher.copyTabID",
             ],
             file: "LauncherMenu.swift"
         )
@@ -590,21 +593,119 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
         assertContains(
             tabChipLauncher,
+            ["tabLauncher(for: tab)"],
+            file: "ShellTitleBar.swift tab-chip launcher anchor"
+        )
+        let tabLauncher = try sourceSlice(
+            titleBar,
+            from: "private func tabLauncher(for tab: TenonCore.Tab) -> LauncherMenu",
+            before: "private var rightZone: some View"
+        )
+        assertContains(
+            tabLauncher,
             [
                 "LauncherMenu(",
                 "placement: .tab(tab.id)",
                 "await send(commandID, onTab: tab.id)",
+                "copyTabID: { WorkspaceIdentifierClipboard.copy(tab.id) }",
             ],
-            file: "ShellTitleBar.swift tab-chip launcher"
+            file: "ShellTitleBar.swift tab-chip launcher content"
         )
         XCTAssertFalse(
-            tabChipLauncher.contains("sendInNewTab"),
+            tabLauncher.contains("sendInNewTab"),
             "the tab-chip anchor must keep targeting the clicked tab"
+        )
+        let tabChip = try sourceSlice(
+            titleBar,
+            from: "struct TabChip: View",
+            before: "struct TabStripSurface"
+        )
+        assertContains(
+            tabChip,
+            [
+                "let openLauncher: () -> Void",
+                ".overlay(RightClickCatcher(action: openLauncher))",
+                "struct RightClickCatcher: NSViewRepresentable",
+                "NSEvent.addLocalMonitorForEvents",
+                "override func hitTest(_ point: NSPoint) -> NSView? { nil }",
+            ],
+            file: "ShellTitleBar.swift tab-chip right-click"
+        )
+        XCTAssertFalse(
+            tabChip.contains("NSApp.currentEvent"),
+            "the right-click observer must never enter hit-testing or steal a tab drag"
+        )
+        XCTAssertTrue(
+            titleBar.contains("TabStripSurface("),
+            "the shared launcher seam must preserve the strip's own pointer surface"
+        )
+        // The strip is drawn inside the title-bar band, and AppKit builds a drag region for
+        // that band which the window server moves the window from. A view leaves the region
+        // by answering `mouseDownCanMoveWindow` with `false`, being an `NSControl`, **and
+        // accepting first responder** — the region builder ignores a plain NSView saying it,
+        // and puts a control that refuses first responder back inside. Three fixes shipped
+        // against the first half of that rule, and a fourth shipped against the second: this
+        // file used to require `acceptsFirstResponder = false` here, which is precisely what
+        // handed every chip back to the window server.
+        XCTAssertTrue(
+            titleBar.contains("override var mouseDownCanMoveWindow: Bool { false }"),
+            "a tab drag must stay in the app instead of becoming a window move"
+        )
+        XCTAssertTrue(
+            titleBar.contains("final class SurfaceView: NSControl"),
+            "only an NSControl descendant is honoured by the window's drag-region builder"
+        )
+        XCTAssertFalse(
+            titleBar.contains("override var acceptsFirstResponder"),
+            """
+            answering acceptsFirstResponder at all puts the chips back inside the drag \
+            region; the keyboard is kept by never calling super in the mouse path, and \
+            TabStripReorderTests drives that consequence rather than asserting the property
+            """
+        )
+        XCTAssertTrue(
+            titleBar.contains("override var canBecomeKeyView: Bool { false }"),
+            "the strip still stays out of the Tab key-view loop, which the region tolerates"
+        )
+        // T-105: a chip's fallback name is the tab's own number. Deriving it from the tab's
+        // place made a working reorder invisible — the chips swapped and the labels swapped
+        // back — so the strip is held to reading the number off the tab.
+        XCTAssertTrue(
+            titleBar.contains(#""Terminal \(tab.number)""#),
+            "a chip's fallback name must come from the tab, not from where the tab stands"
+        )
+        XCTAssertFalse(
+            titleBar.contains("index + 1"),
+            "numbering a tab by its position renames it every time the strip is reordered"
+        )
+        XCTAssertTrue(
+            titleBar.contains("pressed: pressStrip") && titleBar.contains("hovered: hoverStrip"),
+            "owning the strip's pointer means owning the click and the hover it took"
+        )
+        // A surface that claims the point only sometimes leaves the window server holding it
+        // the rest of the time, which is how the first fix for this failed.
+        XCTAssertFalse(
+            titleBar.contains("NSApplication.shared.currentEvent")
+                || titleBar.contains("claimsPointer"),
+            "the strip's surface must claim its region unconditionally, not per event"
+        )
+        XCTAssertTrue(
+            try source("TenonApp/WindowChrome.swift").contains("isMovableByWindowBackground = false")
+                && titleBar.contains("WindowDragArea(color: TenonTheme.chromeNS)"),
+            "only the empty title bar asks for a window drag, and it asks explicitly"
+        )
+        XCTAssertFalse(
+            tabChip.contains(".contextMenu"),
+            "a tab right-click must open LauncherMenu directly, not a native menu first"
+        )
+        XCTAssertFalse(
+            titleBar.contains("Open Something New…"),
+            "the tab launcher must not add an intermediate Open Something New item"
         )
         let plusLauncher = try sourceSlice(
             titleBar,
             from: "ShellIconButton(symbol: \"plus\", help: \"Open something new\")",
-            before: ".background(\n                    GeometryReader"
+            before: "GeometryReader { proxy in"
         )
         assertContains(
             plusLauncher,
@@ -931,8 +1032,8 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             before: "public struct IntentPrincipal"
         )
         for (name, inventory, expectedCases) in [
-            ("CoreIntentName", coreIntentInventory, 43),
-            ("CoreIntentExecutionLane", laneInventory, 11),
+            ("CoreIntentName", coreIntentInventory, 46),
+            ("CoreIntentExecutionLane", laneInventory, 12),
             ("IntentAudience", audienceInventory, 5),
         ] {
             XCTAssertEqual(

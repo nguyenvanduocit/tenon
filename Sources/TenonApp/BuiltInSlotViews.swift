@@ -7,6 +7,9 @@ import TenonIntentCore
 
 struct BuiltInSlotContentView: View {
     let slot: WorkspaceSlot
+    /// The workspace that owns this pane, handed down the canvas rather than looked up. An
+    /// empty pane's launcher offers this workspace's recents and nothing else.
+    let workspaceID: UUID
     let workspacePath: URL
     var host: PluginHost
     var pool: SurfacePool
@@ -84,13 +87,6 @@ struct BuiltInSlotContentView: View {
                 store: store
             )
 
-        case .docs:
-            DocsSlotView(
-                root: workspacePath,
-                slotID: slot.id,
-                headerStore: headerStore
-            )
-
         case .automation:
             AutomationSlotView(
                 slotID: slot.id,
@@ -120,6 +116,7 @@ struct BuiltInSlotContentView: View {
         case .empty:
             EmptySlotView(
                 slotID: slot.id,
+                workspaceID: workspaceID,
                 store: store,
                 pool: pool,
                 agentSuggestions: agentSuggestions,
@@ -147,13 +144,6 @@ enum SlotPresentation {
             return (path as NSString).lastPathComponent
         case .changes:
             return "Changes — working tree"
-        case .docs:
-            // The kind, never the file. Which document a docs pane shows is decided by walking
-            // a candidate list against the filesystem inside `DocsModel`, and this function
-            // sees only `SlotContent`, which carries no filename — so any file named here
-            // would be a guess that goes wrong the moment the first candidate is absent. The
-            // pane publishes the real name into its chrome header (`DocsPaneHeader`).
-            return "Docs"
         case .automation:
             return "Automation"
         case .pluginView(let pluginID, let viewID):
@@ -197,8 +187,6 @@ enum SlotPresentation {
             return "F"
         case .changes:
             return "±"
-        case .docs:
-            return "#"
         case .automation:
             return "↻"
         case .pluginView:
@@ -207,161 +195,6 @@ enum SlotPresentation {
             return "Δ"
         case .empty:
             return "·"
-        }
-    }
-}
-
-// MARK: - Docs  @domain: plugin-contributions
-
-@MainActor
-@Observable
-private final class DocsModel {
-    private(set) var content = ""
-    private(set) var error: String?
-    private(set) var isLoading = false
-    /// The workspace-relative name of the file `content` came from — the candidate that won
-    /// the walk below, not a guess. It is published into the chrome header because this object
-    /// is the only thing in the process that knows the answer.
-    private(set) var document: String?
-
-    private var path: URL?
-    private var task: Task<Void, Never>?
-
-    func load(_ workspacePath: URL) {
-        let standardized = workspacePath.standardizedFileURL
-        guard path != standardized else { return }
-        path = standardized
-        task?.cancel()
-        content = ""
-        error = nil
-        document = nil
-        isLoading = true
-
-        task = Task { [weak self] in
-            do {
-                // The winning candidate comes back WITH the text rather than being recomputed
-                // for display: two walks of the same list against a filesystem that can change
-                // between them is two answers to one question.
-                let result = try await Task.detached(priority: .userInitiated) {
-                    let candidates = ["README.md", "VISION.md", "docs/README.md"]
-                    guard let candidate = candidates
-                        .first(where: {
-                            FileManager.default.fileExists(
-                                atPath: standardized.appendingPathComponent($0).path
-                            )
-                        })
-                    else {
-                        throw CocoaError(.fileNoSuchFile)
-                    }
-                    let url = standardized.appendingPathComponent(candidate)
-                    let handle = try FileHandle(forReadingFrom: url)
-                    defer { try? handle.close() }
-                    let data = try handle.read(upToCount: 600_000) ?? Data()
-                    return (
-                        name: candidate,
-                        text: String(data: data, encoding: .utf8)
-                            ?? "Document is not UTF-8 text."
-                    )
-                }.value
-                guard !Task.isCancelled else { return }
-                self?.content = result.text
-                self?.document = result.name
-                self?.isLoading = false
-            } catch {
-                guard !Task.isCancelled else { return }
-                self?.isLoading = false
-                self?.error = "No README or workspace document found."
-            }
-        }
-    }
-
-    func cancel() {
-        task?.cancel()
-    }
-}
-
-/// What the docs pane contributes to the ONE chrome header the card draws.
-///
-/// The document's name is here rather than in `SlotPresentation.title` because of what that
-/// function *is*: a pure map from `SlotContent` to a string, and `SlotContent.docs` carries no
-/// filename. Which document loaded is decided inside `DocsModel`, by walking a candidate list
-/// against the filesystem, and that answer lives in a `@State` model in the content view's own
-/// SwiftUI graph — the graph `PaneHeaderStore` exists to carry values OUT of. So the title
-/// names the KIND ("Docs") and this names the INSTANCE, which is the only division under which
-/// neither can be wrong.
-///
-/// That is not the restatement the second header row was doing. The strip this replaces printed
-/// `README.md` under a chrome header that had already printed `Docs — README`; here the chrome
-/// says one thing, the header says the other, and only one of them can know the filename.
-///
-/// Pure and headless for the same reason `DiffPaneHeader` is: the rule is arithmetic over the
-/// pane's state, and nothing about it needs a window to be true.
-enum DocsPaneHeader {
-    /// - Parameter document: the workspace-relative name of the file the pane actually loaded,
-    ///   or `nil` before the read lands and after one that found nothing.
-    static func header(document: String?, isLoading: Bool) -> PaneHeader {
-        PaneHeader(
-            leading: document.map {
-                [
-                    // `.head`, because a candidate can be a path (`docs/README.md`) and the
-                    // filename is the end that carries the meaning.
-                    .label(
-                        id: "document",
-                        text: $0,
-                        weight: .semibold,
-                        color: .text,
-                        truncation: .head,
-                        tooltip: nil
-                    ),
-                ]
-            } ?? [],
-            trailing: isLoading ? [.spinner(id: "loading")] : []
-        )
-    }
-}
-
-private struct DocsSlotView: View {
-    let root: URL
-    /// Which pane this is, and where its header contribution goes UP — the projected value
-    /// comes back DOWN through `SpatialSlotCardView.configure`.
-    let slotID: UUID
-    let headerStore: PaneHeaderStore
-    @State private var model = DocsModel()
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            ScrollView([.horizontal, .vertical]) {
-                Text(model.content)
-                    .font(TenonTheme.utilityFont(size: 10))
-                    .foregroundStyle(TenonTheme.text.opacity(0.86))
-                    .textSelection(.enabled)
-                    .lineSpacing(3)
-                    .padding(12)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-            }
-            .tenonScrollbarStyle()
-
-            if let error = model.error {
-                Text(error)
-                    .font(TenonTheme.utilityFont(size: 9))
-                    .foregroundStyle(TenonTheme.muted)
-                    .padding(10)
-            }
-        }
-        .background(TenonTheme.panel)
-        .onAppear { model.load(root) }
-        .onChange(of: root) { _, newRoot in model.load(newRoot) }
-        // Published from `.onChange`, never from `body`. `initial: true` covers the first
-        // frame, where the model is already loading and the pane has something to say.
-        .onChange(
-            of: DocsPaneHeader.header(document: model.document, isLoading: model.isLoading),
-            initial: true
-        ) { _, next in
-            headerStore.publish(next, for: slotID)
-        }
-        .onDisappear {
-            model.cancel()
-            headerStore.clear(for: slotID)
         }
     }
 }
@@ -435,7 +268,15 @@ struct PluginSlotView: View {
                             )
                                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                         )
-                    }
+                    },
+                    // A drag belongs to the instance that drew it: the same board open in
+                    // two panes is two scopes, and a card picked up in one is refused by
+                    // the other (T-012, T-056).
+                    dragScope: PluginViewDragScope(
+                        pluginID: pluginID,
+                        viewID: viewID,
+                        instanceID: section.instanceID
+                    )
                 )
                 if Self.containsWebview(tree) {
                     // A web-hosting view (a browser): fill the pane, no scroll or padding,
@@ -563,6 +404,10 @@ struct PluginNodeView: View {
     /// Renders a `webview` node's host-owned `WKWebView` surface; nil outside a pane,
     /// where the node degrades to a placeholder.
     var webSurface: ((String) -> AnyView)? = nil
+    /// Which plugin view instance this tree belongs to (T-056). A `dragSource` is only
+    /// draggable, and a `dropTarget` only admits a drop, inside one scope; nil renders both
+    /// as the plain containers they otherwise are.
+    var dragScope: PluginViewDragScope? = nil
 
     var body: some View {
         switch node {
@@ -667,6 +512,14 @@ struct PluginNodeView: View {
             PluginTextFieldView(value: value, placeholder: placeholder) { text in
                 onAction(action, text)
             }
+        case let .dragSource(payload, children):
+            dragSourceView(payload, children)
+        case let .dropTarget(action, children):
+            PluginDropTargetView(
+                action: action,
+                scope: dragScope,
+                onAction: onAction
+            ) { AnyView(wrapped(children)) }
         case let .webview(surfaceID):
             if let webSurface {
                 webSurface(surfaceID)
@@ -717,12 +570,40 @@ struct PluginNodeView: View {
         .tenonScrollbarStyle()
     }
 
+    /// A drag wrapper adds a gesture and nothing else, so it lays its children out exactly
+    /// as they would lay themselves out: leading-aligned, no spacing of its own. Around the
+    /// single child both wrappers actually take, this is the child.
+    private func wrapped(_ children: [PluginViewNode]) -> some View {
+        VStack(alignment: .leading, spacing: 0) { childViews(children) }
+    }
+
+    /// The payload rides the drag as plain text carrying its own scope, and the scope is
+    /// checked on arrival — see `PluginViewDrag`. An empty or over-long payload leaves the
+    /// subtree in place and simply undraggable.
+    @ViewBuilder
+    private func dragSourceView(
+        _ payload: String,
+        _ children: [PluginViewNode]
+    ) -> some View {
+        if let dragScope,
+           let encoded = PluginViewDrag.encode(payload: payload, from: dragScope) {
+            wrapped(children).draggable(encoded)
+        } else {
+            wrapped(children)
+        }
+    }
+
     /// Siblings are identified by what they are, not by where they sit: a field's draft and a
     /// live web surface have to survive the plugin inserting a row above them.
     @ViewBuilder
     private func childViews(_ children: [PluginViewNode]) -> some View {
         ForEach(IdentifiedPluginViewNode.identify(children)) { child in
-            PluginNodeView(node: child.node, onAction: onAction, webSurface: webSurface)
+            PluginNodeView(
+                node: child.node,
+                onAction: onAction,
+                webSurface: webSurface,
+                dragScope: dragScope
+            )
         }
     }
 
@@ -752,6 +633,53 @@ struct PluginNodeView: View {
         }
     }
 
+}
+
+/// A subtree that accepts a drag from its own view instance and fires the target's action
+/// with the dragged payload (T-056).
+///
+/// The refusal lives in `PluginViewDrag.decode`, which is why this view can answer the
+/// drag honestly: a string from another plugin, another instance, or another app decodes to
+/// nothing, the drop returns `false`, and no event reaches the generation. What it cannot
+/// answer honestly is the *highlight* — SwiftUI decides that from the dragged type alone,
+/// so text dragged in from another app still lights the target up before being refused.
+private struct PluginDropTargetView<Content: View>: View {
+    let action: String
+    let scope: PluginViewDragScope?
+    let onAction: (String, String?) -> Void
+    @ViewBuilder let content: () -> Content
+
+    @State private var isTargeted = false
+
+    var body: some View {
+        if action.isEmpty || scope == nil {
+            content()
+        } else {
+            content()
+                .dropDestination(for: String.self) { items, _ in
+                    accept(items)
+                } isTargeted: { targeted in
+                    isTargeted = targeted
+                }
+                .overlay {
+                    if isTargeted {
+                        RoundedRectangle(cornerRadius: 8)
+                            .stroke(TenonTheme.amber, lineWidth: 2)
+                            .allowsHitTesting(false)
+                    }
+                }
+        }
+    }
+
+    private func accept(_ items: [String]) -> Bool {
+        guard let scope else { return false }
+        for item in items {
+            guard let payload = PluginViewDrag.decode(item, into: scope) else { continue }
+            onAction(action, payload)
+            return true
+        }
+        return false
+    }
 }
 
 /// The ONE place a `ColorToken` becomes a `Color`.
@@ -784,8 +712,15 @@ enum ViewTokenPalette {
 
 /// An empty pane reuses the empty-tab launcher card; its actions fill this exact
 /// slot in place via `setSlotContent` rather than adding a new one.
-private struct EmptySlotView: View {
+///
+/// Internal rather than private so `WorkspaceRecentLauncherTests` can mount it offscreen and
+/// check that the workspace it is handed is the workspace whose recents it draws.
+struct EmptySlotView: View {
     let slotID: UUID
+    /// Received, never derived. `setSlotContent` files the opened view against the workspace
+    /// its own event names, so this pane's launcher and the record it produces agree by
+    /// construction — including for a pane in a workspace that is not the selected one.
+    let workspaceID: UUID
     var store: WorkspaceStore?
     let pool: SurfacePool
     let agentSuggestions: [AgentLaunchSuggestion]
@@ -795,7 +730,7 @@ private struct EmptySlotView: View {
         EmptyStateCard(
             title: "This panel is empty",
             subtitle: "No terminal running yet",
-            recents: store?.recent?.recent ?? [],
+            recents: store?.recent?.recent(for: workspaceID) ?? [],
             agentSuggestions: agentSuggestions,
             isDefaultAction: isActive,
             onLaunch: { store?.setSlotContent(slotID, $0) },

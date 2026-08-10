@@ -68,6 +68,16 @@ protocol TerminalSurface: AnyObject {
     /// agent presentation uses this to prove a composer still targets the same TUI before
     /// writing; it is not projected onto the public terminal intent surface.
     var foregroundPID: UInt64? { get }
+
+    /// The pane's controlling terminal, as a device path such as `/dev/ttys011`.
+    ///
+    /// This is the pane's process *provenance*, and it is a different kind of fact from
+    /// `foregroundPID`: it is fixed for the lifetime of the surface, so the resource monitor
+    /// can attribute a whole process tree to this pane and keep attributing it while shell
+    /// jobs start, background, and exit. A foreground PID moves every time somebody runs a
+    /// command, which is why it marks a row and never decides who owns one. A backend with no
+    /// PTY has no provenance to give and keeps the `nil` default below.
+    var ttyName: String? { get }
 }
 
 extension TerminalSurface {
@@ -92,6 +102,7 @@ extension TerminalSurface {
     var processExited: Bool { false }
     var commandFinishedCount: Int { 0 }
     var foregroundPID: UInt64? { nil }
+    var ttyName: String? { nil }
 }
 
 // MARK: - Stub backend

@@ -1182,6 +1182,22 @@ final class GhosttyNSView: NSView {
         return ghostty_surface_foreground_pid(surface)
     }
 
+    /// The pane's PTY path, copied out of libghostty's allocation.
+    ///
+    /// `ghostty_surface_tty_name` hands back a `ghostty_string_s` that Tenon owns and must
+    /// return exactly once. The bytes are copied into a Swift `String` before the `defer`
+    /// frees them, so nothing here escapes holding a pointer into freed memory — and the free
+    /// runs on every exit path, including the one where the bytes are not valid UTF-8.
+    var ttyName: String? {
+        guard let surface else { return nil }
+        let reported = ghostty_surface_tty_name(surface)
+        defer { ghostty_string_free(reported) }
+        guard let pointer = reported.ptr, reported.len > 0 else { return nil }
+        let bytes = UnsafeRawBufferPointer(start: pointer, count: Int(reported.len))
+        let copied = String(decoding: bytes, as: UTF8.self)
+        return copied.isEmpty ? nil : copied
+    }
+
     var processExited: Bool {
         guard let surface else { return false }
         return ghostty_surface_process_exited(surface)
@@ -1308,6 +1324,7 @@ final class GhosttySurface: TerminalSurface {
     var commandFinishedCount: Int { view.commandFinishedCount }
     var surfaceSize: GhosttySurfaceSize? { view.surfaceSize }
     var foregroundPID: UInt64? { view.foregroundPID }
+    var ttyName: String? { view.ttyName }
     var processExited: Bool { view.processExited }
     var appliedDisplayID: UInt32? { view.appliedDisplayID }
     var nativeView: NSView { view }

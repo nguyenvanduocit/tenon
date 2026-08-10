@@ -96,20 +96,12 @@ private extension TerminalIntentProvider {
         do {
             let object = try AppIntentProviderSupport.object(envelope.input)
             let text = try AppIntentProviderSupport.string("text", in: object)
-            switch PaneTarget.resolve(
-                explicit: envelope.scope.paneID,
-                in: store.catalog,
-                requireTerminal: true
-            ) {
+            switch terminalTarget(for: envelope.scope) {
             case let .resolved(paneID):
                 surfaces.sendTextWhenReady(text, to: paneID)
                 return AppIntentProviderSupport.emptySuccess
-            case .paneNotFound:
-                return failure("pane-scope-not-found")
-            case .notATerminal:
-                return failure("pane-is-not-a-terminal")
-            case .noActivePane:
-                return failure("active-terminal-not-found")
+            case let .unavailable(reason):
+                return failure(reason)
             }
         } catch let error as AppIntentInputError {
             return AppIntentProviderSupport.invalidInput(error)
@@ -480,6 +472,16 @@ private extension TerminalIntentProvider {
     }
 
     func terminalTarget(for scope: InvocationScope) -> Target {
+        if scope.paneID == nil, scope.tabID != nil {
+            guard let scoped = scopedTab(for: scope) else {
+                return .unavailable("tab-scope-not-found")
+            }
+            guard let paneID = preferredTerminal(in: scoped.tab) else {
+                return .unavailable("active-terminal-not-found")
+            }
+            return .resolved(paneID)
+        }
+
         switch PaneTarget.resolve(
             explicit: scope.paneID,
             in: store.catalog,
@@ -510,6 +512,11 @@ private extension TerminalIntentProvider {
             return paneID
         }
 
+        if scope.paneID == nil, scope.tabID != nil {
+            guard let scoped = scopedTab(for: scope) else { return nil }
+            return preferredTerminal(in: scoped.tab)
+        }
+
         let workspace: Workspace?
         if let workspaceID = scope.workspaceID {
             workspace = store.catalog.workspaces.first {
@@ -537,19 +544,10 @@ private extension TerminalIntentProvider {
             preferredTab = workspace.activeTab
         }
 
-        if let preferredTab {
-            if let activePaneID = preferredTab.activeSlotID,
-               preferredTab.slots.first(where: {
-                   $0.id == activePaneID
-               })?.content == .terminal
-            {
-                return activePaneID
-            }
-            if let inTab = preferredTab.slots.first(where: {
-                $0.content == .terminal
-            }) {
-                return inTab.id
-            }
+        if let preferredTab,
+           let paneID = preferredTerminal(in: preferredTab)
+        {
+            return paneID
         }
 
         for tab in workspace.tabs where tab.id != preferredTab?.id {
@@ -564,7 +562,9 @@ private extension TerminalIntentProvider {
 
     func selectWorkspace(for scope: InvocationScope) -> Bool {
         let workspaceID: UUID?
-        if let scoped = scope.workspaceID {
+        if scope.paneID == nil, scope.tabID != nil {
+            workspaceID = scopedTab(for: scope)?.workspaceID
+        } else if let scoped = scope.workspaceID {
             workspaceID = scoped
         } else if let paneID = scope.paneID {
             workspaceID = store.catalog.workspaces.first { workspace in
@@ -584,6 +584,31 @@ private extension TerminalIntentProvider {
         }
         store.selectWorkspace(workspaceID)
         return store.catalog.activeWorkspaceID == workspaceID
+    }
+
+    func scopedTab(
+        for scope: InvocationScope
+    ) -> (workspaceID: UUID, tab: Tab)? {
+        guard let tabID = scope.tabID else { return nil }
+        for workspace in store.catalog.workspaces {
+            guard let tab = workspace.tabs.first(where: { $0.id == tabID }) else {
+                continue
+            }
+            guard scope.workspaceID.map({ $0 == workspace.id }) ?? true else {
+                return nil
+            }
+            return (workspace.id, tab)
+        }
+        return nil
+    }
+
+    func preferredTerminal(in tab: Tab) -> UUID? {
+        if let activePaneID = tab.activeSlotID,
+           tab.slots.first(where: { $0.id == activePaneID })?.content == .terminal
+        {
+            return activePaneID
+        }
+        return tab.slots.first(where: { $0.content == .terminal })?.id
     }
 
     func failure(_ reason: String) -> IntentProviderReply {

@@ -66,6 +66,10 @@ Rules:
 - Use the accent for current selection, focus, primary action, and small orientation marks.
 - Do not assign decorative blue/orange/purple identities to feature modes. Additional
   colors require real status semantics such as success, warning, or destructive action.
+- A colour a *person* picked for one of their own objects—a workspace's tint—is the one
+  exception, and it is not a licence to introduce a palette: offer `AccentColor`, resolve it
+  through `TenonTheme.accentColor`, and pair it with a shape (a chosen mark, a ring, a check)
+  so the object stays identifiable when the colour is not.
 - Large amber fills are exceptional. Most selected states use a restrained tint or one
   compact filled control.
 

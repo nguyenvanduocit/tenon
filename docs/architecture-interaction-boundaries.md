@@ -209,10 +209,24 @@ Current DIRECT inventory:
   with no public principal, provider selection, or independent lifetime. Authority is the
   accepted in-window gesture; failure to prove idleness asks rather than destroys, and the
   shared inspector serializes its short local reads while the title bar retains only the
-  newest request identity, so a superseded result cannot mutate workspace state.
+  newest request identity, so a superseded result cannot mutate workspace state. A tab-reorder
+  gesture (T-096) is one pointer drag inside the strip that started it: the chip travels on no
+  pasteboard, so there is no path into another workspace, window, or application to refuse,
+  and the operation names only the active workspace, so moving a tab between workspaces is
+  not a case it can express. The rules are pure `TabReorder`, the mutation is the typed
+  `WorkspaceStore.moveTab`, and the resulting order is published on the existing
+  `workspace/tab/pane/content/focus` EVENT family. It registers no host-wide command and no
+  keybinding, so it stays focused-view local control; VoiceOver reaches the same typed
+  mutation through the chip's own custom actions rather than through a second path. The
+  tab Copy ID row and pane menu copy their host-owned stable UUIDs as raw text so a
+  person can designate the same tab or pane through CLI/agent intent scope; writing that
+  value to the pasteboard is one finite same-owner UI action, and each surface's VoiceOver
+  action enters the same clipboard route.
   **why not a plugin:** no CONTRIBUTION declares fixed shell-footer Help or Feedback
   destinations or intercepts host tab chrome, no EVENT exposes host-private terminal process
-  occupancy, and no plugin-owned INTENT owns the app's Settings scene or a host tab close;
+  occupancy, no CONTRIBUTION or INTENT places a chip or identity action in the host's own tab
+  or pane chrome or accepts a pointer gesture inside it, and no plugin-owned INTENT owns the
+  app's Settings scene or a host tab close;
 - app lifecycle and composition-root wiring;
 - install-channel routing: the exact closed set `{production, staging}` is resolved from
   the app bundle identity at the composition root. Each channel is a singleton within
@@ -233,11 +247,10 @@ Current DIRECT inventory:
   and the host-native completion-notification adapter. No plugin EVENT exists for this
   state; if a plugin ever needs visibility into pane attention, that is a NEW classified
   EVENT admitted through this law's ordered decision — never a reuse of this host state;
-- launcher surfaces and tab-context placement (T-039, AIO-8): the title-bar `+`, a tab
-  right-click, and a right-click on an unoccupied spatial-grid cell all host the same
-  `LauncherMenu`, which alone selects and ranks the appropriate `CommandIndex` projection
-  and merges the shell's bounded host-agent suggestion snapshot — there is no second
-  anchor-owned list or presentation. The ordinary launcher reads `launcherOnly`; an
+- launcher surfaces and tab-context placement (T-039, AIO-8): the title-bar `+` and an
+  unoccupied spatial-grid cell and a tab right-click host the same `LauncherMenu` popover.
+  `LauncherMenu` alone selects and ranks the appropriate `CommandIndex` projection, while
+  each anchor merges the shell's bounded host-agent suggestion snapshot. The ordinary launcher reads `launcherOnly`; an
   empty-grid launcher reads `paneFillersOnly`, derived from the declarative
   `palette.fillsPane` CONTRIBUTION, so structural actions such as New Tab and Split are not
   offered where they cannot satisfy the click. Detecting the clicked empty cell, resolving
@@ -350,13 +363,29 @@ Current DIRECT inventory:
   the **main frame** loads in place; a subframe's request is declined, because adopting it
   would let an embedded third party replace the pane's top-level document with no user
   gesture. Both rules are asserted without a window;
+- the read-only process resource monitor (T-100). Built-in SwiftUI reads immutable
+  `TelemetrySnapshot` values from `ProcessTelemetryCoordinator` and reveals a pane through the
+  typed `WorkspaceStore.focusSlot` already DIRECT above. **why not a plugin:** the missing
+  mechanism is an EVENT family for host-private process facts and a RESOURCE for a
+  visibility-scoped repeating sampler whose results are bounded trees of another process's
+  metrics — neither exists, and the EVENT inventory below states that host-private lifecycle
+  facts never reach a plugin or the dispatcher. Nothing about this crosses an ownership
+  boundary: the sampler reads Tenon's own panes' process trees, the coordinator is owned by
+  `AppComposition`, and the one action offered is navigation to a pane the host already owns.
+  No `tenon` member, no intent, no principal, no capability, no contribution. The repeating
+  sampler has internal **RESOURCE/STREAM/TASK** lifecycle semantics — visibility-scoped demand,
+  one sample in flight, one coalesced follow-up, lifecycle generation and provenance revision
+  rejecting late results, a 4,096-identity cap, 60 history samples per aggregate key, and
+  shutdown that cancels and awaits quiescence — but it is host-private and publishes no public
+  resource protocol. Its exclusion from plugin, CLI, and agent reach is deliberate and is a
+  privacy boundary, not an oversight: process names and PIDs stay inside the local app UI;
 - pure parsers, ranking, schemas, and value transformations;
 - `tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the
   plugin runtime as pure string functions.
 
 #### Adding a DIRECT entry
 
-This inventory has 17 entries, pinned in `DirectInventoryGateTests`.
+This inventory has 18 entries, pinned in `DirectInventoryGateTests`.
 
 Step 4 of the ordered decision law is self-ratifying. The five same-owner conditions in
 **Terms** — one semantic owner, no caller principal, no independent lifetime, no public
@@ -450,11 +479,24 @@ when the initial reply returns a handle through which the caller observes subseq
 values or controls an independently continuing lifetime. Rate-limited request progress is
 control-plane metadata, not an additional result.
 
-Workspace and pane designation lives in `options.scope.workspaceID/paneID`, not repeated in
-every input schema. Those IDs are explicit caller-selected designations, never authority:
+Workspace, tab, and pane designation lives in
+`options.scope.workspaceID/tabID/paneID`, not repeated in every input schema. Those IDs are
+explicit caller-selected designations, never authority:
 policy still authorizes the resolved resource for that principal. `userGestureID` is
 host-minted only. A provider's nested `call.send` preserves causal scope by default and may
 explicitly retarget only within that provider/plugin principal's own grants.
+
+Asking the host a question whose answer is host-owned knowledge is an INTENT for the same
+reason an action is. `agent.inventory.v1` and `agent.command.v1` (T-104) return no handle,
+mutate nothing, and start nothing — the first says which coding agents this machine has and
+which options this person passes them, the second composes the command line that would run
+one. Both were DIRECT `AgentLaunchDetector` calls reachable only from the host's own
+Launcher, so every plugin that started an agent invented `"claude " + quote(prompt)` and
+dropped the person's own options on the floor. Composition is finite, crosses the plugin
+principal boundary, and is authorized by the `terminal.write` capability the caller must
+already hold to do anything with the answer — which is also why neither contract needed a new
+capability. The pane that ends up running the line stays with `terminal.open.v1`: this pair
+answers *what to run*, never *where*.
 
 #### Canonical core intent inventory
 
@@ -472,8 +514,9 @@ requires the change protocol below.
 | Browser surface | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` | plugin |
 | User interaction | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1`, `ui.toast.v1` | plugin |
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
-| Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
+| Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
 | Network | `network.fetch.v1` | plugin, CLI, agent |
+| Agent | `agent.inventory.v1`, `agent.command.v1` | plugin, CLI, agent |
 
 Core intents have exactly two audience profiles:
 
@@ -495,13 +538,14 @@ execution topology is the following closed map:
 | `system` | `file.reveal.v1`, `file.open.v1`, `url.open.v1`, `clipboard.write.v1` |
 | `process` | `process.exec.v1` |
 | `network` | `network.fetch.v1` |
-| `workspace` | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
+| `workspace` | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
 | `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1` |
 | `terminalWait` | `terminal.wait.v1` |
 | `browser` | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` |
 | `userPrompt` | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1` |
 | `userNotification` | `ui.toast.v1` |
 | `secrets` | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` |
+| `agentImmediate` | `agent.inventory.v1`, `agent.command.v1` |
 
 Every core intent belongs to exactly one lane. Every lane owns a distinct bounded mailbox,
 which bounds both what may be **queued** and how many of its requests may be **running**.
@@ -540,7 +584,9 @@ caller's handle—such as a filesystem watch or process run—the interaction is
 
 Current EVENT inventory:
 
-- workspace/tab/pane/content/focus facts emitted by `WorkspaceStore`;
+- workspace/tab/pane/content/focus/identity facts emitted by `WorkspaceStore`.
+  `workspace.identity-changed` is the one that moves nothing: a workspace's name, mark or
+  tint changed and every tab, pane and selection stayed where it was;
 - terminal title, command-finished, exit, and other terminal facts;
 - host-private agent lifecycle facts reported by Codex and Claude provider hooks. Each
   adapter accepts an already-happened root session event (`session_id`, `transcript_path`)
@@ -662,6 +708,25 @@ Current RESOURCE inventory:
 - terminal surfaces and browser surfaces retained by their host pools;
 - Agent Lens transcript tails: one bounded, cancellable read resource for the exact
   hook-bound root transcript of a terminal-surface incarnation;
+- Agent Lens milestone synthesis (T-089): one bounded, cancellable reading of a pane's own
+  session, owned by that pane's `AgentLensViewModel` and dying with it. It sits on this rung
+  rather than DIRECT because it establishes a producer whose lifetime outlives the call that
+  started it: a person asks for a reading, watches it run, cancels it, asks again, and a
+  result that was superseded while in flight must not land. Owner: the pane. Capacity: one
+  run at a time per pane, arbitrated by a monotonic run token — cancelling advances past the
+  run in flight so its result can never be rendered. Overflow: the evidence digest is capped
+  at 320 facts and 96 KiB, the synthesis output at 64 KiB refused before parsing, the
+  subprocess at 512 KiB and a 180-second deadline after which it is terminated. Cancellation:
+  the pane cancels the task and the task terminates the process. Teardown: closing the slot,
+  or attaching to a different session, discards the reading — last session's milestones are
+  not this session's. Terminal state: a validated timeline, or a named failure.
+  **why not a plugin:** no EVENT or CONTRIBUTION carries Agent Lens's reconciled
+  transcript-plus-hook snapshot to a plugin, and by the EVENT inventory above those agent
+  lifecycle facts "are not exposed to plugins and never enter the intent dispatcher" — so
+  there is no mechanism through which a plugin could read the evidence this synthesizes, and
+  none is added here. What the reading *asks* is the person's own installed agent CLI, run
+  headlessly with no interactive input; the pane's presentation choice between the verbatim
+  and synthesized accounts is same-owner DIRECT UI state and mints no principal;
 - future large filesystem/process/terminal bodies returned as opaque handles.
 
 Plugin runtime retirement MUST cancel or retire every resource owned by that generation.
@@ -689,11 +754,43 @@ Current CONTRIBUTION inventory:
   its revision-scoped result snapshots (bounded; a publication for a superseded query
   revision is dropped; each result designates an intent the publishing plugin provides);
 - plugin view trees, rows, menus, and native component descriptions;
+- `dragSource`/`dropTarget` nodes inside a published view tree (T-056): which subtree a
+  pointer may pick up, what bounded string it carries, and which subtree accepts it;
 - plugin-owned intent contracts and their palette/registered-product-keybinding presentation
   metadata.
 
 Repeated publication replaces the contributor's previous state for the same key. Hot
 reload removes the retired generation's contributions atomically.
+
+#### Pointer drag-and-drop is CONTRIBUTION plus the existing select EVENT (T-056)
+
+A card dragged between two columns looks like a new mechanism and is not one. Walk the
+ordered law: the plugin publishes *which* subtree is draggable and *which* accepts a drop as
+declarative state inside the tree it already owns, and the host owns the gesture, the hit
+testing, the drag image, and the native pasteboard — rung 1, CONTRIBUTION. What comes back
+is a fact that already happened on the host's own UI channel, scoped to the publishing
+generation — rung 2, the *same* owner-scoped `views.onSelect` route a button press takes.
+The law stops there, so drag-and-drop adds no `tenon` member, no callback, and no intent.
+
+Consequences that follow from that classification, not from convenience:
+
+- **The drop is the target's action, and the payload is the source's string.** One event
+  shape, `onSelect(action, value)` — identical to a `textfield` submit. A second callback
+  for drops would be two public mechanisms performing one action (invariant 6).
+- **A payload is a bounded string and nothing else** (invariant 2). Not a handle, not a
+  node, not a native object; over the bound at the publication boundary, the subtree still
+  renders and is simply not draggable.
+- **Drag scope is the view instance.** The host admits a drop only when the drag started in
+  the same plugin, view, and instance the target belongs to. A drag from another plugin's
+  pane, from another instance of the same view, or from outside the app entirely is refused
+  and delivers nothing. Without that rule a foreign pasteboard string would enter a
+  generation's action route as if the plugin's own UI had produced it — a cross-principal
+  path that never passed the dispatcher.
+- **The pasteboard is not a trust boundary and is not treated as one.** Scope is carried in
+  the dragged string and checked on arrival; a local process that can already synthesise a
+  drag onto a focused pane can synthesise a click on the button beside it, so the check
+  buys correctness against accident and cross-plugin leakage, not resistance to a hostile
+  local app.
 
 ## Reserved control plane
 
@@ -915,6 +1012,8 @@ The architecture suite MUST fail when:
 - a product command appears in CLI/control-plane code;
 - an EVENT asks for a result, an INTENT streams indefinitely, or a CONTRIBUTION performs an
   imperative mutation while being parsed;
+- a plugin view drop is admitted whose payload did not start in the same plugin view
+  instance as the target, or whose payload exceeds the published bound;
 - two public mechanisms perform the same action;
 - a DIRECT inventory entry is added or enlarged without the labelled justification clause
   required by **Adding a DIRECT entry**;

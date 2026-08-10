@@ -74,7 +74,7 @@ final class LauncherCommandsTests: XCTestCase {
     // MARK: - Shipped plugins
 
     /// The regression that matters for the title bar: the launcher must still offer
-    /// everything the removed "Add slot" menu did — Terminal, Files, Diff, Docs,
+    /// everything the removed "Add slot" menu did — Terminal, Files, Diff,
     /// Automation, Browser — plus the split verbs that menu never had.
     func testShippedLauncherOffersEverythingTheAddSlotMenuDid() throws {
         let launchers = try shippedLauncherIntentIDs()
@@ -83,7 +83,6 @@ final class LauncherCommandsTests: XCTestCase {
             "dev.tenon.core-commands.terminal.new.v1",   // Terminal
             "dev.tenon.file-explorer.open.v1",           // Files
             "dev.tenon.core-commands.changes.open.v1",   // Diff
-            "dev.tenon.core-commands.docs.open.v1",      // Docs
             "dev.tenon.core-commands.automation.open.v1", // Automation
             "dev.tenon.browser.open.v1",                 // Browser
             "dev.tenon.core-commands.tab.new.v1",
@@ -123,7 +122,6 @@ final class LauncherCommandsTests: XCTestCase {
         for expected in [
             "dev.tenon.core-commands.terminal.new.v1",
             "dev.tenon.core-commands.changes.open.v1",
-            "dev.tenon.core-commands.docs.open.v1",
             "dev.tenon.core-commands.automation.open.v1",
             "dev.tenon.file-explorer.open.v1",
             "dev.tenon.browser.open.v1",

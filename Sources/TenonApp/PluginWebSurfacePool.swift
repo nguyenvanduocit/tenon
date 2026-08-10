@@ -247,7 +247,9 @@ private extension PluginWebSurfacePool {
              let .card(children),
              let .grid(_, _, children),
              let .scroll(_, children),
-             let .field(_, children):
+             let .field(_, children),
+             let .dragSource(_, children),
+             let .dropTarget(_, children):
             return children.reduce(into: []) { result, child in
                 result.formUnion(webSurfaceIDs(in: child))
             }

@@ -41,6 +41,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case workspaceState = "workspace.state.v1"
     case workspacePaneOwner = "workspace.pane.owner.v1"
     case workspaceTabCreate = "workspace.tab.create.v1"
+    case workspaceTabFocus = "workspace.tab.focus.v1"
     case workspacePaneSplit = "workspace.pane.split.v1"
     case workspacePaneFocus = "workspace.pane.focus.v1"
     case workspacePaneClose = "workspace.pane.close.v1"
@@ -51,6 +52,8 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case workspacePaneFocusNext = "workspace.pane.focus-next.v1"
     case workspaceSelect = "workspace.select.v1"
     case networkFetch = "network.fetch.v1"
+    case agentInventory = "agent.inventory.v1"
+    case agentCommand = "agent.command.v1"
 
     public var intentID: IntentID {
         get throws {
@@ -115,6 +118,7 @@ public extension CoreIntentName {
              .workspaceState,
              .workspacePaneOwner,
              .workspaceTabCreate,
+             .workspaceTabFocus,
              .workspacePaneSplit,
              .workspacePaneFocus,
              .workspacePaneClose,
@@ -124,7 +128,9 @@ public extension CoreIntentName {
              .workspaceTabPrevious,
              .workspacePaneFocusNext,
              .workspaceSelect,
-             .networkFetch:
+             .networkFetch,
+             .agentInventory,
+             .agentCommand:
             .programmatic
         }
     }
@@ -147,6 +153,7 @@ public enum CoreIntentExecutionLane: String, CaseIterable, Sendable, Hashable {
     case userPrompt
     case userNotification
     case secrets
+    case agentImmediate
 
     /// How many of this lane's intents may execute at once.
     ///
@@ -169,7 +176,7 @@ public enum CoreIntentExecutionLane: String, CaseIterable, Sendable, Hashable {
             8
         case .filesystem, .system, .process, .network, .workspace,
              .terminalImmediate, .browser, .userPrompt, .userNotification,
-             .secrets:
+             .secrets, .agentImmediate:
             1
         }
     }
@@ -203,6 +210,7 @@ public extension CoreIntentName {
         case .workspaceState,
              .workspacePaneOwner,
              .workspaceTabCreate,
+             .workspaceTabFocus,
              .workspacePaneSplit,
              .workspacePaneFocus,
              .workspacePaneClose,
@@ -242,6 +250,10 @@ public extension CoreIntentName {
              .secretsSet,
              .secretsDelete:
             .secrets
+
+        case .agentInventory,
+             .agentCommand:
+            .agentImmediate
         }
     }
 }
@@ -1601,10 +1613,28 @@ private extension CoreIntentCatalog {
                 audiences: programmatic,
                 exposure: programmaticExposure,
                 effects: try CoreIntentRuleData.effects(.write),
-                errors: ["dev.tenon.core.workspace-unavailable"],
+                errors: [
+                    "dev.tenon.core.workspace-unavailable",
+                    "dev.tenon.core.tab-not-found",
+                ],
                 bindings: [workspaceControl],
                 admission: .interactive,
                 timeout: .seconds(10),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .workspaceTabFocus,
+                title: "Focus tab",
+                description: "Focuses the tab identified by invocation scope.",
+                input: emptyInput,
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.write),
+                errors: ["dev.tenon.core.tab-not-found"],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(5),
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
@@ -1713,6 +1743,7 @@ private extension CoreIntentCatalog {
                 errors: [
                     "dev.tenon.core.workspace-unavailable",
                     "dev.tenon.core.workspace-not-found",
+                    "dev.tenon.core.tab-not-found",
                     "dev.tenon.core.pane-not-found",
                     "dev.tenon.core.content-unavailable",
                     "dev.tenon.core.layout-unavailable",
@@ -1731,7 +1762,10 @@ private extension CoreIntentCatalog {
                 audiences: programmatic,
                 exposure: programmaticExposure,
                 effects: try CoreIntentRuleData.effects(.write),
-                errors: ["dev.tenon.core.workspace-unavailable"],
+                errors: [
+                    "dev.tenon.core.workspace-unavailable",
+                    "dev.tenon.core.tab-not-found",
+                ],
                 bindings: [workspaceControl],
                 admission: .interactive,
                 timeout: .seconds(5),
@@ -1746,7 +1780,10 @@ private extension CoreIntentCatalog {
                 audiences: programmatic,
                 exposure: programmaticExposure,
                 effects: try CoreIntentRuleData.effects(.write),
-                errors: ["dev.tenon.core.workspace-unavailable"],
+                errors: [
+                    "dev.tenon.core.workspace-unavailable",
+                    "dev.tenon.core.tab-not-found",
+                ],
                 bindings: [workspaceControl],
                 admission: .interactive,
                 timeout: .seconds(5),
@@ -1761,7 +1798,10 @@ private extension CoreIntentCatalog {
                 audiences: programmatic,
                 exposure: programmaticExposure,
                 effects: try CoreIntentRuleData.effects(.write),
-                errors: ["dev.tenon.core.workspace-unavailable"],
+                errors: [
+                    "dev.tenon.core.workspace-unavailable",
+                    "dev.tenon.core.tab-not-found",
+                ],
                 bindings: [workspaceControl],
                 admission: .interactive,
                 timeout: .seconds(5),
@@ -1833,6 +1873,111 @@ private extension CoreIntentCatalog {
                 bindings: [networkURL],
                 admission: .background,
                 timeout: .seconds(60),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .agentInventory,
+                title: "List the agents this person runs",
+                description: """
+                Returns the coding agents installed on this machine, each with \
+                the options this person habitually passes it, so a caller offers \
+                the same choices the Launcher does instead of inventing its own. \
+                It carries no executable path and no shell history — only the \
+                agent, how to name it to a person, and the options.
+                """,
+                input: emptyInput,
+                output: CoreIntentSchema.root(
+                    properties: [
+                        "agents": CoreIntentSchema.array(
+                            items: CoreIntentSchema.object(
+                                properties: [
+                                    "id": CoreIntentSchema.agentIdentifier,
+                                    "label": CoreIntentSchema.string(
+                                        minLength: 1,
+                                        maxLength: 128
+                                    ),
+                                    "arguments": CoreIntentSchema
+                                        .agentArguments,
+                                    "habit": CoreIntentSchema.nullable(
+                                        CoreIntentSchema.string(maxLength: 256)
+                                    ),
+                                ],
+                                required: [
+                                    "id",
+                                    "label",
+                                    "arguments",
+                                    "habit",
+                                ]
+                            ),
+                            maxItems: 16
+                        )
+                    ],
+                    required: ["agents"]
+                ),
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.read),
+                errors: [],
+                bindings: [terminalWrite],
+                admission: .background,
+                timeout: .seconds(5),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .agentCommand,
+                title: "Compose an agent command line",
+                description: """
+                Returns the command line that starts the named agent the way \
+                this person runs it, ready for terminal.open.v1. Give it a \
+                prompt to open the agent on that work, or a session to \
+                continue: the agent that recorded a session resumes it the \
+                provider's own way, and any other agent is handed a prompt \
+                naming the session's transcript so it reads the content \
+                itself. It starts nothing and writes nothing.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "agent": CoreIntentSchema.agentIdentifier,
+                        "prompt": CoreIntentSchema.agentPrompt,
+                        "session": CoreIntentSchema.object(
+                            properties: [
+                                "agent": CoreIntentSchema.agentIdentifier,
+                                "sessionID": CoreIntentSchema.string(
+                                    minLength: 1,
+                                    maxLength: 256
+                                ),
+                                "transcriptPath": CoreIntentSchema.path,
+                            ],
+                            required: ["agent", "sessionID"]
+                        ),
+                        "includeUserOptions": CoreIntentSchema.boolean,
+                    ],
+                    required: ["agent"]
+                ),
+                output: CoreIntentSchema.root(
+                    properties: [
+                        "agent": CoreIntentSchema.agentIdentifier,
+                        "commandLine": CoreIntentSchema.inlineText,
+                        "arguments": CoreIntentSchema.agentArguments,
+                        "handoff": CoreIntentSchema.boolean,
+                    ],
+                    required: [
+                        "agent",
+                        "commandLine",
+                        "arguments",
+                        "handoff",
+                    ]
+                ),
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.read),
+                errors: [
+                    "dev.tenon.core.agent-unavailable",
+                    "dev.tenon.core.agent-handoff-unresolved",
+                ],
+                bindings: [terminalWrite],
+                admission: .background,
+                timeout: .seconds(5),
                 trustedProviderID: trustedProviderID
             ),
         ]
@@ -1935,6 +2080,16 @@ private enum CoreIntentSchema {
     static let secretKey = string(minLength: 1, maxLength: 1_024)
     static let secretValue = string(maxLength: 32 * 1_024)
 
+    /// An agent is named, not enumerated in the schema: the inventory is what says which
+    /// names exist today, and a caller that asks for one this machine does not have gets a
+    /// typed answer instead of a schema rejection it cannot explain to a person.
+    static let agentIdentifier = string(minLength: 1, maxLength: 64)
+    static let agentPrompt = string(maxLength: 32 * 1_024)
+    static let agentArguments = array(
+        items: string(maxLength: 8_192),
+        maxItems: 64
+    )
+
     static let textInput = object(
         properties: [
             "kind": string(constant: "inline"),
@@ -1976,7 +2131,6 @@ private enum CoreIntentSchema {
     static let workspaceContentInput = oneOf([
         contentKind("terminal"),
         contentKind("changes"),
-        contentKind("docs"),
         contentKind("automation"),
         contentKind("empty"),
         object(
@@ -2036,7 +2190,6 @@ private enum CoreIntentSchema {
     static let workspaceContentSnapshot = oneOf([
         contentKind("terminal"),
         contentKind("changes"),
-        contentKind("docs"),
         contentKind("automation"),
         contentKind("empty"),
         object(

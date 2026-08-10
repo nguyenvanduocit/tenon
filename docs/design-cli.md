@@ -40,6 +40,9 @@ Examples:
 tenon-cli intent list
 tenon-cli intent describe workspace.state.v1
 tenon-cli intent send workspace.state.v1 '{}'
+tenon-cli tab-focus --tab '<copied-tab-uuid>'
+tenon-cli pane-focus --pane '<copied-pane-uuid>'
+tenon-cli send --tab '<copied-tab-uuid>' --enter 'git status'
 tenon-cli intent send terminal.write.v1 \
   '{"text":"git status\r"}' --pane "$TENON_PANE_ID"
 tenon-cli intent send terminal.viewport.read.v1 '{}' --pane "$TENON_PANE_ID"
@@ -224,6 +227,7 @@ Parameters:
     "target": {"providerID":"optional explicit provider"},
     "scope": {
       "workspaceID": "optional UUID",
+      "tabID": "optional UUID",
       "paneID": "optional UUID"
     }
   }
@@ -233,22 +237,25 @@ Parameters:
 Result is the successful canonical intent output. A failed intent uses the structured
 intent failure envelope above.
 
-The CLI binary resolves `--pane` in this order before sending:
+The CLI binary accepts `--workspace`, `--tab`, and `--pane` as the corresponding scope
+designators. It resolves `--pane` in this order when no explicit tab scope is present:
 
 1. explicit `--pane <uuid>`;
 2. `$TENON_PANE_ID`;
 3. omit it and let the contract/provider resolve the active pane where allowed.
 
-Pane/workspace identity travels in caller-selectable `options.scope`; it is not duplicated
-inside every input schema. Scope designates a target but does not grant it—policy still
-authorizes the resolved resource for the CLI principal. `userGestureID` is host-minted and
-is never accepted from CLI input.
+Workspace/tab/pane identity travels in caller-selectable `options.scope`; it is not
+duplicated inside every input schema. The tab-chip and pane-header context menus copy their
+stable UUID as raw text for these flags. Scope designates a target but does not grant it—
+policy still authorizes the resolved resource for the CLI principal. `userGestureID` is
+host-minted and is never accepted from CLI input.
 
 ## Canonical domain mappings
 
 | User job | Intent |
 |---|---|
 | inspect workspace | `workspace.state.v1` |
+| focus an exact copied tab ID | `workspace.tab.focus.v1` with `scope.tabID` |
 | create/select/split/focus/close/change pane content | the matching `workspace.*.v1` intent |
 | send terminal input | `terminal.write.v1` |
 | run a command in a terminal | `terminal.run.v1` |
@@ -262,8 +269,8 @@ intent when that contract includes the `cli` audience.
 
 ### `terminal.viewport.read.v1`
 
-This is a finite snapshot query, not a stream. Input is `{}` and the target pane is
-`scope.paneID`. Output:
+This is a finite snapshot query, not a stream. Input is `{}` and the target is either the
+exact `scope.paneID` or the active terminal inside exact `scope.tabID`. Output:
 
 ```json
 {

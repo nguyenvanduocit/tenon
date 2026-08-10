@@ -127,6 +127,10 @@ enum PluginRuntimeBootstrap {
             requireUUID(source.scope.workspaceID, "intent scope.workspaceID");
             scope.workspaceID = source.scope.workspaceID;
           }
+          if (Object.prototype.hasOwnProperty.call(source.scope, "tabID")) {
+            requireUUID(source.scope.tabID, "intent scope.tabID");
+            scope.tabID = source.scope.tabID;
+          }
           if (Object.prototype.hasOwnProperty.call(source.scope, "paneID")) {
             requireUUID(source.scope.paneID, "intent scope.paneID");
             scope.paneID = source.scope.paneID;

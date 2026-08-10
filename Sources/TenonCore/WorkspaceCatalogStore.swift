@@ -39,6 +39,11 @@ public enum WorkspaceCatalogSnapshot {
         public var id: UUID
         public var name: String
         public var path: String
+        /// T-097: how the person marked and tinted this workspace. Absent in every document
+        /// written before customisation existed, which is the whole migration: a missing
+        /// key decodes to nil and restores as `WorkspaceAppearance.default`, so an older
+        /// catalog comes back looking exactly as it did.
+        public var appearance: AppearanceRecord?
         public var tabs: [TabRecord]
         public var activeTabID: UUID
 
@@ -46,14 +51,29 @@ public enum WorkspaceCatalogSnapshot {
             id: UUID,
             name: String,
             path: String,
+            appearance: AppearanceRecord? = nil,
             tabs: [TabRecord],
             activeTabID: UUID
         ) {
             self.id = id
             self.name = name
             self.path = path
+            self.appearance = appearance
             self.tabs = tabs
             self.activeTabID = activeTabID
+        }
+    }
+
+    /// Written as raw tokens rather than as the enums themselves: a mark or tint this build
+    /// has never heard of degrades that one value to Tenon's default and keeps the workspace,
+    /// exactly as an unknown pane content degrades one pane.
+    public struct AppearanceRecord: Equatable, Sendable, Codable {
+        public var symbol: String?
+        public var accent: String?
+
+        public init(symbol: String?, accent: String?) {
+            self.symbol = symbol
+            self.accent = accent
         }
     }
 
@@ -61,11 +81,16 @@ public enum WorkspaceCatalogSnapshot {
         public var id: UUID
         public var slots: [SlotRecord]
         public var activeSlotID: UUID?
+        /// T-105: the number the tab is called by until its content names itself. Optional
+        /// because catalogs written before tabs had one must still restore — those get their
+        /// numbers from strip order at load, once, and keep them from then on.
+        public var number: Int?
 
-        public init(id: UUID, slots: [SlotRecord], activeSlotID: UUID?) {
+        public init(id: UUID, slots: [SlotRecord], activeSlotID: UUID?, number: Int? = nil) {
             self.id = id
             self.slots = slots
             self.activeSlotID = activeSlotID
+            self.number = number
         }
     }
 
@@ -171,6 +196,7 @@ public enum WorkspaceCatalogSnapshot {
                     id: workspace.id,
                     name: workspace.name,
                     path: workspace.path.path,
+                    appearance: appearanceRecord(of: workspace.appearance),
                     tabs: workspace.tabs.map { tab in
                         TabRecord(
                             id: tab.id,
@@ -186,7 +212,8 @@ public enum WorkspaceCatalogSnapshot {
                                     cwd: cwds[slot.id]?.path
                                 )
                             },
-                            activeSlotID: tab.activeSlotID
+                            activeSlotID: tab.activeSlotID,
+                            number: tab.number
                         )
                     },
                     activeTabID: workspace.activeTabID
@@ -287,10 +314,14 @@ public enum WorkspaceCatalogSnapshot {
                     activeSlotID = slots[0].id
                 }
 
+                // A catalog written before T-105 records no number, so the tab takes its
+                // place in the restored strip — once. From the next launch the recorded
+                // number is what comes back, and reordering stops renaming anything.
                 tabs.append(Tab(
                     id: tabRecord.id,
                     slots: slots,
-                    activeSlotID: activeSlotID
+                    activeSlotID: activeSlotID,
+                    number: tabRecord.number ?? tabs.count + 1
                 ))
                 seenTabIDs.insert(tabRecord.id)
                 workspaceTitles.merge(tabTitles) { _, new in new }
@@ -303,10 +334,18 @@ public enum WorkspaceCatalogSnapshot {
                 : tabs[0].id
             guard Workspace.isValid(tabs: tabs, activeTabID: activeTabID) else { continue }
 
+            let workspacePath = URL(
+                fileURLWithPath: workspaceRecord.path,
+                isDirectory: true
+            )
             workspaces.append(Workspace(
                 id: workspaceRecord.id,
-                name: workspaceRecord.name,
-                path: URL(fileURLWithPath: workspaceRecord.path, isDirectory: true),
+                // A name that survived as whitespace, or as a document hand-edited to
+                // nothing, comes back as the derived default rather than as a blank row.
+                name: WorkspaceName.sanitized(workspaceRecord.name)
+                    ?? WorkspaceName.derived(for: workspacePath),
+                path: workspacePath,
+                appearance: appearance(of: workspaceRecord.appearance),
                 tabs: tabs,
                 activeTabID: activeTabID
             ))
@@ -367,7 +406,7 @@ public enum WorkspaceCatalogSnapshot {
             catalog.selectWorkspace(open.id)
         } else {
             catalog.addWorkspace(
-                name: launchDirectory.lastPathComponent,
+                name: WorkspaceName.derived(for: launchDirectory),
                 path: launchDirectory,
                 content: launchContent
             )
@@ -379,14 +418,33 @@ public enum WorkspaceCatalogSnapshot {
         )
     }
 
+    /// The default appearance writes nothing: an uncustomised catalog produces the same
+    /// bytes it produced before customisation existed, so the common document does not grow
+    /// a key that says "unchanged".
+    private static func appearanceRecord(
+        of appearance: WorkspaceAppearance
+    ) -> AppearanceRecord? {
+        guard !appearance.isDefault else { return nil }
+        return AppearanceRecord(
+            symbol: appearance.symbol.rawValue,
+            accent: appearance.accent?.rawValue
+        )
+    }
+
+    private static func appearance(of record: AppearanceRecord?) -> WorkspaceAppearance {
+        guard let record else { return .default }
+        return WorkspaceAppearance(
+            symbol: record.symbol.flatMap(WorkspaceSymbol.init(rawValue:)) ?? .default,
+            accent: record.accent.flatMap(AccentColor.init(rawValue:))
+        )
+    }
+
     private static func record(of content: SlotContent) -> ContentRecord {
         switch content {
         case .terminal:
             return ContentRecord(type: "terminal")
         case .changes:
             return ContentRecord(type: "changes")
-        case .docs:
-            return ContentRecord(type: "docs")
         case .automation:
             return ContentRecord(type: "automation")
         case .empty:
@@ -431,8 +489,6 @@ public enum WorkspaceCatalogSnapshot {
             return .terminal
         case "changes":
             return .changes
-        case "docs":
-            return .docs
         case "automation":
             return .automation
         case "empty":

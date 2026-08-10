@@ -228,79 +228,6 @@ final class PaneHeaderProjectionTests: XCTestCase {
         )
     }
 
-    // MARK: - Docs
-
-    /// The docs pane publishes its spinner only while it is true — and, unlike every other
-    /// migrated pane, it also publishes its own identity, because nothing else can.
-    func testDocsPublishesItsSpinnerOnlyWhileLoading() {
-        let loading = DocsPaneHeader.header(document: nil, isLoading: true)
-        XCTAssertTrue(
-            isSpinner(loading.trailing.first),
-            "a loading docs pane says so with a spinner"
-        )
-        XCTAssertEqual(loading.trailing.count, 1)
-        XCTAssertTrue(
-            loading.leading.isEmpty,
-            "nothing has loaded yet, so there is no document to name"
-        )
-
-        XCTAssertEqual(
-            DocsPaneHeader.header(document: nil, isLoading: false),
-            .empty,
-            "a docs pane that found no document contributes nothing and draws the bare chrome"
-        )
-    }
-
-    /// The docs pane must not be able to misname its own content.
-    ///
-    /// `DocsModel` falls back through `README.md`, `VISION.md` and `docs/README.md`, so the
-    /// document on screen is a fact only the model holds. `SlotPresentation.title` is a pure
-    /// function of `SlotContent`, and `SlotContent.docs` carries no filename — so a title that
-    /// named a file could only ever be naming a guess, which is what `"Docs — README"` was in a
-    /// workspace with no `README.md`. The title names the kind; the header names the instance.
-    ///
-    /// Both halves are asserted here because either alone is satisfiable the wrong way: a
-    /// generic title with no published name leaves the pane anonymous, and a published name
-    /// under a title that still guesses leaves two answers on one strip.
-    @MainActor
-    func testTheDocsTitleNamesTheKindAndTheHeaderNamesTheDocumentThatLoaded() {
-        let slot = WorkspaceSlot(
-            id: UUID(),
-            rect: GridRect(x: 0, y: 0, width: 6, height: 12),
-            content: .docs
-        )
-        XCTAssertEqual(
-            SlotPresentation.title(
-                for: slot,
-                workspacePath: URL(fileURLWithPath: "/tmp"),
-                pool: SurfacePool(backendName: "Stub") { _, _ in StubTerminalSurface() },
-                webPool: PluginWebSurfacePool(),
-                pluginSnapshots: [],
-                pluginViewSections: [],
-                webSurfaceTitles: [:]
-            ),
-            "Docs",
-            "the chrome title is a pure function of slot content, which holds no filename, so "
-                + "it may name only the kind of pane this is"
-        )
-
-        for document in ["README.md", "VISION.md", "docs/README.md"] {
-            let header = DocsPaneHeader.header(document: document, isLoading: false)
-            XCTAssertEqual(
-                labelText(header.leading.first),
-                document,
-                "the pane names the document it actually loaded, not the first candidate"
-            )
-            XCTAssertEqual(header.leading.count, 1)
-        }
-
-        XCTAssertEqual(
-            DocsPaneHeader.header(document: "VISION.md", isLoading: true).trailing.count,
-            1,
-            "naming the document does not cost the pane its loading spinner"
-        )
-    }
-
     // MARK: - Changes
 
     /// The branch name and the change count were the whole point of the 31-point bar this
@@ -660,8 +587,6 @@ final class PaneHeaderProjectionTests: XCTestCase {
                 isLoading: false, hasChanges: true, isBinary: false,
                 added: 4, removed: 4, isSplit: true
             ),
-            DocsPaneHeader.header(document: "README.md", isLoading: true),
-            DocsPaneHeader.header(document: nil, isLoading: false),
             ChangesPaneHeader.header(
                 branch: "main", total: 2, layout: .tree, isLoading: false, canRefresh: true
             ),

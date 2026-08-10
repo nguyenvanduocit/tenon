@@ -33,6 +33,16 @@ A file longer than **400 lines** additionally tags every `// MARK:` section, on 
 which is the only reason a block-level tag can be checked at all. The tag rides on the MARK
 line rather than below it so one `rg` result carries both the section name and its domain.
 
+Enumerability is also the rule's limit, and it is a wide one. Of the 65 files over 400 lines,
+**49 declare no MARK at all** — 41,879 lines, more than half the source tree, including the
+five longest files in it (`CoreIntentCatalog.swift` at 2,482 lines, `IntentDispatcher.swift`,
+`Workspace.swift`, `IntentPolicy.swift`, `FilesystemIntentProvider.swift`). The assertion
+passes on every one of them without checking anything, because there is nothing to enumerate.
+So a green suite means *no tagged MARK is missing a domain*; it never means a long file is
+navigable. Where the rule does bite, 51 of its 78 tags repeat the file tag verbatim — the
+information is in the 27 that differ. Reach for MARK sections when a long file genuinely
+spans concerns, and read the file itself when it does not.
+
 Prefer the fewest domains that are true. **A file tagged with more than two domains is a split
 candidate**, not a well-labelled file: the tag boundaries are the decomposition the file has
 not had yet. `PluginHost.swift` carries five today and is the standing example.
@@ -49,8 +59,37 @@ concern, miss the code that concern reaches). So retrieval stays two steps:
 2. for each symbol that set touches: rg '\bSymbolName\b'   → the edges Swift hides
 ```
 
-Step 2 is not optional. Treating step 1 as the whole answer trades a silent omission for a
-confident one, which is worse.
+Step 2 is not optional, and now there is a number on it. Scored against the set of files
+each of 76 real sessions actually edited, starting from the first file's domains: step 1
+hands back a median **13% of the tree** holding **54% of the files that session went on to
+change**. It beats every free heuristic — same-directory reaches 61% but returns 80 files,
+a filename-prefix grep reaches 28% — and it leaves **46% of the work outside the set**.
+Treating step 1 as the whole answer trades a silent omission for a confident one.
+
+That measurement also settled the vocabulary's size, which had been argued rather than
+tested. Splitting `intent-bus` and `workspace-model` into 25 narrower domains drops recall
+to 35% to buy 4 points of precision; merging everything into 7 broad ones lifts recall to
+65% but returns 48 files a time. Both score worse than what is here. The 22 domains stay.
+
+## What the tests can and cannot settle
+
+Seven assertions in `DomainTagFitnessTests` guard this file. Five check a tag's **shape**:
+declared, used, well-formed, present on every file, present on every MARK of a long tagged
+file. Two read the **code**, and both are ratchets sitting at today's count with zero as the
+target:
+
+- `isolatedTagBudget` (8) — a file whose own domain appears in nothing it references and
+  nothing referencing it. Two-way, because the one-way version flags 16 files and most are
+  composition roots whose neighbours are legitimately everywhere. A domain covering a single
+  file is skipped: it cannot have a same-domain neighbour, so its isolation is arithmetic.
+- `unsectionedLongFileBudget` (49) — long files with no MARK for the MARK rule to check.
+
+None of the seven can tell you a tag names the **wrong concern**. Of three false tags found
+by hand — `EmptyStateCard` as `agent-lens`, `AppStatePaths` as `diagnostics`,
+`AgentLaunchSuggestions` as `agent-lens` — the isolation check catches one. The other two
+shared code with the domain they wrongly claimed, and no structural rule can see past that.
+So the tests keep the layer from rotting; reading the file against the entry below is what
+keeps it true.
 
 ## Adding a domain
 
@@ -74,7 +113,8 @@ storage (→ `plugin-settings`).
 ## plugin-contributions
 
 What a live generation puts on screen and how the host projects it: status-bar items,
-registered views and their pane header, view instances, palette providers and their
+registered views and their pane header, view instances, which subtrees a pointer may pick up
+and drop and the scope a drag is admitted within, palette providers and their
 revision-scoped result snapshots, key-binding and command indexes.
 
 **Excludes:** rendering those projections in SwiftUI (that lives in `TenonApp`, tagged by its
@@ -220,6 +260,23 @@ the diff, or the command that produced it.
 pane the lens is drawn in (→ `spatial-canvas`, `pane-chrome`), and the intent kernel a lens
 action travels through (→ `intent-bus`).
 
+## agent-control
+
+How an agent is started: which coding agents this machine has, which options this person
+actually runs them with, how each provider spells a resume, and how a session recorded by one
+agent is handed to another. One composition, shared by the Launcher and by every plugin, and
+one public boundary over it.
+
+The product concern is that starting an agent is a product decision, not a string. A person
+who runs `claude --model opus --dangerously-skip-permissions` means that setup, and a board or
+a session list that starts a bare `claude` has quietly changed what they asked for. The same
+holds across agents: no CLI can resume the other's session, so continuing one somewhere else
+has to become a prompt naming the transcript rather than a flag that does not exist.
+
+**Excludes:** what a supervisor can see and say about a session once it is running
+(→ `agent-lens`), the pane and PTY the agent runs in (→ `terminal-surface`,
+`terminal-teardown`), and the kernel the two contracts travel through (→ `intent-bus`).
+
 ## command-surface
 
 Everything a person types a name into to make something happen: the palette and its providers,
@@ -316,6 +373,27 @@ thing this product exists to keep true. It is a product rule before it is a sign
 keep a shell alive while nobody looks at it — that is pane lifetime, and lives in
 `SurfacePool`. Also excludes process execution a caller asked for on purpose through
 `process.exec.v1`, which belongs to that provider.
+
+## process-telemetry
+
+Who is spending this machine's CPU and memory right now, and which pane is answerable for it:
+process identity that survives PID reuse, ownership proved from a pane's PTY and the reachable
+tree beneath it, interval CPU and resident memory, the app / host-and-shared / workspace / tab
+/ pane / process hierarchy those figures roll up through, and the visibility-scoped sampler
+that keeps them current while somebody is looking.
+
+The product concern is attribution a person can act on. A supervisor running several agents
+sees one number climbing and needs to know which pane to return to — and needs the answer to
+be *proved* rather than apportioned, because a plausible guess about which pane owns a runaway
+process sends someone to interrupt the wrong work. That is why every figure here is either
+established or explicitly unavailable with a reason, and why nothing is ever divided among
+panes to make a column look complete.
+
+**Excludes:** what the app records about its own health after it stalls, and the bounded
+journal that survives the incident (→ `diagnostics`) — that is post-incident evidence, where
+this is live attribution; the lifetime of the surface a pane mounts (→ `terminal-surface`);
+stopping what a pane started when it closes (→ `terminal-teardown`); and running a process a
+caller asked for on purpose through `process.exec.v1` (→ `intent-bus`).
 
 ## diagnostics
 

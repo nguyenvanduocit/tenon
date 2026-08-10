@@ -93,6 +93,34 @@ backdrop, and the close control all deliver `dismissAction` (default `modal.dism
 the view's `onSelect`, exactly like a `button`. At most one modal is presented at a time;
 with several published, the first in publish order wins.
 
+A subtree can also be **picked up and dropped** (T-056). Two transparent wrappers say which:
+
+```js
+{ type: "dropTarget", action: "drop-into:2", children: [columnTree] }
+{ type: "dragSource", payload: "T-101", children: [cardTree] }
+
+tenon.views.onSelect("board", (action, value) => {
+  if (action.startsWith("drop-into:")) moveTaskToColumn(value, Number(action.slice(10)))
+})
+```
+
+A drop is the target's `action` carrying the source's `payload` in the value slot — the same
+`onSelect(action, value)` a button press and a field submit already use, so drag-and-drop
+adds nothing to the `tenon` global. Both wrappers lay their children out exactly as the
+subtree lays itself out; they add a gesture and nothing else.
+
+The host admits a drop only inside the view instance the drag started in. A card picked up
+in another pane's copy of the same board, in another plugin's pane, or in another app
+entirely, is refused and fires nothing — `PluginViewDrag` in `TenonCore` is that rule, and
+it is asserted without a window. Two consequences worth knowing before you reach for this:
+
+- **A drag is a pointer affordance and nothing else.** Keep whatever button, menu, or
+  keyboard route already performed the action; the kanban board keeps its ◀ ▶ buttons
+  precisely because a drag is unreachable by keyboard and by VoiceOver.
+- **A payload is a short string** (256 characters). Over that, or empty, and the subtree
+  still renders — it is simply not draggable. A card never disappears because its id was
+  long. A `dropTarget` with no `action` degrades the same way, to a plain container.
+
 ## Contracts
 
 - **This surface is CONTRIBUTION.** `views.register/set` publishes plugin-owned

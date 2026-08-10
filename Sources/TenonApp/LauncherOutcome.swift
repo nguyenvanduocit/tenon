@@ -52,6 +52,7 @@ enum EmptyGridLauncherPlacement {
 
         let result = await send(InvocationScope(
             workspaceID: workspaceID,
+            tabID: tabID,
             paneID: paneID,
             userGestureID: userGestureID
         ))
@@ -81,6 +82,7 @@ enum EmptyGridLauncherPlacement {
         guard var reservation = reservations[key] else { return .notReserved }
         guard reservation.wasConsumed == false,
               scope.workspaceID.map({ $0 == reservation.workspaceID }) ?? true,
+              scope.tabID.map({ $0 == reservation.tabID }) ?? true,
               let tab = store.catalog.workspaces
                 .first(where: { $0.id == reservation.workspaceID })?
                 .tabs.first(where: { $0.id == reservation.tabID }),
@@ -183,6 +185,7 @@ enum NewTabLauncherPlacement {
         defer { reservations[reservationKey] = nil }
         let result = await send(InvocationScope(
             workspaceID: workspaceID,
+            tabID: scopedTab.id,
             paneID: paneID,
             userGestureID: userGestureID
         ))
@@ -230,6 +233,7 @@ enum NewTabLauncherPlacement {
         guard var reservation = reservations[reservationKey],
               reservation.wasConsumed == false,
               scope.workspaceID.map({ $0 == reservation.workspaceID }) ?? true,
+              scope.tabID.map({ $0 == reservation.tab.id }) ?? true,
               tab(
                   reservation.tab.id,
                   workspaceID: reservation.workspaceID,

@@ -50,14 +50,6 @@ tenon.intents.handle("dev.tenon.core-commands.changes.open.v1", async function (
   );
 });
 
-tenon.intents.handle("dev.tenon.core-commands.docs.open.v1", async function (_, call) {
-  return requireSuccess(
-    await call.send("workspace.tab.create.v1", {
-      content: { kind: "docs" }
-    })
-  );
-});
-
 tenon.intents.handle("dev.tenon.core-commands.automation.open.v1", async function (_, call) {
   return requireSuccess(
     await call.send("workspace.tab.create.v1", {

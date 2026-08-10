@@ -25,7 +25,10 @@ final class DirectInventoryGateTests: XCTestCase {
     /// to force, and removing from it is the direction the law wants.
     private static let pinnedEntries: [String: Int] = [
         "ordinary functions/modules inside one plugin generation": 56,
-        "SwiftUI workspace, tab, pane, and settings interactions": 1313,
+        // 1313 → 2129 (T-096): tab reordering; 2129 → 2465: copying stable tab/pane IDs.
+        // The clause names the missing mechanism — no contribution or intent places this
+        // identity action in host-owned chrome — rather than the difficulty of building one.
+        "SwiftUI workspace, tab, pane, and settings interactions": 2465,
         "app lifecycle and composition-root wiring": 42,
         "install-channel routing": 946,
         "`WorkspaceStore` and typed workspace use cases": 47,
@@ -39,6 +42,10 @@ final class DirectInventoryGateTests: XCTestCase {
         "plugin-host administration from the Settings UI": 48,
         "Automation Canvas and Settings separation": 1869,
         "browser-surface renderer identity (T-077)": 1020,
+        // T-100. Added with its justification clause: the missing mechanism is an EVENT
+        // family for host-private process facts plus a RESOURCE for a visibility-scoped
+        // sampler, neither of which exists. Named, not hand-waved as difficulty.
+        "the read-only process resource monitor (T-100). Built-in SwiftUI reads immutable `TelemetrySnapshot` values from `ProcessTelemetryCoordinator` and reveals a pane through the typed `WorkspaceStore.focusSlot` already DIRECT above. **why not a plugin": 1427,
         "pure parsers, ranking, schemas, and value transformations": 58,
         "`tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the plugin runtime as pure string functions.": 126,
     ]

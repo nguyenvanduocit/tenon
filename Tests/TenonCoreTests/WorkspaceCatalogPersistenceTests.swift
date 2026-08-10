@@ -300,7 +300,11 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         XCTAssertEqual(treeSlots.map(\.content), [.empty])
     }
 
-    func testAContentTypeFromANewerBuildDegradesThatPaneToEmpty() throws {
+    /// A newer build's content type, or one this build has retired — the saved document was
+    /// written by whatever ran last, so both arrive the same way and both cost exactly the one
+    /// pane. The layout it held stays, because the shape of a workspace is not something an
+    /// unreadable word should be able to change.
+    func testAContentTypeThisBuildCannotNameDegradesThatPaneToEmpty() throws {
         let data = documentJSON(
             contentJSON: #"{"type": "hologram", "wavelength": 550}"#
         )
@@ -440,7 +444,7 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         let launched = WorkspaceCatalogSnapshot.launchCatalog(
             restored: restored,
             launchDirectory: newDirectory,
-            launchContent: .docs,
+            launchContent: .changes,
             fallbackDirectory: URL(fileURLWithPath: "/tmp", isDirectory: true)
         )
 
@@ -450,7 +454,7 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
         XCTAssertEqual(launched.catalog.activeWorkspaceID, added.id)
         XCTAssertEqual(
             added.tabs.flatMap(\.slots).map(\.content),
-            [.docs],
+            [.changes],
             "the added workspace opens with the configured launch content"
         )
     }
@@ -546,5 +550,122 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             FileManager.default.fileExists(atPath: fileURL.path + ".lock")
         )
         XCTAssertNotNil(WorkspaceCatalogStore.loadDocument(at: fileURL))
+    }
+
+    // MARK: - A tab's number survives a relaunch (T-105)
+
+    /// Numbers that gap are the whole point of the design, so the fixture gaps: a number
+    /// restored from position would read `1, 2` and quietly rename the second tab.
+    func testATabsNumberSurvivesTheDocumentEvenWhenTheNumbersGap() throws {
+        let firstSlot = WorkspaceSlot(
+            rect: GridRect(x: 0, y: 0, width: 12, height: 12),
+            content: .terminal
+        )
+        let secondSlot = WorkspaceSlot(
+            rect: GridRect(x: 0, y: 0, width: 12, height: 12),
+            content: .terminal
+        )
+        let first = Tab(slots: [firstSlot], activeSlotID: firstSlot.id, number: 1)
+        let second = Tab(slots: [secondSlot], activeSlotID: secondSlot.id, number: 5)
+        let workspace = Workspace(
+            name: "Alpha",
+            path: alphaPath,
+            tabs: [first, second],
+            activeTabID: first.id
+        )
+        let catalog = WorkspaceCatalog(workspaces: [workspace], activeWorkspaceID: workspace.id)
+
+        let encoded = try JSONEncoder().encode(
+            WorkspaceCatalogSnapshot.document(capturing: catalog)
+        )
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            try JSONDecoder().decode(WorkspaceCatalogSnapshot.Document.self, from: encoded),
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(
+            restored.catalog.workspaces.first?.tabs.map(\.number),
+            [1, 5],
+            "a relaunch renamed a tab, which is the defect this number exists to prevent"
+        )
+        XCTAssertEqual(
+            restored.catalog.workspaces.first?.nextTabNumber,
+            6,
+            "the next tab must not take a number a restored tab already answers to"
+        )
+    }
+
+    /// A catalog written before tabs had numbers still opens, and the strip it opens with is
+    /// where its numbers come from — once. From then on they are recorded like any other.
+    func testACatalogWrittenBeforeTabsHadNumbersRestoresInStripOrder() throws {
+        let json = Data("""
+        {
+            "version": 1,
+            "activeWorkspaceID": "11111111-1111-1111-1111-111111111111",
+            "workspaces": [
+                {
+                    "id": "11111111-1111-1111-1111-111111111111",
+                    "name": "Alpha",
+                    "path": "/tmp/tenon-catalog-a",
+                    "activeTabID": "22222222-2222-2222-2222-222222222222",
+                    "tabs": [
+                        {
+                            "id": "22222222-2222-2222-2222-222222222222",
+                            "activeSlotID": "33333333-3333-3333-3333-333333333333",
+                            "slots": [
+                                {
+                                    "id": "33333333-3333-3333-3333-333333333333",
+                                    "x": 0, "y": 0, "width": 12, "height": 12,
+                                    "content": {"type": "terminal"}
+                                }
+                            ]
+                        },
+                        {
+                            "id": "44444444-4444-4444-4444-444444444444",
+                            "activeSlotID": "55555555-5555-5555-5555-555555555555",
+                            "slots": [
+                                {
+                                    "id": "55555555-5555-5555-5555-555555555555",
+                                    "x": 0, "y": 0, "width": 12, "height": 12,
+                                    "content": {"type": "terminal"}
+                                }
+                            ]
+                        }
+                    ]
+                }
+            ]
+        }
+        """.utf8)
+
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            try JSONDecoder().decode(WorkspaceCatalogSnapshot.Document.self, from: json),
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(
+            restored.catalog.workspaces.first?.tabs.map(\.number),
+            [1, 2],
+            "a catalog with no numbers must open with dense ones in the order it was saved"
+        )
+
+        // And they are numbers now, not positions: recapture, reorder, restore.
+        var catalog = restored.catalog
+        let ids = try XCTUnwrap(catalog.workspaces.first?.tabs.map(\.id))
+        _ = catalog.moveTab(ids[0], to: 1)
+        let recaptured = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            WorkspaceCatalogSnapshot.document(capturing: catalog),
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+        XCTAssertEqual(
+            recaptured.catalog.workspaces.first?.tabs.map(\.number),
+            [2, 1],
+            "the numbers must travel with their tabs across the move and the relaunch"
+        )
     }
 }

@@ -25,17 +25,22 @@ struct DiagnosticsCommands: View {
         panel.canCreateDirectories = true
 
         guard panel.runModal() == .OK, let destination = panel.url else { return }
-        do {
-            try journal.export(to: destination)
-            TenonLog.diagnostics.notice("exported diagnostics")
-        } catch {
-            TenonLog.diagnostics.error(
-                "diagnostics export failed: \(error.localizedDescription, privacy: .public)"
-            )
-            let alert = NSAlert()
-            alert.messageText = "Could not export diagnostics"
-            alert.informativeText = error.localizedDescription
-            alert.runModal()
+        let journal = journal
+        Task { @MainActor in
+            do {
+                _ = try await Task.detached(priority: .utility) {
+                    try journal.export(to: destination)
+                }.value
+                TenonLog.diagnostics.notice("exported diagnostics")
+            } catch {
+                TenonLog.diagnostics.error(
+                    "diagnostics export failed: \((error as NSError).code, privacy: .public)"
+                )
+                let alert = NSAlert()
+                alert.messageText = "Could not export diagnostics"
+                alert.informativeText = error.localizedDescription
+                alert.runModal()
+            }
         }
     }
 }

@@ -7,6 +7,7 @@ import XCTest
 /// that keyboard focus lands in the search field, and that a typed query filters to a
 /// real command row. It drives Tenon.app through the Accessibility tree, so it needs no
 /// osascript/Accessibility grant.
+@MainActor
 final class PaletteFlowUITests: XCTestCase {
     private var app: XCUIApplication!
 
@@ -21,7 +22,8 @@ final class PaletteFlowUITests: XCTestCase {
             .path
     }
 
-    override func setUpWithError() throws {
+    override func setUp() async throws {
+        try await super.setUp()
         continueAfterFailure = false
         app = XCUIApplication()
         app.launchEnvironment["TENON_STUB_TERMINAL"] = "1"
@@ -29,9 +31,10 @@ final class PaletteFlowUITests: XCTestCase {
         app.launch()
     }
 
-    override func tearDownWithError() throws {
+    override func tearDown() async throws {
         app.terminate()
         app = nil
+        try await super.tearDown()
     }
 
     private var canvas: XCUIElement {

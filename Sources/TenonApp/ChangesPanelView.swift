@@ -513,7 +513,7 @@ struct ChangesPanelView: View {
                     case .changesRefresh:
                         // No workspace captured: the model is what knows which one it read.
                         changes.reload()
-                    case .diffStyle, .agentLensPresentation, .agentLensInspector:
+                    case .diffStyle, .agentLensPresentation, .agentLensInspector, .agentLensAccount:
                         return
                     }
                 }

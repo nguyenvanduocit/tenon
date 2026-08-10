@@ -21,6 +21,8 @@ struct ContentView: View {
     var quickCommands: QuickCommandStore
     var pluginUI: PluginUIState
     var automation: AutomationScheduler
+    /// T-100's read-only process monitor, drawn in the title bar.
+    var resourceMonitor: ResourceMonitorModel?
     let automationSchedulesEnabled: Bool
     let automationActions: AutomationPaneActions
 
@@ -58,6 +60,7 @@ struct ContentView: View {
                 palette: palette,
                 quickCommands: quickCommands,
                 agentSuggestions: agentSuggestions,
+                resourceMonitor: resourceMonitor,
                 sidebarVisible: sidebarVisible,
                 sidebarWidth: sidebarWidth,
                 onToggleSidebar: {

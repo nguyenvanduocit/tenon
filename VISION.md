@@ -39,7 +39,7 @@ Tenon opens and behaves like a terminal.
    coupled neighbors where the layout permits it.
 7. Escape restores the exact layout captured at pointer-down. Invalid or stale
    transactions never partially mutate the workspace.
-8. Files, changes, docs, and a web preview can open as slots, keeping common
+8. Files, changes, and a web preview can open as slots, keeping common
    coding-session navigation inside Tenon.
 
 The structural reference is
@@ -119,7 +119,7 @@ TenonCore
 TenonApp
   ContentView       -> workspace sidebar, tab controls, canvas, status strip
   SpatialCanvasView -> AppKit cards and pure pointer transaction coordinator
-  BuiltInSlotViews  -> terminal, files, changes, docs, web, plugin, empty
+  BuiltInSlotViews  -> terminal, files, changes, web, plugin, empty
   SurfacePool       -> stable UUID-to-TerminalSurface ownership
   GhosttySurface    -> libghostty/AppKit boundary
 ```

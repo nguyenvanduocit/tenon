@@ -129,6 +129,7 @@ The current public inventory is:
 - `workspace.state.v1`;
 - `workspace.pane.owner.v1`;
 - `workspace.tab.create.v1`;
+- `workspace.tab.focus.v1`;
 - `workspace.pane.split.v1`;
 - `workspace.pane.focus.v1`;
 - `workspace.pane.close.v1`;
@@ -139,17 +140,18 @@ The current public inventory is:
 - `workspace.pane.focus-next.v1`;
 - `workspace.select.v1`.
 
-Workspace and pane targeting uses caller-selectable `options.scope.workspaceID/paneID`;
-policy authorizes the designation. The input schema contains operation data only (for
-example split axis or content descriptor).
+Workspace, tab, and pane targeting uses caller-selectable
+`options.scope.workspaceID/tabID/paneID`; policy authorizes the designation. The input
+schema contains operation data only (for example split axis or content descriptor).
 
 `workspace.content.open.v1` is the one intent that does not ask the caller to choose a
-pane: placement is host policy. The pane in the scope pane's tab that already shows this
-kind of content takes it — a file pane takes the next file, a diff pane the next diff, a
-plugin view yields only to that same view, a blank pane takes anything — and with no such
-pane the scope pane splits horizontally. It never opens a tab. `WorkspaceStore.openContent`
-is the single typed implementation; the built-in Changes panel calls it DIRECT and this
-intent is its public adapter.
+pane: placement is host policy. A pane scope selects that pane's tab; a tab scope selects
+that exact tab; otherwise the active tab in the scoped workspace is used. The selected
+tab's pane that already shows this kind of content takes it — a file pane takes the next
+file, a diff pane the next diff, a plugin view yields only to that same view, a blank pane
+takes anything — and with no such pane the selected tab's active pane splits horizontally.
+It never opens a tab. `WorkspaceStore.openContent` is the single typed implementation; the
+built-in Changes panel calls it DIRECT and this intent is its public adapter.
 
 Future move/swap/resize intents require a concrete public use case and explicit bounded
 schema. They MUST adapt to the existing typed transactions rather than creating a second

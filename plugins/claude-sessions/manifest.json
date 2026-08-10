@@ -7,6 +7,8 @@
   "permissions": ["filesystem.read", "process.exec", "terminal.write", "workspace.control"],
   "intents": {
     "uses": [
+      "agent.inventory.v1",
+      "agent.command.v1",
       "filesystem.directory.list.v2",
       "process.exec.v1",
       "terminal.open.v1",

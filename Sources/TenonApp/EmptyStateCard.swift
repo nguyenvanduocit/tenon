@@ -1,4 +1,4 @@
-// @domain: agent-lens
+// @domain: command-surface
 import SwiftUI
 import TenonCore
 
@@ -32,7 +32,6 @@ struct EmptyStateCard: View {
                 "Files"
             ),
             (.changes, "Changes"),
-            (.docs, "Docs"),
             (.automation, "Automation"),
             (
                 .pluginView(
@@ -191,7 +190,6 @@ struct EmptyStateCard: View {
         switch content {
         case .terminal: return "Terminal"
         case .changes: return "Changes"
-        case .docs: return "Docs"
         case .automation: return "Automation"
         case .file(let path): return (path as NSString).lastPathComponent
         case .pluginView(_, let viewID): return viewID

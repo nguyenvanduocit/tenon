@@ -5,6 +5,7 @@ import XCTest
 final class IntentEnvelopeTests: XCTestCase {
     func testScopeOverrideRetargetsEntitiesButPreservesHostGesture() {
         let inheritedWorkspace = UUID()
+        let inheritedTab = UUID()
         let inheritedPane = UUID()
         let gesture = UUID()
         let targetWorkspace = UUID()
@@ -14,12 +15,32 @@ final class IntentEnvelopeTests: XCTestCase {
         ).applying(
             to: InvocationScope(
                 workspaceID: inheritedWorkspace,
+                tabID: inheritedTab,
                 paneID: inheritedPane,
                 userGestureID: gesture
             )
         )
 
         XCTAssertEqual(applied.workspaceID, targetWorkspace)
+        XCTAssertNil(applied.tabID)
+        XCTAssertNil(applied.paneID)
+        XCTAssertEqual(applied.userGestureID, gesture)
+    }
+
+    func testScopeOverrideRetargetingATabClearsTheInheritedPane() {
+        let targetTab = UUID()
+        let gesture = UUID()
+
+        let applied = InvocationScopeOverride(tabID: targetTab).applying(
+            to: InvocationScope(
+                workspaceID: UUID(),
+                tabID: UUID(),
+                paneID: UUID(),
+                userGestureID: gesture
+            )
+        )
+
+        XCTAssertEqual(applied.tabID, targetTab)
         XCTAssertNil(applied.paneID)
         XCTAssertEqual(applied.userGestureID, gesture)
     }
@@ -36,6 +57,7 @@ final class IntentEnvelopeTests: XCTestCase {
         )
         let scope = InvocationScope(
             workspaceID: UUID(),
+            tabID: UUID(),
             paneID: UUID(),
             userGestureID: UUID()
         )

@@ -110,6 +110,30 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertEqual(target?.rect, GridRect(x: 6, y: 0, width: 6, height: 12))
     }
 
+    func testACreationMaximumNarrowsTheClickedRegionAroundTheCellClicked() {
+        // Column 11 of a hole spanning 0…12, capped to 4 columns. Left-anchoring would
+        // open the pane at columns 0…4 — nowhere near the pointer.
+        let target = SpatialCanvasInteractionCoordinator.emptyGridLauncherTarget(
+            at: CGPoint(x: 1_150, y: 600),
+            canvasSize: CGSize(width: 1_200, height: 1_200),
+            slots: [],
+            sizing: NewPaneSizing(maximumWidth: .oneThird)
+        )
+
+        XCTAssertEqual(target?.rect, GridRect(x: 8, y: 0, width: 4, height: 12))
+    }
+
+    func testWithNoCreationMaximumTheClickedRegionIsTheWholeHole() {
+        let target = SpatialCanvasInteractionCoordinator.emptyGridLauncherTarget(
+            at: CGPoint(x: 1_150, y: 600),
+            canvasSize: CGSize(width: 1_200, height: 1_200),
+            slots: [],
+            sizing: .unlimited
+        )
+
+        XCTAssertEqual(target?.rect, GridRect(x: 0, y: 0, width: 12, height: 12))
+    }
+
     func testAccessibilityOffersEachFillableEmptyRegion() throws {
         let barrierID = UUID()
         let fixture = try makeCanvasFixture(
@@ -2159,7 +2183,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
     }
 
-    func testHeaderContextMenuOffersSplitStackDuplicateAndClose() throws {
+    func testHeaderContextMenuOffersSplitStackDuplicateCopyIDAndClose() throws {
         let slotID = UUID()
         let fixture = try makeCanvasFixture(
             slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
@@ -2172,16 +2196,44 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
         XCTAssertEqual(
             menu.items.map(\.title),
-            ["Split", "Stack", "Duplicate", "", "Close"]
+            ["Split", "Stack", "Duplicate", "", "Copy Pane ID", "", "Close"]
         )
         XCTAssertTrue(try menuItem(menu, "Split").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Stack").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Duplicate").isEnabled)
+        XCTAssertTrue(try menuItem(menu, "Copy Pane ID").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Close").isEnabled)
         XCTAssertTrue(
             menu.items.allSatisfy { $0.submenu == nil },
             "the pane menu is flat — no submenu to walk into"
         )
+    }
+
+    func testHeaderContextMenuCopiesTheClickedPaneIDThroughTheSharedRoute() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        var copiedIDs: [UUID] = []
+        fixture.canvas.copyWorkspaceIdentifier = { copiedIDs.append($0) }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+        try menuItem(menu, "Copy Pane ID").invoke()
+
+        XCTAssertEqual(copiedIDs, [slotID])
+    }
+
+    func testWorkspaceIdentifierClipboardWritesOnlyTheRawUUID() {
+        let id = UUID()
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("dev.tenon.tests.identifier.\(UUID().uuidString)")
+        )
+        defer { pasteboard.clearContents() }
+
+        XCTAssertTrue(WorkspaceIdentifierClipboard.copy(id, to: pasteboard))
+        XCTAssertEqual(pasteboard.string(forType: .string), id.uuidString)
     }
 
     func testHeaderContextMenuSplitTargetsTheClickedSlotNotTheActiveOne() throws {
@@ -2509,6 +2561,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         canvas.configure(
             tab: tab,
+            workspaceID: workspace.id,
             workspacePath: workspacePath,
             allLiveSlotIDs: Set(([tab] + additionalTabs).flatMap { $0.slots.map(\.id) }),
             activeSlotID: activeSlotID,
@@ -2600,6 +2653,7 @@ private struct CanvasFixture {
         guard let tab = store.catalog.activeTab else { return }
         canvas.configure(
             tab: tab,
+            workspaceID: store.catalog.activeWorkspaceID,
             workspacePath: workspacePath,
             allLiveSlotIDs: Set(store.catalog.workspaces.flatMap { workspace in
                 workspace.tabs.flatMap { $0.slots.map(\.id) }

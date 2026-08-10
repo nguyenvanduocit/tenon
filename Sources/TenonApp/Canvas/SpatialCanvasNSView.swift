@@ -37,6 +37,11 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     /// `LauncherMenu` below; tests replace only the final popover side effect while the
     /// same empty-grid routing still runs.
     var onPresentEmptyGridLauncher: ((NSRect, GridRect) -> Void)?
+    /// Test seam for the clipboard edge. Both the contextual-menu item and the pane's
+    /// VoiceOver action enter this one route.
+    var copyWorkspaceIdentifier: (UUID) -> Void = {
+        WorkspaceIdentifierClipboard.copy($0)
+    }
 
     private var gestureIsMove = false
 
@@ -142,6 +147,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
 
     func configure(
         tab: TenonCore.Tab,
+        workspaceID: UUID,
         workspacePath: URL,
         allLiveSlotIDs: Set<UUID>,
         activeSlotID: UUID?,
@@ -247,6 +253,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             }
             card.configure(
                 slot: slot,
+                workspaceID: workspaceID,
                 workspacePath: workspacePath,
                 title: SlotPresentation.title(
                     for: slot,
@@ -300,17 +307,21 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         guard let target = SpatialCanvasInteractionCoordinator.emptyGridLauncherTarget(
             at: point,
             canvasSize: bounds.size,
-            slots: displayedSlots
+            slots: displayedSlots,
+            sizing: store?.newPaneSizing ?? .unlimited
         ) else { return false }
 
         return presentEmptyGridLauncher(target)
     }
 
     private func requestBestEmptyGridLauncher() -> Bool {
-        guard let rect = SpatialLayout.bestEmptyRect(
+        guard let hole = SpatialLayout.bestEmptyRect(
             in: displayedSlots,
             near: store?.catalog.activeSlotID
         ) else { return false }
+        // No pointer chose a cell here, so the pane takes the hole's leading edge and the
+        // popover follows it rather than the hole's centre.
+        let rect = (store?.newPaneSizing ?? .unlimited).fitting(hole)
         let target = EmptyGridLauncherTarget(
             anchor: CGPoint(
                 x: CGFloat(rect.x * 2 + rect.width) * bounds.width /
@@ -437,6 +448,9 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         card.onRequestMenu = { [weak self] id in
             self?.slotContextMenu(for: id)
         }
+        card.onCopyID = { [weak self] id in
+            self?.copyWorkspaceIdentifier(id)
+        }
         card.onCycleExtent = { [weak self] id, direction in
             self?.store?.cycleSlotExtent(id, direction: direction)
         }
@@ -557,6 +571,12 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             isEnabled: store.catalog.canDuplicateSlot(slotID)
         ) { [weak store] in
             store?.duplicateSlot(slotID)
+        })
+
+        menu.addItem(.separator())
+
+        menu.addItem(SlotMenuItem(title: "Copy Pane ID", isEnabled: true) { [weak self] in
+            self?.copyWorkspaceIdentifier(slotID)
         })
 
         menu.addItem(.separator())
@@ -1153,4 +1173,3 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         }
     }
 }
-

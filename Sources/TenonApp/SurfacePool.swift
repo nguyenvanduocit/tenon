@@ -329,6 +329,24 @@ final class SurfacePool {
         )
     }
 
+    /// Process provenance for every retained terminal surface, for the resource monitor.
+    ///
+    /// Read on `MainActor` and handed off as plain values, because everything after this point
+    /// — device resolution, traversal, aggregation — runs off the main thread. Retained
+    /// surfaces belonging to workspaces nobody is looking at are included deliberately: their
+    /// shells are still running, and a monitor that hid them would under-report the machine.
+    ///
+    /// `ttyName` is asked for once per pane per sample rather than cached, because a surface
+    /// that has not materialised yet has no PTY and would cache a permanent `nil`.
+    func terminalProvenance(for slotIDs: [UUID]) -> [UUID: (ttyName: String?, foregroundPID: UInt64?)] {
+        var provenance: [UUID: (ttyName: String?, foregroundPID: UInt64?)] = [:]
+        for slotID in slotIDs {
+            guard let surface = surfaces[slotID] else { continue }
+            provenance[slotID] = (surface.ttyName, surface.foregroundPID)
+        }
+        return provenance
+    }
+
     /// How many shell commands have finished in a slot, for `pane.wait --for command-finished`.
     func commandFinishedCount(for slotID: UUID) -> Int {
         surfaces[slotID]?.commandFinishedCount ?? 0

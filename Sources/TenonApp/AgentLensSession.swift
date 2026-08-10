@@ -262,6 +262,14 @@ final class AgentLensViewModel {
     private(set) var timelineItems: [AgentTimelineItem] = []
     private(set) var resolution: AgentLensResolution?
     private(set) var isSending = false
+    /// Which reading of the attached session the Session renderer draws. Local host UI state:
+    /// it changes no attachment, sends nothing to the PTY, and is independent of
+    /// `mode`/`showsSplitView`.
+    var account: AgentLensAccount = .chat
+    private(set) var timelineGeneration: AgentTimelineGeneration = .idle
+    /// The fact Chat should scroll to when it next draws, set by a milestone's anchor. Cleared
+    /// by whichever list consumes it, so one anchor click scrolls once.
+    var pendingChatFocus: String?
     /// Which renderer the pane shows. Detecting an agent fills in the pane's chrome header and
     /// leaves this alone: the pane is a live PTY someone is typing into, so the choice of
     /// renderer stays with them.
@@ -286,12 +294,39 @@ final class AgentLensViewModel {
     @ObservationIgnored private var inputQueue: AgentLensInputQueue?
     @ObservationIgnored private var consecutiveMisses = 0
     @ObservationIgnored private var didAnnounceHookCapabilities = false
+    @ObservationIgnored private let resolveTimelineSynthesizer: AgentTimelineSynthesizerResolver
+    @ObservationIgnored private var timelineTask: Task<Void, Never>?
+    @ObservationIgnored private var timelineLedger = AgentTimelineRunLedger()
+    /// How many facts the reading on screen was made from. Comparing counts is O(1) and moves
+    /// only when something actually happened, so a streaming reply does not mark a fresh
+    /// reading stale several times a second.
+    @ObservationIgnored private var readingFactCount: Int?
+    /// Run-local, content-free correlation for the bounded diagnostics transition ring.
+    /// It is deliberately not the slot UUID or provider session identifier.
+    @ObservationIgnored let diagnosticsPaneOrdinal: Int
     private var optionSubmissionGate = AgentOptionSubmissionGate()
 
-    init(slotID: UUID, terminalPool: SurfacePool, discovery: AgentLensDiscovery) {
+    init(
+        slotID: UUID,
+        terminalPool: SurfacePool,
+        discovery: AgentLensDiscovery,
+        resolveTimelineSynthesizer: @escaping AgentTimelineSynthesizerResolver =
+            AgentLensViewModel.installedTimelineSynthesizer
+    ) {
         self.slotID = slotID
         self.terminalPool = terminalPool
         self.discovery = discovery
+        self.resolveTimelineSynthesizer = resolveTimelineSynthesizer
+        self.diagnosticsPaneOrdinal = DiagnosticsRuntimeSignals.shared.registerAgentLensPane()
+    }
+
+    /// Finding the agent binary reads the filesystem, which the interaction law forbids on
+    /// `MainActor`, and it is asked for only when someone actually wants a reading — so it is
+    /// resolved inside the generation's own task rather than at pane construction.
+    static let installedTimelineSynthesizer: AgentTimelineSynthesizerResolver = {
+        await Task.detached(priority: .userInitiated) {
+            AgentCLITimelineSynthesizer.installed()
+        }.value
     }
 
     var isAgentDetected: Bool { resolution != nil || snapshot.provider != nil }
@@ -321,6 +356,139 @@ final class AgentLensViewModel {
         coordinator = nil
         inputQueue = nil
         optionSubmissionGate.reconcile(pendingRequestID: nil)
+        discardTimeline()
+    }
+
+    // MARK: - The synthesized reading  @domain: agent-lens
+
+    /// Whether the session has moved since the reading on screen was made.
+    ///
+    /// Only a `ready` reading can be stale. A run in flight is already about to be replaced, and
+    /// a failure describes an attempt rather than a state of the session.
+    var timelineIsStale: Bool {
+        guard case .ready = timelineGeneration, let readingFactCount else { return false }
+        return snapshot.factCount != readingFactCount
+    }
+
+    /// Follows a milestone's anchor back to the fact it stood on.
+    ///
+    /// Two return paths, because they cover different facts. The inspector shows the evidence
+    /// for ANY anchored fact — source, authority, location, byte offset, fingerprint — and it is
+    /// what makes the synthesis checkable rather than merely readable. Chat additionally scrolls
+    /// to the row, for the facts Chat draws.
+    func returnToEvidence(_ factID: String) {
+        guard let item = snapshot.timelineItems.first(where: { $0.id == factID }) else { return }
+        inspection = AgentLensInspection(fact: item)
+        showsInspector = inspection != nil
+        account = .chat
+        pendingChatFocus = factID
+    }
+
+    /// Reads this session into milestones. Explicit, never automatic: a reading costs the
+    /// person a model call, so it happens when they ask for one.
+    ///
+    /// An unreadable session is refused here rather than reported, and refused silently: the
+    /// invitation is only drawn over a session `AgentTimelineDigest.insufficiency(of:)` admits,
+    /// so arriving with too little evidence means the snapshot shrank between the draw and the
+    /// click. The account re-reads that same snapshot on the next pass and says so itself.
+    func generateTimeline() {
+        guard case .success(let digest) = AgentTimelineDigest.build(from: snapshot) else { return }
+
+        timelineTask?.cancel()
+        let run = timelineLedger.begin()
+        let factCount = snapshot.factCount
+        timelineGeneration = .running(fingerprint: digest.fingerprint, progress: .launching)
+        // Whether this result may be shown is the ledger's answer and only the ledger's.
+        // `Task.isCancelled` looks like a second guard and is a weaker one: a synthesizer that
+        // has already returned settles before cancellation propagates, so the window it leaves
+        // open is exactly the race this is here to close. One rule, one place.
+        let announce = progressAnnouncer(run: run)
+        timelineTask = Task { [weak self, resolveTimelineSynthesizer] in
+            let outcome = await Self.read(
+                digest,
+                using: resolveTimelineSynthesizer,
+                progress: announce
+            )
+            self?.land(outcome, run: run, factCount: factCount)
+        }
+    }
+
+    /// The channel a run in flight uses to say what it is doing. Built here, on the pane, so the
+    /// synthesizer never learns what an actor hop or a view model is.
+    private func progressAnnouncer(run: Int) -> @Sendable (AgentTimelineProgress) -> Void {
+        { [weak self] progress in
+            Task { @MainActor in self?.note(progress, run: run) }
+        }
+    }
+
+    /// Shows what the run in flight is doing.
+    ///
+    /// Guarded by the ledger for the same reason a result is: progress from a superseded run
+    /// would otherwise narrate work whose answer can never be shown.
+    private func note(_ progress: AgentTimelineProgress, run: Int) {
+        guard run == timelineLedger.currentRun,
+              case .running(let fingerprint, let current) = timelineGeneration,
+              current != progress
+        else { return }
+        timelineGeneration = .running(fingerprint: fingerprint, progress: progress)
+    }
+
+    /// Stops the run in flight. The ledger advances past it in the same breath, so the work
+    /// already started cannot land afterwards on top of whatever the person does next.
+    func cancelTimelineGeneration() {
+        guard timelineLedger.isRunning else { return }
+        timelineTask?.cancel()
+        timelineTask = nil
+        timelineLedger.cancel()
+        timelineGeneration = .failed(.cancelled)
+    }
+
+    private static func read(
+        _ digest: AgentTimelineDigest,
+        using resolve: AgentTimelineSynthesizerResolver,
+        progress: @escaping @Sendable (AgentTimelineProgress) -> Void
+    ) async -> Result<AgentSessionTimeline, AgentTimelineFailure> {
+        guard let synthesizer = await resolve() else { return .failure(.noSynthesizer) }
+        do {
+            let raw = try await synthesizer.synthesize(digest, progress: progress)
+            return AgentTimelineDraftDecoder.decode(raw).flatMap { draft in
+                AgentTimelineValidation
+                    .validate(draft, against: digest, generatedAt: Date())
+                    .mapError(AgentTimelineFailure.rejected)
+            }
+        } catch is CancellationError {
+            return .failure(.cancelled)
+        } catch {
+            return .failure(
+                (error as? AgentTimelineFailure) ?? .runFailed(error.localizedDescription)
+            )
+        }
+    }
+
+    private func land(
+        _ outcome: Result<AgentSessionTimeline, AgentTimelineFailure>,
+        run: Int,
+        factCount: Int
+    ) {
+        guard timelineLedger.settle(run: run) else { return }
+        timelineTask = nil
+        switch outcome {
+        case .success(let timeline):
+            readingFactCount = factCount
+            timelineGeneration = .ready(timeline)
+        case .failure(let failure):
+            timelineGeneration = .failed(failure)
+        }
+    }
+
+    /// A reading belongs to the session it was made from. Attaching to a different one, or
+    /// losing the pane, drops it rather than leaving last session's milestones on screen.
+    private func discardTimeline() {
+        timelineTask?.cancel()
+        timelineTask = nil
+        if timelineLedger.isRunning { timelineLedger.cancel() }
+        readingFactCount = nil
+        timelineGeneration = .idle
     }
 
     func sendDraft() async {
@@ -451,16 +619,32 @@ final class AgentLensViewModel {
     }
 
     private var publisher: AgentLensSessionCoordinator.Publisher {
-        { @MainActor [weak self] snapshot in
-            guard let self else { return }
-            self.optionSubmissionGate.reconcile(
-                pendingRequestID: snapshot.pendingInteraction?.id
-            )
-            if self.snapshot != snapshot {
-                self.timelineItems = snapshot.sessionTimelineItems
-                self.snapshot = snapshot
-            }
-        }
+        { @MainActor [weak self] snapshot in self?.receive(snapshot) }
+    }
+
+    /// The one place a published snapshot lands on the pane.
+    ///
+    /// Named rather than left as a closure body so there is exactly one entry: the coordinator
+    /// uses it in the app, and the headless suite drives the pane through the same door instead
+    /// of needing a second write path to `snapshot` that only tests would ever take.
+    func receive(_ next: AgentLensSnapshot) {
+        optionSubmissionGate.reconcile(pendingRequestID: next.pendingInteraction?.id)
+        guard snapshot != next else { return }
+        timelineItems = next.sessionTimelineItems
+        snapshot = next
+        DiagnosticsRuntimeSignals.shared.noteAgentLensSnapshot(
+            paneOrdinal: diagnosticsPaneOrdinal,
+            account: account,
+            mode: mode,
+            split: showsSplitView,
+            status: next.status,
+            revision: next.renderRevision,
+            messageCount: next.messages.count,
+            toolCount: next.tools.count,
+            interactionCount: next.interactions.count,
+            diagnosticCount: next.diagnostics.count,
+            timelineItemCount: timelineItems.count
+        )
     }
 
     private func discoveryLoop() async {
@@ -515,6 +699,7 @@ final class AgentLensViewModel {
         if let coordinator { await coordinator.stop() }
         if let inputQueue { await inputQueue.stop() }
         optionSubmissionGate.reconcile(pendingRequestID: nil)
+        discardTimeline()
 
         resolution = next
         let coordinator = AgentLensSessionCoordinator()
@@ -600,10 +785,16 @@ enum AgentHookLensBus {
 @MainActor
 final class AgentLensPool {
     private let discovery: AgentLensDiscovery
+    private let resolveTimelineSynthesizer: AgentTimelineSynthesizerResolver
     private var models: [UUID: AgentLensViewModel] = [:]
 
-    init(discovery: AgentLensDiscovery = AgentLensDiscovery()) {
+    init(
+        discovery: AgentLensDiscovery = AgentLensDiscovery(),
+        resolveTimelineSynthesizer: @escaping AgentTimelineSynthesizerResolver =
+            AgentLensViewModel.installedTimelineSynthesizer
+    ) {
         self.discovery = discovery
+        self.resolveTimelineSynthesizer = resolveTimelineSynthesizer
         AgentHookLensBus.attach(self)
     }
 
@@ -616,7 +807,8 @@ final class AgentLensPool {
         let model = AgentLensViewModel(
             slotID: slotID,
             terminalPool: terminalPool,
-            discovery: discovery
+            discovery: discovery,
+            resolveTimelineSynthesizer: resolveTimelineSynthesizer
         )
         models[slotID] = model
         return model

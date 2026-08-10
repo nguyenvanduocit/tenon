@@ -197,11 +197,12 @@ A stand-in agent is ready at `scratchpad/t091/claude` (session 784166de): a scri
 from the foreground executable's path, so putting that directory first on `PATH` inside a pane
 attaches the lens and churns the timeline without spending real agent quota.
 
-### A permanent bound now exists, and it converges
+### A generic host-boundary smoke test exists, and it converges
 
-`PaneUpdateTurnBoundTests` mounts the real pane hierarchy — `PaneContentHost` framed by hand
-around `ScrollView { LazyVStack }`, in an off-screen window — and asserts the body-evaluation
-count stops climbing. It passes.
+`PaneUpdateTurnBoundTests` mounts the same host boundary — `PaneContentHost` framed by hand
+around a synthetic `ScrollView { LazyVStack }`, in an off-screen window — and asserts the
+body-evaluation count stops climbing. It passes. It does not mount Agent Lens or exercise live
+snapshot churn, `ScrollViewReader`, bottom-sentinel state, or revision-driven `scrollTo`.
 
 It also passes with `sizingOptions` mutated back to the platform default, which **independently
 reproduces the earlier PoC result**: the sizing options alone do not spin. So the trigger needs
@@ -218,15 +219,95 @@ something none of these probes have — live content churn, the AppKit-hosted ne
       NOT a proven fix for the hang
 - [x] `swift test` green across the suite
 
-## Criteria — open (the hang itself)
+## Recurrence, root mechanism, and fix — 2026-08-10
+
+The natural recurrence supplied the receipt the first incident lacked. PID 98322 stalled at
+about 10:38:27 while consuming 78–102% of one core. Three five-second samples kept the main
+thread inside one AppKit display callback:
+
+```
+NSDisplayCycleObserverInvoke → NSHostingView.layout → ViewGraphRootValueUpdater.render
+```
+
+The inner feedback edge is the same family as the first incident:
+
+```
+Update.dispatchActions → LazyLayoutViewCache.signalPrefetch
+  → NSHostingView.requestUpdate → NSHostingView.setNeedsUpdate
+    → -[NSView setNeedsUpdateConstraints:]
+```
+
+The Agent Lens ancestry is more precise than the first sample and falsifies the idea that the
+old `ZStack` replacement removed the whole route:
+
+```
+StackLayout → ScrollViewLayoutComputer.sizeThatFits → LazyStack.measureEstimates
+  → ForEachState.item → AgentTimelineItem
+```
+
+The remaining `StackLayout` was `AgentSessionView`'s ordinary outer `VStack`, which sized the
+live account content above the composer. Lazy prefetch requested another host update before
+that measurement finished; AppKit therefore found constraints dirty and restarted the same
+display cycle. Unified logging recorded 300 `layoutSubtreeIfNeeded` iterations and an earlier
+`NSHostingView` reentrant-layout warning.
+
+The process was not killed by the OS, memory pressure, or the watchdog. At 10:48:50 AppKit's
+update-constraints count crossed its hard safety bound, threw `NSGenericException`, and Tenon
+exited with code 6. Memory stayed below 1 GB, unlike the first incident's 11 GB aftermath.
+
+The fix keeps the chat `LazyVStack` and its real viewport-driven `onAppear`/`onDisappear`
+semantics. `AgentSessionLayout` now owns the two-region geometry: it content-sizes only the
+small composer footer and places the account content with the exact finite width and remaining
+height. Its `sizeThatFits` never asks the live scroll view for an ideal size, severing the
+`StackLayout → ScrollView.sizeThatFits → LazyStack.measureEstimates` ancestry that fed the loop.
+
+`LazyListSizingFitnessTests.testAgentLensLiveChatUsesAFiniteViewportLayout` was red before the
+production wiring changed and is green afterward. The runtime
+`PaneUpdateTurnBoundTests.testAgentSessionContentReceivesOnlyAnExactFiniteViewport` mounts the
+layout in `PaneContentHost`/`NSWindow` and records every content proposal; all are finite and
+fully specified. A second runtime fixture drives the production feedback shape —
+`ScrollViewReader → ScrollView → LazyVStack`, bottom sentinel, revision-triggered asynchronous
+`scrollTo`, and a 1...6-line composer — through 32 churn cycles, proves those changes rendered,
+then proves two fixed quiet windows add no evaluation turns. The prior lazy-host convergence
+and sizing-option guards remain green.
+
+The first installed-candidate pass exposed a second, finite amplifier after the layout loop was
+removed: every `renderRevision` still enqueued its own next-turn `scrollTo`. Under a deliberate
+30 Hz burst, those obsolete requests saturated the main queue even though the watchdog kept
+receiving beats and `signalPrefetch` was absent. `AgentScrollTurnGate` now admits at most one
+pending bottom scroll; when it runs, it uses the newest geometry. Its focused regression proves
+32 further claims are rejected until the scheduled turn releases the gate.
+
+### Installed-candidate receipt — 2026-08-10 12:00–12:10
+
+An ad-hoc-signed staging candidate ran the production `AgentSessionView` in Session/Chat mode
+against a real Claude JSONL under `~/.claude/projects`. The deterministic foreground driver
+seeded 599 history rows, then appended 8,088 changing revisions over five minutes at about
+27–30 Hz. The candidate remained responsive and its diagnostics journal added no `stall`,
+`stall-continues`, `stall-sample`, or `recovered` record after the launch line.
+
+The 61.17-second SwiftUI Instruments capture reports **0 hangs**, three 17 ms app hitches, and
+553 SwiftUI updates totalling 15 ms. During the same live churn, a five-second process sample
+found the main thread idle in `mach_msg` for 4,020 of 4,082 samples and contained none of
+`LazyLayoutViewCache.signalPrefetch`, `NSHostingView.requestUpdate`,
+`setNeedsUpdateConstraints`, `NSHostingView.layout`, or revision-driven `scrollTo`. Unified
+logging contains no reentrant-hosting warning, 300-pass layout warning, update-constraints
+fault, or `NSGenericException` for the candidate PID. CPU was about 4.5% during the captured
+load and settled to 1.5% after the foreground driver's terminal output finished rendering.
+Artifacts are retained at `/tmp/tenon-hang-fix2-QJ4Ti3/`.
+
+## Criteria — current state
 
 - [x] The steps are written down (runbook above), and the next stall samples itself five
       seconds in instead of two hours in
-- [ ] The loop is reproduced by running those steps against the real app
-- [ ] Root cause identified from that reproduction, with the falsification that supports it
-- [~] A regression test that bounds update turns exists and passes (`PaneUpdateTurnBoundTests`).
-      The "red before the fix" half cannot be honoured while there is no reproduction to be red
-      against — that is stated rather than papered over.
+- [x] The loop recurred naturally and diagnostics captured its live onset family and terminal
+      AppKit exception
+- [x] Root mechanism identified: parent ideal-size measurement of the live Agent Lens lazy list
+      feeds prefetch invalidation back into the same host constraints/display pass
+- [x] A production-wiring regression was red before the finite-viewport fix and green after it;
+      a runtime proposal recorder proves the content receives only exact finite dimensions
+- [x] Exercise the same sustained live-agent workflow in an installed candidate and retain the
+      no-stall journal/sample receipt
 
 A watchdog script (`scratchpad/watch-tenon.sh`, session efc4afbd) samples the process on
 the first sustained spin — the earlier sample was taken after 10 GB had swapped, which

@@ -9,7 +9,6 @@ public enum DefaultPaneContent: String, CaseIterable, Codable, Sendable {
     case terminal
     case files
     case changes
-    case docs
     case browser
     case empty
 
@@ -19,7 +18,6 @@ public enum DefaultPaneContent: String, CaseIterable, Codable, Sendable {
         case .terminal: return "Terminal"
         case .files: return "Files"
         case .changes: return "Changes"
-        case .docs: return "Docs"
         case .browser: return "Browser"
         case .empty: return "Empty"
         }
@@ -37,7 +35,6 @@ public enum DefaultPaneContent: String, CaseIterable, Codable, Sendable {
                 viewID: "tree"
             )
         case .changes: return .changes
-        case .docs: return .docs
         case .browser:
             return .pluginView(
                 pluginID: "dev.tenon.browser",
@@ -87,6 +84,10 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     public var newTabContent: DefaultPaneContent
     public var newSplitContent: DefaultPaneContent
     public var newWorkspaceContent: DefaultPaneContent
+    /// The widest a pane may be when it is created, or nil to let the layout decide as it
+    /// always has. Read at creation only, so raising or lowering it never disturbs a pane
+    /// already on the canvas.
+    public var newPaneMaximumWidth: SpatialExtentFraction?
     public var sidebarVisibleOnLaunch: Bool
     public var sidebarWidth: Double
     public var accent: AccentColor
@@ -101,6 +102,7 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         newTabContent: DefaultPaneContent = .terminal,
         newSplitContent: DefaultPaneContent = .terminal,
         newWorkspaceContent: DefaultPaneContent = .terminal,
+        newPaneMaximumWidth: SpatialExtentFraction? = nil,
         sidebarVisibleOnLaunch: Bool = true,
         sidebarWidth: Double = 232,
         accent: AccentColor = .amber,
@@ -110,6 +112,7 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         self.newTabContent = newTabContent
         self.newSplitContent = newSplitContent
         self.newWorkspaceContent = newWorkspaceContent
+        self.newPaneMaximumWidth = newPaneMaximumWidth
         self.sidebarVisibleOnLaunch = sidebarVisibleOnLaunch
         self.sidebarWidth = sidebarWidth
         self.accent = accent
@@ -120,12 +123,23 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     public init(from decoder: any Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         let defaults = AppPreferences()
-        newTabContent = try container.decodeIfPresent(DefaultPaneContent.self, forKey: .newTabContent)
+        // A pane content this build cannot name — a newer Tenon's, one this build retired,
+        // or a hand-edited file — falls back to the default for that one key. Failing the
+        // whole document instead would take accent, sidebar width and paused schedules down
+        // with it, which is a large loss to answer a single unreadable word.
+        newTabContent = (try? container.decode(DefaultPaneContent.self, forKey: .newTabContent))
             ?? defaults.newTabContent
-        newSplitContent = try container.decodeIfPresent(DefaultPaneContent.self, forKey: .newSplitContent)
+        newSplitContent = (try? container.decode(DefaultPaneContent.self, forKey: .newSplitContent))
             ?? defaults.newSplitContent
-        newWorkspaceContent = try container.decodeIfPresent(DefaultPaneContent.self, forKey: .newWorkspaceContent)
+        newWorkspaceContent = (try? container.decode(DefaultPaneContent.self, forKey: .newWorkspaceContent))
             ?? defaults.newWorkspaceContent
+        // A width this build cannot name — a newer Tenon's, or a hand-edited file — is
+        // dropped instead of failing the whole document. An unreadable maximum means the
+        // layout decides, which is exactly the behaviour of no maximum at all.
+        newPaneMaximumWidth = try? container.decode(
+            SpatialExtentFraction.self,
+            forKey: .newPaneMaximumWidth
+        )
         sidebarVisibleOnLaunch = try container.decodeIfPresent(Bool.self, forKey: .sidebarVisibleOnLaunch)
             ?? defaults.sidebarVisibleOnLaunch
         sidebarWidth = try container.decodeIfPresent(Double.self, forKey: .sidebarWidth)

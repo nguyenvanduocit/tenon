@@ -36,6 +36,7 @@ struct WorkspaceStageView: View {
             ZStack {
                 SpatialCanvasView(
                     tab: tab,
+                    workspaceID: workspace.id,
                     workspacePath: workspace.path,
                     allLiveSlotIDs: Set(store.catalog.allSlotIDs),
                     activeSlotID: tab.activeSlotID,
@@ -62,6 +63,7 @@ struct WorkspaceStageView: View {
 
                 if tab.slots.isEmpty {
                     EmptyTabCallToAction(
+                        workspaceID: workspace.id,
                         store: store,
                         pool: pool,
                         agentSuggestions: agentSuggestions
@@ -90,6 +92,10 @@ struct WorkspaceStageView: View {
 /// The empty tab presents the shared launcher card; its actions add a fresh slot
 /// to the otherwise-empty tab.
 private struct EmptyTabCallToAction: View {
+    /// The workspace this tab belongs to, handed down from the one place that already knows
+    /// it. The card offers only this workspace's recents; it never asks which workspace is
+    /// selected, so a list can't follow the selection somewhere else.
+    let workspaceID: UUID
     let store: WorkspaceStore
     let pool: SurfacePool
     let agentSuggestions: [AgentLaunchSuggestion]
@@ -98,7 +104,7 @@ private struct EmptyTabCallToAction: View {
         EmptyStateCard(
             title: "This tab is empty",
             subtitle: "No terminal running yet",
-            recents: store.recent?.recent ?? [],
+            recents: store.recent?.recent(for: workspaceID) ?? [],
             agentSuggestions: agentSuggestions,
             isDefaultAction: true,
             onLaunch: { store.addSlot(content: $0) },

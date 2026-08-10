@@ -78,12 +78,24 @@ public enum ResizeDirection: Equatable, Sendable {
 /// The sizes a pane border offers when it is asked to resize by name rather than by
 /// drag. A fraction is of the whole canvas, never of the pane's current size, so "1/2"
 /// means the same width wherever the pane sits.
-public enum SpatialExtentFraction: Equatable, Sendable, CaseIterable {
+///
+/// `Codable` because this is also the vocabulary Settings uses to cap how wide a newly
+/// created pane may be (`NewPaneSizing`); `label` so the border menu and that preference
+/// spell a size identically.
+public enum SpatialExtentFraction: String, Equatable, Sendable, CaseIterable, Codable {
     case oneThird
     case oneHalf
     case full
 
-    func extent(of total: Int) -> Int {
+    public var label: String {
+        switch self {
+        case .oneThird: return "1/3"
+        case .oneHalf: return "1/2"
+        case .full: return "Full"
+        }
+    }
+
+    public func extent(of total: Int) -> Int {
         switch self {
         case .oneThird: return total / 3
         case .oneHalf: return total / 2
@@ -265,11 +277,21 @@ public enum SpatialLayout {
         return best?.rect
     }
 
+    /// Halves `slotID` along `axis` and gives the new half to `newSlotID`.
+    ///
+    /// `newSlotMaximumWidth` caps how wide the *new* slot may be, which is how a person's
+    /// preferred maximum for a freshly created pane reaches the geometry. The width it
+    /// gives up goes somewhere the layout stays gapless: on a horizontal split back to the
+    /// pane being split, which simply keeps a larger share; on a vertical split back to the
+    /// canvas as empty space, since the new pane sits beneath its sibling and has no
+    /// neighbour to hand it to. A cap wider than the half on offer, or narrower than
+    /// `minimumWidth`, changes nothing the layout would not already have refused.
     public static func split(
         _ slots: [SpatialSlot],
         slotID: UUID,
         newSlotID: UUID,
-        axis: SplitAxis
+        axis: SplitAxis,
+        newSlotMaximumWidth: Int? = nil
     ) -> SpatialLayoutTransaction? {
         guard isValid(slots),
               let index = slots.firstIndex(where: { $0.id == slotID }),
@@ -281,6 +303,11 @@ public enum SpatialLayout {
         let minimum = axis == .horizontal ? minimumWidth : minimumHeight
         guard available >= minimum * 2 else { return nil }
 
+        func capped(_ width: Int) -> Int {
+            guard let newSlotMaximumWidth else { return width }
+            return max(minimumWidth, min(width, newSlotMaximumWidth))
+        }
+
         let firstSize = (available + 1) / 2
         let secondSize = available - firstSize
         var proposal = slots
@@ -289,11 +316,12 @@ public enum SpatialLayout {
 
         switch axis {
         case .horizontal:
-            firstRect.width = firstSize
+            let newWidth = capped(secondSize)
+            firstRect.width = original.width - newWidth
             secondRect = GridRect(
-                x: original.x + firstSize,
+                x: original.x + firstRect.width,
                 y: original.y,
-                width: secondSize,
+                width: newWidth,
                 height: original.height
             )
         case .vertical:
@@ -301,7 +329,7 @@ public enum SpatialLayout {
             secondRect = GridRect(
                 x: original.x,
                 y: original.y + firstSize,
-                width: original.width,
+                width: capped(original.width),
                 height: secondSize
             )
         }

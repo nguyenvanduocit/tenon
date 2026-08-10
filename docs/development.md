@@ -13,7 +13,7 @@ lives.
   swap, coupled resize, stale-transaction rejection, and Escape rollback.
 - Stable `TerminalSurface` ownership per slot UUID, backed by libghostty or a
   deterministic stub.
-- Built-in terminal, files, changes, docs, automation, web preview, plugin-view, and empty
+- Built-in terminal, files, changes, automation, web preview, plugin-view, and empty
   slot content.
 - An embedded JavaScriptCore plugin host with isolated runtimes, hot reload,
   durable enable/disable, capability policy and consent, intent invocation and
@@ -93,7 +93,7 @@ test targets. Run `xcodegen generate` after adding or moving source files.
 | Resize | Drag any slot edge or corner |
 | Cancel pointer transaction | `Esc` |
 
-**Add slot** opens terminal, files, diff, docs, automation, and local web-preview choices.
+**Add slot** opens terminal, files, diff, automation, and local web-preview choices.
 Closing the final slot keeps the tab alive and shows an **Add terminal** action.
 Closing an active tab selects its previous neighbor.
 
@@ -228,7 +228,7 @@ Sources/
       SpatialSlotCardView.swift  one slot's card chrome
       SpatialInteraction.swift   pointer gesture state machine
       PaneContentHost.swift      hosts a slot's content without publishing size
-    BuiltInSlotViews.swift async/cancel-aware files, Git, docs, web, plugin UI
+    BuiltInSlotViews.swift async/cancel-aware files, Git, web, plugin UI
     SurfacePool.swift      slot UUID to stable terminal surface
     GhosttySurface.swift   libghostty/AppKit integration
     TerminalSurface.swift protocol and deterministic stub

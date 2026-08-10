@@ -73,7 +73,7 @@ enum PaneHeaderProjection {
                 slotID: slot.id,
                 in: pluginViewSections
             )?.header ?? .empty
-        case .terminal, .changes, .docs, .file, .diff, .automation, .empty:
+        case .terminal, .changes, .file, .diff, .automation, .empty:
             return published ?? .empty
         }
     }

@@ -129,10 +129,11 @@ public enum CLIActionParser {
         }
         try requireOnly(
             object,
-            allowed: ["workspaceID", "paneID"]
+            allowed: ["workspaceID", "tabID", "paneID"]
         )
         return InvocationScope(
             workspaceID: try optionalUUID(object, "workspaceID"),
+            tabID: try optionalUUID(object, "tabID"),
             paneID: try optionalUUID(object, "paneID")
         )
     }

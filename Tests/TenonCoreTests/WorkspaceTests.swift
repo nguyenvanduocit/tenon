@@ -345,14 +345,14 @@ final class WorkspaceCatalogTests: XCTestCase {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let originalID = try XCTUnwrap(catalog.activeSlotID)
 
-        let events = catalog.addSlot(content: .docs)
+        let events = catalog.addSlot(content: .automation)
 
         let tab = try XCTUnwrap(catalog.activeTab)
         XCTAssertEqual(tab.slots.count, 2)
         XCTAssertEqual(tab.slots[0].rect, GridRect(x: 0, y: 0, width: 6, height: 12))
         let added = try XCTUnwrap(tab.slots.first { $0.id != originalID })
         XCTAssertEqual(added.rect, GridRect(x: 6, y: 0, width: 6, height: 12))
-        XCTAssertEqual(added.content, .docs)
+        XCTAssertEqual(added.content, .automation)
         XCTAssertTrue(events.contains(.slotSplit(
             original: originalID,
             new: added.id,
@@ -383,11 +383,11 @@ final class WorkspaceCatalogTests: XCTestCase {
             activeSlotID: activeSlotID
         )
 
-        let events = catalog.addSlot(content: .docs)
+        let events = catalog.addSlot(content: .automation)
 
         let tab = try XCTUnwrap(catalog.activeTab)
         let added = try XCTUnwrap(tab.slots.first {
-            $0.id != activeSlotID && $0.content == .docs
+            $0.id != activeSlotID && $0.content == .automation
         })
         XCTAssertEqual(
             catalog.slot(id: activeSlotID)?.rect,
@@ -622,7 +622,7 @@ final class WorkspaceCatalogTests: XCTestCase {
             .terminal,
             .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree"),
             .changes,
-            .docs,
+            .automation,
             .pluginView(pluginID: "dev.tenon.browser", viewID: "browser"),
             .pluginView(pluginID: "dev.tenon.git", viewID: "graph"),
             .empty,

@@ -257,6 +257,7 @@ final class PluginPaneHeaderRouteTests: XCTestCase {
         window.makeKeyAndOrderFront(nil)
         canvas.configure(
             tab: tab,
+            workspaceID: store.catalog.activeWorkspaceID,
             workspacePath: root,
             allLiveSlotIDs: Set(tab.slots.map(\.id)),
             activeSlotID: firstPaneID,

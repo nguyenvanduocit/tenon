@@ -1,4 +1,4 @@
-// @domain: diagnostics
+// @domain: plugin-host, workspace-model
 import Foundation
 
 enum AppStatePathError: Error, Sendable, Equatable, CustomStringConvertible {

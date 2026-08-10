@@ -51,6 +51,19 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     case keyValue(label: String, value: String, tint: ColorToken)
     case progress(value: Double, tint: ColorToken)
     case field(label: String, children: [PluginViewNode])
+
+    // Pointer drag-and-drop (T-056). Both are transparent wrappers: they lay their children
+    // out exactly as the subtree would lay itself out, and add only a gesture. A drop
+    // arrives as the target's own `views.onSelect(action, payload)` — the event shape a
+    // button press and a field submit already use, never a second callback.
+    /// A subtree a pointer may pick up, carrying `payload` to whichever `dropTarget`
+    /// receives it. An empty payload means the subtree renders and is simply not draggable
+    /// — how a payload past `PluginViewDrag.maximumPayloadLength` degrades, so a card never
+    /// disappears because its id was long.
+    case dragSource(payload: String, children: [PluginViewNode])
+    /// A subtree that accepts a drag from its own view instance and fires `action` with the
+    /// dragged payload. An empty action means the subtree renders and accepts nothing.
+    case dropTarget(action: String, children: [PluginViewNode])
 }
 
 public extension PluginViewNode {
@@ -61,7 +74,9 @@ public extension PluginViewNode {
              let .hstack(_, children),
              let .card(children),
              let .scroll(_, children),
-             let .field(_, children):
+             let .field(_, children),
+             let .dragSource(_, children),
+             let .dropTarget(_, children):
             children
         case let .box(_, _, _, _, children):
             children

@@ -414,6 +414,30 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             ],
             selectedID: Fixture.workspaceA,
             respond: { request in
+                if request.intentID.rawValue == "agent.inventory.v1" {
+                    return .object([
+                        "agents": .array([
+                            .object([
+                                "id": .string("codex"),
+                                "label": .string("Codex"),
+                                "arguments": .array([]),
+                                "habit": .null,
+                            ])
+                        ])
+                    ])
+                }
+                // The host is what knows that Codex spells a resume as a subcommand. The
+                // plugin's part is naming the session and passing the answer through.
+                if request.intentID.rawValue == "agent.command.v1" {
+                    let session = request.input.objectValue?["session"]?.objectValue
+                    let id = session?["sessionID"]?.stringValue ?? ""
+                    return .object([
+                        "agent": .string("codex"),
+                        "commandLine": .string("/opt/bin/codex resume \(id)"),
+                        "arguments": .array([.string("resume"), .string(id)]),
+                        "handoff": .bool(false),
+                    ])
+                }
                 guard request.intentID.rawValue == "process.exec.v1" else { return nil }
                 let input = request.input.objectValue
                 let arguments = input?["arguments"]?.arrayValue?.compactMap(\.stringValue) ?? []
@@ -463,7 +487,8 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         )
         XCTAssertEqual(provider, "codex")
         let rowValue = try await runtime.evaluateForTesting(
-            "sessionRow(panes[\"\(Fixture.paneA)\"].sessions[0]).children[0].children[0].value"
+            "sessionRow(panes[\"\(Fixture.paneA)\"], panes[\"\(Fixture.paneA)\"]"
+                + ".sessions[0]).children[0].children[0].value"
         )
         let visibleRow = try XCTUnwrap(rowValue.stringValue)
         XCTAssertEqual(visibleRow, "Make session history readable")
@@ -472,7 +497,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "sessions",
             instanceID: Fixture.paneA,
-            itemID: "resume:codex:\(sessionID)"
+            itemID: "open:codex:\(sessionID)"
         )
         let resumed = await eventually {
             await bridge.requests().contains { request in
@@ -482,6 +507,14 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             }
         }
         XCTAssertTrue(resumed, "a Codex row must resume through the Codex CLI")
+        // The session it named is the row's own session, and it asked for a resume by that
+        // session's own agent — which is what makes the answer a resume and not a handoff.
+        let asked = await bridge.requests().first {
+            $0.intentID.rawValue == "agent.command.v1"
+        }
+        let session = try XCTUnwrap(asked?.input.objectValue?["session"]?.objectValue)
+        XCTAssertEqual(session["agent"]?.stringValue, "codex")
+        XCTAssertEqual(session["sessionID"]?.stringValue, sessionID)
         _ = await runtime.shutdown()
     }
 
@@ -506,6 +539,39 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             ],
             selectedID: Fixture.workspaceA,
             respond: { request in
+                // The pane never spells an agent's command line; it asks the host which
+                // agents exist and then for the line that starts one.
+                if request.intentID.rawValue == "agent.inventory.v1" {
+                    return .object([
+                        "agents": .array([
+                            .object([
+                                "id": .string("claude"),
+                                "label": .string("Claude Code"),
+                                "arguments": .array([]),
+                                "habit": .null,
+                            ]),
+                            .object([
+                                "id": .string("codex"),
+                                "label": .string("Codex"),
+                                "arguments": .array([.string("--full-auto")]),
+                                "habit": .string("Full auto"),
+                            ]),
+                        ])
+                    ])
+                }
+                if request.intentID.rawValue == "agent.command.v1" {
+                    let agent = request.input.objectValue?["agent"]?
+                        .stringValue ?? ""
+                    return .object([
+                        "agent": .string(agent),
+                        "commandLine": .string("/opt/bin/\(agent) --model opus"),
+                        "arguments": .array([
+                            .string("--model"),
+                            .string("opus"),
+                        ]),
+                        "handoff": .bool(false),
+                    ])
+                }
                 guard request.intentID.rawValue == "process.exec.v1" else { return nil }
                 let arguments = request.input.objectValue?["arguments"]?.arrayValue?
                     .compactMap(\.stringValue) ?? []
@@ -558,8 +624,15 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             _ = await runtime.shutdown()
             return XCTFail("two labelled ways to start a session is a menu, not two glyphs")
         }
-        XCTAssertEqual(entries.map(\.value), ["new:claude", "new:codex"])
-        XCTAssertEqual(entries.map(\.label), ["New Claude session", "New Codex session"])
+        XCTAssertEqual(
+            entries.map(\.value),
+            ["start:claude", "start:codex"],
+            "the entries are the agents the host reports, not a list this plugin keeps"
+        )
+        XCTAssertEqual(
+            entries.map(\.label),
+            ["New Claude Code session", "New Codex session"]
+        )
 
         let body = String(describing: view.body)
         XCTAssertFalse(
@@ -581,16 +654,21 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             viewID: "sessions",
             instanceID: Fixture.paneA,
             itemID: "new",
-            value: .string("new:claude")
+            value: .string("start:claude")
         )
         XCTAssertTrue(picked)
         let started = await eventually {
             await bridge.requests().contains { request in
                 request.intentID.rawValue == "terminal.open.v1"
-                    && request.input.objectValue?["command"]?.stringValue == "claude"
+                    && request.input.objectValue?["command"]?.stringValue
+                        == "/opt/bin/claude --model opus"
             }
         }
-        XCTAssertTrue(started, "picking `New Claude session` must open a Claude terminal")
+        XCTAssertTrue(
+            started,
+            "the pane opens the line the host composed, unedited — that is the whole point "
+                + "of asking for one"
+        )
 
         // The count badges are pure functions of the scanned list, so they are checked
         // against a list this test states outright rather than one it has to arrange.
@@ -599,6 +677,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             JSON.stringify(headerNode({
               project: "/p",
               notice: null,
+              agents: [],
               sessions: [
                 { provider: "claude" }, { provider: "claude" }, { provider: "codex" }
               ]
@@ -611,8 +690,12 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         )
         let scanning = try await runtime.evaluateForTesting(
             """
-            JSON.stringify(headerNode({ project: "/p", notice: SCANNING, sessions: [] })
-              .trailing.map(function (item) { return item.id; }))
+            JSON.stringify(headerNode({
+              project: "/p",
+              notice: SCANNING,
+              agents: [{ id: "claude", label: "Claude Code" }],
+              sessions: []
+            }).trailing.map(function (item) { return item.id; }))
             """
         )
         XCTAssertEqual(
@@ -620,6 +703,19 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             #"["scanning","new","refresh"]"#,
             "a scan in flight is the pane's own state and belongs in its strip"
         )
+        // A machine with no agent installed offers no way to start one, rather than a menu
+        // whose every entry fails.
+        let bare = try await runtime.evaluateForTesting(
+            """
+            JSON.stringify(headerNode({
+              project: "/p",
+              notice: null,
+              agents: [],
+              sessions: []
+            }).trailing.map(function (item) { return item.id; }))
+            """
+        )
+        XCTAssertEqual(try XCTUnwrap(bare.stringValue), #"["refresh"]"#)
         _ = await runtime.shutdown()
     }
 

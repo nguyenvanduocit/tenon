@@ -23,8 +23,19 @@ public final class WorkspaceStore {
     @ObservationIgnored public var newSplitContentProvider: () -> SlotContent = { .terminal }
     @ObservationIgnored public var newWorkspaceContentProvider: () -> SlotContent = { .terminal }
 
-    /// Opened views are recorded here so the empty-tab launcher can offer a
-    /// "recently opened" list. Nil in headless tests that don't exercise it.
+    /// How wide a pane may be when it is created. The shell wires this to the user's
+    /// `AppPreferences`; the bare store, and every test that never sets it, creates panes
+    /// bounded only by the space the layout offers.
+    @ObservationIgnored public var newPaneSizingProvider: () -> NewPaneSizing = { .unlimited }
+
+    /// The live creation policy, read fresh at each use so a preference change reaches the
+    /// next pane and no earlier one. AppKit surfaces that compute a pane rect themselves —
+    /// the empty-canvas launcher — read it here and apply it DIRECT.
+    public var newPaneSizing: NewPaneSizing { newPaneSizingProvider() }
+
+    /// Opened views are recorded here, against the workspace the mutation's own events name,
+    /// so the empty-tab launcher can offer a "recently opened" list scoped to the workspace
+    /// that owns it. Nil in headless tests that don't exercise it.
     public let recent: RecentStore?
 
     /// Opened workspaces are recorded here so the sidebar's Add-Workspace menu can
@@ -49,7 +60,14 @@ public final class WorkspaceStore {
     }
 
     public func addWorkspace(name: String, path: URL, content: SlotContent? = nil) {
-        if apply({ $0.addWorkspace(name: name, path: path, content: content ?? newWorkspaceContentProvider()) }) {
+        if apply({
+            $0.addWorkspace(
+                name: name,
+                path: path,
+                content: content ?? newWorkspaceContentProvider(),
+                sizing: newPaneSizing
+            )
+        }) {
             recentWorkspaces?.record(name: name, path: path)
         }
     }
@@ -62,9 +80,28 @@ public final class WorkspaceStore {
         apply { $0.selectWorkspace(id) }
     }
 
+    /// Name a workspace. Clearing the name asks for Tenon's derived default back.
+    public func renameWorkspace(_ id: UUID, to typed: String) {
+        apply { $0.renameWorkspace(id, to: typed) }
+    }
+
+    /// Mark and tint a workspace.
+    public func setWorkspaceAppearance(_ id: UUID, to appearance: WorkspaceAppearance) {
+        apply { $0.setWorkspaceAppearance(id, appearance) }
+    }
+
+    /// Give a workspace Tenon's default name, mark, and tint back, leaving the workspace
+    /// itself — its id, root, tabs, and panes — exactly where it is.
+    public func resetWorkspaceIdentity(_ id: UUID) {
+        apply { $0.resetWorkspaceIdentity(id) }
+    }
+
     public func newTab(content: SlotContent? = nil) {
         let resolved = content ?? newTabContentProvider()
-        if apply({ $0.newTab(content: resolved) }) { recent?.record(resolved) }
+        recordRecent(
+            resolved,
+            from: applyEvents { $0.newTab(content: resolved, sizing: newPaneSizing) }
+        )
     }
 
     public func selectTab(_ id: UUID) {
@@ -87,12 +124,24 @@ public final class WorkspaceStore {
         apply { $0.closeTab(id, in: workspaceID) }
     }
 
+    /// Puts a tab at a different place in the active workspace's order (T-096). A
+    /// destination that is out of range, names a tab this workspace is not showing, or is
+    /// the place the tab already occupies publishes nothing and changes nothing.
+    public func moveTab(_ id: UUID, to index: Int) {
+        apply { $0.moveTab(id, to: index) }
+    }
+
     public func addSlot(content: SlotContent = .terminal) {
-        if apply({ $0.addSlot(content: content) }) { recent?.record(content) }
+        recordRecent(
+            content,
+            from: applyEvents { $0.addSlot(content: content, sizing: newPaneSizing) }
+        )
     }
 
     /// Reserves an exact empty canvas region and returns the pane identity a scoped
-    /// launcher invocation can address.
+    /// launcher invocation can address. `rect` is placed as given: the canvas fitted it to
+    /// the creation maximum when it hit-tested the click, because only there is the cell
+    /// the person actually pointed at still known.
     @discardableResult
     public func addSlot(content: SlotContent, at rect: GridRect) -> UUID? {
         let id = UUID()
@@ -109,7 +158,9 @@ public final class WorkspaceStore {
         content: SlotContent? = nil
     ) {
         let resolved = content ?? newSplitContentProvider()
-        if apply({ $0.splitActiveSlot(axis, content: resolved) }) { recent?.record(resolved) }
+        recordRecent(resolved, from: applyEvents {
+            $0.splitActiveSlot(axis, content: resolved, sizing: newPaneSizing)
+        })
     }
 
     public func splitSlot(
@@ -118,14 +169,19 @@ public final class WorkspaceStore {
         content: SlotContent? = nil
     ) {
         let resolved = content ?? newSplitContentProvider()
-        if apply({ $0.splitSlot(id, axis, content: resolved) }) { recent?.record(resolved) }
+        recordRecent(resolved, from: applyEvents {
+            $0.splitSlot(id, axis, content: resolved, sizing: newPaneSizing)
+        })
     }
 
     /// A second pane showing what this pane shows. The content is copied, not shared: a
     /// duplicated terminal is a new shell, a duplicated editor is the same file open twice.
     public func duplicateSlot(_ id: UUID) {
         guard let content = catalog.slot(id: id)?.content else { return }
-        if apply({ $0.duplicateSlot(id) }) { recent?.record(content) }
+        recordRecent(
+            content,
+            from: applyEvents { $0.duplicateSlot(id, sizing: newPaneSizing) }
+        )
     }
 
     public func closeSlot(_ id: UUID) {
@@ -150,7 +206,7 @@ public final class WorkspaceStore {
     }
 
     public func setSlotContent(_ id: UUID, _ content: SlotContent) {
-        if apply({ $0.setSlotContent(id, content) }) { recent?.record(content) }
+        recordRecent(content, from: applyEvents { $0.setSlotContent(id, content) })
     }
 
     /// Opens `content` in the active tab, adding its first pane when the tab is empty,
@@ -246,11 +302,19 @@ public final class WorkspaceStore {
         apply { $0.cycleSlotExtent(id, direction: direction) }
     }
 
+    /// "Did anything change?" — the answer almost every mutation wants, projected from the
+    /// facts `applyEvents` returns.
     @discardableResult
     private func apply(_ mutation: (inout WorkspaceCatalog) -> [WorkspaceEvent]) -> Bool {
+        !applyEvents(mutation).isEmpty
+    }
+
+    private func applyEvents(
+        _ mutation: (inout WorkspaceCatalog) -> [WorkspaceEvent]
+    ) -> [WorkspaceEvent] {
         var next = catalog
         let events = mutation(&next)
-        guard !events.isEmpty else { return false }
+        guard !events.isEmpty else { return [] }
         catalog = next
         snapshotID = UUID()
         // Assigned only on a real change: an unconditional write would republish this on
@@ -258,7 +322,22 @@ public final class WorkspaceStore {
         let folders = WorkspaceStore.folders(in: next)
         if folders != openWorkspaceFolders { openWorkspaceFolders = folders }
         onEvents?(events, next)
-        return true
+        return events
+    }
+
+    /// File `content` into the recents of the workspace the mutation's own events name.
+    ///
+    /// The events are the authority, not `activeWorkspaceID`: `setSlotContent` addresses a
+    /// pane anywhere in the catalog, so filling an empty pane in an unselected workspace must
+    /// land in that workspace's list. A mutation that changed nothing emits nothing and
+    /// records nothing, and a workspace that vanished between the mutation and this line
+    /// records nothing either — there is no fallback target, because every fallback would be
+    /// some other workspace.
+    private func recordRecent(_ content: SlotContent, from events: [WorkspaceEvent]) {
+        guard let recent, let workspaceID = events.first?.workspaceID,
+              let workspace = catalog.workspaces.first(where: { $0.id == workspaceID })
+        else { return }
+        recent.record(content, for: workspaceID, root: workspace.path)
     }
 
     private static func folders(in catalog: WorkspaceCatalog) -> Set<String> {
@@ -325,6 +404,14 @@ public extension PluginHost {
         case .workspaceSelected(let workspace):
             return (
                 "workspace.selected",
+                .object([
+                    "workspaceId": .string(workspace.uuidString),
+                ])
+            )
+
+        case .workspaceIdentityChanged(let workspace):
+            return (
+                "workspace.identity-changed",
                 .object([
                     "workspaceId": .string(workspace.uuidString),
                 ])
@@ -483,6 +570,17 @@ public extension PluginHost {
                     "slotId": .string(slot.uuidString),
                     "fromTabId": .string(fromTab.uuidString),
                     "toTabId": .string(toTab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
+            )
+
+        case let .tabMoved(tab, from, to, workspace):
+            return (
+                "workspace.tab-moved",
+                .object([
+                    "tabId": .string(tab.uuidString),
+                    "fromIndex": .integer(Int64(from)),
+                    "toIndex": .integer(Int64(to)),
                     "workspaceId": .string(workspace.uuidString),
                 ])
             )

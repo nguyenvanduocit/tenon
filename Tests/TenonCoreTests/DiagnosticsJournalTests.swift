@@ -93,6 +93,77 @@ final class DiagnosticsJournalTests: XCTestCase {
         )
     }
 
+    func testAppendingAfterATruncatedTailRepairsTheBoundary() throws {
+        let file = scratch.appendingPathComponent("health.jsonl")
+        let subject = journal()
+        subject.append(record(1))
+        let text = try String(contentsOf: file, encoding: .utf8)
+        try Data((text + "{\"kind\":\"partial").utf8).write(to: file)
+
+        XCTAssertTrue(subject.append(record(2)))
+        XCTAssertEqual(
+            subject.records().map(\.message),
+            ["record 1", "record 2"],
+            "a crash fragment must not swallow the first record of the next run"
+        )
+    }
+
+    func testInvalidUTF8LineDoesNotEraseNeighboringRecordsOrNextAppend() throws {
+        let file = scratch.appendingPathComponent("health.jsonl")
+        let subject = journal()
+        subject.append(record(1))
+        subject.append(record(2))
+        let valid = try Data(contentsOf: file).split(separator: UInt8(ascii: "\n"))
+        var damaged = Data(valid[0])
+        damaged.append(UInt8(ascii: "\n"))
+        damaged.append(0xFF)
+        damaged.append(UInt8(ascii: "\n"))
+        damaged.append(Data(valid[1]))
+        damaged.append(UInt8(ascii: "\n"))
+        try damaged.write(to: file)
+
+        XCTAssertEqual(subject.records().map(\.message), ["record 1", "record 2"])
+        XCTAssertTrue(subject.append(record(3)))
+        XCTAssertEqual(
+            subject.records().map(\.message),
+            ["record 1", "record 2", "record 3"]
+        )
+    }
+
+    func testRecordAndJournalByteCeilingsAreEnforced() throws {
+        let file = scratch.appendingPathComponent("health.jsonl")
+        let subject = DiagnosticsJournal(
+            fileURL: file,
+            ceiling: 100,
+            maximumRecordBytes: 256,
+            maximumJournalBytes: 1_024
+        )
+        XCTAssertFalse(
+            subject.append(
+                DiagnosticsRecord(at: Date(), kind: "stall", message: String(repeating: "x", count: 300))
+            )
+        )
+        for n in 1...40 {
+            XCTAssertTrue(subject.append(record(n)))
+        }
+
+        XCTAssertLessThanOrEqual(try Data(contentsOf: file).count, 1_024)
+        XCTAssertEqual(subject.records().last?.message, "record 40")
+        XCTAssertLessThan(subject.records().count, 40)
+    }
+
+    func testAppendReportsAnUnwritableTargetWithoutThrowing() throws {
+        let directoryTarget = scratch.appendingPathComponent("not-a-file", isDirectory: true)
+        try FileManager.default.createDirectory(
+            at: directoryTarget,
+            withIntermediateDirectories: true
+        )
+        let subject = DiagnosticsJournal(fileURL: directoryTarget)
+
+        XCTAssertFalse(subject.append(record(1)))
+        XCTAssertEqual(subject.records(), [])
+    }
+
     func testExportProducesAReadableFileContainingTheRecords() throws {
         let subject = journal()
         subject.append(
@@ -113,7 +184,169 @@ final class DiagnosticsJournalTests: XCTestCase {
         XCTAssertTrue(text.contains("records: 1"), text)
     }
 
+    func testConcurrentExportsToTheSameDestinationRemainWhole() throws {
+        let subject = journal()
+        for n in 1...100 { XCTAssertTrue(subject.append(record(n))) }
+        let destination = scratch.appendingPathComponent("concurrent-export.txt")
+        let queue = DispatchQueue(label: "diagnostics-export-test", attributes: .concurrent)
+        let group = DispatchGroup()
+        let failures = ExportFailureLog()
+
+        for _ in 0..<8 {
+            group.enter()
+            queue.async {
+                defer { group.leave() }
+                do {
+                    try subject.export(to: destination)
+                } catch {
+                    failures.append(error)
+                }
+            }
+        }
+        XCTAssertEqual(group.wait(timeout: .now() + 5), .success)
+        XCTAssertTrue(failures.isEmpty, "concurrent export failures: \(failures.count)")
+
+        let text = try String(contentsOf: destination, encoding: .utf8)
+        XCTAssertEqual(text.components(separatedBy: "Tenon diagnostics export").count - 1, 1)
+        XCTAssertTrue(text.contains("records: 100"), text)
+        XCTAssertTrue(text.contains("record 1"), text)
+        XCTAssertTrue(text.contains("record 100"), text)
+    }
+
+    func testExportIncludesOnlyCommittedIncidentArtifactsBelowDiagnosticsRoot() throws {
+        let subject = journal()
+        let relative = "incidents/run/0001/sample.txt"
+        let artifact = scratch.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(
+            at: artifact.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("captured stack evidence".utf8).write(to: artifact)
+        subject.append(
+            DiagnosticsRecord(
+                at: Date(timeIntervalSince1970: 0),
+                kind: "stall-sample-completed",
+                message: "stack sample committed",
+                figures: ["sampleFile": relative]
+            )
+        )
+        subject.append(
+            DiagnosticsRecord(
+                at: Date(timeIntervalSince1970: 1),
+                kind: "stall-sample-completed",
+                message: "malicious path",
+                figures: ["sampleFile": "../../outside.txt"]
+            )
+        )
+        let destination = scratch.appendingPathComponent("bundle.txt")
+
+        try subject.export(to: destination)
+        let text = try String(contentsOf: destination, encoding: .utf8)
+
+        XCTAssertTrue(text.contains("captured stack evidence"), text)
+        XCTAssertTrue(text.contains("[artifact path rejected]"), text)
+    }
+
+    func testExportRejectsAnIncidentArtifactSymlinkThatEscapesDiagnostics() throws {
+        let subject = journal()
+        let outside = scratch.deletingLastPathComponent()
+            .appendingPathComponent("outside-\(UUID().uuidString).txt")
+        try Data("PRIVATE-OUTSIDE-DIAGNOSTICS".utf8).write(to: outside)
+        addTeardownBlock { try? FileManager.default.removeItem(at: outside) }
+        let link = scratch.appendingPathComponent("incidents/run/0001/sample.txt")
+        try FileManager.default.createDirectory(
+            at: link.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try FileManager.default.createSymbolicLink(at: link, withDestinationURL: outside)
+        subject.append(
+            DiagnosticsRecord(
+                at: Date(),
+                kind: "stall-sample-completed",
+                message: "stack sample committed",
+                figures: ["sampleFile": "incidents/run/0001/sample.txt"]
+            )
+        )
+        let destination = scratch.appendingPathComponent("symlink-export.txt")
+
+        try subject.export(to: destination)
+        let text = try String(contentsOf: destination, encoding: .utf8)
+
+        XCTAssertTrue(text.contains("[artifact unavailable or not a regular file]"), text)
+        XCTAssertFalse(text.contains("PRIVATE-OUTSIDE-DIAGNOSTICS"), text)
+    }
+
+    func testExportRejectsAnIntermediateIncidentDirectorySymlink() throws {
+        let subject = journal()
+        let outside = scratch.deletingLastPathComponent()
+            .appendingPathComponent("outside-dir-\(UUID().uuidString)", isDirectory: true)
+        let outsideSample = outside.appendingPathComponent("0001/sample.txt")
+        try FileManager.default.createDirectory(
+            at: outsideSample.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("PRIVATE-PARENT-SYMLINK".utf8).write(to: outsideSample)
+        addTeardownBlock { try? FileManager.default.removeItem(at: outside) }
+        let incidents = scratch.appendingPathComponent("incidents", isDirectory: true)
+        try FileManager.default.createDirectory(at: incidents, withIntermediateDirectories: true)
+        try FileManager.default.createSymbolicLink(
+            at: incidents.appendingPathComponent("run"),
+            withDestinationURL: outside
+        )
+        subject.append(
+            DiagnosticsRecord(
+                at: Date(),
+                kind: "stall-sample-completed",
+                message: "stack sample committed",
+                figures: ["sampleFile": "incidents/run/0001/sample.txt"]
+            )
+        )
+        let destination = scratch.appendingPathComponent("parent-symlink-export.txt")
+
+        try subject.export(to: destination)
+        let text = try String(contentsOf: destination, encoding: .utf8)
+
+        XCTAssertTrue(text.contains("[artifact unavailable or not a regular file]"), text)
+        XCTAssertFalse(text.contains("PRIVATE-PARENT-SYMLINK"), text)
+    }
+
+    func testExportRefusesToOverwriteJournalOrCommittedArtifact() throws {
+        let subject = journal()
+        let relative = "incidents/run/0001/sample.txt"
+        let artifact = scratch.appendingPathComponent(relative)
+        try FileManager.default.createDirectory(
+            at: artifact.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        try Data("evidence".utf8).write(to: artifact)
+        subject.append(
+            DiagnosticsRecord(
+                at: Date(),
+                kind: "stall-sample-completed",
+                message: "stack sample committed",
+                figures: ["sampleFile": relative]
+            )
+        )
+
+        XCTAssertThrowsError(try subject.export(to: subject.fileURL))
+        XCTAssertThrowsError(try subject.export(to: artifact))
+        XCTAssertEqual(subject.records().count, 1)
+        XCTAssertEqual(try String(contentsOf: artifact, encoding: .utf8), "evidence")
+    }
+
     func testReadingAJournalThatWasNeverWrittenIsEmptyRatherThanAnError() {
         XCTAssertEqual(journal().records(), [])
+    }
+}
+
+private final class ExportFailureLog: @unchecked Sendable {
+    private let lock = NSLock()
+    private var failures: [Error] = []
+
+    var isEmpty: Bool { lock.withLock { failures.isEmpty } }
+    var count: Int { lock.withLock { failures.count } }
+
+    func append(_ error: Error) {
+        lock.withLock { failures.append(error) }
     }
 }

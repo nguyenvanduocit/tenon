@@ -4,6 +4,95 @@ import XCTest
 @testable import TenonCore
 
 final class PluginViewsTests: XCTestCase {
+    /// T-056. Both drag wrappers are transparent: the subtree is exactly what the plugin
+    /// published, and the wrapper adds only the gesture.
+    func testDragSourceAndDropTargetWrapTheirSubtreeUnchanged() async throws {
+        let runtime = try makeRuntime(
+            source: """
+            tenon.views.register("board", { title: "Board" });
+            tenon.views.set("board", { body: {
+              type: "dropTarget",
+              action: "drop-into:1",
+              children: [{
+                type: "dragSource",
+                payload: "T-101",
+                children: [{ type: "text", value: "First thing" }]
+              }]
+            }});
+            """
+        )
+        _ = try await runtime.start()
+        let snapshot = await runtime.snapshot()
+        let view = try XCTUnwrap(snapshot.views.first)
+        var dropAction: String?
+        var dragPayload: String?
+        var leaf: [PluginViewNode] = []
+        if case let .dropTarget(action, targetChildren) = view.body,
+           case let .dragSource(payload, sourceChildren) = targetChildren.first {
+            dropAction = action
+            dragPayload = payload
+            leaf = sourceChildren
+        }
+        XCTAssertEqual(dropAction, "drop-into:1", "a dropTarget node survives parsing")
+        XCTAssertEqual(dragPayload, "T-101", "a dragSource node survives parsing")
+        XCTAssertEqual(
+            leaf,
+            [.text("First thing", style: .body, weight: .regular, color: .default)],
+            "the wrapper carries the subtree through untouched"
+        )
+        _ = await runtime.shutdown()
+    }
+
+    /// A card must not vanish because its id was long or its action was forgotten. Unlike
+    /// `button`, which IS its content, these wrap content the plugin still meant to show:
+    /// the gesture is what is dropped, not the subtree.
+    func testAMalformedDragWrapperKeepsItsSubtreeAndLosesOnlyTheGesture() async throws {
+        let overlong = String(repeating: "x", count: PluginViewDrag.maximumPayloadLength + 1)
+        let runtime = try makeRuntime(
+            source: """
+            tenon.views.register("board", { title: "Board" });
+            tenon.views.set("board", { body: { type: "vstack", children: [
+              {
+                type: "dragSource",
+                payload: "\(overlong)",
+                children: [{ type: "text", value: "still here" }]
+              },
+              { type: "dropTarget", children: [{ type: "text", value: "also here" }] }
+            ]}});
+            """
+        )
+        _ = try await runtime.start()
+        let snapshot = await runtime.snapshot()
+        let view = try XCTUnwrap(snapshot.views.first)
+        var dragPayload: String?
+        var dragChildren: [PluginViewNode] = []
+        var dropAction: String?
+        var dropChildren: [PluginViewNode] = []
+        if case let .vstack(_, children) = view.body {
+            if case let .dragSource(payload, kept) = children.first {
+                dragPayload = payload
+                dragChildren = kept
+            }
+            if case let .dropTarget(action, kept) = children.last {
+                dropAction = action
+                dropChildren = kept
+            }
+        }
+        XCTAssertEqual(
+            dragPayload,
+            "",
+            "a payload past the bound makes the node undraggable, not absent"
+        )
+        XCTAssertEqual(dragChildren.count, 1, "and its subtree still renders")
+        XCTAssertEqual(
+            dropAction,
+            "",
+            "a dropTarget with no action stays as a plain container"
+        )
+        XCTAssertEqual(dropChildren.count, 1)
+        _ = await runtime.shutdown()
+    }
+
     func testDeclarativeBodyParsesIntoNativeViewTree() async throws {
         let runtime = try makeRuntime(
             source: """

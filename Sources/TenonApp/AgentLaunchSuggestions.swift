@@ -1,4 +1,4 @@
-// @domain: agent-lens
+// @domain: agent-control
 import Foundation
 import TenonCore
 
@@ -64,10 +64,19 @@ struct AgentLaunchSuggestion: Identifiable, Equatable, Sendable {
         ([agent.executableName] + arguments).joined(separator: " ")
     }
 
+    /// The same composition every plugin reaches through `agent.command.v1`, called DIRECT
+    /// because the Launcher shares its semantic owner. A refusal here can only come from an
+    /// executable path this detector itself resolved, so the fallback is the bare agent.
     var commandLine: String {
-        ([executableURL.path] + arguments)
-            .map(AutomationAuthoring.posixQuoted)
-            .joined(separator: " ")
+        let plan = try? AgentLaunchComposer.plan(
+            agent: agent,
+            executablePath: executableURL.path,
+            userArguments: arguments,
+            prompt: nil,
+            session: nil
+        )
+        return plan?.commandLine
+            ?? AutomationAuthoring.posixQuoted(executableURL.path)
     }
 
     private func value(after flag: String) -> String? {

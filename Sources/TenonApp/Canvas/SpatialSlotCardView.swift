@@ -17,6 +17,7 @@ final class SpatialSlotCardView: NSView {
     var onCycleExtent: ((UUID, ResizeDirection) -> Void)?
     var onRequestMenu: ((UUID) -> NSMenu?)?
     var onRequestResizeMenu: ((UUID, ResizeDirection) -> NSMenu?)?
+    var onCopyID: ((UUID) -> Void)?
     /// A header control's click, already attributed to the item that owns it. The card
     /// stays a dumb view with no store reference — the same split `onRequestMenu` uses.
     var onHeaderAction: ((UUID, PaneHeaderAction) -> Void)?
@@ -109,6 +110,18 @@ final class SpatialSlotCardView: NSView {
 
     required init?(coder: NSCoder) {
         nil
+    }
+
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        [
+            NSAccessibilityCustomAction(
+                name: Shell.text("Copy Pane ID")
+            ) { [weak self] in
+                guard let self else { return false }
+                self.onCopyID?(self.slotID)
+                return self.onCopyID != nil
+            },
+        ]
     }
 
     override func layout() {
@@ -543,6 +556,7 @@ final class SpatialSlotCardView: NSView {
 
     func configure(
         slot: WorkspaceSlot,
+        workspaceID: UUID,
         workspacePath: URL,
         title newTitle: String,
         // The header travels in BOTH directions, over two channels that are not
@@ -632,6 +646,7 @@ final class SpatialSlotCardView: NSView {
         let root = AnyView(
             BuiltInSlotContentView(
                 slot: slot,
+                workspaceID: workspaceID,
                 workspacePath: workspacePath,
                 host: host,
                 pool: pool,

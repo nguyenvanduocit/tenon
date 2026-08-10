@@ -18,7 +18,40 @@ struct AgentTranscriptDecoder: Sendable {
         "wait_agent",
     ]
 
+    /// The Codex payloads that answer a call rather than make one.
+    private static let codexCallOutputTypes: Set<String> = [
+        "function_call_output",
+        "custom_tool_call_output",
+    ]
+
     let provider: AgentProvider
+
+    /// Whether a record can begin a bounded history window on its own terms.
+    ///
+    /// A tool result cannot. The call it answers is what names it, and when the window opens
+    /// mid-turn that call is on the far side of the cut — so admitting the result alone puts an
+    /// unnamed, already-finished run on the timeline that leads nowhere. Everything a reader
+    /// could act on says what it is by itself: a message, a question, a call being made.
+    ///
+    /// Pure and per-provider: the tailer owns bytes and offsets, this owns what a record means.
+    func opensHistoryWindow(line: Data) -> Bool {
+        guard let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
+        else { return false }
+        switch provider {
+        case .claude:
+            guard let recordType = record["type"] as? String,
+                  recordType == "user" || recordType == "assistant",
+                  let message = record["message"] as? [String: Any]
+            else { return false }
+            let blocks = Self.contentBlocks(message["content"])
+            return blocks.contains { (Self.string($0["type"]) ?? "text") != "tool_result" }
+        case .codex:
+            guard let payload = record["payload"] as? [String: Any],
+                  let payloadType = Self.string(payload["type"])
+            else { return false }
+            return !Self.codexCallOutputTypes.contains(payloadType)
+        }
+    }
 
     func decode(line: Data, byteOffset: UInt64, location: String) throws -> [AgentLensEvent] {
         guard line.count <= 2 << 20 else { throw AgentLensDecodeError.recordTooLarge }

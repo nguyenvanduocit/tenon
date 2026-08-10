@@ -95,7 +95,7 @@ tenon.log(result.value.stdout);
 ```
 
 `send` always resolves once to `{ ok: true, value }` or `{ ok: false, error }`. A target
-workspace or pane belongs in `options.scope`, not in every input object:
+workspace, tab, or pane belongs in `options.scope`, not in every input object:
 
 ```js
 await tenon.intents.send(
@@ -264,6 +264,51 @@ as any other function that sends: pass the invoking `call` and the whole run is 
 that invocation's pane, capped at that intent's deadline, and cancelled with it. A long
 supervised run started from a short-deadline command should omit the sender so it keeps
 its own budget.
+
+## Starting an agent
+
+Never build an agent command line. Ask which agents exist, then ask for the line:
+
+```js
+// Declare agent.inventory.v1 and agent.command.v1 in `uses`; both need `terminal.write`.
+const found = await tenon.intents.send("agent.inventory.v1", {});
+// → { agents: [{ id: "claude", label: "Claude Code",
+//               arguments: ["--model", "opus"], habit: "Model opus" }] }
+
+const composed = await tenon.intents.send("agent.command.v1", {
+  agent: "claude",
+  prompt: "Do task T-104, described in .kanban/tasks/T-104-....md"
+});
+await tenon.intents.send("terminal.open.v1", {
+  command: composed.value.commandLine,
+  workingDirectory: workspacePath
+});
+```
+
+The inventory is what a menu should offer — an agent this machine does not have is never
+listed, and the `arguments` are the options this person actually runs that agent with, so a
+plugin's Start behaves like their own Start. Composition owns the quoting and each provider's
+own spelling, so nothing you pass can become shell syntax.
+
+To continue an existing session, name it. The agent that recorded it resumes it; any other
+agent is handed a prompt naming the transcript, and `handoff` in the result says which
+happened:
+
+```js
+await tenon.intents.send("agent.command.v1", {
+  agent: "codex",
+  session: {
+    agent: "claude",                    // who recorded it
+    sessionID: id,
+    transcriptPath: path                // required when the agents differ
+  }
+});
+```
+
+Omitting `transcriptPath` on a cross-agent request fails with
+`dev.tenon.core.agent-handoff-unresolved` rather than starting an agent with no context;
+naming an agent this machine lacks fails with `dev.tenon.core.agent-unavailable`. Pass
+`includeUserOptions: false` for the plain agent with none of this person's options.
 
 ## Scoped facilities and path helpers
 

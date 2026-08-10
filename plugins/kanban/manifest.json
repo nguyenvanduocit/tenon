@@ -17,6 +17,8 @@
   },
   "intents": {
     "uses": [
+      "agent.inventory.v1",
+      "agent.command.v1",
       "filesystem.file.read.v1",
       "filesystem.file.write.v1",
       "workspace.pane.owner.v1",

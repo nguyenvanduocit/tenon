@@ -305,6 +305,21 @@ struct AgentTimelineItem: Identifiable, Equatable, Sendable {
     var content: AgentTimelineContent
 }
 
+/// Says where the visible history begins, in the words a reader can act on.
+///
+/// Pure so the sentence can be asserted without a window: the notice is the only place the
+/// cut is stated, and a claim about evidence that cannot itself be checked is the failure this
+/// product is built against.
+enum AgentLensEarlierHistoryNotice {
+    static func text(for evidence: AgentEvidence) -> String {
+        let file = (evidence.location as NSString).lastPathComponent
+        guard let byteOffset = evidence.byteOffset, !file.isEmpty else {
+            return "Showing recent history. Earlier evidence remains available in the transcript."
+        }
+        return "Showing history from byte \(byteOffset) of \(file). Earlier evidence remains in the transcript."
+    }
+}
+
 struct AgentLensSnapshot: Equatable, Sendable {
     var provider: AgentProvider?
     var capabilities: AgentLensCapabilities = []
@@ -314,7 +329,12 @@ struct AgentLensSnapshot: Equatable, Sendable {
     var interactions: [AgentInteractionRequest] = []
     var diagnostics: [AgentLensDiagnostic] = []
     var transcriptPath: String?
-    var earlierHistoryAvailable = false
+    /// Where the visible history begins, when it does not begin at the session's start.
+    ///
+    /// Evidence rather than a flag, because "there is more" is a claim like any other: it names
+    /// the transcript and the byte the reader would have to go to. Both the bounded initial
+    /// window and in-memory trimming answer it the same way.
+    var earlierHistory: AgentEvidence?
     var canSend = false
     var renderRevision = 0
 
@@ -322,6 +342,15 @@ struct AgentLensSnapshot: Equatable, Sendable {
 
     var contextMessages: [AgentLensMessage] {
         messages.filter { $0.kind != .conversation }
+    }
+
+    /// How many facts this session holds, without building any of them.
+    ///
+    /// O(1) on purpose: it is read to decide whether a synthesized reading has gone stale, and
+    /// that question is asked on every publish. Counting `timelineItems` instead would sort and
+    /// group the whole session to answer it.
+    var factCount: Int {
+        messages.count + tools.count + interactions.count + diagnostics.count
     }
 
     var timelineItems: [AgentTimelineItem] {
@@ -482,7 +511,7 @@ enum AgentLensEvent: Equatable, Sendable {
     /// A transport proved itself at runtime — Claude Code's hooks only report tool
     /// lifecycle and questions once they are actually installed and firing.
     case capabilitiesGained(AgentLensCapabilities, evidence: AgentEvidence)
-    case earlierHistoryAvailable(AgentEvidence)
+    case earlierHistory(AgentEvidence)
     case userMessage(AgentLensMessage)
     case contextMessage(AgentLensMessage)
     case assistantDelta(id: String, text: String, evidence: AgentEvidence)
@@ -539,8 +568,8 @@ struct AgentLensReducer: Sendable {
         case .capabilitiesGained(let capabilities, _):
             snapshot.capabilities.formUnion(capabilities)
 
-        case .earlierHistoryAvailable:
-            snapshot.earlierHistoryAvailable = true
+        case .earlierHistory(let evidence):
+            snapshot.earlierHistory = evidence
 
         case .userMessage(let message):
             upsertMessage(message)
@@ -672,7 +701,9 @@ struct AgentLensReducer: Sendable {
     private mutating func trimMessages() {
         if snapshot.messages.count > Self.messageCapacity {
             snapshot.messages.removeFirst(snapshot.messages.count - Self.messageCapacity)
-            snapshot.earlierHistoryAvailable = true
+            // Trimming answers the same question the bounded window does, so it answers it the
+            // same way: the oldest message still on screen is where a reader would go back from.
+            snapshot.earlierHistory = snapshot.messages.first?.evidence
         }
     }
 

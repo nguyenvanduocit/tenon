@@ -70,7 +70,14 @@ struct PluginModalOverlay: View {
                             node: presentation.modal.body ?? .spacer,
                             onAction: { action, value in
                                 send(presentation, action: action, value: value)
-                            }
+                            },
+                            // Same scope as the pane behind it: a modal is another mount of
+                            // one view instance, not a second one (T-056).
+                            dragScope: PluginViewDragScope(
+                                pluginID: presentation.pluginID,
+                                viewID: presentation.viewID,
+                                instanceID: presentation.instanceID
+                            )
                         )
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(16)

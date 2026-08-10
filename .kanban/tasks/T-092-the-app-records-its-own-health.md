@@ -105,3 +105,32 @@ export up against `log show` — but a person skimming their own export reads a 
 lie unless they notice the `Z`. Worth a local-time column or a stated timezone in the
 header; noted rather than changed, because it is a product call about who the export is
 for.
+
+## 2026-08-10 recurrence audit
+
+The second T-091-family incident falsified several original evidence claims. The fixed
+`stall-sample.txt` had overwritten the first incident; `stall-sample` was appended before
+the process outcome and therefore claimed success for a no-op test sampler; observer beats
+could remain fresh during main-queue backlog; clean shutdown had no receipt; and export left
+the stack artifact behind.
+
+The follow-up hardens the shipped contract:
+
+- run/PID/version/build/channel and incident attribution on every relevant record;
+- physical-footprint failure is `unavailable`, plus interval CPU core percent and last
+  completed runloop phase/beat age;
+- one outstanding main-queue responsiveness ping, detecting backlog without queue growth;
+- separate watchdog, sampler, and bounded persistence queues; scheduled/completed/failed
+  receipts; exit-zero plus privacy-filtered non-empty commit; unique run/incident directories;
+  and newest-eight retention;
+- a 128-entry, closed-schema Agent Lens/watchdog transition ring frozen at incident onset;
+- 2,000-record/16-KiB-record/4-MiB-journal and 64-MiB-sample byte bounds; line-local damaged
+  input recovery; a bounded best-effort orderly `termination`; and capped export of committed,
+  privacy-filtered correlated artifacts with traversal/symlink/overwrite rejection.
+
+Focused receipt: 50 diagnostics/journal/sample tests passed, including no-turn and
+observer-still-beating backlog cases, both signal-handoff directions, false sampler success,
+recurrence preservation, blocked sampler/persistence, CPU/run attribution, transition and sample
+privacy/bounds, clean termination, no-follow capture/retention, concurrent atomic export,
+writer-retaining sampler timeout recovery, overwrite rejection, and damaged-tail/invalid-UTF8
+recovery.

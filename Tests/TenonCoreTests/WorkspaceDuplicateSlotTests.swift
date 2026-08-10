@@ -211,13 +211,13 @@ final class WorkspaceDuplicateSlotTests: XCTestCase {
     func testStoreDuplicatesThroughTheSameRule() throws {
         let store = WorkspaceStore(catalog: WorkspaceCatalog(name: "One", path: projectPath))
         let originalID = try XCTUnwrap(store.catalog.activeSlotID)
-        store.setSlotContent(originalID, .docs)
+        store.setSlotContent(originalID, .automation)
 
         store.duplicateSlot(originalID)
 
         let tab = try XCTUnwrap(store.catalog.activeTab)
         XCTAssertEqual(tab.slots.count, 2)
-        XCTAssertEqual(tab.slots.map(\.content), [.docs, .docs])
+        XCTAssertEqual(tab.slots.map(\.content), [.automation, .automation])
         XCTAssertEqual(tab.activeSlotID, tab.slots.last?.id)
     }
 }

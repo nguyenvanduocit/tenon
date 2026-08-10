@@ -84,7 +84,8 @@ enum AgentLensPaneHeader {
         currentAction: String,
         hasDiagnostics: Bool,
         presentation: AgentLensPresentation,
-        showsInspector: Bool
+        showsInspector: Bool,
+        account: AgentLensAccount = .chat
     ) -> PaneHeader {
         // A terminal pane with no agent in it is a terminal pane. There is no provider to
         // name, no status to report and no second renderer to offer, so it keeps the bare
@@ -124,9 +125,27 @@ enum AgentLensPaneHeader {
             )
         }
 
+        // The account picker exists only while the Session renderer is on screen. A Terminal-only
+        // pane draws no Chat and no Timeline, so offering a choice between them would be a
+        // control whose two states look identical.
+        var trailing: [PaneHeaderItem] = []
+        if presentation != .terminal {
+            trailing.append(
+                .segmented(
+                    id: PaneHeaderCommand.agentLensAccount.rawValue,
+                    segments: AgentLensAccount.allCases.compactMap {
+                        PaneHeaderSegment(value: $0.rawValue, label: $0.title)
+                    },
+                    selection: account.rawValue,
+                    isEnabled: true,
+                    accessibilityID: "tenon.agentLens.account"
+                )
+            )
+        }
+
         return PaneHeader(
             leading: leading,
-            trailing: [
+            trailing: trailing + [
                 .segmented(
                     id: PaneHeaderCommand.agentLensPresentation.rawValue,
                     segments: AgentLensPresentation.allCases.compactMap(\.segment),
@@ -244,6 +263,11 @@ struct AgentLensSlotView: View {
                     }
                     if let mode = next.mode { model.mode = mode }
                     model.showsSplitView = next.showsSplitView
+                case .agentLensAccount:
+                    guard let next = value.flatMap(AgentLensAccount.init(rawValue:)) else {
+                        return
+                    }
+                    model.account = next
                 case .agentLensInspector:
                     // Opening the panel from the chrome shows the session's own context, not
                     // whichever timeline row was inspected last — that selection belongs to the
@@ -279,7 +303,8 @@ struct AgentLensSlotView: View {
                 mode: model.mode,
                 showsSplitView: model.showsSplitView
             ),
-            showsInspector: model.showsInspector
+            showsInspector: model.showsInspector,
+            account: model.account
         )
     }
 
@@ -328,6 +353,87 @@ struct AgentLensSlotView: View {
     }
 }
 
+/// Owns the finite pane viewport without asking the account content for its ideal size.
+///
+/// Agent Chat contains a live `ScrollView`/`LazyVStack`. Measuring that content while placing
+/// the pane lets lazy prefetch invalidate the same `NSHostingView` constraints pass that caused
+/// the measurement, so AppKit can keep restarting one display cycle. Only the small footer is
+/// content-sized; the account receives the exact space left above it.
+struct AgentSessionLayout: Layout {
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        let footerSize = measuredFooter(proposal: proposal, subviews: subviews)
+        return CGSize(
+            width: proposal.width ?? footerSize.width,
+            height: proposal.height ?? footerSize.height
+        )
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard let content = subviews.first else { return }
+        guard subviews.count > 1 else {
+            content.place(
+                at: bounds.origin,
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: bounds.height)
+            )
+            return
+        }
+
+        let footer = subviews[1]
+        let measuredHeight = footer.sizeThatFits(
+            ProposedViewSize(width: bounds.width, height: nil)
+        ).height
+        let footerHeight = min(max(measuredHeight.isFinite ? measuredHeight : 0, 0), bounds.height)
+        let contentHeight = max(bounds.height - footerHeight, 0)
+
+        content.place(
+            at: bounds.origin,
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: contentHeight)
+        )
+        footer.place(
+            at: CGPoint(x: bounds.minX, y: bounds.maxY - footerHeight),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: bounds.width, height: footerHeight)
+        )
+    }
+
+    private func measuredFooter(proposal: ProposedViewSize, subviews: Subviews) -> CGSize {
+        guard subviews.count > 1 else { return .zero }
+        return subviews[1].sizeThatFits(
+            ProposedViewSize(width: proposal.width, height: nil)
+        )
+    }
+}
+
+/// Admits one bottom-scroll request until that request has run on the next main-loop turn.
+///
+/// Snapshot delivery and the scroll itself both run on the main actor. Without this gate, a
+/// burst can enqueue one expensive `ScrollViewProxy.scrollTo` for every revision before the
+/// first request gets a turn, leaving the UI draining obsolete geometry work after input stops.
+struct AgentScrollTurnGate {
+    private(set) var isClaimed = false
+
+    mutating func claim() -> Bool {
+        guard !isClaimed else { return false }
+        isClaimed = true
+        return true
+    }
+
+    mutating func release() {
+        isClaimed = false
+    }
+}
+
 private struct AgentSessionView: View {
     @Bindable var model: AgentLensViewModel
     let openTerminal: () -> Void
@@ -336,16 +442,30 @@ private struct AgentSessionView: View {
     @State private var isPinnedToBottom = true
     @State private var unseenUpdates = 0
     @State private var lastRevision = 0
+    @State private var bottomScrollGate = AgentScrollTurnGate()
     @FocusState private var composerFocused: Bool
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     private let bottomID = "agent-lens-bottom"
 
     var body: some View {
-        VStack(spacing: 0) {
-            timeline
-            Divider().overlay(TenonTheme.line)
-            composer
+        AgentSessionLayout {
+            // Two readings of ONE attached session. Switching between them changes no
+            // attachment, sends nothing to the PTY, and leaves the composer where it is: a
+            // person can answer a waiting question without leaving the synthesized reading.
+            switch model.account {
+            case .chat:
+                timeline
+            case .timeline:
+                AgentSessionTimelineView(
+                    model: model,
+                    returnToEvidence: { model.returnToEvidence($0) }
+                )
+            }
+            VStack(spacing: 0) {
+                Divider().overlay(TenonTheme.line)
+                composer
+            }
         }
         .background(TenonTheme.ink)
         .onChange(of: model.snapshot.pendingInteraction?.id) { _, requestID in
@@ -357,59 +477,55 @@ private struct AgentSessionView: View {
 
     private var timeline: some View {
         ScrollViewReader { proxy in
-            // `.overlay` rather than a `ZStack`, and the difference is measured.
+            // `.overlay` keeps the jump button out of the scroll view's sizing contract.
             //
-            // A `ZStack` computes its own size by asking every child what it wants, and asking
-            // a `ScrollView` that makes the lazy list inside it measure its estimates — which
-            // materialises timeline items that are nowhere near the screen. The T-091 sample
-            // names that path frame for frame: `_ZStackLayout.sizeThatFits` →
-            // `ScrollViewLayoutComputer.Engine.sizeThatFits` → `LazyStack.measureEstimates` →
-            // `ForEachState.item(at:offset:)` over `AgentTimelineItem`. An overlay is sized by
-            // the view it sits on instead, so the scroll view is never asked what it "wants".
+            // The enclosing `AgentSessionLayout` owns the stronger invariant: it places this
+            // scroll view with an exact finite viewport, so neither a ZStack nor an ordinary
+            // StackLayout can ask the lazy content for an ideal size during the host's pass.
             ScrollView {
-                    LazyVStack(alignment: .leading, spacing: 0) {
-                        AgentHookSetupNotice(provider: model.snapshot.provider)
+                LazyVStack(alignment: .leading, spacing: 0) {
+                    AgentHookSetupNotice(provider: model.snapshot.provider)
 
-                        if model.snapshot.earlierHistoryAvailable {
-                            AgentLensNotice(
-                                icon: "clock.arrow.circlepath",
-                                text: "Showing recent history. Earlier evidence remains available in the transcript."
-                            )
-                            .padding(.bottom, 8)
-                        }
-
-                        if model.timelineItems.isEmpty {
-                            AgentLensEmptyProjection(status: model.snapshot.status)
-                        }
-
-                        ForEach(model.timelineItems) { item in
-                            AgentTimelineRow(
-                                item: item,
-                                inspect: inspect,
-                                chooseOption: chooseOption,
-                                openTerminal: openTerminal,
-                                fileLinks: fileLinks,
-                                submittedOptionRequestID: model.submittedOptionRequestID
-                            )
-                                .id(item.id)
-                        }
-
-                        // Keep the breathing room inside the target so its bottom edge is
-                        // also the real end of the scroll content. Parent bottom padding
-                        // would leave scrollTo(bottomID) one inset short of the true bottom.
-                        Color.clear
-                            .frame(height: 12)
-                            .id(bottomID)
-                            .onAppear {
-                                isPinnedToBottom = true
-                                unseenUpdates = 0
-                            }
-                            .onDisappear { isPinnedToBottom = false }
+                    if let earlierHistory = model.snapshot.earlierHistory {
+                        AgentLensNotice(
+                            icon: "clock.arrow.circlepath",
+                            text: AgentLensEarlierHistoryNotice.text(for: earlierHistory)
+                        )
+                        .padding(.bottom, 8)
                     }
-                    .padding(.horizontal, 16)
-                    .padding(.top, 12)
-                    .frame(maxWidth: 860, alignment: .leading)
-                    .frame(maxWidth: .infinity, alignment: .center)
+
+                    if model.timelineItems.isEmpty {
+                        AgentLensEmptyProjection(status: model.snapshot.status)
+                    }
+
+                    ForEach(model.timelineItems) { item in
+                        AgentTimelineRow(
+                            item: item,
+                            inspect: inspect,
+                            chooseOption: chooseOption,
+                            openTerminal: openTerminal,
+                            fileLinks: fileLinks,
+                            submittedOptionRequestID: model.submittedOptionRequestID
+                        )
+                        .id(item.id)
+                    }
+
+                    // Keep the breathing room inside the target so its bottom edge is
+                    // also the real end of the scroll content. Parent bottom padding
+                    // would leave scrollTo(bottomID) one inset short of the true bottom.
+                    Color.clear
+                        .frame(height: 12)
+                        .id(bottomID)
+                        .onAppear {
+                            isPinnedToBottom = true
+                            unseenUpdates = 0
+                        }
+                        .onDisappear { isPinnedToBottom = false }
+                }
+                .padding(.horizontal, 16)
+                .padding(.top, 12)
+                .frame(maxWidth: 860, alignment: .leading)
+                .frame(maxWidth: .infinity, alignment: .center)
             }
             .tenonScrollbarStyle()
             .overlay(alignment: .bottomTrailing) {
@@ -434,23 +550,51 @@ private struct AgentSessionView: View {
             }
             .onAppear {
                 lastRevision = model.snapshot.renderRevision
-                DispatchQueue.main.async {
-                    proxy.scrollTo(bottomID, anchor: .bottom)
+                if let factID = model.pendingChatFocus {
+                    model.pendingChatFocus = nil
+                    isPinnedToBottom = false
+                    DispatchQueue.main.async { proxy.scrollTo(factID, anchor: .center) }
+                } else {
+                    scheduleBottomScroll(using: proxy)
                 }
+            }
+            // A milestone's anchor landing while Chat is already mounted — the split view shows
+            // both, so this list may never have gone away.
+            .onChange(of: model.pendingChatFocus) { _, factID in
+                guard let factID else { return }
+                model.pendingChatFocus = nil
+                isPinnedToBottom = false
+                DispatchQueue.main.async { proxy.scrollTo(factID, anchor: .center) }
             }
             .onChange(of: model.snapshot.renderRevision) { oldRevision, newRevision in
                 guard newRevision != oldRevision, newRevision != lastRevision else { return }
                 lastRevision = newRevision
                 if isPinnedToBottom {
                     // The revision arrives before the new row has completed layout.
-                    // Scroll on the next main-loop turn using the new bottom geometry.
-                    DispatchQueue.main.async {
-                        proxy.scrollTo(bottomID, anchor: .bottom)
-                    }
+                    // Coalesce the burst and scroll once on the next main-loop turn using the
+                    // newest bottom geometry. Obsolete requests must never form a queue.
+                    scheduleBottomScroll(using: proxy)
                 } else {
                     unseenUpdates += 1
                 }
             }
+        }
+    }
+
+    private func scheduleBottomScroll(using proxy: ScrollViewProxy) {
+        let admitted = bottomScrollGate.claim()
+        DiagnosticsRuntimeSignals.shared.noteAgentLensScroll(
+            paneOrdinal: model.diagnosticsPaneOrdinal,
+            admitted: admitted,
+            pinned: isPinnedToBottom
+        )
+        guard admitted else { return }
+        DispatchQueue.main.async {
+            defer { bottomScrollGate.release() }
+            DiagnosticsRuntimeSignals.shared.noteAgentLensScrollExecuted(
+                paneOrdinal: model.diagnosticsPaneOrdinal
+            )
+            proxy.scrollTo(bottomID, anchor: .bottom)
         }
     }
 
@@ -1109,6 +1253,9 @@ private struct AgentLensNotice: View {
         Label(text, systemImage: icon)
             .font(.caption)
             .foregroundStyle(TenonTheme.muted)
+            // A notice that says where evidence begins is worth more than the width it fits
+            // in, so a narrow pane wraps it instead of truncating the part that locates it.
+            .fixedSize(horizontal: false, vertical: true)
             .padding(8)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(TenonTheme.chrome, in: .rect(cornerRadius: 7))
@@ -1141,6 +1288,14 @@ struct AgentLensInspection: Identifiable, Equatable {
     let detail: String
     let evidence: AgentEvidence
 
+    init(id: String, category: String, title: String, detail: String, evidence: AgentEvidence) {
+        self.id = id
+        self.category = category
+        self.title = title
+        self.detail = detail
+        self.evidence = evidence
+    }
+
     static func message(_ message: AgentLensMessage) -> Self {
         Self(
             id: "message-\(message.id)",
@@ -1169,6 +1324,36 @@ struct AgentLensInspection: Identifiable, Equatable {
             detail: diagnostic.message,
             evidence: diagnostic.evidence
         )
+    }
+
+    /// The inspection for any fact a milestone anchored to.
+    ///
+    /// This is the anchor's return path, and it is deliberately the one that always exists.
+    /// Scrolling Chat to the anchored row works only for a fact Chat draws, and Chat drops
+    /// completed tool runs on purpose — so a milestone standing on "ran the suite, 1510 passed"
+    /// would otherwise cite evidence with nothing on the other end. The inspector shows the
+    /// source, authority, location, offset and fingerprint for every kind of fact.
+    init?(fact item: AgentTimelineItem) {
+        switch item.content {
+        case .message(let message): self = .message(message)
+        case .interaction(let request): self = .interaction(request)
+        case .diagnostic(let diagnostic): self = .diagnostic(diagnostic)
+        case .tools(let group):
+            guard let evidence = group.evidence else { return nil }
+            self = Self(
+                id: group.id,
+                category: group.kind == .subagent ? "Subagent" : "Tool",
+                title: group.title,
+                detail: group.tools
+                    .map { tool in
+                        [tool.name, tool.summary, tool.detail]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " — ")
+                    }
+                    .joined(separator: "\n"),
+                evidence: evidence
+            )
+        }
     }
 }
 

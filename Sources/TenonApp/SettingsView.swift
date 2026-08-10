@@ -251,10 +251,18 @@ private struct GeneralSettingsDetail: View {
                 paneContentPicker("New tab opens", selection: $prefs.preferences.newTabContent)
                 paneContentPicker("New split opens", selection: $prefs.preferences.newSplitContent)
                 paneContentPicker("New workspace opens", selection: $prefs.preferences.newWorkspaceContent)
+                Picker("Widest a new pane opens", selection: $prefs.preferences.newPaneMaximumWidth) {
+                    Text("As wide as it fits").tag(SpatialExtentFraction?.none)
+                    ForEach(SpatialExtentFraction.allCases, id: \.self) { fraction in
+                        Text(fraction.label).tag(SpatialExtentFraction?.some(fraction))
+                    }
+                }
             } header: {
                 Text("New panes")
             } footer: {
-                Text("The view a freshly opened pane starts on.")
+                Text("The view a freshly opened pane starts on, and how much of the canvas "
+                    + "it may take when it opens. The width is a starting size only — drag "
+                    + "any pane's border past it, and panes already open keep their size.")
             }
 
             Section("Sidebar") {
@@ -291,6 +299,19 @@ private struct GeneralSettingsDetail: View {
             } footer: {
                 Text("Applies to Tenon's chrome — tab selection, active-pane borders, "
                     + "focus marks. Terminal colours come from ghostty.")
+            }
+
+            // Where a person goes to ask what they are running. The workspace list is not
+            // that place, so the version reads here — beside the plugin versions Settings
+            // already reports — rather than under the sidebar (T-098).
+            Section("About") {
+                LabeledContent("Tenon version") {
+                    Text(AppVersion.current.summary)
+                        .foregroundStyle(.secondary)
+                        .monospacedDigit()
+                        .textSelection(.enabled)
+                        .accessibilityIdentifier("tenon.settingsVersion")
+                }
             }
         }
         .tenonScrollbarStyle()

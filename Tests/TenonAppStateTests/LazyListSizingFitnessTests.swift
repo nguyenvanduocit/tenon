@@ -20,6 +20,40 @@ import XCTest
 /// for. It is deliberately narrow: `ZStack` → `ScrollView` → lazy container, in that order,
 /// within one screenful.
 final class LazyListSizingFitnessTests: XCTestCase {
+    func testAgentLensLiveChatUsesAFiniteViewportLayout() throws {
+        let source = try String(
+            contentsOf: appSourceRoot.appendingPathComponent("AgentLensView.swift"),
+            encoding: .utf8
+        )
+        let sessionStart = try XCTUnwrap(
+            source.range(of: "private struct AgentSessionView")
+        )
+        let timelineStart = try XCTUnwrap(
+            source.range(
+                of: "private var timeline: some View",
+                range: sessionStart.upperBound ..< source.endIndex
+            )
+        )
+        let composerStart = try XCTUnwrap(
+            source.range(
+                of: "private var composer: some View",
+                range: timelineStart.upperBound ..< source.endIndex
+            )
+        )
+        let sessionBody = source[sessionStart.lowerBound ..< timelineStart.lowerBound]
+        let timeline = source[timelineStart.lowerBound ..< composerStart.lowerBound]
+
+        // Keep the fixture tied to the production path that failed. Chat must remain lazy so
+        // offscreen rows do not appear eagerly and corrupt its bottom-sentinel semantics. Its
+        // parent must instead give it an exact finite viewport, never an ideal-size query.
+        XCTAssertTrue(sessionBody.contains("AgentSessionLayout {"))
+        XCTAssertTrue(timeline.contains("ScrollViewReader"))
+        XCTAssertTrue(timeline.contains("model.snapshot.renderRevision"))
+        XCTAssertTrue(timeline.contains("scheduleBottomScroll(using: proxy)"))
+        XCTAssertTrue(timeline.contains("proxy.scrollTo(bottomID"))
+        XCTAssertTrue(timeline.contains("LazyVStack"))
+    }
+
     func testNoLazyListIsMeasuredByAnEnclosingStackLayout() throws {
         var offenders: [String] = []
 
@@ -63,11 +97,7 @@ final class LazyListSizingFitnessTests: XCTestCase {
     }
 
     private func appSourceFiles() throws -> [URL] {
-        let root = URL(fileURLWithPath: #filePath)
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .deletingLastPathComponent()
-            .appendingPathComponent("Sources/TenonApp")
+        let root = appSourceRoot
         var files: [URL] = []
         let enumerator = FileManager.default.enumerator(
             at: root,
@@ -82,5 +112,13 @@ final class LazyListSizingFitnessTests: XCTestCase {
             "fixture failed to enumerate TenonApp sources — an empty scan passes vacuously"
         )
         return files
+    }
+
+    private var appSourceRoot: URL {
+        URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources/TenonApp")
     }
 }

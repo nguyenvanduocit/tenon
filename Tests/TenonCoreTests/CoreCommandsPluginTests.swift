@@ -28,7 +28,6 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "Split Down",
                 "Close Pane",
                 "Open Changes",
-                "Open Docs",
                 "Open Automation",
                 "Next Tab",
                 "Previous Tab",
@@ -98,7 +97,6 @@ final class CoreCommandsPluginTests: XCTestCase {
             "dev.tenon.core-commands.pane.split-down.v1",
             "dev.tenon.core-commands.pane.close.v1",
             "dev.tenon.core-commands.changes.open.v1",
-            "dev.tenon.core-commands.docs.open.v1",
             "dev.tenon.core-commands.automation.open.v1",
             "dev.tenon.core-commands.tab.next.v1",
             "dev.tenon.core-commands.tab.previous.v1",
@@ -133,7 +131,6 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "workspace.pane.close.v1",
                 "workspace.tab.create.v1",
                 "workspace.tab.create.v1",
-                "workspace.tab.create.v1",
                 "workspace.tab.next.v1",
                 "workspace.tab.previous.v1",
                 "workspace.pane.focus-next.v1",
@@ -141,7 +138,7 @@ final class CoreCommandsPluginTests: XCTestCase {
         )
         let recordedRequests = await recorder.allRequests()
         XCTAssertEqual(
-            recordedRequests[7].input,
+            recordedRequests[6].input,
             .object([
                 "content": .object([
                     "kind": .string("automation")

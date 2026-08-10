@@ -131,7 +131,7 @@ final class RecentWorkspaceStoreTests: XCTestCase {
 
         store.newTab()
         store.splitActiveSlot(.horizontal)
-        store.setSlotContent(store.catalog.activeSlotID!, .docs)
+        store.setSlotContent(store.catalog.activeSlotID!, .automation)
         wait(for: [republished], timeout: 0.1)
     }
 

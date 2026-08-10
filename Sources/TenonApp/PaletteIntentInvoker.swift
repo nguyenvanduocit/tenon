@@ -105,8 +105,8 @@ enum PaletteIntentInvoker {
 
     /// Invoke a ranked command against a caller-named scope instead of the focused pane.
     ///
-    /// The palette's convenience overload inherits the selected workspace and pane. An
-    /// anchored launcher has stronger placement meaning: the title-bar `+` names its
+    /// The palette's convenience overload inherits the selected workspace, tab, and
+    /// pane. An anchored launcher has stronger placement meaning: the title-bar `+` names its
     /// freshly created tab, while a tab right-click names that tab even when it is not
     /// selected. This is the entry point
     /// `AppIntentRuntime.send(_:input:as:scope:…)` documents: authority visible at the
@@ -134,6 +134,7 @@ enum PaletteIntentInvoker {
             as: AppIntentRuntime.userPrincipal,
             scope: InvocationScope(
                 workspaceID: scope.workspaceID,
+                tabID: scope.tabID,
                 paneID: scope.paneID,
                 // `prepare` minted this proof at the accepted click boundary, exactly as
                 // the unscoped path does — a caller cannot supply one.

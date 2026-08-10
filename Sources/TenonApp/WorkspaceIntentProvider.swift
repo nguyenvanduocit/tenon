@@ -8,6 +8,7 @@ final class WorkspaceIntentProvider {
     private struct ErrorCodes {
         let workspaceUnavailable: IntentErrorCode
         let workspaceNotFound: IntentErrorCode
+        let tabNotFound: IntentErrorCode
         let paneNotFound: IntentErrorCode
         let layoutUnavailable: IntentErrorCode
         let closeRefused: IntentErrorCode
@@ -24,6 +25,9 @@ final class WorkspaceIntentProvider {
                 try IntentDomainErrorCode(
                     "dev.tenon.core.workspace-not-found"
                 )
+            )
+            tabNotFound = .domain(
+                try IntentDomainErrorCode("dev.tenon.core.tab-not-found")
             )
             paneNotFound = .domain(
                 try IntentDomainErrorCode("dev.tenon.core.pane-not-found")
@@ -76,6 +80,12 @@ final class WorkspaceIntentProvider {
             ) { envelope, context in
                 try context.checkCancellation()
                 return await self.createTab(envelope: envelope)
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.workspaceTabFocus.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return await self.focusTab(envelope: envelope)
             },
             IntentProviderBinding(
                 intentID: try CoreIntentName.workspacePaneSplit.intentID
@@ -249,8 +259,12 @@ private extension WorkspaceIntentProvider {
 
             guard selectScopedWorkspace(envelope.scope) else {
                 return failure(
-                    codes.workspaceNotFound,
-                    reason: "workspace-scope-not-found"
+                    envelope.scope.tabID == nil
+                        ? codes.workspaceNotFound
+                        : codes.tabNotFound,
+                    reason: envelope.scope.tabID == nil
+                        ? "workspace-scope-not-found"
+                        : "tab-scope-not-found"
                 )
             }
 
@@ -276,6 +290,18 @@ private extension WorkspaceIntentProvider {
                 reason: "content-is-invalid"
             )
         }
+    }
+
+    func focusTab(envelope: IntentEnvelope) -> IntentProviderReply {
+        guard envelope.input == .object([:]) else {
+            return AppIntentProviderSupport.invalidInput(.expectedObject)
+        }
+        guard envelope.scope.tabID != nil,
+              selectScopedTab(envelope.scope)
+        else {
+            return failure(codes.tabNotFound, reason: "tab-scope-not-found")
+        }
+        return AppIntentProviderSupport.emptySuccess
     }
 
     func splitPane(envelope: IntentEnvelope) -> IntentProviderReply {
@@ -387,8 +413,8 @@ private extension WorkspaceIntentProvider {
     }
 
     /// Places content without the caller choosing a pane: the pane already showing this
-    /// kind of content takes it, and otherwise one is split beside. The scope pane names
-    /// the tab; a scope without a pane opens into the scoped workspace's active tab.
+    /// kind of content takes it, and otherwise one is split beside. The scope pane or tab
+    /// names the tab; without either, content opens into the scoped workspace's active tab.
     func openContent(envelope: IntentEnvelope) -> IntentProviderReply {
         do {
             let object = try AppIntentProviderSupport.object(envelope.input)
@@ -421,6 +447,13 @@ private extension WorkspaceIntentProvider {
                     )
                 }
                 store.focusSlot(paneID)
+            } else if envelope.scope.tabID != nil {
+                guard selectScopedTab(envelope.scope) else {
+                    return failure(
+                        codes.tabNotFound,
+                        reason: "tab-scope-not-found"
+                    )
+                }
             } else if !selectScopedWorkspace(envelope.scope) {
                 return failure(
                     codes.workspaceNotFound,
@@ -462,10 +495,17 @@ private extension WorkspaceIntentProvider {
         guard envelope.input == .object([:]) else {
             return AppIntentProviderSupport.invalidInput(.expectedObject)
         }
-        guard selectScopedWorkspace(envelope.scope) else {
+        guard envelope.scope.tabID == nil
+            ? selectScopedWorkspace(envelope.scope)
+            : selectScopedTab(envelope.scope)
+        else {
             return failure(
-                codes.workspaceNotFound,
-                reason: "workspace-scope-not-found"
+                envelope.scope.tabID == nil
+                    ? codes.workspaceNotFound
+                    : codes.tabNotFound,
+                reason: envelope.scope.tabID == nil
+                    ? "workspace-scope-not-found"
+                    : "tab-scope-not-found"
             )
         }
         if offset > 0 {
@@ -488,6 +528,10 @@ private extension WorkspaceIntentProvider {
                 )
             }
             store.focusSlot(paneID)
+        } else if envelope.scope.tabID != nil {
+            guard selectScopedTab(envelope.scope) else {
+                return failure(codes.tabNotFound, reason: "tab-scope-not-found")
+            }
         } else if !selectScopedWorkspace(envelope.scope) {
             return failure(
                 codes.workspaceNotFound,
@@ -521,6 +565,14 @@ private extension WorkspaceIntentProvider {
     }
 
     func selectScopedWorkspace(_ scope: InvocationScope) -> Bool {
+        if let tabID = scope.tabID {
+            guard let workspace = store.catalog.workspaces.first(where: {
+                $0.tabs.contains(where: { $0.id == tabID })
+            }), scope.workspaceID.map({ $0 == workspace.id }) ?? true
+            else { return false }
+            store.selectWorkspace(workspace.id)
+            return store.catalog.activeWorkspaceID == workspace.id
+        }
         guard let workspaceID = scope.workspaceID else {
             return store.catalog.activeWorkspace != nil
         }
@@ -529,6 +581,14 @@ private extension WorkspaceIntentProvider {
         }
         store.selectWorkspace(workspaceID)
         return store.catalog.activeWorkspaceID == workspaceID
+    }
+
+    func selectScopedTab(_ scope: InvocationScope) -> Bool {
+        guard let tabID = scope.tabID,
+              selectScopedWorkspace(scope)
+        else { return false }
+        store.selectTab(tabID)
+        return store.catalog.activeTab?.id == tabID
     }
 
     func failure(
@@ -546,8 +606,6 @@ private extension WorkspaceIntentProvider {
             return .terminal
         case "changes":
             return .changes
-        case "docs":
-            return .docs
         case "automation":
             return .automation
         case "empty":
@@ -839,8 +897,6 @@ private extension WorkspaceIntentProvider {
             .object(["kind": .string("terminal")])
         case .changes:
             .object(["kind": .string("changes")])
-        case .docs:
-            .object(["kind": .string("docs")])
         case .automation:
             .object(["kind": .string("automation")])
         case .empty:

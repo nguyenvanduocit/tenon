@@ -171,6 +171,7 @@ enum PluginViewSnapshot {
                 invocationScopeProvider: { @MainActor [weak store] in
                     InvocationScope(
                         workspaceID: store?.catalog.activeWorkspaceID,
+                        tabID: store?.catalog.activeTab?.id,
                         paneID: store?.catalog.activeSlotID
                     )
                 }

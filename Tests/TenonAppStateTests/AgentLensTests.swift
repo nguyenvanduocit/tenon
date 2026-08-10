@@ -762,9 +762,143 @@ final class AgentLensReducerTests: XCTestCase {
 
         XCTAssertEqual(reducer.snapshot.messages.count, 600)
         XCTAssertEqual(reducer.snapshot.messages.first?.id, "message-20")
-        XCTAssertTrue(reducer.snapshot.earlierHistoryAvailable)
+        // Trimming in memory names its own boundary: the oldest message still visible is
+        // where the reader would have to go back from.
+        XCTAssertEqual(reducer.snapshot.earlierHistory?.byteOffset, 20)
+        XCTAssertEqual(reducer.snapshot.earlierHistory?.location, "fixture")
         XCTAssertEqual(reducer.snapshot.diagnostics.count, 40)
         XCTAssertEqual(reducer.snapshot.timelineItems.count, 640)
+    }
+
+    func testEarlierHistoryNamesTheTranscriptAndTheByteItBeginsAt() {
+        var reducer = AgentLensReducer()
+        let cut = evidence(
+            source: .transcript,
+            authority: .reported,
+            location: "/tmp/agent/session.jsonl",
+            offset: 4_096
+        )
+        reducer.apply(.earlierHistory(cut))
+
+        XCTAssertEqual(reducer.snapshot.earlierHistory?.byteOffset, 4_096)
+        XCTAssertEqual(reducer.snapshot.earlierHistory?.location, "/tmp/agent/session.jsonl")
+
+        let notice = AgentLensEarlierHistoryNotice.text(for: cut)
+        XCTAssertTrue(notice.contains("4096"), notice)
+        XCTAssertTrue(notice.contains("session.jsonl"), notice)
+    }
+
+    func testOnlyARecordThatCarriesItsOwnMeaningOpensBoundedHistory() throws {
+        let claude = AgentTranscriptDecoder(provider: .claude)
+        let toolResult = try JSONSerialization.data(withJSONObject: [
+            "type": "user",
+            "uuid": "orphan",
+            "message": ["content": [["type": "tool_result", "tool_use_id": "toolu_1"]]],
+        ])
+        let prompt = try JSONSerialization.data(withJSONObject: [
+            "type": "user",
+            "uuid": "prompt",
+            "message": ["content": [["type": "text", "text": "carry on"]]],
+        ])
+        let call = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "call",
+            "message": ["content": [[
+                "type": "tool_use", "id": "toolu_2", "name": "Bash", "input": ["command": "ls"],
+            ]]],
+        ])
+        let attachment = try JSONSerialization.data(withJSONObject: ["type": "attachment"])
+
+        XCTAssertFalse(claude.opensHistoryWindow(line: toolResult))
+        XCTAssertTrue(claude.opensHistoryWindow(line: prompt))
+        XCTAssertTrue(claude.opensHistoryWindow(line: call))
+        XCTAssertFalse(claude.opensHistoryWindow(line: attachment))
+        XCTAssertFalse(claude.opensHistoryWindow(line: Data("{ not json".utf8)))
+
+        let codex = AgentTranscriptDecoder(provider: .codex)
+        let codexOutput = try JSONSerialization.data(withJSONObject: [
+            "type": "response_item",
+            "payload": ["type": "function_call_output", "call_id": "call_1", "output": "done"],
+        ])
+        let codexMessage = try JSONSerialization.data(withJSONObject: [
+            "type": "event_msg",
+            "payload": ["type": "agent_message", "message": "carry on"],
+        ])
+        XCTAssertFalse(codex.opensHistoryWindow(line: codexOutput))
+        XCTAssertTrue(codex.opensHistoryWindow(line: codexMessage))
+    }
+
+    func testBoundedAttachSkipsTheToolResultItsWindowCutThrough() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tenon-agent-lens-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+
+        // One Claude turn spans two records: the call is named in the assistant record and
+        // answered in the next user record. A window that opens between them used to admit
+        // the answer alone, which the decoder can only render as an unnamed finished "Tool".
+        let call = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "call-record",
+            "message": ["content": [[
+                "type": "tool_use",
+                "id": "toolu_cut",
+                "name": "Bash",
+                "input": ["command": "swift test --filter Padding\(String(repeating: "x", count: 200))"],
+            ]]],
+        ])
+        let result = try JSONSerialization.data(withJSONObject: [
+            "type": "user",
+            "uuid": "result-record",
+            "message": ["content": [[
+                "type": "tool_result", "tool_use_id": "toolu_cut", "content": "1854 passed",
+            ]]],
+        ])
+        let after = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "after-record",
+            "message": ["content": [["type": "text", "text": "after the cut"]]],
+        ])
+        let newline = Data([0x0A])
+        try (call + newline + result + newline + after + newline).write(to: file)
+
+        // Land the window five bytes inside the call record, so the seek drops a partial
+        // record and the first whole record it meets is the orphaned result.
+        let window = UInt64(result.count + 1 + after.count + 1 + 5)
+        let stream = await AgentTranscriptTailer().events(
+            fileURL: file,
+            provider: .claude,
+            pollInterval: .milliseconds(5),
+            initialWindowBytes: window
+        )
+
+        var collected: [AgentLensEvent] = []
+        var iterator = stream.makeAsyncIterator()
+        while collected.count < 8 {
+            guard let event = try await iterator.next() else { break }
+            collected.append(event)
+            if case .assistantMessage = event { break }
+        }
+
+        let toolFacts = collected.filter {
+            if case .toolFinished = $0 { return true }
+            if case .toolStarted = $0 { return true }
+            return false
+        }
+        XCTAssertTrue(toolFacts.isEmpty, "a half-seen call was projected: \(toolFacts)")
+        // The cut is a claim like any other, so it names the file and the byte a reader would
+        // have to open to see what came before it.
+        let cut = collected.compactMap { event -> AgentEvidence? in
+            guard case let .earlierHistory(evidence) = event else { return nil }
+            return evidence
+        }.first
+        XCTAssertEqual(cut?.location, file.path)
+        XCTAssertEqual(cut?.byteOffset, UInt64(call.count + 1) - 5)
+        guard case let .assistantMessage(message) = try XCTUnwrap(collected.last) else {
+            return XCTFail("the record after the cut was never read")
+        }
+        XCTAssertEqual(message.text, "after the cut")
     }
 
     func testSessionTimelineOrdersFactsSeparatesContextAndGroupsExecution() throws {
@@ -2241,6 +2375,13 @@ final class AgentLensPaneHeaderTests: XCTestCase {
         return isOn
     }
 
+    /// The renderer picker, found by its own command id rather than by position: the trailing
+    /// run's ORDER is pinned by one test on purpose, and every other test asking about the
+    /// picker should keep passing when a control is added beside it.
+    private func presentationPicker(_ header: PaneHeader) -> PaneHeaderItem? {
+        header.trailing.first { $0.id == PaneHeaderCommand.agentLensPresentation.rawValue }
+    }
+
     private func toggleTooltip(_ item: PaneHeaderItem?) -> String? {
         guard case let .toggle(_, _, _, _, tooltip, _) = item else { return nil }
         return tooltip
@@ -2341,28 +2482,41 @@ final class AgentLensPaneHeaderTests: XCTestCase {
     func testThePickerAndTheInspectorToggleAreTheTrailingRun() {
         let shown = header(presentation: .split, showsInspector: true)
 
+        // Three controls, and the order is the claim: the account is a property of the CONTENT
+        // and the other two are the pane's own chrome, so the content control sits furthest from
+        // the close button and is the first to fold away when the pane narrows.
         XCTAssertEqual(
             shown.trailing.map(\.id),
             [
+                PaneHeaderCommand.agentLensAccount.rawValue,
                 PaneHeaderCommand.agentLensPresentation.rawValue,
                 PaneHeaderCommand.agentLensInspector.rawValue,
             ]
         )
         XCTAssertEqual(
-            segments(shown.trailing.first)?.map(\.value),
+            segments(shown.trailing[1])?.map(\.value),
             AgentLensPresentation.allCases.map(\.rawValue)
         )
-        XCTAssertEqual(selection(shown.trailing.first), "split")
+        XCTAssertEqual(selection(shown.trailing[1]), "split")
         // The XCUITest anchor the in-body picker carried. A plugin cannot mint one; a
         // host-native producer must, or the identifier is lost in the move into chrome.
-        XCTAssertEqual(segmentedAccessibilityID(shown.trailing.first), "tenon.agentLens.mode")
+        XCTAssertEqual(segmentedAccessibilityID(shown.trailing[1]), "tenon.agentLens.mode")
 
         XCTAssertEqual(toggleSymbol(shown.trailing.last), "sidebar.right")
         // `isOn` is the item's own CURRENT state, not the next one.
         XCTAssertEqual(toggleIsOn(shown.trailing.last), true)
         XCTAssertEqual(toggleTooltip(shown.trailing.last), "Hide context and evidence")
 
+        // A terminal-only pane draws no Chat and no Timeline, so it publishes no account picker
+        // and the presentation control is the whole head of its run again.
         let hidden = header(presentation: .terminal, showsInspector: false)
+        XCTAssertEqual(
+            hidden.trailing.map(\.id),
+            [
+                PaneHeaderCommand.agentLensPresentation.rawValue,
+                PaneHeaderCommand.agentLensInspector.rawValue,
+            ]
+        )
         XCTAssertEqual(selection(hidden.trailing.first), "terminal")
         XCTAssertEqual(toggleIsOn(hidden.trailing.last), false)
         XCTAssertEqual(toggleTooltip(hidden.trailing.last), "Show context and evidence")
@@ -2372,7 +2526,7 @@ final class AgentLensPaneHeaderTests: XCTestCase {
     /// readers that need some are both written for: the pointer wants hover text, VoiceOver
     /// wants a spoken name.
     func testTheSplitOptionIsIconOnlyAndSaysWhatItIsToBothReaders() {
-        let options = try? XCTUnwrap(segments(header().trailing.first))
+        let options = try? XCTUnwrap(segments(presentationPicker(header())))
         let split = options?.first { $0.value == "split" }
 
         XCTAssertEqual(split?.systemName, "rectangle.split.2x1")
@@ -2406,6 +2560,7 @@ final class AgentLensPaneHeaderTests: XCTestCase {
         XCTAssertEqual(
             Set(interactive),
             [
+                PaneHeaderCommand.agentLensAccount.rawValue,
                 PaneHeaderCommand.agentLensPresentation.rawValue,
                 PaneHeaderCommand.agentLensInspector.rawValue,
             ]
@@ -2449,10 +2604,10 @@ final class AgentLensPaneHeaderTests: XCTestCase {
                     mode: mode,
                     showsSplitView: showsSplitView
                 )
-                let published = header(presentation: presentation)
-                XCTAssertEqual(selection(published.trailing.first), presentation.rawValue)
+                let published = presentationPicker(header(presentation: presentation))
+                XCTAssertEqual(selection(published), presentation.rawValue)
                 XCTAssertTrue(
-                    segments(published.trailing.first)?
+                    segments(published)?
                         .contains { $0.value == presentation.rawValue } ?? false,
                     "\(presentation.rawValue) is selected but is not one of the options"
                 )

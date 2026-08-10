@@ -21,6 +21,10 @@ struct LauncherMenu: View {
     var palette: CommandPaletteState
     var agentSuggestions: [AgentLaunchSuggestion] = []
     var launchAgent: ((AgentLaunchSuggestion) -> LauncherOutcome)? = nil
+    /// A tab anchor may expose its same-owner identity utility below the shared command
+    /// projection. It never enters ranking/search because copying an address is not an
+    /// open command and has no public intent principal.
+    var copyTabID: (() -> Void)? = nil
     /// How a chosen row is dispatched. `nil` inherits the focused pane through the shared
     /// invoker. Anchors with stronger placement meaning inject a send: the title-bar `+`
     /// creates a tab, a tab chip names the tab that was clicked, and an empty-grid
@@ -102,6 +106,21 @@ struct LauncherMenu: View {
                     .padding(.vertical, 5)
             }
             results(agents: agents, order: order, selected: selected, ceiling: listCeiling)
+            if let copyTabID {
+                Rectangle().fill(TenonTheme.line).frame(height: 1)
+                Button("Copy Tab ID", systemImage: "doc.on.doc") {
+                    copyTabID()
+                    dismiss()
+                }
+                .buttonStyle(.plain)
+                .font(TenonTheme.interfaceFont(size: 11, weight: .medium))
+                .foregroundStyle(TenonTheme.text)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 12)
+                .frame(height: 30)
+                .contentShape(Rectangle())
+                .accessibilityIdentifier("tenon.launcher.copyTabID")
+            }
         }
         .frame(width: 300)
         .background(TenonTheme.chromeRaised)
@@ -149,7 +168,8 @@ struct LauncherMenu: View {
     private var listCeiling: CGFloat {
         // Search field + its rule + the list's own vertical padding, plus the popover's
         // arrow and a margin so the last row never sits flush against the screen edge.
-        let chrome: CGFloat = 32 + 1 + 10 + 28
+        let utilityHeight: CGFloat = copyTabID == nil ? 0 : 31
+        let chrome: CGFloat = 32 + 1 + 10 + 28 + utilityHeight
         guard let window = NSApp.mainWindow ?? NSApp.keyWindow,
               let screen = window.screen ?? NSScreen.main
         else {

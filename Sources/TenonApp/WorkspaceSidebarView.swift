@@ -71,148 +71,8 @@ struct WorkspaceSidebarView: View {
         panel.prompt = "Open Workspace"
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
-            store.addWorkspace(
-                name: url.lastPathComponent.isEmpty ? url.path : url.lastPathComponent,
-                path: url
-            )
+            store.addWorkspace(name: WorkspaceName.derived(for: url), path: url)
         }
-    }
-}
-
-/// Fixed host utilities beneath the workspace list. Labeled controls collapse to icons at
-/// the sidebar's minimum width; VoiceOver and tooltips retain the full names in both forms.
-private struct SidebarFooter: View {
-    @Environment(\.openSettings) private var openSettings
-    @Environment(\.openURL) private var openURL
-
-    private static let helpURL = projectURL()
-    private static let feedbackURL = projectURL(path: "issues/new")
-    private static let version = Bundle.main.object(
-        forInfoDictionaryKey: "CFBundleShortVersionString"
-    ) as? String ?? "—"
-    private static let build = Bundle.main.object(
-        forInfoDictionaryKey: "CFBundleVersion"
-    ) as? String ?? "—"
-
-    var body: some View {
-        VStack(spacing: 5) {
-            ViewThatFits(in: .horizontal) {
-                SidebarFooterActions(
-                    showsTitles: true,
-                    openHelp: openHelp,
-                    openFeedback: openFeedback,
-                    openSettings: openAppSettings
-                )
-                SidebarFooterActions(
-                    showsTitles: false,
-                    openHelp: openHelp,
-                    openFeedback: openFeedback,
-                    openSettings: openAppSettings
-                )
-            }
-
-            Text("v\(Self.version) (\(Self.build))")
-                .font(TenonTheme.utilityFont(size: 8))
-                .foregroundStyle(TenonTheme.muted)
-                .lineLimit(1)
-                .accessibilityLabel("Version \(Self.version), build \(Self.build)")
-                .accessibilityIdentifier("tenon.sidebarVersion")
-        }
-        .padding(.horizontal, 7)
-        .padding(.top, 7)
-        .padding(.bottom, 6)
-        .frame(maxWidth: .infinity)
-        .overlay(alignment: .top) {
-            Rectangle()
-                .fill(TenonTheme.line)
-                .frame(height: 1)
-        }
-    }
-
-    private func openHelp() {
-        openURL(Self.helpURL)
-    }
-
-    private func openFeedback() {
-        openURL(Self.feedbackURL)
-    }
-
-    private func openAppSettings() {
-        openSettings()
-    }
-
-    private static func projectURL(path: String? = nil) -> URL {
-        let suffix = path.map { "/\($0)" } ?? ""
-        guard let url = URL(string: "https://github.com/nguyenvanduocit/tenon\(suffix)") else {
-            fatalError("The fixed Tenon project URL must be valid")
-        }
-        return url
-    }
-}
-
-private struct SidebarFooterActions: View {
-    let showsTitles: Bool
-    let openHelp: () -> Void
-    let openFeedback: () -> Void
-    let openSettings: () -> Void
-
-    var body: some View {
-        HStack(spacing: 2) {
-            SidebarFooterButton(
-                title: "Help",
-                symbol: "questionmark.circle",
-                accessibilityIdentifier: "tenon.sidebarHelp",
-                showsTitle: showsTitles,
-                action: openHelp
-            )
-            SidebarFooterButton(
-                title: "Feedback",
-                symbol: "bubble.left",
-                accessibilityIdentifier: "tenon.sidebarFeedback",
-                showsTitle: showsTitles,
-                action: openFeedback
-            )
-            SidebarFooterButton(
-                title: "Settings",
-                symbol: "gearshape",
-                accessibilityIdentifier: "tenon.sidebarSettings",
-                showsTitle: showsTitles,
-                action: openSettings
-            )
-        }
-    }
-}
-
-private struct SidebarFooterButton: View {
-    let title: LocalizedStringKey
-    let symbol: String
-    let accessibilityIdentifier: String
-    let showsTitle: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(title, action: action)
-            .font(TenonTheme.interfaceFont(size: 8.5))
-            .lineLimit(1)
-            .padding(.top, showsTitle ? 13 : 0)
-            .frame(
-                width: showsTitle ? 44 : 28,
-                height: showsTitle ? 38 : 28
-            )
-            .foregroundStyle(showsTitle ? TenonTheme.muted : .clear)
-            .contentShape(Rectangle())
-            .overlay(alignment: showsTitle ? .top : .center) {
-                Image(systemName: symbol)
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(TenonTheme.muted)
-                    .padding(.top, showsTitle ? 6 : 0)
-                    .accessibilityHidden(true)
-                    .allowsHitTesting(false)
-            }
-            .buttonStyle(.plain)
-            .background(TenonTheme.chromeRaised, in: .rect(cornerRadius: 6))
-            .help(title)
-            .accessibilityIdentifier(accessibilityIdentifier)
     }
 }
 
@@ -229,6 +89,7 @@ private struct WorkspaceRowList: View {
                 ForEach(store.catalog.workspaces) { workspace in
                     WorkspaceRow(
                         workspace: workspace,
+                        store: store,
                         isActive: workspace.id == store.catalog.activeWorkspaceID,
                         // T-029: this row's rollup of the one attention machine.
                         // Read here, inside the row list, so the open context menu
@@ -253,6 +114,9 @@ private struct WorkspaceRowList: View {
 
 private struct WorkspaceRow: View {
     let workspace: Workspace
+    /// T-097: the customisation popover writes straight through to the typed workspace
+    /// service, so the row hands it the store rather than a fourth closure.
+    var store: WorkspaceStore
     let isActive: Bool
     /// T-029: how many of this workspace's panes finished (or died) unviewed.
     /// The row bolds and counts while it is non-zero; viewing clears it upstream.
@@ -262,15 +126,13 @@ private struct WorkspaceRow: View {
     let remove: () -> Void
 
     @State private var isHovering = false
+    @State private var isCustomising = false
 
     var body: some View {
         Button(action: select) {
             HStack(spacing: 8) {
-                Image(systemName: "folder")
-                    .font(.system(size: 11, weight: .medium))
-                    .foregroundStyle(isActive ? TenonTheme.amber : TenonTheme.muted)
+                WorkspaceMark(workspace: workspace, isActive: isActive)
                     .frame(width: 29, height: 29)
-                    .accessibilityHidden(true)
 
                 VStack(alignment: .leading, spacing: 3) {
                     Text(workspace.name)
@@ -315,9 +177,24 @@ private struct WorkspaceRow: View {
         .onHover { isHovering = $0 }
         .accessibilityAddTraits(isActive ? .isSelected : [])
         .accessibilityIdentifier("tenon.workspaceRow")
+        // The mark is drawn, so it has to be spoken: the row announces the name it carries
+        // and what it is marked with, and never leans on colour to tell two rows apart. The
+        // tab count and the unseen count stay in the label — an explicit label replaces the
+        // children VoiceOver would otherwise have read.
+        .accessibilityLabel(
+            WorkspaceRowAnnouncement.text(for: workspace, unseenCount: unseenCount)
+        )
         .contextMenu {
+            Button("Customise Workspace…") { isCustomising = true }
             Button("Remove Workspace", role: .destructive, action: remove)
                 .disabled(!canRemove)
+        }
+        .popover(isPresented: $isCustomising, arrowEdge: .trailing) {
+            WorkspaceIdentityForm(
+                workspace: workspace,
+                store: store,
+                dismiss: { isCustomising = false }
+            )
         }
     }
 }

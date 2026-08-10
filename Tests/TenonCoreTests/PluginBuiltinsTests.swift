@@ -315,6 +315,7 @@ final class PluginBuiltinsTests: XCTestCase {
 
     func testIntentScopeAcceptsEntityUUIDsAndRejectsCallerGesture() async throws {
         let workspaceID = UUID()
+        let tabID = UUID()
         let paneID = UUID()
         let request = try PluginRuntimeValueParsing.intentRequest(
             name: .string("workspace.select.v1"),
@@ -322,6 +323,7 @@ final class PluginBuiltinsTests: XCTestCase {
             options: .object([
                 "scope": .object([
                     "workspaceID": .string(workspaceID.uuidString),
+                    "tabID": .string(tabID.uuidString),
                     "paneID": .string(paneID.uuidString),
                 ]),
             ])
@@ -330,6 +332,7 @@ final class PluginBuiltinsTests: XCTestCase {
             request.scopeOverride,
             InvocationScopeOverride(
                 workspaceID: workspaceID,
+                tabID: tabID,
                 paneID: paneID
             )
         )

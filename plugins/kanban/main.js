@@ -65,6 +65,9 @@ function makePane(instanceID) {
     // Agent runs this pane started, keyed by task id: { paneID, exited, tail, error }.
     // A run survives closing the sheet — reopening a task shows the agent still going.
     runs: {},
+    // The agents this machine has, as the host reports them. A board never spells an agent's
+    // command line itself; it asks for one.
+    agents: [],
     trackHandle: null,
     // Bumped on every refresh so a slow read that lands after a newer one is dropped
     // instead of overwriting it.
@@ -356,13 +359,28 @@ function writeFailure(result) {
   return { reason: String(reason || error.code || "unknown") };
 }
 
-// Relocates one verbatim board line to the adjacent column, preserving every other byte:
-// the moved line lands after the target column's last task line, or directly under its
-// heading when it has none. The line moved is the id's FIRST occurrence — the same one
-// findTask resolves and the pane rendered the button on — so a stale duplicate later in
-// the file (the workflow doc's "stale copy reads as free work") is never the one that
-// moves. Returns { text } or { reason }.
+// Relocates one verbatim board line to another column, preserving every other byte: the
+// moved line lands after the target column's last task line, or directly under its heading
+// when it has none. The line moved is the id's FIRST occurrence — the same one findTask
+// resolves and the pane rendered the control on — so a stale duplicate later in the file
+// (the workflow doc's "stale copy reads as free work") is never the one that moves.
+// Returns { text }, { unchanged: true }, or { reason }.
+//
+// Two ways to name the destination, one relocation: the ◀ ▶ buttons step one column from
+// wherever the card is now, a drop lands it on the column the pointer chose.
 function relocateTaskLine(text, id, direction) {
+  return relocateBy(text, id, function (current) { return current + direction; });
+}
+
+// The drop's form of the same move: the card lands in the column it was dropped on,
+// whichever column it started in. Absolute rather than relative on purpose — the pointer
+// named a destination, and re-deriving that as a delta against a board that may have
+// changed since the render would be a second answer to a question already answered.
+function relocateTaskLineToColumn(text, id, column) {
+  return relocateBy(text, id, function () { return column; });
+}
+
+function relocateBy(text, id, resolveTarget) {
   var lines = String(text).split("\n");
   var headings = [];
   var lastTaskLine = [];
@@ -384,10 +402,14 @@ function relocateTaskLine(text, id, direction) {
     }
   }
   if (taskLine < 0) return { reason: "task-not-found" };
-  var target = taskColumn + direction;
+  var target = resolveTarget(taskColumn);
   if (target < 0 || target >= headings.length) {
     return { reason: "no-adjacent-column" };
   }
+  // A card dropped back on the column it came from changed nothing, so nothing is
+  // written: rewriting a 113 KB board to produce the bytes it already holds would make
+  // every watcher re-read for a gesture that said nothing.
+  if (target === taskColumn) return { unchanged: true };
   var moved = lines[taskLine];
   var insertAfter = lastTaskLine[target] >= 0 ? lastTaskLine[target] : headings[target];
   lines.splice(taskLine, 1);
@@ -403,15 +425,19 @@ var MAX_QUEUED_MOVES = 4;
 
 // Moves on one pane run strictly one after another: a second click computes against the
 // board the first one committed instead of racing it read-for-write, so ▶▶ is two
-// columns over, always, never a coin flip on whose write lands last.
-function moveTask(st, id, direction) {
+// columns over, always, never a coin flip on whose write lands last. The same queue holds
+// a drag: a card released while an earlier move is still writing waits its turn rather
+// than computing against the board that move is about to replace.
+//
+// `relocate(text)` is how this move names its destination — see relocateTaskLine.
+function moveTask(st, relocate) {
   if (st.queuedMoves >= MAX_QUEUED_MOVES) {
     st.writeError = "Move refused: too-many-queued-moves";
     render(st);
     return;
   }
   st.queuedMoves += 1;
-  var run = function () { return performMove(st, id, direction); };
+  var run = function () { return performMove(st, relocate); };
   var chained = (st.movesInFlight ? st.movesInFlight.then(run, run) : run())
     .finally(function () { st.queuedMoves -= 1; });
   st.movesInFlight = chained;
@@ -422,7 +448,7 @@ function moveTask(st, id, direction) {
 // last rendered it: another agent's edit in between must survive the rewrite untouched.
 // Any failure is total — the target never holds a partial move — so the honest ending is
 // the same either way: name what happened and re-read the board the disk actually holds.
-async function performMove(st, id, direction) {
+async function performMove(st, relocate) {
   st.writeError = "";
   // Captured once: `workspace.changed` can rebind st.boardPath while this move is
   // paging the board (T-036 moves the pane between workspaces). The move belongs to
@@ -436,7 +462,11 @@ async function performMove(st, id, direction) {
     await refresh(st);
     return;
   }
-  var moved = relocateTaskLine(read.text, id, direction);
+  var moved = relocate(read.text);
+  if (moved.unchanged) {
+    await refresh(st);
+    return;
+  }
   if (moved.text === undefined) {
     st.writeError = "Move failed: " + moved.reason;
     await refresh(st);
@@ -525,13 +555,19 @@ function columnNode(st, column, index) {
     });
   }
   children.push({ type: "spacer" });
+  // The whole column accepts a card, including the empty space under its last one — a
+  // column you cannot drop an item into when it is empty is the one you most need to.
   return {
-    type: "box",
-    padding: 10,
-    background: true,
-    cornerRadius: 10,
-    width: COLUMN_WIDTH,
-    children: children
+    type: "dropTarget",
+    action: "drop-into:" + index,
+    children: [{
+      type: "box",
+      padding: 10,
+      background: true,
+      cornerRadius: 10,
+      width: COLUMN_WIDTH,
+      children: children
+    }]
   };
 }
 
@@ -558,13 +594,24 @@ function cardNode(st, task, columnIndex) {
   }
   // Packed, not spread: a column is 260 points wide, and a spacer between these pushes
   // the last button past the edge, where the label truncates to "Det…".
+  // A 260 pt card has no room to name an agent, so it carries no agent: one installed agent
+  // starts, and a choice between several belongs in the sheet, which already draws one
+  // button per agent. Guessing here would silently start the other one.
   controls.push({ type: "button", label: "Start", action: "start:" + task.id });
   controls.push({ type: "button", label: "More", action: "more:" + task.id });
   // The card is the same height whichever task is open: the detail goes to the sheet,
   // where it has the width of the window instead of a fifth of a pane.
+  //
+  // Dragging is the pointer's way to say the same thing the ◀ ▶ buttons say, and the
+  // buttons stay: they are how the move is reachable by keyboard and by VoiceOver, where
+  // a drag is not reachable at all.
   return {
-    type: "card",
-    children: header.concat([{ type: "hstack", spacing: 6, children: controls }])
+    type: "dragSource",
+    payload: task.id,
+    children: [{
+      type: "card",
+      children: header.concat([{ type: "hstack", spacing: 6, children: controls }])
+    }]
   };
 }
 
@@ -621,15 +668,27 @@ function appendRun(st, task, children) {
   if (!run) {
     children.push({
       type: "text",
-      value: "No agent started for this task yet.",
+      value: st.agents.length
+        ? "No agent started for this task yet."
+        : "No coding agent found on this machine.",
       style: "caption",
       color: "muted"
     });
-    children.push({
-      type: "hstack",
-      spacing: 6,
-      children: [{ type: "button", label: "Start agent", action: "start:" + task.id }]
-    });
+    // One button per installed agent, named after it: a board on a machine with two agents
+    // is exactly where somebody wants to choose which one takes the task.
+    var buttons = [];
+    for (var a = 0; a < st.agents.length; a++) {
+      buttons.push({
+        type: "button",
+        label: st.agents.length === 1
+          ? "Start agent"
+          : "Start " + st.agents[a].label,
+        action: "start:" + st.agents[a].id + ":" + task.id
+      });
+    }
+    if (buttons.length) {
+      children.push({ type: "hstack", spacing: 6, children: buttons });
+    }
     return;
   }
   children.push({
@@ -656,7 +715,15 @@ function appendRun(st, task, children) {
     children: [
       { type: "button", label: "Focus pane", action: "focus:" + task.id },
       { type: "spacer" },
-      { type: "button", label: "Start again", action: "start:" + task.id }
+      // Again means the same agent: the run remembers which one it was, so a second try
+      // never quietly hands the task to the other one.
+      {
+        type: "button",
+        label: "Start again",
+        action: run.agent
+          ? "start:" + run.agent + ":" + task.id
+          : "start:" + task.id
+      }
     ]
   });
 }
@@ -759,26 +826,66 @@ function tailOf(text) {
 
 // --- Actions ------------------------------------------------------------------------
 
-function shellQuote(text) {
-  return "'" + String(text).replace(/'/g, "'\\''") + "'";
+// Which agents this machine has, read when a task's sheet opens rather than on every board
+// change: the answer is only needed where the buttons are drawn, and a board rewritten by
+// six agents refreshes far more often than anybody installs a CLI.
+async function loadAgents(st, call = tenon.intents) {
+  var result = await call.send("agent.inventory.v1", {});
+  if (panes[st.id] !== st) return;
+  st.agents = result.ok ? (result.value.agents || []) : [];
+  if (!result.ok) {
+    tenon.log("kanban: could not list agents: " + result.error.code);
+  }
+}
+
+// A Start that names no agent — the card's, and a "Start again" from before this pane knew
+// which agent ran. One installed agent is not a choice, so it starts; several is a choice,
+// and the sheet is where the person makes it.
+async function startUnnamedAgent(st, task) {
+  await loadAgents(st);
+  if (panes[st.id] !== st) return;
+  if (st.agents.length === 1) {
+    await startAgent(st, st.agents[0].id, task);
+    return;
+  }
+  await openDetail(st, task.id);
 }
 
 // Opens the agent's pane and, on success, records the run so the sheet can follow it.
 // The sheet opens either way: a start that failed is exactly when a human wants to look.
-async function startAgent(st, task) {
+//
+// The command line comes from the host, so a task starts the agent the way this person runs
+// it — the model, the permission mode — instead of a bare `claude` this file invented.
+async function startAgent(st, agentID, task) {
   var relative = tenon.path.join(KANBAN_DIR, task.path.replace(/^\.\//, ""));
   var prompt =
     "Do task " + task.id + " described in " + relative +
     ". Follow the workflow protocol in CLAUDE.md: claim it on the board before " +
     "touching a file, and release the claim when you finish.";
+  var composed = await tenon.intents.send("agent.command.v1", {
+    agent: agentID,
+    prompt: prompt
+  });
+  if (panes[st.id] !== st) return composed;
+  if (!composed.ok) {
+    st.writeError = "Start failed: " + composed.error.code;
+    await openDetail(st, task.id);
+    return composed;
+  }
   var result = await tenon.intents.send("terminal.open.v1", {
-    command: "claude " + shellQuote(prompt),
+    command: composed.value.commandLine,
     workingDirectory: st.workspacePath
   });
   if (panes[st.id] !== st) return result;
   var paneID = result.ok ? (result.value || {}).paneID : null;
   if (paneID) {
-    st.runs[task.id] = { paneID: String(paneID), exited: false, tail: "", error: "" };
+    st.runs[task.id] = {
+      paneID: String(paneID),
+      agent: agentID,
+      exited: false,
+      tail: "",
+      error: ""
+    };
   } else {
     st.writeError = "Start failed: " +
       String((result.error && result.error.code) || "no-pane-returned");
@@ -792,6 +899,8 @@ async function startAgent(st, task) {
 async function openDetail(st, id) {
   st.openTask = id;
   st.detail = null;
+  await loadAgents(st);
+  if (panes[st.id] !== st || st.openTask !== id) return;
   await refresh(st);
   if (panes[st.id] !== st || st.openTask !== id) return;
   if (st.runs[id] && !st.runs[id].exited) startTracking(st);
@@ -801,8 +910,15 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
   var st = panes[instanceID];
   if (!st || typeof action !== "string") return;
   if (action.indexOf("start:") === 0) {
-    var task = findTask(st, action.slice("start:".length));
-    if (task) await startAgent(st, task);
+    var rest = action.slice("start:".length);
+    var separator = rest.indexOf(":");
+    if (separator > 0) {
+      var chosen = findTask(st, rest.slice(separator + 1));
+      if (chosen) await startAgent(st, rest.slice(0, separator), chosen);
+      return;
+    }
+    var task = findTask(st, rest);
+    if (task) await startUnnamedAgent(st, task);
     return;
   }
   if (action.indexOf("more:") === 0) {
@@ -828,13 +944,32 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
     return;
   }
   if (action.indexOf("move-left:") === 0) {
-    await moveTask(st, action.slice("move-left:".length), -1);
+    await moveTask(st, byDelta(action.slice("move-left:".length), -1));
     return;
   }
   if (action.indexOf("move-right:") === 0) {
-    await moveTask(st, action.slice("move-right:".length), 1);
+    await moveTask(st, byDelta(action.slice("move-right:".length), 1));
+    return;
+  }
+  // A drop arrives on the same route a button press does: the target column's action,
+  // carrying the card's id as the value (T-056). The host has already refused anything
+  // that did not start in this pane's own board, so `value` here is a task id this view
+  // published — but the id is still resolved against the board on disk, exactly as the
+  // buttons' ids are, because the board may have moved on since the render.
+  if (action.indexOf("drop-into:") === 0) {
+    var column = Number(action.slice("drop-into:".length));
+    if (typeof value !== "string" || !value || !isFinite(column)) return;
+    await moveTask(st, toColumn(value, column));
   }
 });
+
+function byDelta(id, direction) {
+  return function (text) { return relocateTaskLine(text, id, direction); };
+}
+
+function toColumn(id, column) {
+  return function (text) { return relocateTaskLineToColumn(text, id, column); };
+}
 
 tenon.views.onOpen(VIEW, async function (instanceID) {
   var st = makePane(instanceID);

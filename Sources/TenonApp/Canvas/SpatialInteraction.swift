@@ -127,19 +127,28 @@ final class SpatialCanvasInteractionCoordinator {
     static func emptyGridLauncherAnchor(
         at point: CGPoint,
         canvasSize: CGSize,
-        slots: [SpatialSlot]
+        slots: [SpatialSlot],
+        sizing: NewPaneSizing = .unlimited
     ) -> CGPoint? {
         emptyGridLauncherTarget(
             at: point,
             canvasSize: canvasSize,
-            slots: slots
+            slots: slots,
+            sizing: sizing
         )?.anchor
     }
 
+    /// The region a click on empty canvas reserves.
+    ///
+    /// This is where the person's creation maximum meets a rect, and the only place it can:
+    /// the cell they pointed at is known here and nowhere downstream, so the narrowed region
+    /// can be held over that cell instead of snapping to the hole's leading edge and opening
+    /// a pane away from the pointer. The width the maximum declines stays empty canvas.
     static func emptyGridLauncherTarget(
         at point: CGPoint,
         canvasSize: CGSize,
-        slots: [SpatialSlot]
+        slots: [SpatialSlot],
+        sizing: NewPaneSizing = .unlimited
     ) -> EmptyGridLauncherTarget? {
         guard let cell = gridCell(at: point, canvasSize: canvasSize) else { return nil }
         guard let rect = SpatialLayout.bestEmptyRect(
@@ -147,7 +156,10 @@ final class SpatialCanvasInteractionCoordinator {
             containingColumn: cell.column,
             row: cell.row
         ) else { return nil }
-        return EmptyGridLauncherTarget(anchor: point, rect: rect)
+        return EmptyGridLauncherTarget(
+            anchor: point,
+            rect: sizing.fitting(rect, keeping: cell.column)
+        )
     }
 
     private static func gridCell(

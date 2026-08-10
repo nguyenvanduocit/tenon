@@ -456,6 +456,22 @@ enum PluginRuntimeValueParsing {
                 label: object["label"]?.stringValue ?? "",
                 children: children
             )
+        // A malformed drag wrapper keeps its subtree and loses only the gesture. `button`
+        // returns nil for a missing action because a button IS its content; these two wrap
+        // content the plugin still meant to show, and blanking a card because its payload
+        // was too long is a worse answer than a card you have to move with the buttons.
+        case "dragSource":
+            return .dragSource(
+                payload: PluginViewDrag.admissiblePayload(
+                    object["payload"]?.stringValue
+                ) ?? "",
+                children: children
+            )
+        case "dropTarget":
+            return .dropTarget(
+                action: object["action"].map(actionIdentifier(from:)) ?? "",
+                children: children
+            )
         default:
             return nil
         }
@@ -579,14 +595,19 @@ enum PluginRuntimeValueParsing {
                 scope["workspaceID"],
                 field: "workspaceID"
             )
+            let tabID = try scopeUUID(
+                scope["tabID"],
+                field: "tabID"
+            )
             let paneID = try scopeUUID(
                 scope["paneID"],
                 field: "paneID"
             )
-            scopeOverride = workspaceID == nil && paneID == nil
+            scopeOverride = workspaceID == nil && tabID == nil && paneID == nil
                 ? nil
                 : InvocationScopeOverride(
                     workspaceID: workspaceID,
+                    tabID: tabID,
                     paneID: paneID
                 )
         } else {

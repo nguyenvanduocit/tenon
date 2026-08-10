@@ -883,6 +883,9 @@ private extension PluginRuntime {
         if let workspaceID = envelope.scope.workspaceID {
             scope["workspaceID"] = .string(workspaceID.uuidString)
         }
+        if let tabID = envelope.scope.tabID {
+            scope["tabID"] = .string(tabID.uuidString)
+        }
         if let paneID = envelope.scope.paneID {
             scope["paneID"] = .string(paneID.uuidString)
         }

@@ -25,18 +25,26 @@ enum PaneViewSnapshotWriter {
         size: CGSize,
         to path: String
     ) -> Never {
+        write(
+            bare: PaneChromePreview(
+                slot: slot,
+                title: title,
+                headerStore: headerStore
+            ) { view },
+            size: size,
+            to: path
+        )
+    }
+
+    /// The same capture with no pane around it, for shell chrome that is not a pane — the
+    /// workspace sidebar and its footer. Wrapping those in a slot header would photograph a
+    /// frame the app never draws around them.
+    @MainActor
+    static func write(bare view: some View, size: CGSize, to path: String) -> Never {
         _ = NSApplication.shared
         NSApp.appearance = NSAppearance(named: .darkAqua)
 
-        let hosting = NSHostingView(
-            rootView: AnyView(
-                PaneChromePreview(
-                    slot: slot,
-                    title: title,
-                    headerStore: headerStore
-                ) { view }
-            )
-        )
+        let hosting = NSHostingView(rootView: AnyView(view))
         hosting.frame = NSRect(origin: .zero, size: size)
         let layoutStart = Date()
         hosting.layoutSubtreeIfNeeded()

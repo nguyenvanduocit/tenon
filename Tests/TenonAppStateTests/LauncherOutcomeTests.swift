@@ -73,7 +73,7 @@ final class LauncherOutcomeTests: XCTestCase {
             XCTAssertEqual(fixture.store.catalog.slot(id: paneID)?.rect, target)
             XCTAssertEqual(fixture.store.catalog.slot(id: paneID)?.content, .empty)
             fixture.store.focusSlot(paneID)
-            fixture.store.openContent(.docs)
+            fixture.store.openContent(.changes)
             return try! self.success()
         }
 
@@ -81,7 +81,7 @@ final class LauncherOutcomeTests: XCTestCase {
         XCTAssertEqual(fixture.store.catalog.slot(id: fixture.originalID)?.rect, fixture.originalRect)
         XCTAssertEqual(
             fixture.store.catalog.activeTab?.slots.first(where: { $0.id != fixture.originalID })?.content,
-            .docs
+            .changes
         )
         XCTAssertEqual(
             fixture.store.catalog.activeTab?.slots.first(where: { $0.id != fixture.originalID })?.rect,
@@ -192,7 +192,7 @@ final class LauncherOutcomeTests: XCTestCase {
             )
             XCTAssertTrue(NewTabLauncherPlacement.consumeReservedTabCreation(
                 scope: scope,
-                content: .docs,
+                content: .changes,
                 store: store
             ))
             return try! self.success()
@@ -203,7 +203,7 @@ final class LauncherOutcomeTests: XCTestCase {
         }
         let tabs = try XCTUnwrap(store.catalog.activeWorkspace?.tabs)
         XCTAssertEqual(tabs.count, originalTabIDs.count + 1)
-        XCTAssertEqual(store.catalog.activeTab?.slots.map(\.content), [.docs])
+        XCTAssertEqual(store.catalog.activeTab?.slots.map(\.content), [.changes])
         XCTAssertFalse(
             tabs.flatMap(\.slots).contains { $0.content == .empty },
             "the scoped placeholder is collapsed when the intent opens its own tab"
@@ -311,7 +311,7 @@ final class LauncherOutcomeTests: XCTestCase {
     func testPlusFailureDoesNotOverrideNewerTabNavigation() async throws {
         let store = WorkspaceStore()
         let originalTabID = try XCTUnwrap(store.catalog.activeTab?.id)
-        store.newTab(content: .docs)
+        store.newTab(content: .changes)
         let newerSelection = try XCTUnwrap(store.catalog.activeTab?.id)
         store.selectTab(originalTabID)
 
@@ -341,7 +341,7 @@ final class LauncherOutcomeTests: XCTestCase {
         _ = await NewTabLauncherPlacement.invoke(in: store) { scope in
             XCTAssertTrue(NewTabLauncherPlacement.consumeReservedTabCreation(
                 scope: scope,
-                content: .docs,
+                content: .changes,
                 store: store
             ))
             store.selectWorkspace(newerWorkspaceID)

@@ -17,6 +17,7 @@ private func fail(_ message: String) -> Never {
 
 private struct Flags {
     var paneID: String?
+    var tabID: String?
     var workspaceID: String?
     var providerID: String?
     var idempotencyKey: String?
@@ -33,6 +34,12 @@ private struct Flags {
             switch argument {
             case "--pane":
                 paneID = Self.value(
+                    after: &index,
+                    flag: argument,
+                    in: arguments
+                )
+            case "--tab":
+                tabID = Self.value(
                     after: &index,
                     flag: argument,
                     in: arguments
@@ -109,17 +116,18 @@ usage: tenon-cli <command> [args]
 
 Convenience aliases (all compile to intent.send):
   state
-  send [--pane <uuid>] [--enter] <text...>
-  read [--pane <uuid>]
-  wait [--pane <uuid>] --for exit|tui-idle|command-finished [--timeout <ms>]
+  send [--pane <uuid> | --tab <uuid>] [--enter] <text...>
+  read [--pane <uuid> | --tab <uuid>]
+  wait [--pane <uuid> | --tab <uuid>] --for exit|tui-idle|command-finished [--timeout <ms>]
   pane-focus --pane <uuid>
+  tab-focus --tab <uuid>
 
 Scope/options:
-  --workspace <uuid> --pane <uuid>
+  --workspace <uuid> --tab <uuid> --pane <uuid>
   --provider <provider-id> --idempotency-key <key> --timeout <ms>
 
-When --pane is absent, $TENON_PANE_ID is used when available. Every wire-level
-domain request is intent.send with explicit input and scope objects.
+When neither --pane nor --tab is present, $TENON_PANE_ID is used when available.
+Every wire-level domain request is intent.send with explicit input and scope objects.
 """
 
 private func buildRequest(
@@ -212,6 +220,18 @@ private func buildRequest(
             flags: flags
         )
 
+    case "tab-focus":
+        let flags = Flags(arguments)
+        requireNoPositionals(flags, command: command)
+        guard flags.tabID != nil else {
+            fail("tab-focus needs --tab")
+        }
+        return intentSendRequest(
+            name: "workspace.tab.focus.v1",
+            input: .object([:]),
+            flags: flags
+        )
+
     default:
         fail("unknown command '\(command)'\n\n\(usage)")
     }
@@ -292,6 +312,9 @@ private func scopeValue(_ flags: Flags) -> IntentValue {
     if let workspaceID = flags.workspaceID {
         scope["workspaceID"] = .string(validUUID(workspaceID, "--workspace"))
     }
+    if let tabID = flags.tabID {
+        scope["tabID"] = .string(validUUID(tabID, "--tab"))
+    }
     if let paneID = resolvedPaneID(flags) {
         scope["paneID"] = .string(validUUID(paneID, "--pane"))
     }
@@ -301,6 +324,11 @@ private func scopeValue(_ flags: Flags) -> IntentValue {
 private func resolvedPaneID(_ flags: Flags) -> String? {
     if let paneID = flags.paneID {
         return paneID
+    }
+    // An explicit tab is the target. Inheriting this terminal's pane would make providers
+    // correctly prefer that more-specific pane and silently defeat `--tab`.
+    if flags.tabID != nil {
+        return nil
     }
     let environment = ProcessInfo.processInfo.environment
     guard let paneID = environment["TENON_PANE_ID"],
@@ -349,6 +377,7 @@ private func requireNoPositionals(_ flags: Flags, command: String) {
 
 private func requireDiscoveryOnly(_ flags: Flags, command: String) {
     guard flags.paneID == nil,
+          flags.tabID == nil,
           flags.workspaceID == nil,
           flags.providerID == nil,
           flags.idempotencyKey == nil,

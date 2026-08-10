@@ -110,7 +110,7 @@ step "Ensuring GhosttyKit.xcframework + resources"
 
 # --- 4. Regenerate the Xcode project from project.yml (source of truth) -------
 step "Generating Tenon.xcodeproj from project.yml"
-xcodegen generate
+xcodegen generate --use-cache
 
 # --- 5. Build the standalone CLI --------------------------------------------
 step "Building tenon-cli ($SWIFT_CONFIGURATION, host arch: $(uname -m))"
@@ -228,17 +228,10 @@ INSTALLED_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionStri
     "$DEST_APP/Contents/Info.plist" 2>/dev/null || echo '?')"
 echo "installed: $DEST_APP (version $INSTALLED_VERSION, id $BUNDLE_ID)"
 
-# --- 10. Drop what the finished install no longer needs -----------------------
-# The app now lives at its destination, so the object files and headers that
-# assembled it are dead weight — hundreds of megabytes of it. Products stay, so a
-# later install still skips the work that did not change.
-step "Reclaiming build intermediates"
-INTERMEDIATES="$DERIVED_DATA/Build/Intermediates.noindex"
-if [ -d "$INTERMEDIATES" ]; then
-    echo "freed $(du -sh "$INTERMEDIATES" | cut -f1) of intermediates"
-    rm -rf "$INTERMEDIATES"
-fi
-echo "build cache now $(du -sh "$REPO_ROOT/.build" | cut -f1)"
+# Keep Xcode's object files and build database. Removing Intermediates.noindex
+# here forces the next install to compile the app from scratch; CLEAN=1 remains
+# the explicit escape hatch when a from-scratch build is actually wanted.
+echo "build cache kept for fast incremental installs: $(du -sh "$REPO_ROOT/.build" | cut -f1)"
 
 if [ "$LAUNCH" -eq 1 ]; then
     step "Launching Tenon"

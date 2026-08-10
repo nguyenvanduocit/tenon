@@ -317,7 +317,7 @@ struct CodexProtocolIngress: Sendable {
 /// initial window, caps an individual JSONL record, detects truncation/rotation, and
 /// terminates on consumer overflow instead of silently losing semantic facts.
 actor AgentTranscriptTailer {
-    private static let initialWindowBytes: UInt64 = 8 << 20
+    static let initialWindowBytes: UInt64 = 8 << 20
     private static let chunkBytes = 256 << 10
     private static let recordLimit = 2 << 20
     private static let bufferCapacity = 1_024
@@ -325,7 +325,8 @@ actor AgentTranscriptTailer {
     func events(
         fileURL: URL,
         provider: AgentProvider,
-        pollInterval: Duration = .milliseconds(180)
+        pollInterval: Duration = .milliseconds(180),
+        initialWindowBytes: UInt64 = AgentTranscriptTailer.initialWindowBytes
     ) -> AsyncThrowingStream<AgentLensEvent, any Error> {
         AsyncThrowingStream(bufferingPolicy: .bufferingOldest(Self.bufferCapacity)) {
             continuation in
@@ -334,6 +335,7 @@ actor AgentTranscriptTailer {
                     fileURL: fileURL,
                     provider: provider,
                     pollInterval: pollInterval,
+                    initialWindowBytes: initialWindowBytes,
                     continuation: continuation
                 )
             }
@@ -345,6 +347,7 @@ actor AgentTranscriptTailer {
         fileURL: URL,
         provider: AgentProvider,
         pollInterval: Duration,
+        initialWindowBytes: UInt64,
         continuation: AsyncThrowingStream<AgentLensEvent, any Error>.Continuation
     ) async {
         let decoder = AgentTranscriptDecoder(provider: provider)
@@ -352,7 +355,11 @@ actor AgentTranscriptTailer {
         var offset: UInt64 = 0
         var pending = Data()
         var pendingStart: UInt64 = 0
-        var dropsInitialPartialRecord = false
+        // Whether the window is still looking for a record that can begin it. Set when a seek
+        // lands mid-file and when an unterminated record is abandoned: in both cases the bytes
+        // on hand are the tail of something whose beginning is gone, and that is true of a
+        // record split by the seek and of a `tool_result` whose call was left behind it alike.
+        var seeksWindowStart = false
         var didReportMissing = false
         var didReportMalformed = false
 
@@ -370,17 +377,27 @@ actor AgentTranscriptTailer {
                 let size = fileSize.uint64Value
                 didReportMissing = false
 
-                if offset == 0 && size > Self.initialWindowBytes {
-                    offset = size - Self.initialWindowBytes
+                if offset == 0 && size > initialWindowBytes {
+                    offset = size - initialWindowBytes
                     pendingStart = offset
-                    dropsInitialPartialRecord = true
-                    let evidence = AgentEvidence.terminalInference("\(location):bounded-history")
-                    guard yield(.earlierHistoryAvailable(evidence), to: continuation) else { return }
+                    seeksWindowStart = true
+                    // The transcript and the byte, not a sentence about them: this is the one
+                    // fact whose whole purpose is to be walked back to.
+                    let evidence = AgentEvidence(
+                        source: .transcript,
+                        authority: .observed,
+                        location: location,
+                        byteOffset: offset,
+                        fingerprint: "",
+                        capturedAt: Date(),
+                        freshness: .current
+                    )
+                    guard yield(.earlierHistory(evidence), to: continuation) else { return }
                 } else if size < offset {
                     offset = 0
                     pendingStart = 0
                     pending.removeAll(keepingCapacity: true)
-                    dropsInitialPartialRecord = false
+                    seeksWindowStart = false
                     let evidence = AgentEvidence.terminalInference("\(location):rotation")
                     guard yield(.reset(source: evidence), to: continuation) else { return }
                 }
@@ -406,11 +423,11 @@ actor AgentTranscriptTailer {
                             let line = Data(pending.prefix(length))
                             pending.removeFirst(length + 1)
                             pendingStart += UInt64(length + 1)
-                            if dropsInitialPartialRecord {
-                                dropsInitialPartialRecord = false
-                                continue
-                            }
                             guard !line.isEmpty else { continue }
+                            if seeksWindowStart {
+                                guard decoder.opensHistoryWindow(line: line) else { continue }
+                                seeksWindowStart = false
+                            }
                             do {
                                 for event in try decoder.decode(
                                     line: line,
@@ -452,7 +469,7 @@ actor AgentTranscriptTailer {
                         if pending.count > Self.recordLimit {
                             pending.removeAll(keepingCapacity: true)
                             pendingStart = offset
-                            dropsInitialPartialRecord = true
+                            seeksWindowStart = true
                             let evidence = AgentEvidence.terminalInference(
                                 "\(location):oversized-record"
                             )

@@ -71,15 +71,6 @@
         "palette": { "category": "Open", "icon": "arrow.triangle.branch", "keywords": ["git", "diff", "status", "vcs"], "launcher": true, "fillsPane": true }
       },
       {
-        "name": "dev.tenon.core-commands.docs.open.v1",
-        "title": "Open Docs",
-        "audiences": ["plugin", "user"],
-        "effects": { "kind": "write", "idempotency": "none", "confirmation": "never", "external": false },
-        "inputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "outputSchema": { "$schema": "https://json-schema.org/draft/2020-12/schema", "type": "object", "additionalProperties": false },
-        "palette": { "category": "Open", "icon": "book", "keywords": ["documentation", "readme", "help", "manual"], "launcher": true, "fillsPane": true }
-      },
-      {
         "name": "dev.tenon.core-commands.automation.open.v1",
         "title": "Open Automation",
         "audiences": ["plugin", "user"],

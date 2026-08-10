@@ -47,6 +47,9 @@ function makePane(instanceID) {
     workspacePath: "",
     project: "",
     sessions: [],
+    // What the host says is installed and how this person runs it. The pane never spells an
+    // agent's command line itself; it asks for one.
+    agents: [],
     notice: LOADING,
     // Guards against a slow scan clobbering a newer one (settings can change twice in a row).
     generation: 0
@@ -136,6 +139,9 @@ async function scan(st, call = tenon.intents) {
   st.scanError = null;
   render(st);
 
+  await loadAgents(st, gen, call);
+  if (gen !== st.generation || panes[st.id] !== st) return;
+
   var limit = sessionLimit();
   var claude = await scanClaude(st, gen, limit, call);
   if (gen !== st.generation || panes[st.id] !== st) return;
@@ -153,6 +159,100 @@ async function scan(st, call = tenon.intents) {
 function sessionLimit() {
   var value = parseInt(setting("limit") || "25", 10) || 25;
   return Math.max(10, Math.min(100, value));
+}
+
+// Which agents this machine has, re-read with every scan so an agent installed since the
+// pane opened appears on the next Refresh. The host owns the answer — including the options
+// this person passes — so the pane offers exactly what the Launcher offers.
+async function loadAgents(st, gen, call = tenon.intents) {
+  var result = await call.send("agent.inventory.v1", {});
+  if (gen !== st.generation || panes[st.id] !== st) return;
+  st.agents = result.ok ? (result.value.agents || []) : [];
+  if (!result.ok) {
+    tenon.log("agent-sessions: could not list agents: " + result.error.code);
+  }
+}
+
+function agentLabel(st, id) {
+  for (var i = 0; i < st.agents.length; i++) {
+    if (st.agents[i].id === id) return st.agents[i].label;
+  }
+  return id;
+}
+
+// --- starting and continuing -----------------------------------------------
+
+// Every command line this pane runs is composed by the host, which is the only place that
+// knows which agents exist, which options this person passes them, and how each provider
+// spells "resume". Each session gets a pane of its own: `terminal.run.v1` would reuse
+// whichever terminal is in this tab, taking over a shell somebody is already working in.
+async function launch(st, request, call = tenon.intents) {
+  var composed = await call.send("agent.command.v1", request);
+  if (panes[st.id] !== st) return composed;
+  if (!composed.ok) {
+    st.notice = "Could not start " + agentLabel(st, request.agent)
+      + ": " + composed.error.code;
+    render(st);
+    return composed;
+  }
+  var opened = await call.send("terminal.open.v1", {
+    command: composed.value.commandLine,
+    workingDirectory: st.project
+  });
+  if (panes[st.id] !== st) return opened;
+  if (!opened.ok) {
+    st.notice = "Could not open a pane: " + opened.error.code;
+    render(st);
+  }
+  return opened;
+}
+
+// Continuing a session with the agent that wrote it is a resume. Continuing it with any
+// other agent is a reading task, so that agent is told where the transcript is and the host
+// writes the instructions — there is no flag on either CLI for the other one's session.
+async function continueSession(st, agentID, sessionID, call = tenon.intents) {
+  var session = null;
+  for (var i = 0; i < st.sessions.length; i++) {
+    if (st.sessions[i].id === sessionID) session = st.sessions[i];
+  }
+  if (!session) return;
+
+  var request = {
+    agent: agentID,
+    session: { agent: session.provider, sessionID: session.id }
+  };
+  if (session.provider !== agentID) {
+    var path = session.path || await transcriptPath(st, session, call);
+    if (panes[st.id] !== st) return;
+    if (!path) {
+      st.notice = "No transcript on disk for that session, so "
+        + agentLabel(st, agentID) + " would have nothing to read.";
+      render(st);
+      return;
+    }
+    request.session.transcriptPath = path;
+  }
+  await launch(st, request, call);
+}
+
+// A Codex thread's transcript is a rollout file named after the thread and filed by date.
+// The SQLite index that lists the session carries no path, so it is looked up once — at the
+// moment somebody asks another agent to read it, not for every row of every scan.
+async function transcriptPath(st, session, call = tenon.intents) {
+  if (session.provider !== "codex") return "";
+  var home = setting("codexHome") || "~/.codex";
+  var script = "exec /usr/bin/find " + shellPath(home)
+    + "/sessions -maxdepth 5 -type f -name \"*$1.jsonl\" -print -quit";
+  var result = await exec(
+    "/bin/sh",
+    ["-c", script, "tenon-codex-transcript", session.id],
+    st.project,
+    call
+  );
+  if (!result.ok || result.status !== 0) return "";
+  var found = (result.stdout || "").split("\n")[0].trim();
+  session.path = found;
+  return found;
 }
 
 async function scanClaude(st, gen, limit, call = tenon.intents) {
@@ -392,16 +492,12 @@ function sessionTitle(session) {
   return session.provider === "codex" ? "Untitled Codex session" : "Untitled Claude session";
 }
 
-function shellArgument(value) {
-  return "'" + String(value).split("'").join("'\\''") + "'";
-}
-
 // --- rendering -------------------------------------------------------------
 
 // One session = two quiet lines inside the shared list card: what it was about, then the
 // facts about it. Everything that was a badge before is one muted line, so twenty sessions
 // read as a list instead of twenty competing boxes.
-function sessionRow(session) {
+function sessionRow(st, session) {
   var facts = [];
   if (session.prompts) facts.push(plural(session.prompts, "prompt", "prompts"));
   if (session.replies) facts.push(plural(session.replies, "reply", "replies"));
@@ -420,12 +516,17 @@ function sessionRow(session) {
     meta.push({ type: "text", value: facts.join(" · "), style: "caption", color: "muted" });
   }
   meta.push({ type: "spacer" });
-  meta.push({
-    type: "button",
-    label: "Resume",
-    action: "resume:" + session.provider + ":" + session.id,
-    style: "plain"
-  });
+  // One button per installed agent. The agent that wrote the session resumes it; any other
+  // one continues it, and the host is what decides which of those a command line means.
+  for (var a = 0; a < st.agents.length; a++) {
+    var agent = st.agents[a];
+    meta.push({
+      type: "button",
+      label: agent.id === session.provider ? "Resume" : "In " + agent.label,
+      action: "open:" + agent.id + ":" + session.id,
+      style: "plain"
+    });
+  }
 
   return {
     type: "vstack",
@@ -480,18 +581,25 @@ function headerNode(st) {
 
   var trailing = [];
   if (isScanning(st)) trailing.push({ type: "spinner", id: "scanning" });
-  // Two ways to start a session is a menu of named lines, not two glyphs nobody can tell
-  // apart: there is no Claude symbol and no Codex symbol to draw.
-  trailing.push({
-    type: "menu",
-    id: "new",
-    systemName: "plus",
-    tooltip: "Start a session",
-    entries: [
-      { value: "new:claude", label: "New Claude session" },
-      { value: "new:codex", label: "New Codex session" }
-    ]
-  });
+  // Starting a session is a menu of named lines, not a row of glyphs nobody can tell apart:
+  // there is no Claude symbol and no Codex symbol to draw. The entries are whatever the host
+  // says is installed, so an agent this machine does not have is never offered.
+  if (st.agents.length) {
+    var entries = [];
+    for (var a = 0; a < st.agents.length; a++) {
+      entries.push({
+        value: "start:" + st.agents[a].id,
+        label: "New " + st.agents[a].label + " session"
+      });
+    }
+    trailing.push({
+      type: "menu",
+      id: "new",
+      systemName: "plus",
+      tooltip: "Start a session",
+      entries: entries
+    });
+  }
   trailing.push({
     type: "iconButton",
     id: "refresh",
@@ -510,7 +618,7 @@ function render(st) {
     var rows = [];
     for (var i = 0; i < st.sessions.length; i++) {
       if (i > 0) rows.push({ type: "divider" });
-      rows.push(sessionRow(st.sessions[i]));
+      rows.push(sessionRow(st, st.sessions[i]));
     }
     children.push({ type: "card", children: rows });
   } else if (!isScanning(st)) {
@@ -560,21 +668,14 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
   var chosen = action === "new" ? (value || "") : action;
   if (chosen === "refresh") {
     await scan(st);
-  } else if (chosen === "new:claude") {
-    await tenon.intents.send("terminal.open.v1", { command: "claude" });
-  } else if (chosen === "new:codex") {
-    await tenon.intents.send("terminal.open.v1", { command: "codex" });
-  } else if (chosen.indexOf("resume:claude:") === 0) {
-    // Each session gets a pane of its own. `terminal.run.v1` would reuse whichever
-    // terminal is in this tab, so resuming would take over a shell the user is already
-    // working in — and two resumed sessions would fight over one pane.
-    await tenon.intents.send("terminal.open.v1", {
-      command: "claude --resume " + shellArgument(chosen.slice("resume:claude:".length))
-    });
-  } else if (chosen.indexOf("resume:codex:") === 0) {
-    await tenon.intents.send("terminal.open.v1", {
-      command: "codex resume " + shellArgument(chosen.slice("resume:codex:".length))
-    });
+  } else if (chosen.indexOf("start:") === 0) {
+    await launch(st, { agent: chosen.slice("start:".length) });
+  } else if (chosen.indexOf("open:") === 0) {
+    var rest = chosen.slice("open:".length);
+    var separator = rest.indexOf(":");
+    if (separator > 0) {
+      await continueSession(st, rest.slice(0, separator), rest.slice(separator + 1));
+    }
   }
 });
 
