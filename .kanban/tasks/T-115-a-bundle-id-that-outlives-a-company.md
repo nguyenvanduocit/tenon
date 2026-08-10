@@ -58,7 +58,7 @@ Were held by T-113, released mid-session and changed here:
 - [x] `install.sh`'s identifier allowlist accepts the new pair and nothing else
 - [x] The CLI control socket path and single-instance channel still agree between app and
       CLI after the rename (`CLISocketServerTests`, `AppInstanceChannel`)
-- [ ] A staging install and a normal install can still both be present at once
+- [x] A staging install and a normal install can still both be present at once
 - [x] `make-cask.sh`'s `zap` paths follow the new identifier — it derives them from the
       artifact, so this should need no edit, and that is worth confirming rather than assuming
 - [ ] One install on this machine, verified: app launches, CLI connects, old
@@ -74,16 +74,24 @@ remaining file** — `AppInstanceChannel.swift`, `install.sh`, `install-staging.
 fitness tests doubled as the work list. Full suite **1872 / 0** afterwards, and
 `rg 'com\.firegroup'` is empty across the tree.
 
-Two criteria are deliberately unchecked. Both need an install that replaces the running
-app, and this session is running *inside* Tenon:
+A staging install proved the new identity end to end while this session stayed alive.
+`Tenon Staging.app` reinstalled as `dev.tenon.app.staging`, launched, and answered on its
+own channel: `ping` returned **pid 61165** against production's 37334, over
+`/tmp/tenon-staging-501/tenon.sock` created at install time, with its own
+`~/Library/Application Support/Tenon Staging`. Through that socket it listed **34 intents**
+and returned live workspace state. Both channels ran side by side throughout.
 
-- a staging install alongside a normal one;
-- removing the old `com.firegroup.tenon` bundle from `/Applications`, without which
-  LaunchServices keeps offering two identities for the same product.
+One measurement corrected a wrong reading along the way: `tenon-cli ping` run from the
+staging bundle answered with production's pid. That is not a defect —
+`CLIClient.socketPath()` (`Sources/TenonCLI/CLIClient.swift:26-31`) always resolves the
+production path unless `TENON_SOCKET_PATH` is set, which is what `AppInstanceChannel:20-21`
+means by production keeping every legacy path. The CLI shipped *inside* a staging bundle
+still talks to production by default, and that is worth knowing before someone debugs it
+as a bug.
 
-The second matters more than it looks: until that bundle is deleted, `open -b
-com.firegroup.tenon` still resolves and the old app can be launched by anything holding
-that identifier.
+**Still open, and it needs the production install:** `/Applications/Tenon.app` remains
+`com.firegroup.tenon`. Until it is replaced, `open -b com.firegroup.tenon` still resolves
+and anything holding the old identifier can launch it.
 
 ## Owner / files (agent lock)
 

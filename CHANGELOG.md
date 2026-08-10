@@ -3,6 +3,45 @@
 This file records notable changes to Tenon. The project does not yet publish versioned
 releases, so entries are grouped by date.
 
+## 2026-08-10 — Release identity and signing
+
+### Added
+
+- A release pipeline: [`scripts/release.sh`](scripts/release.sh) builds universal, signs
+  inside-out through [`scripts/release-sign.sh`](scripts/release-sign.sh), notarizes,
+  staples, packages, and then verifies a copy extracted back out of the published archive.
+  [`scripts/make-cask.sh`](scripts/make-cask.sh) derives the Homebrew cask from that
+  artifact, and `.github/workflows/release.yml` runs both on a tag.
+- `Tenon.entitlements`, granting `com.apple.security.cs.allow-jit` and nothing wider.
+  `AppSigningFitnessTests` asserts that exact set, so widening it turns the suite red.
+- [`docs/releasing.md`](docs/releasing.md) — the procedure, the one-time certificate and
+  notarization setup, the CI secrets, and the measurements behind each decision.
+
+### Changed
+
+- The bundle identifier moved from `com.firegroup.tenon` to `dev.tenon.app`, joining the
+  `dev.tenon.*` namespace the bundled plugins already publish under. macOS keys TCC consent,
+  Keychain ACLs, LaunchServices registration, preferences and saved state to this
+  identifier, so it was changed before the first release rather than after, when it would
+  reset all of them for every user. The signing identity is a separate decision and did not
+  change.
+- Distribution builds enable the Hardened Runtime. Local installs deliberately do not:
+  measured, an ad-hoc signature plus Hardened Runtime cannot load the app's own embedded
+  frameworks, because Library Validation requires a shared Team ID that ad-hoc has none of.
+- Both install paths sign innermost-first instead of with `codesign --deep`, which is not
+  accepted for distribution. `--deep` remains correct on `codesign --verify`, where it means
+  the opposite.
+
+### Verified
+
+- The Hardened Runtime does not restrict `libproc`: one probe binary signed twice, differing
+  only in that flag, returned identical process telemetry. This closes the signed-app
+  feasibility question the Resource Monitor design left open on 2026-07-30.
+- JavaScriptCore keeps its JIT under Developer ID plus Hardened Runtime — a bundled plugin
+  rendered byte-identical to the unhardened control.
+- Notarization has **not** been submitted to Apple. Every step up to it is proved by a real
+  signed universal artifact; the verdict is not.
+
 ## 2026-08-08 — Repository structure
 
 ### Changed

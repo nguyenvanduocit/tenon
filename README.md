@@ -42,6 +42,33 @@ metrics are documented in
 - [`docs/README.md`](docs/README.md) — canonical documentation map, precedence,
   implementation status, guides, and research history.
 
+## Install
+
+There is no published release yet, so there is nothing to download and nothing
+for a package manager to fetch. Building from source is the only way to run
+Tenon today.
+
+```bash
+./scripts/setup-ghosttykit.sh   # once per clone
+./install.sh --launch           # build Release and install to /Applications
+```
+
+That install is signed ad-hoc, which is all a machine needs to run software it
+just compiled itself. `./install-staging.sh` puts a second copy beside it under
+its own identity, so a candidate build can be exercised without replacing the
+one you are working in.
+
+Once releases are published, installation becomes:
+
+```bash
+brew tap <owner>/tap
+brew install --cask tenon
+```
+
+[`docs/releasing.md`](docs/releasing.md) covers signing, notarization, and the
+Homebrew cask — including why the distributed build is hardened and the local
+one deliberately is not.
+
 ## Build
 
 Tenon requires macOS 14+, Xcode, and XcodeGen 2.45.4+. The native app builds
@@ -84,8 +111,11 @@ black-box macOS UI test layers; command output, not a hard-coded count in this
 README, is the verification receipt.
 
 Production hardening remains open, most importantly a hard isolation boundary
-for untrusted plugin JavaScript, a signed/notarized release pipeline, and recorded
-performance/reliability receipts.
+for untrusted plugin JavaScript and recorded performance/reliability receipts.
+The release pipeline itself is implemented — universal build, Developer ID
+signature, Hardened Runtime, packaging, and a derived Homebrew cask — and every
+step but one is proved by a real artifact; notarization has not yet been
+submitted to Apple.
 The cross-session Attention Inbox, evidence-linked context capsules, and
 safe-fan-out measurements remain product experiments rather than shipped
 runtime capabilities. See [`docs/README.md`](docs/README.md) for the exact
