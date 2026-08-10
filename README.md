@@ -45,9 +45,9 @@ metrics are documented in
 ## Install
 
 Download the latest build from
-[Releases](https://github.com/nguyenvanduocit/tenon/releases), unzip it, and move
-`Tenon.app` to `/Applications`. It is universal, requires macOS 14 or later, and is
-signed with a Developer ID certificate, hardened, notarized, and stapled — so a
+[Releases](https://github.com/nguyenvanduocit/tenon/releases), open it in Finder, and
+move `Tenon.app` to `/Applications`. It is universal, requires macOS 14 or later, and
+is signed with a Developer ID certificate, hardened, notarized, and stapled — so a
 machine that has never seen Tenon verifies it offline, with no right-click-to-open
 step. Check what you downloaded before running it:
 
@@ -55,6 +55,13 @@ step. Check what you downloaded before running it:
 shasum -a 256 Tenon-*-macos.zip        # compare against SHA256SUMS on the release
 spctl --assess -vv /Applications/Tenon.app   # accepted / source=Notarized Developer ID
 ```
+
+**Extract it in Finder or with `ditto`, not with `unzip`.** The archive stores the
+extended attributes the app's signature seals; `ditto -x -k Tenon-*-macos.zip .`
+restores them, and Finder does the same. Info-ZIP's `unzip` cannot, so it writes them
+out as 735 stray `._*` files inside the bundle instead — and `spctl` then rejects the
+app with *"a sealed resource is missing or invalid"*, which looks like a corrupt
+download but is only a corrupt extraction.
 
 Releases are marked pre-release while the product is pre-alpha and its interfaces
 still change between builds.
