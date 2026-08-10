@@ -112,10 +112,10 @@ README, is the verification receipt.
 
 Production hardening remains open, most importantly a hard isolation boundary
 for untrusted plugin JavaScript and recorded performance/reliability receipts.
-The release pipeline itself is implemented — universal build, Developer ID
-signature, Hardened Runtime, packaging, and a derived Homebrew cask — and every
-step but one is proved by a real artifact; notarization has not yet been
-submitted to Apple.
+The release pipeline is implemented and proved end to end by a real artifact:
+universal build, Developer ID signature, Hardened Runtime, notarization,
+stapling, packaging, and a derived Homebrew cask. Gatekeeper accepts the
+extracted archive as `Notarized Developer ID`.
 The cross-session Attention Inbox, evidence-linked context capsules, and
 safe-fan-out measurements remain product experiments rather than shipped
 runtime capabilities. See [`docs/README.md`](docs/README.md) for the exact

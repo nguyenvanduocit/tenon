@@ -187,7 +187,7 @@ configuration, and the pending T-090 spikes.
 | 024…030 | domain vocabulary/fitness, decomposed coordinators and typed phases | shipped/continuous |
 | 031…033 | design system, accessibility/localization/remediation and UI tests | shipped/continuous |
 | 034 and NFR-003/005/007/012 | T-090 research/spikes/decision matrix/GUI artifact contract | planned/partial |
-| 035…039 and NFR-013 | entitlements file and its fitness test, `release-sign.sh`/`release.sh`/`make-cask.sh`, release workflow, [`releasing.md`](../releasing.md) | shipped (T-114); notarization submission not yet exercised against Apple |
+| 035…039 and NFR-013 | entitlements file and its fitness test, `release-sign.sh`/`release.sh`/`make-cask.sh`, release workflow, [`releasing.md`](../releasing.md) | shipped (T-114), proved end to end including a real notarization submission |
 
 Risks are testing mocks instead of boundaries, flaky XCUITest sprawl, pixel snapshots tied to OS/font
 noise, inaccessible test-only selectors, vacuous assertions, stale manifests, over-tagging, and
@@ -213,6 +213,7 @@ planned rather than being implied by existing UI tests.
 | 2026-08-10 (T-114) | ad-hoc + `--options runtime` on the real bundle | app fails in dyld: embedded frameworks rejected, "mapping process and mapped file (non-platform) have different Team IDs". Hardened Runtime and ad-hoc are mutually exclusive here; the local install path stays unhardened (ENQ-FR-037) |
 | 2026-08-10 (T-114) | Developer ID signature, `release-sign.sh`, then `TENON_VIEW_SNAPSHOT` over the bundled Kanban plugin | `flags=0x10000(runtime)`, `allow-jit` attached, plugin JavaScript rendered byte-identical to the unhardened control |
 | 2026-08-10 (T-114) | one probe binary signed twice, differing only in the runtime flag | `libproc` results identical (638 pids; 419 readable; 219 EPERM; 635 paths) — closes PRD-016's signed-app feasibility question |
+| 2026-08-10 (T-114) | first real notarization submission, `9599ec16-d60a-4e7a-b6ad-d43bbfe981ef` | `status: Accepted` for the universal 0.1.0 archive; ticket stapled; a copy extracted back out of the published zip assessed `accepted / source=Notarized Developer ID`. Nothing in the entitlement set or signing shape had to change to pass |
 | 2026-08-10 (T-114) | `CODE_SIGNING_REQUIRED=NO` Release build | no `codesign` step runs at all, so `ENABLE_HARDENED_RUNTIME` has no effect and the `flags=0x2(adhoc)` present comes from the linker; the signing script, not the build setting, is the authority for a distributed artifact |
 
 Initial canonical PRD created 2026-08-09.

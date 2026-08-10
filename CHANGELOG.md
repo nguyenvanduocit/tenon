@@ -39,8 +39,9 @@ releases, so entries are grouped by date.
   feasibility question the Resource Monitor design left open on 2026-07-30.
 - JavaScriptCore keeps its JIT under Developer ID plus Hardened Runtime — a bundled plugin
   rendered byte-identical to the unhardened control.
-- Notarization has **not** been submitted to Apple. Every step up to it is proved by a real
-  signed universal artifact; the verdict is not.
+- Notarization succeeded: submission `9599ec16-d60a-4e7a-b6ad-d43bbfe981ef` returned
+  `status: Accepted`, the ticket stapled, and `spctl --assess --type exec` on a copy
+  extracted from the published archive reports `accepted / source=Notarized Developer ID`.
 
 ## 2026-08-08 — Repository structure
 

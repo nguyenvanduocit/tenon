@@ -213,6 +213,21 @@ flag:
 Identical. The 219 refusals are processes owned by root or other users, present in both.
 Process telemetry survives distribution unchanged.
 
+### Notarization, first real submission
+
+Submission `9599ec16-d60a-4e7a-b6ad-d43bbfe981ef` on 2026-08-10 returned `status: Accepted`
+for the universal 0.1.0 archive. The ticket stapled, and a copy extracted back out of the
+published zip assessed as:
+
+```
+accepted
+source=Notarized Developer ID
+```
+
+Nothing in the entitlements or the signing shape needed changing to get there — the
+`allow-jit`-only entitlement set and the inside-out signature passed Apple's checks on the
+first attempt.
+
 ### Build settings are not the artifact
 
 `ENABLE_HARDENED_RUNTIME` in `project.yml` applies only when the build actually signs.
