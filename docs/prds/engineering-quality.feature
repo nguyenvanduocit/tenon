@@ -431,6 +431,21 @@ Feature: Produce fast honest evidence for domain rules and real native interacti
       Then version, checksum, bundle identifier, and minimum macOS are read out of the built artifact
       And a definition pointing at an unreachable download is reported before it is published rather than by the first install
 
+    @req-enq-fr-040 @req-enq-nfr-012 @build-inputs
+    Scenario: A build input exists because setup makes it, not because a laptop has it
+      Given a checkout on a machine that has never built this project
+      When setup runs and the project is generated
+      Then every source directory the project declares is present
+      And each one was produced from a tracked or checksummed source rather than found already in place
+
+    @req-enq-fr-040 @build-inputs
+    Scenario: A verified download says nothing about what setup compiles itself
+      Given the downloaded artifact is already installed and passes its checksums
+      And a compiled build input is missing from that tree
+      When setup runs
+      Then it produces the missing input instead of reporting the installation current and returning
+      And the input it produces is identical to the one the last release shipped
+
     @req-enq-nfr-013 @credentials
     Scenario: Signing credentials never enter the repository or the environment
       Given a release is cut locally or on a shared runner

@@ -28,8 +28,14 @@ lives.
 ## Setup and build
 
 The app consumes a pinned prebuilt Ghostty artifact. Setup downloads the
-xcframework, shell integration, and terminfo, then syncs the public header into
-the thin `GhosttyKit` C shim.
+xcframework and shell integration, syncs the public header into the thin
+`GhosttyKit` C shim, and compiles `scripts/ghostty.terminfo` into
+`Resources/terminfo` with `tic`. The terminfo entry is compiled rather than
+downloaded because the pinned release carries no terminfo asset — upstream holds
+it as Zig source and builds it with a toolchain this repository deliberately
+never runs. Setup rebuilds it on every run, including when the downloaded
+artifact is already present and verified, since it is the one build input a
+verified GhosttyKit says nothing about.
 
 ```bash
 ./scripts/setup-ghosttykit.sh
@@ -236,7 +242,7 @@ Sources/
     main.swift             ping/focus and intent list/describe/send adapter
 GhosttyKit/                thin C module shim
 GhosttyKit.xcframework/    downloaded prebuilt static artifact
-Resources/                 downloaded Ghostty shell integration and terminfo
+Resources/                 downloaded Ghostty shell integration, compiled terminfo
 plugins/                   bundled JavaScript plugins
 Tests/                     core, hosted app, and terminal integration suites
 project.yml                XcodeGen source of truth

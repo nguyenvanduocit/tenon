@@ -44,4 +44,41 @@ if [[ "$tree_before" == "$tree_after" ]]; then
     exit 1
 fi
 
+# The terminfo entry is the one build input that is compiled here rather than downloaded,
+# so what has to be proved is that compiling is lossless: the entry installed into an empty
+# directory must decompile back to exactly the committed source, extended capabilities and
+# all. A tic that silently drops `Tc` or `Sync` would otherwise ship a terminal that claims
+# less than Ghostty does.
+terminfo_destination="$fixture_directory/terminfo"
+install_terminfo scripts/ghostty.terminfo "$terminfo_destination"
+
+if [[ ! -f "$terminfo_destination/78/xterm-ghostty" || ! -f "$terminfo_destination/67/ghostty" ]]; then
+    echo "install_terminfo did not compile both entry names" >&2
+    exit 1
+fi
+
+if ! diff -q \
+    <(terminfo_entry_body "$terminfo_destination") \
+    <(grep -v '^#' scripts/ghostty.terminfo) >/dev/null; then
+    echo "the compiled terminfo entry does not match its source" >&2
+    exit 1
+fi
+
+# A destination left behind by an older or corrupted install has to be replaced rather than
+# trusted, because the failure it causes appears at runtime inside the terminal.
+printf 'not a terminfo entry\n' >"$terminfo_destination/78/xterm-ghostty"
+install_terminfo scripts/ghostty.terminfo "$terminfo_destination"
+if ! diff -q \
+    <(terminfo_entry_body "$terminfo_destination") \
+    <(grep -v '^#' scripts/ghostty.terminfo) >/dev/null; then
+    echo "install_terminfo left a corrupted entry in place" >&2
+    exit 1
+fi
+
+if install_terminfo "$fixture_directory/absent.terminfo" \
+    "$fixture_directory/unused" >/dev/null 2>&1; then
+    echo "install_terminfo accepted a missing source file" >&2
+    exit 1
+fi
+
 echo "setup-ghosttykit integrity tests passed"

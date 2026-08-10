@@ -77,6 +77,59 @@ expected_provenance() {
         "resources_tree_sha256=$RESOURCES_TREE_SHA256"
 }
 
+# The compiled entry read back as source. Comments are dropped because infocmp stamps the
+# file it read into the first line, which says nothing about the entry itself.
+terminfo_entry_body() {
+    local directory="$1"
+    infocmp -1 -x -A "$directory" xterm-ghostty 2>/dev/null | grep -v '^#'
+}
+
+# `tic` writes one file per entry name, hashed by first letter, so the destination is
+# replaced as a whole rather than written into: a half-updated terminfo directory fails
+# inside the terminal, far from here.
+install_terminfo() {
+    local source_file="$1"
+    local destination="$2"
+
+    if [[ ! -f "$source_file" ]]; then
+        echo "terminfo source missing: $source_file" >&2
+        return 1
+    fi
+
+    local expected
+    expected="$(grep -v '^#' "$source_file")"
+    if [[ "$(terminfo_entry_body "$destination")" == "$expected" ]]; then
+        return 0
+    fi
+
+    # Staged beside the destination, so the install below is a rename within one filesystem
+    # rather than a copy that can be interrupted half-written.
+    mkdir -p "$(dirname "$destination")"
+    local stage
+    stage="$(mktemp -d "$(dirname "$destination")/.terminfo-install.XXXXXX")"
+
+    local tic_output
+    if ! tic_output="$(tic -x -o "$stage" "$source_file" 2>&1)"; then
+        echo "$tic_output" >&2
+        rm -rf "$stage"
+        return 1
+    fi
+
+    # Proving the round trip here rather than after installing keeps a tic that drops
+    # extended capabilities from ever reaching the app bundle.
+    if [[ "$(terminfo_entry_body "$stage")" != "$expected" ]]; then
+        echo "compiled terminfo entry does not match $source_file" >&2
+        rm -rf "$stage"
+        return 1
+    fi
+
+    rm -rf "$destination"
+    if ! mv "$stage" "$destination"; then
+        rm -rf "$stage"
+        return 1
+    fi
+}
+
 installation_is_current() {
     [[ -d GhosttyKit.xcframework ]] || return 1
     [[ -f GhosttyKit/ghostty.h ]] || return 1
@@ -88,6 +141,10 @@ installation_is_current() {
 
 main() {
     cd "$(dirname "$0")/.."
+
+    # Before the early return, not after it: terminfo is compiled here rather than
+    # downloaded, so a tree that already has a verified GhosttyKit can still be missing it.
+    install_terminfo scripts/ghostty.terminfo Resources/terminfo
 
     if installation_is_current; then
         echo "GhosttyKit $TAG already set up and verified"

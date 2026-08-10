@@ -154,6 +154,7 @@ along product responsibility while behavior tests remain unchanged.
 | `ENQ-FR-037` | The local install path **MUST** stay ad-hoc and unhardened and **MUST NOT** require a certificate, because Library Validation refuses this app's embedded frameworks under an ad-hoc signature. | shipped (T-114) | `@req-enq-fr-037` |
 | `ENQ-FR-038` | Release packaging **MUST** produce a universal artifact, notarize and staple it, and verify a copy extracted back out of the published archive rather than the bundle verified in place. | shipped (T-114) | `@req-enq-fr-038` |
 | `ENQ-FR-039` | Distribution metadata — version, checksum, bundle identifier, minimum macOS — **MUST** be derived from the built artifact rather than transcribed into a cask or release note by hand. | shipped (T-114) | `@req-enq-fr-039` |
+| `ENQ-FR-040` | Every input the generated project declares **MUST** be produced by setup from a tracked or checksummed source, and setup **MUST** produce it even when the downloaded artifact is already installed and verified; an input that exists only on a developer's machine **MUST NOT** be a build requirement. | shipped (T-117) | `@req-enq-fr-040` |
 
 ### Non-functional requirements
 
@@ -188,6 +189,7 @@ configuration, and the pending T-090 spikes.
 | 031…033 | design system, accessibility/localization/remediation and UI tests | shipped/continuous |
 | 034 and NFR-003/005/007/012 | T-090 research/spikes/decision matrix/GUI artifact contract | planned/partial |
 | 035…039 and NFR-013 | entitlements file and its fitness test, `release-sign.sh`/`release.sh`/`make-cask.sh`, release workflow, [`releasing.md`](../releasing.md) | shipped (T-114), proved end to end including a real notarization submission |
+| 040 and NFR-012 | `scripts/ghostty.terminfo`, `install_terminfo`/`terminfo_entry_body` in `setup-ghosttykit.sh`, their tests in `test-setup-ghosttykit.sh` | shipped (T-117); the generated project's last machine-local input became reproducible, which is what had been failing CI and would have failed the first tagged release |
 
 Risks are testing mocks instead of boundaries, flaky XCUITest sprawl, pixel snapshots tied to OS/font
 noise, inaccessible test-only selectors, vacuous assertions, stale manifests, over-tagging, and
@@ -215,5 +217,9 @@ planned rather than being implied by existing UI tests.
 | 2026-08-10 (T-114) | one probe binary signed twice, differing only in the runtime flag | `libproc` results identical (638 pids; 419 readable; 219 EPERM; 635 paths) — closes PRD-016's signed-app feasibility question |
 | 2026-08-10 (T-114) | first real notarization submission, `9599ec16-d60a-4e7a-b6ad-d43bbfe981ef` | `status: Accepted` for the universal 0.1.0 archive; ticket stapled; a copy extracted back out of the published zip assessed `accepted / source=Notarized Developer ID`. Nothing in the entitlement set or signing shape had to change to pass |
 | 2026-08-10 (T-114) | `CODE_SIGNING_REQUIRED=NO` Release build | no `codesign` step runs at all, so `ENABLE_HARDENED_RUNTIME` has no effect and the `flags=0x2(adhoc)` present comes from the linker; the signing script, not the build setting, is the authority for a distributed artifact |
+| 2026-08-11 (T-117) | shipped `Resources/terminfo` compared against `src/terminfo/ghostty.zig` at the pinned tag | capability sets equal at 268 each, none missing and none extra — the untracked directory really did hold the pinned Ghostty's entry, so committing it as source text preserved rather than guessed at the entry |
+| 2026-08-11 (T-117) | `tic -x` over the decompiled source | reproduces `67/ghostty` and `78/xterm-ghostty` byte-identically, so compiling at setup time is lossless and the committed text is the shipped artifact in reviewable form |
+| 2026-08-11 (T-117) | clean room: whole tree copied without `Resources/`, `GhosttyKit.xcframework` or the synced header, then `setup-ghosttykit.sh` + `xcodegen generate` | both succeed and the compiled terminfo is byte-identical to the copy shipped in 0.1.0 — the sequence that had failed on every CI run since 2026-08-07 |
+| 2026-08-11 (T-117) | `setup-ghosttykit.sh` run against a tree whose GhosttyKit is installed and verified | prints "already set up and verified" and still rebuilds the missing terminfo, which is the case the early return had been hiding |
 
 Initial canonical PRD created 2026-08-09.
