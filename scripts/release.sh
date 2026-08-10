@@ -109,7 +109,13 @@ install -m 755 "$CLI_BIN" "$STAGED/Contents/MacOS/tenon-cli"
 # It has to keep working once it leaves the bundle, which means linking nothing but the
 # OS. The app binary beside it genuinely links @rpath/TenonCore.framework, so this is a
 # real difference and not a hypothetical one.
-FOREIGN_LINKS="$(otool -L "$STAGED/Contents/MacOS/tenon-cli" | tail -n +2 |
+#
+# Selected by shape rather than by position: a universal binary makes `otool -L` print one
+# "… (architecture x86_64):" header per slice, so dropping the first line — which is what
+# the single-arch install path does — leaves the second header behind and reports it as a
+# foreign link. Dependency lines are the indented ones; every header starts at column zero.
+FOREIGN_LINKS="$(otool -L "$STAGED/Contents/MacOS/tenon-cli" |
+    grep -E '^[[:space:]]' |
     grep -vE '^[[:space:]]+(/usr/lib/|/System/Library/Frameworks/)' || true)"
 if [ -n "$FOREIGN_LINKS" ]; then
     echo "error: bundled tenon-cli links outside the OS and would break in ~/.local/bin:" >&2
