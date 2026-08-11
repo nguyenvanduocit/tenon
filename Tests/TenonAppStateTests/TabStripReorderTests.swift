@@ -669,6 +669,14 @@ final class TabStripReorderTests: XCTestCase {
             guard let target = frameView.hitTest(point) else {
                 return XCTFail("no view in the window claims \(point), so the press lands nowhere")
             }
+            // A press that resolves to the hosting view rather than to something inside the strip
+            // is not a reorder bug, and saying so here is the difference between one CI run and
+            // five. `hitTest` returning non-nil proves only that *a* view answered.
+            print(
+                "TABSTRIP-DIAG press at \(point) resolved to \(target.className) "
+                    + "frame=\(target.frame) windowNumber=\(window.windowNumber) "
+                    + "onScreenList=\(NSWindow.windowNumbers(options: [])?.count ?? -1)"
+            )
             pressTarget = target
             target.mouseDown(with: event)
         case .leftMouseDragged:
@@ -769,6 +777,14 @@ final class TabStripReorderTests: XCTestCase {
         window.contentView?.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
         window.contentView?.layoutSubtreeIfNeeded()
+        // Layout is not enough for hit testing. SwiftUI builds the geometry `hitTest` answers
+        // from during a *display* pass, and a window the server never draws may never get one —
+        // which leaves `hitTest` returning the hosting view instead of a chip, and every gesture
+        // in this file then reads as "the tab order did not change". Forcing the render offscreen
+        // is the same move `PaneViewSnapshotWriter` makes to photograph a pane with no window.
+        if let bitmap = hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds) {
+            hosting.cacheDisplay(in: hosting.bounds, to: bitmap)
+        }
         return window
     }
 
