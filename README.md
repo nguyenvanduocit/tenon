@@ -88,12 +88,16 @@ one deliberately is not.
 
 ## Build
 
-Tenon requires macOS 14+, Xcode, and XcodeGen 2.45.4+. The native app builds
-without a JavaScript toolchain.
+Tenon requires macOS 14+ and Xcode. The native app builds without a JavaScript
+toolchain. The project generator is not a prerequisite you install yourself:
+`scripts/setup-xcodegen.sh` fetches the exact pinned version, verifies its
+checksum, and puts it in `.build/tools` — a different version generates a
+different project from the committed one.
 
 ```bash
 ./scripts/setup-ghosttykit.sh
-xcodegen generate
+./scripts/setup-xcodegen.sh
+.build/tools/xcodegen/bin/xcodegen generate
 xcodebuild \
   -project Tenon.xcodeproj \
   -scheme Tenon \

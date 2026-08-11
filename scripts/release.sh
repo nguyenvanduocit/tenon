@@ -51,7 +51,8 @@ step "Fetching the pinned Ghostty artifact"
 ./scripts/setup-ghosttykit.sh
 
 step "Regenerating the Xcode project"
-xcodegen generate
+./scripts/setup-xcodegen.sh
+.build/tools/xcodegen/bin/xcodegen generate
 if ! git diff --quiet -- Tenon.xcodeproj/project.pbxproj; then
     echo "error: the generated project differs from the committed one." >&2
     echo "       Commit the regenerated project.pbxproj before cutting a release." >&2

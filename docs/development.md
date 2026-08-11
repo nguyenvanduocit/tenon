@@ -39,7 +39,8 @@ verified GhosttyKit says nothing about.
 
 ```bash
 ./scripts/setup-ghosttykit.sh
-xcodegen generate
+./scripts/setup-xcodegen.sh
+.build/tools/xcodegen/bin/xcodegen generate
 xcodebuild \
   -project Tenon.xcodeproj \
   -scheme Tenon \
@@ -83,7 +84,17 @@ Runtime overrides:
   content for UI tests and shell smoke runs.
 
 XcodeGen is the source of truth for the app, bundled resources, and all hosted
-test targets. Run `xcodegen generate` after adding or moving source files.
+test targets. Run `.build/tools/xcodegen/bin/xcodegen generate` after adding or
+moving source files.
+
+Use that pinned copy rather than one on `PATH`. The version is a build input:
+2.46.0 orders targets by declaration where 2.45.4 sorted them alphabetically, and
+it embeds `TenonIntentCore.framework` although nothing loads it dynamically. Either
+difference makes a generated project disagree with the committed one on a tree
+nobody edited, which is how CI failed for a day. `scripts/setup-xcodegen.sh` pins
+the version and checksum, `scripts/test-setup-xcodegen.sh` asserts the pin still
+matches the published release, and `project.yml`'s `minimumXcodeGenVersion` names
+the same version.
 
 ## Controls
 

@@ -126,10 +126,6 @@ fi
 cd "$REPO_ROOT"
 
 # --- 1. Toolchain preconditions ----------------------------------------------
-command -v xcodegen >/dev/null 2>&1 || {
-    echo "error: xcodegen not found. Install with: brew install xcodegen" >&2
-    exit 1
-}
 command -v xcodebuild >/dev/null 2>&1 || {
     echo "error: xcodebuild not found. Install the Xcode command line tools." >&2
     exit 1
@@ -152,7 +148,8 @@ step "Ensuring GhosttyKit.xcframework + resources"
 
 # --- 4. Regenerate the Xcode project from project.yml (source of truth) -------
 step "Generating Tenon.xcodeproj from project.yml"
-xcodegen generate --use-cache
+./scripts/setup-xcodegen.sh
+.build/tools/xcodegen/bin/xcodegen generate --use-cache
 
 # --- 5. Build the standalone CLI --------------------------------------------
 step "Building tenon-cli ($SWIFT_CONFIGURATION, host arch: $(uname -m))"

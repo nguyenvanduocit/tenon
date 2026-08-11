@@ -190,6 +190,7 @@ configuration, and the pending T-090 spikes.
 | 034 and NFR-003/005/007/012 | T-090 research/spikes/decision matrix/GUI artifact contract | planned/partial |
 | 035…039 and NFR-013 | entitlements file and its fitness test, `release-sign.sh`/`release.sh`/`make-cask.sh`, release workflow, [`releasing.md`](../releasing.md) | shipped (T-114), proved end to end including a real notarization submission |
 | 040 and NFR-012 | `scripts/ghostty.terminfo`, `install_terminfo`/`terminfo_entry_body` in `setup-ghosttykit.sh`, their tests in `test-setup-ghosttykit.sh` | shipped (T-117); the generated project's last machine-local input became reproducible, which is what had been failing CI and would have failed the first tagged release |
+| 040 and NFR-012 | `scripts/setup-xcodegen.sh` + `scripts/test-setup-xcodegen.sh`, the generator call sites in `install.sh`/`release.sh`/both workflows, `project.yml`'s pinned version | shipped (T-118); the generator itself was the remaining unpinned build input, and `brew install` had already moved it out from under the committed project |
 
 Risks are testing mocks instead of boundaries, flaky XCUITest sprawl, pixel snapshots tied to OS/font
 noise, inaccessible test-only selectors, vacuous assertions, stale manifests, over-tagging, and
@@ -221,5 +222,8 @@ planned rather than being implied by existing UI tests.
 | 2026-08-11 (T-117) | `tic -x` over the decompiled source | reproduces `67/ghostty` and `78/xterm-ghostty` byte-identically, so compiling at setup time is lossless and the committed text is the shipped artifact in reviewable form |
 | 2026-08-11 (T-117) | clean room: whole tree copied without `Resources/`, `GhosttyKit.xcframework` or the synced header, then `setup-ghosttykit.sh` + `xcodegen generate` | both succeed and the compiled terminfo is byte-identical to the copy shipped in 0.1.0 — the sequence that had failed on every CI run since 2026-08-07 |
 | 2026-08-11 (T-117) | `setup-ghosttykit.sh` run against a tree whose GhosttyKit is installed and verified | prints "already set up and verified" and still rebuilds the missing terminfo, which is the case the early return had been hiding |
+| 2026-08-11 (T-118) | the 2.46.0 the runner had poured, run over the unchanged spec | 21-line project diff: targets reordered, plus an Embed Frameworks phase copying `TenonIntentCore.framework`. `otool -L` on the shipped 0.1.0 binary and on `TenonCore` names only TenonCore, OrderedCollections and JSONSchema — nothing loads that framework, so the newer generator would ship a fourth one and change the artifact Apple notarized. The pin stayed at 2.45.4 on that evidence rather than on age |
+| 2026-08-11 (T-118) | `setup-xcodegen.sh` from a tree with no `.build/tools`, then the CI sequence | installs 2.45.4 against its recorded checksum, and `xcodegen generate` + `git diff --exit-code -- Tenon.xcodeproj` passes — the check that had failed since the generator moved |
+| 2026-08-11 (T-118) | mutation: pinned checksum replaced with zeros | `test-setup-xcodegen.sh` turns red naming both digests, and green again when restored — the pin is asserted against the published release rather than trusted |
 
 Initial canonical PRD created 2026-08-09.

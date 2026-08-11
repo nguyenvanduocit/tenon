@@ -7,11 +7,13 @@ contracts are indexed in [`README.md`](README.md).
 
 ## Build and test
 
-Prerequisites are macOS 14+, Xcode, and XcodeGen 2.45.4 or newer.
+Prerequisites are macOS 14+ and Xcode. The project generator is pinned and installed by
+its own setup script rather than being something you bring.
 
 ```sh
 ./scripts/setup-ghosttykit.sh
-xcodegen generate
+./scripts/setup-xcodegen.sh
+.build/tools/xcodegen/bin/xcodegen generate
 xcodebuild \
   -project Tenon.xcodeproj \
   -scheme Tenon \
@@ -31,7 +33,7 @@ swift test
 Complete hosted verification:
 
 ```sh
-xcodegen generate
+.build/tools/xcodegen/bin/xcodegen generate
 xcodebuild test \
   -project Tenon.xcodeproj \
   -scheme Tenon \
@@ -77,7 +79,7 @@ principal's settings, storage, secrets, or standing consent.
 
 1. Re-run `./scripts/setup-ghosttykit.sh` and confirm the pinned artifact completed its
    integrity check before extraction.
-2. Run `xcodegen generate`; `project.yml` is authoritative and the checked-in project must
+2. Run `.build/tools/xcodegen/bin/xcodegen generate`; `project.yml` is authoritative and the checked-in project must
    not drift from it.
 3. Use the same `.build` paths as the commands above so SwiftPM and Xcode do not resolve
    different package trees.
@@ -133,7 +135,7 @@ the newest transcript by directory and modification time.
 1. Start from a clean, reviewed worktree and record the intended version and commit.
 2. Fetch the pinned Ghostty artifact through `setup-ghosttykit.sh`; require the expected
    digest/signature check to pass before extraction. Record the artifact tag and digest.
-3. Run `xcodegen generate` and assert the generated project has no unexplained diff.
+3. Run `.build/tools/xcodegen/bin/xcodegen generate` and assert the generated project has no unexplained diff.
 4. Run `swift build`, `swift test`, the complete macOS scheme, architecture fitness tests,
    and XCUITest in a logged-in GUI session. Keep command receipts rather than copying a test
    count into docs.

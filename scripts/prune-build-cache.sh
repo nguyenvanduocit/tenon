@@ -39,7 +39,9 @@ if pgrep -f 'swift-build|swift-frontend|swift-driver|xcodebuild' >/dev/null 2>&1
 fi
 
 # The trees and caches that make an incremental build fast.
-KEEP="arm64-apple-macosx xcode checkouts repositories artifacts prebuilts"
+# `tools` holds the pinned project generator (scripts/setup-xcodegen.sh). Dropping it costs
+# a 4 MB download on the next build and, unlike a cache, it is a verified build input.
+KEEP="arm64-apple-macosx xcode checkouts repositories artifacts prebuilts tools"
 
 freed_kb=0
 drop() {  # drop <path> <why>

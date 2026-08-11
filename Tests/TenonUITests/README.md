@@ -45,7 +45,7 @@ The shell publishes these identifiers from the SwiftUI/AppKit views in `Sources/
 ## Running
 
 ```bash
-xcodegen generate                       # regenerates Tenon.xcodeproj from project.yml
+.build/tools/xcodegen/bin/xcodegen generate                       # regenerates Tenon.xcodeproj from project.yml
 xcodebuild test -project Tenon.xcodeproj -scheme Tenon \
   -destination 'platform=macOS,arch=arm64' \
   -only-testing:TenonUITests

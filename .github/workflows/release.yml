@@ -35,8 +35,8 @@ jobs:
           sudo xcode-select --switch /Applications/Xcode_26.2.app
           swift --version
 
-      - name: Install project generator
-        run: brew install xcodegen
+      - name: Install the pinned project generator
+        run: scripts/setup-xcodegen.sh
 
       - name: Install verified Ghostty artifacts
         run: |

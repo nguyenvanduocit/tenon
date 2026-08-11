@@ -99,7 +99,7 @@ round trip.
 
 ### Version
 
-`MARKETING_VERSION` in `project.yml` is the source. Bump it, run `xcodegen generate`, and
+`MARKETING_VERSION` in `project.yml` is the source. Bump it, run `.build/tools/xcodegen/bin/xcodegen generate`, and
 commit the regenerated project before cutting.
 
 ### Publishing
