@@ -1,9 +1,10 @@
 # Kanban Board
-<!-- Updated: 2026-08-12 02:05 -->
+<!-- Updated: 2026-08-12 03:40 -->
 
 ## Backlog
 
 ## Todo
+- [T-135](tasks/T-135-a-real-surface-that-kills-the-test-runner.md) A real Ghostty surface that kills the test runner on a VM — high/M. Unclaimed. The last CI step still fails, and not on an assertion: `testRealSurfaceRendersAcceptsInputResizesAndExits` makes the runner exit mid-run on CI's VM (4 passed, 1 failed; read from the `integration-xcresult` artifact, since the plain log prints no failure reason). Inherited, not introduced — `macOS CI` has no green run in its last 40, and this step sat behind five causes that all failed earlier.
 - [T-134](tasks/T-134-waits-that-yield-instead-of-waiting.md) Waits that yield instead of waiting — medium/M. Unclaimed. Twelve test files spin `Task.yield()` a fixed number of times and call it a wait; `Task.yield()` reschedules onto the same cooperative pool without handing it back, so the count is a guess about scheduling, not a bound. Measured 2026-08-12: `CallerConsentTests` failed in isolation on a loaded machine while passing twice on the same tree an hour earlier. Two sites fixed already (deadline + suspend); the rest are listed in the task file.
 - [T-133](tasks/T-133-two-majors-the-closed-schema-law-requires.md) Two majors the closed-schema law requires — medium/L. Unclaimed. `workspace.state.v2` (pane title/cwd/exited) and `workspace.pane.split.v2` (return the created paneID). T-132 stopped at the edge of both rather than widen a closed object inside one major — `docs/design-intent-bus.md:620-624` answers "Add any top-level input/output field to a closed object → same major? no", and `filesystem.directory.list.v2` is the standing precedent. They go together because both migrate the same three bundled plugin manifests. (b) is the highest-value row left in the capability survey.
 
