@@ -108,17 +108,23 @@ struct LauncherMenu: View {
             results(agents: agents, order: order, selected: selected, ceiling: listCeiling)
             if let copyTabID {
                 Rectangle().fill(TenonTheme.line).frame(height: 1)
-                Button("Copy Tab ID", systemImage: "doc.on.doc") {
+                // Same chrome as every row above it, so the pointer gets the same answer
+                // here as it does anywhere else in the popover. `isSelected` is fixed
+                // `false` because this utility never joins the ranked order ↓/↑ walks,
+                // which is exactly why it could not be drawn as a ranked row.
+                Button {
                     copyTabID()
                     dismiss()
+                } label: {
+                    PaletteRowChrome(
+                        icon: "doc.on.doc",
+                        title: Text("Copy Tab ID"),
+                        isSelected: false,
+                        density: .compact
+                    )
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .font(TenonTheme.interfaceFont(size: 11, weight: .medium))
-                .foregroundStyle(TenonTheme.text)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.horizontal, 12)
-                .frame(height: 30)
-                .contentShape(Rectangle())
                 .accessibilityIdentifier("tenon.launcher.copyTabID")
             }
         }
@@ -168,7 +174,10 @@ struct LauncherMenu: View {
     private var listCeiling: CGFloat {
         // Search field + its rule + the list's own vertical padding, plus the popover's
         // arrow and a margin so the last row never sits flush against the screen edge.
-        let utilityHeight: CGFloat = copyTabID == nil ? 0 : 31
+        // The footer is one compact chrome row plus the 1-pt rule above it.
+        let utilityHeight: CGFloat = copyTabID == nil
+            ? 0
+            : LauncherListHeight.row + LauncherListHeight.separatorRule
         let chrome: CGFloat = 32 + 1 + 10 + 28 + utilityHeight
         guard let window = NSApp.mainWindow ?? NSApp.keyWindow,
               let screen = window.screen ?? NSScreen.main

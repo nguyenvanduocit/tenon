@@ -10,8 +10,9 @@ import CoreGraphics
 /// the screen. `LauncherMenu` draws with these same constants, so the rule and the
 /// pixels cannot drift apart.
 enum LauncherListHeight {
-    /// One compact row, exactly as `PaletteRow` draws it.
-    static let row: CGFloat = PaletteRow.Density.compact.height
+    /// One compact row, exactly as `PaletteRowChrome` draws it — ranked, appended, or
+    /// the fixed Copy Tab ID utility, since all three are drawn by that one chrome.
+    static let row: CGFloat = PaletteRowChrome.Density.compact.height
     /// The 1-pt rule between sections.
     static let separatorRule: CGFloat = 1
     /// The rule's top and bottom padding.

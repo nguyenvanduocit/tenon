@@ -273,18 +273,14 @@ struct PaletteOverlay: View {
             Button {
                 run(intentID: result.intentID, input: result.input, pluginID: pluginID)
             } label: {
-                PaletteRow(
-                    match: CommandMatch(
-                        command: Command(
-                            id: result.id,
-                            title: result.title,
-                            subtitle: result.subtitle,
-                            icon: result.icon
-                        ),
-                        score: 0,
-                        titleMatch: []
-                    ),
-                    isSelected: isSelected
+                // A provider result is appended, never ranked, so it has no score and no
+                // matched indices to show: it draws the shared chrome directly with its
+                // plain title.
+                PaletteRowChrome(
+                    icon: result.icon,
+                    title: Text(result.title),
+                    isSelected: isSelected,
+                    subtitle: result.subtitle
                 )
                 .contentShape(Rectangle())
             }
@@ -428,88 +424,29 @@ private extension [Int] {
     }
 }
 
-/// One command row: leading icon, title with matched characters accented, and the
-/// dimmed subtitle / assigned-key accessory on the trailing edge. Shared by the
-/// palette overlay and the tab strip's `+` launcher so both read identically; the
-/// launcher asks for the `compact` density because a popover anchored to a 36-pt
-/// title bar reads as a menu, not as a full-window search surface.
+/// The one row that *did* win a ranking: `PaletteRowChrome` with the title's matched
+/// characters accented, plus the command's own subtitle and assigned-key accessory.
+/// Shared by the palette overlay and the tab strip's `+` launcher so both read
+/// identically; the launcher asks for the `compact` density because a popover anchored
+/// to a 36-pt title bar reads as a menu, not as a full-window search surface.
+///
+/// Everything about how a row looks — metrics, hover, selected accent — lives in the
+/// chrome, so a row that was never ranked reaches the same appearance without inventing
+/// a ranking answer for itself.
 struct PaletteRow: View {
-    /// Row metrics. The overlay is a destination the user summons and looks at; the
-    /// launcher is a menu they flick through. Same anatomy, two scales.
-    enum Density {
-        case regular
-        case compact
-
-        var height: CGFloat { self == .compact ? 28 : 40 }
-        var horizontalPadding: CGFloat { self == .compact ? 12 : 14 }
-        /// Inset of the highlight from the row edge, so the accent reads as a pill
-        /// inside the surface instead of a full-bleed band.
-        var railInset: CGFloat { self == .compact ? 6 : 8 }
-        var cornerRadius: CGFloat { self == .compact ? 6 : 8 }
-        var spacing: CGFloat { self == .compact ? 8 : 10 }
-        var iconWidth: CGFloat { self == .compact ? 15 : 18 }
-        var iconSize: CGFloat { self == .compact ? 11 : 13 }
-        var titleSize: CGFloat { self == .compact ? 12 : 14 }
-        var accessorySize: CGFloat { self == .compact ? 11 : 12 }
-    }
-
     let match: CommandMatch
     let isSelected: Bool
-    var density: Density = .regular
-
-    @State private var isHovered = false
+    var density: PaletteRowChrome.Density = .regular
 
     var body: some View {
-        HStack(spacing: density.spacing) {
-            Group {
-                if let icon = match.command.icon {
-                    Image(systemName: icon)
-                } else {
-                    Image(systemName: "command")
-                }
-            }
-            .font(.system(size: density.iconSize))
-            .frame(width: density.iconWidth)
-            .foregroundStyle(isSelected ? TenonTheme.amber : TenonTheme.muted)
-
-            title
-                .font(TenonTheme.interfaceFont(size: density.titleSize))
-                .lineLimit(1)
-                .layoutPriority(1)
-
-            Spacer(minLength: 12)
-
-            if let subtitle = match.command.subtitle {
-                Text(subtitle)
-                    .font(TenonTheme.interfaceFont(size: density.accessorySize))
-                    .foregroundStyle(TenonTheme.muted)
-                    .lineLimit(1)
-                    .truncationMode(.tail)
-            }
-            if let key = match.command.key {
-                Text(key.display)
-                    .font(TenonTheme.utilityFont(size: density.accessorySize))
-                    .foregroundStyle(TenonTheme.muted)
-            }
-        }
-        .padding(.horizontal, density.horizontalPadding)
-        .frame(height: density.height)
-        .background {
-            RoundedRectangle(cornerRadius: density.cornerRadius, style: .continuous)
-                .fill(highlight)
-                .padding(.horizontal, density.railInset)
-        }
-        // Keyboard selection and pointer hover are separate signals: arrowing never
-        // moves under the mouse, so the hovered row gets its own quieter wash and the
-        // accent stays with whatever Enter would run.
-        .onHover { isHovered = $0 }
-    }
-
-    private var highlight: Color {
-        if isSelected {
-            return TenonTheme.amber.opacity(isHovered ? 0.24 : 0.16)
-        }
-        return isHovered ? TenonTheme.text.opacity(0.07) : .clear
+        PaletteRowChrome(
+            icon: match.command.icon,
+            title: title,
+            isSelected: isSelected,
+            density: density,
+            subtitle: match.command.subtitle,
+            trailing: match.command.key?.display
+        )
     }
 
     /// Concatenate one `Text` per character so matched indices render accented+bold —

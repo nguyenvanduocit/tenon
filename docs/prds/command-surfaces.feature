@@ -134,6 +134,20 @@ Feature: Discover commands and arrange tabs without losing context
       Then each surface uses its documented Tenon density and semantic tokens
       And no state depends on a feature-local color or geometry scale
 
+    @req-cmd-nfr-005 @req-cmd-nfr-008 @row-chrome
+    Scenario Outline: Every kind of row answers the pointer the same way
+      Given a command surface is showing a <row_kind>
+      When the operator moves the pointer onto that row
+      Then the row draws the shared hover wash from Tenon's semantic tokens
+      And its metrics come from the one row presentation every other row is drawn with
+      And that presentation is reached without supplying a ranking score or match
+
+      Examples:
+        | row_kind                        |
+        | ranked command                  |
+        | appended provider result        |
+        | fixed tab identity utility      |
+
   Rule: Tab identity utilities remain local and explicit
 
     @req-cmd-fr-007 @req-cmd-nfr-007 @identity
@@ -142,6 +156,13 @@ Feature: Discover commands and arrange tabs without losing context
       When the operator activates Copy Tab ID
       Then the clipboard contains that tab's raw UUID
       And the utility does not become a ranked command or teach frecency
+
+    @req-cmd-fr-007 @req-cmd-nfr-008 @identity
+    Scenario: The fixed tab utility looks like a row while staying out of the order
+      Given the operator opens the launcher from a tab
+      When the pointer rests on the Copy Tab ID footer
+      Then it highlights exactly as a command row does
+      And it never carries the keyboard selection accent, because arrowing never reaches it
 
     @req-cmd-fr-017 @req-cmd-nfr-004 @accessibility
     Scenario: A non-pointer user can reach tab identity and launcher actions
