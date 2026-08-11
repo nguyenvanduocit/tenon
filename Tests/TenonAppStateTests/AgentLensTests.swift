@@ -1163,6 +1163,141 @@ final class AgentLensStreamTests: XCTestCase {
         XCTAssertEqual(message.evidence.location, file.path)
     }
 
+    /// A transcript the provider has not written yet is the ordinary state of every session
+    /// between launch and its first prompt. It is not a fault, so it must not be reported as
+    /// one — a warning in the pane's header there would fire on every session that ever starts.
+    func testTranscriptTailerSaysNothingBeforeTheProviderWritesTheTranscript() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tenon-agent-lens-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+
+        let stream = await AgentTranscriptTailer().events(
+            fileURL: file,
+            provider: .claude,
+            pollInterval: .milliseconds(5)
+        )
+        let task = Task { () throws -> AgentLensEvent? in
+            for try await event in stream { return event }
+            return nil
+        }
+
+        // Poll against the absent transcript before it is written, exactly as a pane does
+        // while its operator is still typing the first message.
+        try await Task.sleep(for: .milliseconds(60))
+        let record = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "written-at-first-prompt",
+            "message": ["content": [["type": "text", "text": "the provider finally wrote"]]],
+        ])
+        try (record + Data([0x0A])).write(to: file)
+
+        let event = try await task.value
+        task.cancel()
+        guard case let .assistantMessage(message) = try XCTUnwrap(event) else {
+            return XCTFail("a transcript that had not been written yet was reported as a fault")
+        }
+        XCTAssertEqual(message.id, "written-at-first-prompt")
+    }
+
+    /// The other half of staying quiet before a transcript appears: once there was something
+    /// to lose, losing it is a fact the reader has to be told, or the pane would keep drawing a
+    /// conversation whose source is gone.
+    func testTranscriptTailerStillReportsATranscriptThatVanishesAfterItWasRead() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tenon-agent-lens-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+        let record = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "read-before-it-vanished",
+            "message": ["content": [["type": "text", "text": "read while it was there"]]],
+        ])
+        try (record + Data([0x0A])).write(to: file)
+
+        let stream = await AgentTranscriptTailer().events(
+            fileURL: file,
+            provider: .claude,
+            pollInterval: .milliseconds(5)
+        )
+        let sink = AgentLensTailSink()
+        let collector = Task {
+            for try await event in stream {
+                switch event {
+                case let .assistantMessage(message): await sink.record(messageID: message.id)
+                case let .diagnostic(diagnostic): await sink.record(diagnostic)
+                default: continue
+                }
+            }
+        }
+        defer { collector.cancel() }
+
+        for _ in 0..<200 {
+            if await sink.messageID != nil { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let messageID = await sink.messageID
+        XCTAssertEqual(messageID, "read-before-it-vanished")
+
+        try FileManager.default.removeItem(at: file)
+        for _ in 0..<200 {
+            if await sink.diagnosticID != nil { break }
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        let diagnosticID = await sink.diagnosticID
+        let severity = await sink.diagnosticSeverity
+        XCTAssertEqual(diagnosticID, "transcript-missing")
+        XCTAssertEqual(severity, .warning)
+    }
+
+    /// The binding now trusts a path before anything exists at it, so what arrives there later
+    /// is what must be checked. A symlink dropped onto the declared path is the swap that buys,
+    /// and the reader refuses it by type rather than by having validated the name once.
+    func testTranscriptTailerRefusesBytesFromAPathSwappedToASymlink() async throws {
+        let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+            .appendingPathComponent("tenon-agent-lens-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let file = directory.appendingPathComponent("session.jsonl")
+        let foreign = directory.appendingPathComponent("foreign.jsonl")
+
+        let swapped = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "from-the-swapped-file",
+            "message": ["content": [["type": "text", "text": "someone else's transcript"]]],
+        ])
+        try (swapped + Data([0x0A])).write(to: foreign)
+        try FileManager.default.createSymbolicLink(at: file, withDestinationURL: foreign)
+
+        let stream = await AgentTranscriptTailer().events(
+            fileURL: file,
+            provider: .claude,
+            pollInterval: .milliseconds(5)
+        )
+        let task = Task { () throws -> AgentLensEvent? in
+            for try await event in stream { return event }
+            return nil
+        }
+
+        try await Task.sleep(for: .milliseconds(60))
+        try FileManager.default.removeItem(at: file)
+        let genuine = try JSONSerialization.data(withJSONObject: [
+            "type": "assistant",
+            "uuid": "from-the-genuine-file",
+            "message": ["content": [["type": "text", "text": "the session's own transcript"]]],
+        ])
+        try (genuine + Data([0x0A])).write(to: file)
+
+        let event = try await task.value
+        task.cancel()
+        guard case let .assistantMessage(message) = try XCTUnwrap(event) else {
+            return XCTFail("the tailer produced no message from the genuine transcript")
+        }
+        XCTAssertEqual(message.id, "from-the-genuine-file")
+    }
+
     func testTranscriptTailerReadsRecordAppendedAfterAttachment() async throws {
         let directory = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("tenon-agent-lens-\(UUID().uuidString)", isDirectory: true)
@@ -1628,9 +1763,12 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
         XCTAssertEqual(rejected.confidence, .processOnly)
     }
 
-    func testHookBindingWaitsForTranscriptCreatedAfterClaudePromptHook() async throws {
+    /// Claude Code buffers a session and writes its `.jsonl` at the first prompt, back-stamping
+    /// the records it was already holding. The hook names the right path the whole time, so the
+    /// pane's account of which session it is watching cannot be made to wait on the filesystem.
+    func testHookBindingAttachesTheDeclaredTranscriptBeforeTheProviderWritesIt() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("tenon-agent-hook-delayed-transcript-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("tenon-agent-hook-declared-transcript-\(UUID().uuidString)", isDirectory: true)
         let project = root.appendingPathComponent(".claude/projects/-tmp-workspace", isDirectory: true)
         let transcript = project.appendingPathComponent("claude-session.jsonl")
         try FileManager.default.createDirectory(at: project, withIntermediateDirectories: true)
@@ -1646,31 +1784,22 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
                 provider: .claude,
                 sessionID: "claude-session",
                 transcriptPath: transcript.path,
-                hookEventName: "UserPromptSubmit",
+                hookEventName: "SessionStart",
                 agentID: nil,
                 processGroupID: 42
             )
         )
 
-        let beforeCreation = await registry.binding(
-            paneID: paneID,
-            surfaceToken: surfaceToken
-        )
-        XCTAssertNil(beforeCreation)
+        XCTAssertFalse(FileManager.default.fileExists(atPath: transcript.path))
+        let binding = await registry.binding(paneID: paneID, surfaceToken: surfaceToken)
 
-        try Data("{}\n".utf8).write(to: transcript)
-        let afterCreation = await registry.binding(
-            paneID: paneID,
-            surfaceToken: surfaceToken
-        )
-
-        XCTAssertEqual(afterCreation?.provider, .claude)
-        XCTAssertEqual(afterCreation?.sessionID, "claude-session")
-        XCTAssertEqual(afterCreation?.transcriptURL, transcript.standardizedFileURL)
-        XCTAssertEqual(afterCreation?.processGroupID, 42)
+        XCTAssertEqual(binding?.provider, .claude)
+        XCTAssertEqual(binding?.sessionID, "claude-session")
+        XCTAssertEqual(binding?.transcriptURL, transcript.standardizedFileURL)
+        XCTAssertEqual(binding?.processGroupID, 42)
     }
 
-    func testPendingNewSessionStartSurvivesDelayedOldStop() async throws {
+    func testANewSessionStartSurvivesADelayedOldStop() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("tenon-agent-hook-pending-race-\(UUID().uuidString)", isDirectory: true)
         let project = root.appendingPathComponent(".claude/projects/-tmp-workspace", isDirectory: true)
@@ -1720,7 +1849,6 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
             )
         )
 
-        try Data("{}\n".utf8).write(to: newTranscript)
         let binding = await registry.binding(paneID: paneID, surfaceToken: surfaceToken)
 
         XCTAssertEqual(binding?.sessionID, "new-session")
@@ -1831,17 +1959,6 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
         let first = sessions.appendingPathComponent("first.jsonl")
         let second = sessions.appendingPathComponent("second.jsonl")
         try FileManager.default.createDirectory(at: sessions, withIntermediateDirectories: true)
-        try Data("{}\n".utf8).write(to: first)
-        try Data("{}\n".utf8).write(to: second)
-        let now = Date()
-        try FileManager.default.setAttributes(
-            [.creationDate: now.addingTimeInterval(-10)],
-            ofItemAtPath: first.path
-        )
-        try FileManager.default.setAttributes(
-            [.creationDate: now],
-            ofItemAtPath: second.path
-        )
         defer { try? FileManager.default.removeItem(at: root) }
 
         let paneID = UUID()
@@ -2621,6 +2738,25 @@ private actor AgentHookEventSink {
 
     func record(_ event: AgentHookEvent) {
         self.event = event
+    }
+}
+
+/// Keeps the first fact of each kind a tail produced, so a test can wait on the fact it needs
+/// under a bound instead of on an iterator that a regression would simply never answer.
+private actor AgentLensTailSink {
+    private(set) var messageID: String?
+    private(set) var diagnosticID: String?
+    private(set) var diagnosticSeverity: AgentDiagnosticSeverity?
+
+    func record(messageID: String) {
+        if self.messageID == nil { self.messageID = messageID }
+    }
+
+    func record(_ diagnostic: AgentLensDiagnostic) {
+        if diagnosticID == nil {
+            diagnosticID = diagnostic.id
+            diagnosticSeverity = diagnostic.severity
+        }
     }
 }
 

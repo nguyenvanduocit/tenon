@@ -82,7 +82,7 @@ actor AgentLensDiscovery {
         ), binding.provider == provider,
            binding.processGroupID == nil ||
                binding.processGroupID == processGroupID(for: identity.foregroundPID),
-           let transcript = validate(binding.transcriptURL, under: roots)
+           let transcript = declared(binding.transcriptURL, under: roots)
         {
             return AgentLensResolution(
                 provider: provider,
@@ -208,15 +208,24 @@ actor AgentLensDiscovery {
         return nil
     }
 
-    private func validate(_ candidate: URL, under roots: [URL]) -> URL? {
+    /// Where a transcript is allowed to be, which a root session can state before it writes one.
+    private func declared(_ candidate: URL, under roots: [URL]) -> URL? {
         let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
-        guard resolved.pathExtension == "jsonl", fileManager.fileExists(atPath: resolved.path)
-        else { return nil }
+        guard resolved.pathExtension == "jsonl" else { return nil }
         for root in roots {
             let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
             if resolved.path.hasPrefix(resolvedRoot + "/") { return resolved }
         }
         return nil
+    }
+
+    /// The same question asked of a file that is already there, for a transcript found by
+    /// walking a process's open descriptors rather than reported by its own session.
+    private func validate(_ candidate: URL, under roots: [URL]) -> URL? {
+        guard let declared = declared(candidate, under: roots),
+              fileManager.fileExists(atPath: declared.path)
+        else { return nil }
+        return declared
     }
 
     private func run(executable: String, arguments: [String]) -> String {
@@ -362,6 +371,11 @@ actor AgentTranscriptTailer {
         var seeksWindowStart = false
         var didReportMissing = false
         var didReportMalformed = false
+        // Whether the transcript has ever been readable. A session is bound to the path its
+        // root hook declares, which is minutes ahead of the file on Claude Code, so "not there"
+        // is the ordinary opening state of every session and only becomes a fact worth
+        // reporting once there was something to lose.
+        var didAppear = false
 
         while !Task.isCancelled {
             do {
@@ -371,11 +385,18 @@ actor AgentTranscriptTailer {
                 let attributes = try FileManager.default.attributesOfItem(
                     atPath: fileURL.path
                 )
-                guard let fileSize = attributes[.size] as? NSNumber else {
-                    throw CocoaError(.fileReadUnknown)
-                }
+                // The session was bound to this path before anything existed at it, so what
+                // arrived there is what has to be proven — and proven on every pass, because a
+                // path checked once can be swapped afterwards. `attributesOfItem` does not
+                // follow a symlink, so a transcript replaced by one is refused by its type
+                // rather than by a name that still looks right.
+                guard attributes[.type] as? FileAttributeType == .typeRegular,
+                      (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
+                      let fileSize = attributes[.size] as? NSNumber
+                else { throw CocoaError(.fileReadNoPermission) }
                 let size = fileSize.uint64Value
                 didReportMissing = false
+                didAppear = true
 
                 if offset == 0 && size > initialWindowBytes {
                     offset = size - initialWindowBytes
@@ -484,7 +505,7 @@ actor AgentTranscriptTailer {
                     }
                 }
             } catch {
-                if !didReportMissing {
+                if didAppear, !didReportMissing {
                     didReportMissing = true
                     var evidence = AgentEvidence.terminalInference("\(location):missing")
                     evidence.freshness = .sourceMissing

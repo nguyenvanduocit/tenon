@@ -193,6 +193,7 @@ mark the last reading stale; newest requested run alone may replace it.
 | `AL-FR-036` | A bounded history window **MUST** open at a record that carries its own meaning; a record holding only tool results **MUST NOT** open one, so a cut turn never projects a completion whose call is on the far side of the cut. | shipped | `@req-al-fr-036` |
 | `AL-FR-037` | Where visible history begins **MUST** be evidence naming transcript and byte offset, from the bounded window and from in-memory trimming alike, and the Session notice **MUST** state it. | shipped | `@req-al-fr-037` |
 | `AL-FR-038` | A reading in flight **MUST** report what it is doing from the CLI's own stream, and its deadline **MUST** be silence rather than duration, with the two expiries distinguishable to the reader. | shipped | `@req-al-fr-038` |
+| `AL-FR-039` | A session **MUST** bind to the transcript its root hook declares from the moment it is declared, without waiting for the provider to create the file; a transcript that has not appeared yet **MUST NOT** be reported as a fault. | shipped | `@req-al-fr-039` |
 
 ### Non-functional requirements
 
@@ -208,6 +209,7 @@ mark the last reading stale; newest requested run alone may replace it.
 | `AL-NFR-008` | architecture | Built-in state/input/file actions **MUST** be DIRECT, facts EVENT, tails RESOURCE/STREAM, and Timeline RESOURCE/TASK; no new public path/principal is added. | shipped | `@req-al-nfr-008` |
 | `AL-NFR-009` | fail-soft | Unknown methods and malformed/missing/rotated/oversized sources **MUST** become explicit diagnostic or safe ignore according to whether evidence completeness is affected. | shipped | `@req-al-nfr-009` |
 | `AL-NFR-010` | verification | Headless mutation proof **MUST** be complemented by installed visual/interaction receipts for assembled native flows. | partial | `@req-al-nfr-010` |
+| `AL-NFR-011` | privacy/security | A bound transcript **MUST** be proven a regular file owned by this user on every read pass, so a path trusted before it exists cannot later deliver another file's bytes. | shipped | `@req-al-nfr-011` |
 
 ## 8. Acceptance specification
 
@@ -258,6 +260,7 @@ decoder, capability truth, fixtures, and installed observation—not a process-n
 | `AL-R-005` | headless green hides native click/focus defect | FR-034/NFR-010 installed checklist remains open |
 | `AL-R-006` | a bounded window strands a turn and shows an unnamed finished tool | window opens only at a record that stands alone (FR-036); the cut names its own offset (FR-037) |
 | `AL-R-007` | a reading that is working is indistinguishable from one that hung | the CLI's stream drives both what is shown and when the host stops waiting (FR-038) |
+| `AL-R-008` | a provider stops being recognised when it changes how it installs itself | unmitigated, and measured: Claude Code 2.1.226 runs from `~/.local/share/claude/versions/2.1.226`, so the executable is named after the version and `provider(for:)` matches only on the incidental `/claude` directory component. A new install layout takes detection to nothing, and nothing in the suite would notice — the host cannot assert on a path only the provider chooses |
 
 ## 12. Open questions and decisions
 
@@ -280,6 +283,7 @@ The answer requires the pending real-provider test, not source inference.
 | Date | Worktree | Scope | Result | Exclusions |
 |---|---|---|---|---|
 | 2026-08-09 | current dirty tree, docs audit | current design/source/test/task mapping | canonical requirements reconciled | no live provider, click, or GUI question flow run |
+| 2026-08-10 | `main`, session `c254942e` | `AL-FR-039`, `AL-NFR-011` (T-116) | Reported from a live pane: Claude Code's first transcript record carried `23:39:52` while the file itself was born at `23:40:19`, so the declared path was correct and absent for 27 s and the lens sat at `.processOnly` with nothing to draw. 5 tests / 10 assertions **red first** — the binding returned `nil` before creation, and the tailer really did read a symlinked transcript, its first event arriving as `from-the-swapped-file`. Binding now attaches the declared path and `AgentTranscriptTailer` re-proves regular-file plus owner uid on every pass, from attributes it already fetched. The sixth test, that a transcript vanishing *after* it was read is still reported, was proven by mutation: `didAppear = false` turns it red in 2.4 s. Full suite **1875 / 0** | the 27 s figure is one measured session, not a bound; a provider that never writes the file leaves the pane bound to a path forever, reported as silence |
 | 2026-08-10 | `main`, session `0a29c687` | `AL-FR-031`, `AL-FR-038` (T-111) | `AgentCLIStreamReader` 5 assertions **red first** against a stub answering `.ignored`; progress path checked by mutation (early return in `note(_:run:)` turns the pane test red); stream shapes recorded from the installed CLI, and `--safe-mode` verified not to break auth; `TENON_TIMELINE_SNAPSHOT_STATE=running` photographs "Writing the reading — 512 characters"; full suite **1859 / 0** | the silence watchdog has no automated test — no seam for a child process that goes quiet |
 | 2026-08-10 | `main`, session `0a29c687` | `AL-FR-036`, `AL-FR-037` (T-110) | 4 tests red first — the tailer projected `AgentToolRun(id: "toolu_cut", name: "Tool", summary: "", state: .succeeded)` from a window cut between a call and its result — then `swift test` **1857 / 0**; window-start tests stable over 3 repeat runs | notice text asserted as a pure rule, not photographed; no live provider run |
 

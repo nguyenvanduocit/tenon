@@ -64,7 +64,6 @@ struct AgentSessionBinding: Equatable, Sendable {
     let transcriptURL: URL
     let hookEventName: String
     let processGroupID: UInt64?
-    let transcriptCreatedAt: Date
 }
 
 /// Binds a provider's root session to the exact incarnation of a terminal surface.
@@ -79,7 +78,11 @@ actor AgentSessionRegistry {
     private static let capacity = 256
     private let allowedTranscriptRoots: [URL]
     private var bindings: [Key: AgentSessionBinding] = [:]
-    private var pendingEvents: [Key: AgentHookEvent] = [:]
+    /// Session IDs a later start has already replaced on this surface. A provider keeps firing
+    /// hooks from a session the terminal has moved on from, and they arrive after the ones that
+    /// replaced it. Ordering by the terminal's own event order is the only account that stays
+    /// true while the transcript is not yet on disk to be dated.
+    private var supersededSessionIDs: [Key: Set<String>] = [:]
     private var recency: [Key] = []
 
     init(
@@ -95,50 +98,60 @@ actor AgentSessionRegistry {
         }
     }
 
+    /// Binds the path the hook declares, whether or not anything exists at it yet.
+    ///
+    /// Claude Code buffers a session and writes its JSONL at the first prompt, back-stamping the
+    /// records it was already holding — measured here as 27 seconds between a session's first
+    /// record and the file's own birth. The hook names the right path for that whole window, so
+    /// waiting on the filesystem only means the pane cannot say which session it is watching
+    /// while its operator is still typing. What later appears at the path is checked where the
+    /// bytes are actually read, which also covers a path swapped after this point.
     func record(_ event: AgentHookEvent) {
         guard event.agentID == nil else { return }
         guard !event.sessionID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
-        guard candidateURL(for: event) != nil else { return }
+        guard let transcriptURL = candidateURL(for: event) else { return }
         let key = Key(paneID: event.paneID, surfaceToken: event.surfaceToken)
-
-        // Claude can emit SessionStart/UserPromptSubmit before it creates the JSONL.
-        // Preserve that exact terminal-scoped fact and validate the resource lazily. A
-        // non-start event can arrive late from the previous session, so it must never
-        // displace a pending SessionStart.
-        let protectsPendingStart = pendingEvents[key]?.hookEventName == "SessionStart" &&
-            event.hookEventName != "SessionStart"
-        if !protectsPendingStart && (
-            pendingEvents[key]?.sessionID != event.sessionID ||
-                pendingEvents[key]?.hookEventName != "SessionStart" ||
-                event.hookEventName == "SessionStart"
-        )
-        {
-            pendingEvents[key] = event
-        }
-        promotePendingBinding(for: key)
+        bind(event, transcriptURL: transcriptURL, for: key)
         recency.removeAll { $0 == key }
         recency.append(key)
         while recency.count > Self.capacity {
             let evicted = recency.removeFirst()
             bindings.removeValue(forKey: evicted)
-            pendingEvents.removeValue(forKey: evicted)
+            supersededSessionIDs.removeValue(forKey: evicted)
         }
     }
 
     func binding(paneID: UUID, surfaceToken: UUID) -> AgentSessionBinding? {
-        let key = Key(paneID: paneID, surfaceToken: surfaceToken)
-        promotePendingBinding(for: key)
-        return bindings[key]
+        bindings[Key(paneID: paneID, surfaceToken: surfaceToken)]
     }
 
     func retainOnly(_ paneIDs: Set<UUID>) {
         let removed = Set(bindings.keys.filter { !paneIDs.contains($0.paneID) })
-            .union(pendingEvents.keys.filter { !paneIDs.contains($0.paneID) })
+            .union(supersededSessionIDs.keys.filter { !paneIDs.contains($0.paneID) })
         for key in removed {
             bindings.removeValue(forKey: key)
-            pendingEvents.removeValue(forKey: key)
+            supersededSessionIDs.removeValue(forKey: key)
         }
         recency.removeAll { removed.contains($0) }
+    }
+
+    private func bind(_ event: AgentHookEvent, transcriptURL: URL, for key: Key) {
+        if let existing = bindings[key], existing.sessionID != event.sessionID {
+            // Only a session start moves a surface to another session, and only forwards: a
+            // session this surface has already left cannot take it back when its trailing
+            // hooks land.
+            guard event.hookEventName == "SessionStart",
+                  supersededSessionIDs[key]?.contains(event.sessionID) != true
+            else { return }
+            supersededSessionIDs[key, default: []].insert(existing.sessionID)
+        }
+        bindings[key] = AgentSessionBinding(
+            provider: event.provider,
+            sessionID: event.sessionID,
+            transcriptURL: transcriptURL,
+            hookEventName: event.hookEventName,
+            processGroupID: event.processGroupID
+        )
     }
 
     private func candidateURL(for event: AgentHookEvent) -> URL? {
@@ -153,35 +166,6 @@ actor AgentSessionRegistry {
               })
         else { return nil }
         return transcriptURL
-    }
-
-    private func materializedBinding(for event: AgentHookEvent) -> AgentSessionBinding? {
-        guard let transcriptURL = candidateURL(for: event),
-              let attributes = try? FileManager.default.attributesOfItem(atPath: transcriptURL.path),
-              attributes[.type] as? FileAttributeType == .typeRegular,
-              (attributes[.ownerAccountID] as? NSNumber)?.uint32Value == getuid(),
-              let transcriptCreatedAt = attributes[.creationDate] as? Date
-        else { return nil }
-        return AgentSessionBinding(
-            provider: event.provider,
-            sessionID: event.sessionID,
-            transcriptURL: transcriptURL,
-            hookEventName: event.hookEventName,
-            processGroupID: event.processGroupID,
-            transcriptCreatedAt: transcriptCreatedAt
-        )
-    }
-
-    private func promotePendingBinding(for key: Key) {
-        guard let event = pendingEvents[key] else { return }
-        guard let candidate = materializedBinding(for: event) else { return }
-        defer { pendingEvents.removeValue(forKey: key) }
-        if let existing = bindings[key], existing.sessionID != event.sessionID {
-            guard event.hookEventName == "SessionStart",
-                  candidate.transcriptCreatedAt > existing.transcriptCreatedAt
-            else { return }
-        }
-        bindings[key] = candidate
     }
 }
 

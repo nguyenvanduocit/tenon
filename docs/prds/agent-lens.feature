@@ -250,6 +250,20 @@ Feature: Supervise agent sessions through bounded checkable evidence
       But a run that produces nothing for the silence bound is stopped and says so
       And a run that never stops talking is stopped at the ceiling and says that instead
 
+    @req-al-fr-039 @req-al-fr-012 @discovery
+    Scenario: A session is known before its provider writes the transcript
+      Given a root hook declares the transcript this terminal's session will write
+      When the provider has not created that file yet
+      Then the pane binds the declared transcript and names the session it is watching
+      And the wait for the first byte is reported as nothing at all
+
+    @req-al-nfr-011 @discovery
+    Scenario: A path trusted before it existed cannot deliver another file's bytes
+      Given a session is bound to a transcript path that nothing occupies yet
+      When a symlink to another transcript appears at that path
+      Then its bytes are refused because the path is no longer a regular file of this user
+      And the genuine transcript is read from its beginning once it is written there
+
     @req-al-nfr-009 @degradation
     Scenario Outline: Source failure has an honest semantic outcome
       Given the source is <failure>
