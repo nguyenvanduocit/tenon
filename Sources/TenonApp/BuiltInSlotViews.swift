@@ -113,6 +113,35 @@ struct BuiltInSlotContentView: View {
                 headerStore: headerStore
             )
 
+        case .agentSession(let ref):
+            // The same Agent Lens a live pane mounts, reading a transcript instead of a PTY.
+            // Where a live pane puts its terminal, this one puts the resume invitation: the
+            // pane holds no surface, so there is no terminal to draw and nothing to focus.
+            AgentLensSlotView(
+                terminal: AnyView(AgentSessionResumeView(
+                    ref: ref,
+                    offer: AgentSessionResume.offer(for: ref, installed: agentSuggestions),
+                    resume: { commandLine in
+                        guard let store else { return }
+                        // In place, in this order: the pane becomes a terminal, and the
+                        // command is queued for the surface that pane is about to build.
+                        // `sendTextWhenReady` holds the text until the shell exists, which
+                        // is why the conversion does not have to wait for it here.
+                        store.setSlotContent(slot.id, .terminal)
+                        pool.sendTextWhenReady(commandLine + "\n", to: slot.id)
+                    }
+                )),
+                focusTerminal: {},
+                model: agentLens.model(for: slot.id, recording: ref),
+                workspaceRoot: workspacePath,
+                openFile: store.map { store in
+                    { @MainActor @Sendable path in
+                        store.openContent(.file(path: path))
+                    }
+                },
+                headerStore: headerStore
+            )
+
         case .empty:
             EmptySlotView(
                 slotID: slot.id,
@@ -174,6 +203,8 @@ enum SlotPresentation {
             return webTitle ?? registered ?? viewID
         case .diff(let request):
             return request.title
+        case .agentSession(let ref):
+            return ref.displayName
         case .empty:
             return "Empty slot"
         }
@@ -193,6 +224,10 @@ enum SlotPresentation {
             return "◇"
         case .diff:
             return "Δ"
+        case .agentSession:
+            // A session that already happened, distinct from the live `>_` it was recorded
+            // from: the pane reads a transcript and holds no PTY until someone resumes it.
+            return "◷"
         case .empty:
             return "·"
         }

@@ -235,6 +235,45 @@ async function continueSession(st, agentID, sessionID, call = tenon.intents) {
   await launch(st, request, call);
 }
 
+// Opening a session for reading rather than for running. `workspace.content.open.v1` already
+// carries every other kind of pane this plugin opens, and a recorded session is one more kind
+// of content — so this needs no new contract and no manifest change.
+//
+// The path is required and is not this plugin's to vouch for: the host re-decides containment
+// under its own provider roots, with symlinks resolved, and refuses anything else. A Codex row
+// carries no path until somebody asks for one, so it is looked up here rather than for every
+// row of every scan.
+async function openRecorded(st, sessionID, call = tenon.intents) {
+  var session = null;
+  for (var i = 0; i < st.sessions.length; i++) {
+    if (st.sessions[i].id === sessionID) session = st.sessions[i];
+  }
+  if (!session) return;
+
+  var path = session.path || await transcriptPath(st, session, call);
+  if (panes[st.id] !== st) return;
+  if (!path) {
+    st.notice = "No transcript on disk for that session, so there is nothing to read.";
+    render(st);
+    return;
+  }
+
+  var opened = await call.send("workspace.content.open.v1", {
+    content: {
+      kind: "agentSession",
+      provider: session.provider,
+      sessionID: session.id,
+      transcriptPath: path,
+      title: sessionTitle(session)
+    }
+  });
+  if (panes[st.id] !== st) return;
+  if (!opened.ok) {
+    st.notice = "Could not open that session: " + opened.error.code;
+    render(st);
+  }
+}
+
 // A Codex thread's transcript is a rollout file named after the thread and filed by date.
 // The SQLite index that lists the session carries no path, so it is looked up once — at the
 // moment somebody asks another agent to read it, not for every row of every scan.
@@ -516,6 +555,15 @@ function sessionRow(st, session) {
     meta.push({ type: "text", value: facts.join(" · "), style: "caption", color: "muted" });
   }
   meta.push({ type: "spacer" });
+  // Reading a session you already had, without starting anything. The host opens its own
+  // Agent Lens over the recorded transcript, so this pane hands over a reference and stops
+  // there — it renders no transcript itself and learns nothing about how one is read.
+  meta.push({
+    type: "button",
+    label: "Details",
+    action: "details:" + session.id,
+    style: "plain"
+  });
   // One button per installed agent. The agent that wrote the session resumes it; any other
   // one continues it, and the host is what decides which of those a command line means.
   for (var a = 0; a < st.agents.length; a++) {
@@ -670,6 +718,8 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
     await scan(st);
   } else if (chosen.indexOf("start:") === 0) {
     await launch(st, { agent: chosen.slice("start:".length) });
+  } else if (chosen.indexOf("details:") === 0) {
+    await openRecorded(st, chosen.slice("details:".length));
   } else if (chosen.indexOf("open:") === 0) {
     var rest = chosen.slice("open:".length);
     var separator = rest.indexOf(":");

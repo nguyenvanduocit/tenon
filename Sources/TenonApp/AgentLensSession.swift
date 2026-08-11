@@ -1,6 +1,7 @@
 // @domain: agent-lens
 import Foundation
 import Observation
+import TenonCore
 
 enum AgentLensInputError: Error, Equatable, Sendable {
     case empty
@@ -267,6 +268,19 @@ final class AgentLensViewModel {
     /// `mode`/`showsSplitView`.
     var account: AgentLensAccount = .chat
     private(set) var timelineGeneration: AgentTimelineGeneration = .idle
+    /// How the NEXT reading will be taken. Local host UI state, like `account`: picking a
+    /// different reader or lens changes nothing about the attachment until someone asks for a
+    /// reading with it.
+    var readingOptions = AgentReadingOptions()
+    /// How the reading on screen — or the one in flight — was actually asked for.
+    ///
+    /// Separate from `readingOptions` because a run in flight has to keep the options it started
+    /// with: the person is free to pick different ones while it works, and those belong to the
+    /// next reading rather than retroactively to this one.
+    private(set) var readingOptionsInUse: AgentReadingOptions?
+    /// Which CLIs this machine can read a session with. Empty until the scan answers, and a
+    /// single entry is not a choice — the pane offers a reader picker only over two or more.
+    private(set) var availableReaders: [AgentCLI] = []
     /// The fact Chat should scroll to when it next draws, set by a milestone's anchor. Cleared
     /// by whichever list consumes it, so one anchor click scrolls once.
     var pendingChatFocus: String?
@@ -306,27 +320,61 @@ final class AgentLensViewModel {
     @ObservationIgnored let diagnosticsPaneOrdinal: Int
     private var optionSubmissionGate = AgentOptionSubmissionGate()
 
+    /// What this pane is reading: a live PTY, or a session that already finished. Fixed for
+    /// the model's whole life — a resumed recording gets a NEW model, because the pane it
+    /// becomes owns a surface this one never had.
+    @ObservationIgnored let attachment: AgentLensAttachment
+
+    /// `terminalPool` is optional because a recorded pane has no surface to hold. It is the
+    /// same weak reference either way, so nothing downstream learns a second way to be absent.
     init(
         slotID: UUID,
-        terminalPool: SurfacePool,
+        terminalPool: SurfacePool?,
         discovery: AgentLensDiscovery,
+        attachment: AgentLensAttachment = .live,
         resolveTimelineSynthesizer: @escaping AgentTimelineSynthesizerResolver =
             AgentLensViewModel.installedTimelineSynthesizer
     ) {
         self.slotID = slotID
         self.terminalPool = terminalPool
         self.discovery = discovery
+        self.attachment = attachment
         self.resolveTimelineSynthesizer = resolveTimelineSynthesizer
         self.diagnosticsPaneOrdinal = DiagnosticsRuntimeSignals.shared.registerAgentLensPane()
+        // A live pane opens on its terminal because someone is typing into it. A recorded one
+        // opens on its reading, because the reading is the entire reason the pane exists.
+        if attachment.recordedSession != nil { mode = .session }
     }
 
     /// Finding the agent binary reads the filesystem, which the interaction law forbids on
     /// `MainActor`, and it is asked for only when someone actually wants a reading — so it is
     /// resolved inside the generation's own task rather than at pane construction.
-    static let installedTimelineSynthesizer: AgentTimelineSynthesizerResolver = {
+    static let installedTimelineSynthesizer: AgentTimelineSynthesizerResolver = { options in
         await Task.detached(priority: .userInitiated) {
-            AgentCLITimelineSynthesizer.installed()
+            AgentCLITimelineSynthesizer.installed(provider: options.provider)
         }.value
+    }
+
+    /// The same scan, asked for the whole list rather than for one provider's binary.
+    static let installedReaders: AgentReadingReaderDetector = {
+        await Task.detached(priority: .utility) {
+            AgentCLITimelineSynthesizer.installedProviders()
+        }.value
+    }
+
+    /// Narrows the reader choice to the CLIs this machine actually has, and moves the pending
+    /// choice onto one of them when the current pick is not installed.
+    ///
+    /// An empty answer leaves the choice alone rather than emptying it: a scan that found nothing
+    /// says the reader picker has nothing to offer, and the invitation already reports a missing
+    /// CLI honestly through `noSynthesizer` when someone asks for a reading anyway.
+    func loadAvailableReaders(
+        using detect: AgentReadingReaderDetector = AgentLensViewModel.installedReaders
+    ) async {
+        let readers = await detect()
+        availableReaders = readers
+        guard let first = readers.first, !readers.contains(readingOptions.provider) else { return }
+        readingOptions.select(provider: first)
     }
 
     var isAgentDetected: Bool { resolution != nil || snapshot.provider != nil }
@@ -334,12 +382,21 @@ final class AgentLensViewModel {
     var submittedOptionRequestID: String? { optionSubmissionGate.requestID }
 
     var canSend: Bool {
-        resolution != nil && snapshot.canSend && !isSending &&
+        attachment.allowsSending && resolution != nil && snapshot.canSend && !isSending &&
             !draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     }
 
     func start() {
         guard discoveryTask == nil else { return }
+        // A recorded session is attached once, from the reference the pane was opened with.
+        // There is no process to poll for, and polling would report the session as ended.
+        guard attachment.startsDiscovery else {
+            guard let resolution = attachment.resolution else { return }
+            discoveryTask = Task { [weak self] in
+                await self?.attach(resolution)
+            }
+            return
+        }
         discoveryTask = Task { [weak self] in
             guard let self else { return }
             await self.discoveryLoop()
@@ -392,11 +449,17 @@ final class AgentLensViewModel {
     /// so arriving with too little evidence means the snapshot shrank between the draw and the
     /// click. The account re-reads that same snapshot on the next pass and says so itself.
     func generateTimeline() {
-        guard case .success(let digest) = AgentTimelineDigest.build(from: snapshot) else { return }
+        // Read once, here: what the person picks while this run works belongs to the next
+        // reading, so the run carries a copy rather than the live field.
+        let options = readingOptions
+        guard case .success(let digest) =
+            AgentTimelineDigest.build(from: snapshot, span: options.span)
+        else { return }
 
         timelineTask?.cancel()
         let run = timelineLedger.begin()
         let factCount = snapshot.factCount
+        readingOptionsInUse = options
         timelineGeneration = .running(fingerprint: digest.fingerprint, progress: .launching)
         // Whether this result may be shown is the ledger's answer and only the ledger's.
         // `Task.isCancelled` looks like a second guard and is a weaker one: a synthesizer that
@@ -406,6 +469,7 @@ final class AgentLensViewModel {
         timelineTask = Task { [weak self, resolveTimelineSynthesizer] in
             let outcome = await Self.read(
                 digest,
+                options: options,
                 using: resolveTimelineSynthesizer,
                 progress: announce
             )
@@ -445,12 +509,13 @@ final class AgentLensViewModel {
 
     private static func read(
         _ digest: AgentTimelineDigest,
+        options: AgentReadingOptions,
         using resolve: AgentTimelineSynthesizerResolver,
         progress: @escaping @Sendable (AgentTimelineProgress) -> Void
     ) async -> Result<AgentSessionTimeline, AgentTimelineFailure> {
-        guard let synthesizer = await resolve() else { return .failure(.noSynthesizer) }
+        guard let synthesizer = await resolve(options) else { return .failure(.noSynthesizer) }
         do {
-            let raw = try await synthesizer.synthesize(digest, progress: progress)
+            let raw = try await synthesizer.synthesize(digest, options: options, progress: progress)
             return AgentTimelineDraftDecoder.decode(raw).flatMap { draft in
                 AgentTimelineValidation
                     .validate(draft, against: digest, generatedAt: Date())
@@ -488,6 +553,7 @@ final class AgentLensViewModel {
         timelineTask = nil
         if timelineLedger.isRunning { timelineLedger.cancel() }
         readingFactCount = nil
+        readingOptionsInUse = nil
         timelineGeneration = .idle
     }
 
@@ -704,17 +770,22 @@ final class AgentLensViewModel {
         resolution = next
         let coordinator = AgentLensSessionCoordinator()
         self.coordinator = coordinator
-        guard let terminalPool else { return }
-        let expectedPID = next.foregroundPID
-        inputQueue = AgentLensInputQueue(
-            transport: AgentLensInputTransport { @MainActor [weak terminalPool] frame in
-                terminalPool?.sendAgentInputFrame(
-                    frame,
-                    to: self.slotID,
-                    expectedForegroundPID: expectedPID
-                ) ?? false
-            }
-        )
+        // A recorded session has no PTY to write to, so it gets no input queue — the pane
+        // that cannot send is the pane that holds no transport, rather than one that holds a
+        // transport and remembers not to use it.
+        if attachment.allowsSending {
+            guard let terminalPool else { return }
+            let expectedPID = next.foregroundPID
+            inputQueue = AgentLensInputQueue(
+                transport: AgentLensInputTransport { @MainActor [weak terminalPool] frame in
+                    terminalPool?.sendAgentInputFrame(
+                        frame,
+                        to: self.slotID,
+                        expectedForegroundPID: expectedPID
+                    ) ?? false
+                }
+            )
+        }
 
         let connectionEvidence = AgentEvidence.terminalInference(
             next.transcriptURL?.path ?? "terminal-process:\(next.foregroundPID)"
@@ -808,6 +879,30 @@ final class AgentLensPool {
             slotID: slotID,
             terminalPool: terminalPool,
             discovery: discovery,
+            resolveTimelineSynthesizer: resolveTimelineSynthesizer
+        )
+        models[slotID] = model
+        return model
+    }
+
+    /// The model for a pane reading a session that already happened.
+    ///
+    /// Keyed by slot like every other model, but ALSO checked against the session it holds: one
+    /// recorded pane takes the next recorded session (`SlotContent.yieldsPane`), so the same
+    /// slot legitimately reads a different transcript over its life. Handing back the previous
+    /// session's model would leave the pane reading the session the person just navigated away
+    /// from, which is the one failure this lookup exists to prevent.
+    func model(for slotID: UUID, recording ref: AgentSessionRef) -> AgentLensViewModel {
+        if let existing = models[slotID],
+           existing.attachment == .recorded(ref) {
+            return existing
+        }
+        models[slotID]?.stop()
+        let model = AgentLensViewModel(
+            slotID: slotID,
+            terminalPool: nil,
+            discovery: discovery,
+            attachment: .recorded(ref),
             resolveTimelineSynthesizer: resolveTimelineSynthesizer
         )
         models[slotID] = model

@@ -38,10 +38,21 @@ enum AgentTimelineSnapshot {
             slotID: UUID(),
             terminalPool: terminalPool,
             discovery: AgentLensDiscovery(),
-            resolveTimelineSynthesizer: { SnapshotSynthesizer(state: state) }
+            resolveTimelineSynthesizer: { _ in SnapshotSynthesizer(state: state) }
         )
         model.account = .timeline
         model.receive(state == "insufficient" ? shortSession() : session)
+
+        // The reader list is a filesystem answer the live pane gets from `.task`, and an offscreen
+        // render never runs one — so it is asked for here, and the invitation is photographed with
+        // the readers this machine actually has. Capped, because a machine with no agent CLI
+        // installed would otherwise wait on a list that is legitimately empty.
+        let scan = Task { await model.loadAvailableReaders() }
+        let scanDeadline = Date(timeIntervalSinceNow: 3)
+        while model.availableReaders.isEmpty, Date() < scanDeadline {
+            RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+        }
+        scan.cancel()
 
         // `insufficient` is drawn from the snapshot, not from a generation, so asking for a
         // reading there would be asking the account to refuse one — the picture is the same
@@ -195,6 +206,7 @@ enum AgentTimelineSnapshot {
 
         func synthesize(
             _ digest: AgentTimelineDigest,
+            options: AgentReadingOptions,
             progress: @escaping @Sendable (AgentTimelineProgress) -> Void
         ) async throws -> String {
             switch state {

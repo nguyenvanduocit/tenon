@@ -551,7 +551,10 @@ final class AgentSessionTimelineTests: XCTestCase {
 
     /// The arguments are part of what a reading costs, so they are pinned like any other bound.
     func testAReadingRunsWithoutTheOperatorsCustomizations() {
-        let arguments = AgentCLITimelineSynthesizer.arguments
+        let arguments = AgentCLITimelineSynthesizer.arguments(
+            provider: .claude,
+            model: .providerDefault
+        )
         XCTAssertTrue(arguments.contains("--safe-mode"))
         XCTAssertTrue(arguments.contains("--no-session-persistence"))
         XCTAssertTrue(arguments.contains("stream-json"))
@@ -914,7 +917,7 @@ private enum Fixture {
                 StubTerminalSurface()
             },
             discovery: AgentLensDiscovery(),
-            resolveTimelineSynthesizer: { synthesizer }
+            resolveTimelineSynthesizer: { _ in synthesizer }
         )
         if let snapshot { model.receive(snapshot) }
         return model
@@ -937,6 +940,7 @@ private enum Fixture {
 
         func synthesize(
             _ digest: AgentTimelineDigest,
+            options: AgentReadingOptions,
             progress: @escaping @Sendable (AgentTimelineProgress) -> Void
         ) async throws -> String {
             for step in announces { progress(step) }
@@ -947,6 +951,7 @@ private enum Fixture {
     struct FailingSynthesizer: AgentTimelineSynthesizer {
         func synthesize(
             _ digest: AgentTimelineDigest,
+            options: AgentReadingOptions,
             progress: @escaping @Sendable (AgentTimelineProgress) -> Void
         ) async throws -> String {
             XCTFail("an agent was asked to read a session the host already knows is unreadable")
@@ -974,6 +979,7 @@ private enum Fixture {
 
         func synthesize(
             _ digest: AgentTimelineDigest,
+            options: AgentReadingOptions,
             progress: @escaping @Sendable (AgentTimelineProgress) -> Void
         ) async throws -> String {
             isEntered = true
@@ -1034,5 +1040,305 @@ private extension PaneHeaderItem {
     var segmentValues: [String]? {
         guard case let .segmented(_, segments, _, _, _) = self else { return nil }
         return segments.map(\.value)
+    }
+}
+
+/// T-123 — the options a reading is taken with.
+///
+/// The reason these rules are worth asserting is that every one of them used to be a compile-time
+/// constant, and the danger in making them choices is that a choice could widen what the host
+/// accepts. So the load-bearing test here is not that the options work — it is that no option can
+/// change what a reading has to survive to be shown.
+final class AgentReadingOptionsTests: XCTestCase {
+    // MARK: - Span
+
+    func testANarrowerSpanKeepsTheNewestWorkAndAsksADifferentQuestion() throws {
+        let snapshot = Fixture.session(userTurns: 60, toolRuns: 40)
+        let whole = try AgentTimelineDigest.build(from: snapshot, span: .wholeSession).get()
+        let recent = try AgentTimelineDigest.build(from: snapshot, span: .recentWork).get()
+
+        XCTAssertGreaterThan(whole.facts.count, recent.facts.count)
+        XCTAssertEqual(recent.facts.count, AgentReadingSpan.recentWork.maximumFacts)
+        XCTAssertTrue(recent.isTruncated, "a span that cut the session has to say so")
+        XCTAssertEqual(
+            recent.facts.last?.id,
+            whole.facts.last?.id,
+            "a narrower span keeps the tail — the newest work is what it means"
+        )
+        XCTAssertNotEqual(
+            recent.fingerprint,
+            whole.fingerprint,
+            "two spans are two questions, so a reading of one is not a reading of the other"
+        )
+    }
+
+    func testNoSpanCanTakeASessionBelowTheBarThatRefusesASynthesis() throws {
+        // Fewer facts than the narrow span's own cap, so the cap cannot be what decides.
+        let snapshot = Fixture.session(userTurns: 4, toolRuns: 3)
+        for span in AgentReadingSpan.allCases {
+            let digest = try AgentTimelineDigest.build(from: snapshot, span: span).get()
+            XCTAssertGreaterThanOrEqual(
+                digest.facts.count,
+                AgentTimelineBounds.minimumFactsForSynthesis
+            )
+            XCTAssertNil(
+                AgentTimelineDigest.insufficiency(of: snapshot),
+                "the two sufficiency answers still agree under \(span)"
+            )
+        }
+    }
+
+    // MARK: - Lens
+
+    func testEveryLensAsksForTheSameCheckableShape() throws {
+        let digest = try XCTUnwrap(Fixture.digest(Fixture.session(userTurns: 6, toolRuns: 6)))
+        let prompts = AgentReadingLens.allCases.map {
+            AgentTimelinePrompt.text(for: digest, lens: $0)
+        }
+        let rules = AgentTimelinePrompt.rules(forFacts: digest.facts.count)
+
+        for prompt in prompts {
+            XCTAssertTrue(
+                prompt.contains(rules),
+                "every lens carries the identical rules block, byte for byte"
+            )
+            XCTAssertTrue(
+                prompt.contains("A fact belongs to at most ONE milestone"),
+                "the partition rule cannot be a property of one lens"
+            )
+            XCTAssertTrue(
+                prompt.contains("copied EXACTLY"),
+                "anchors stay the digest's own ids under every lens"
+            )
+        }
+        XCTAssertEqual(
+            Set(AgentReadingLens.allCases.map(\.framing)).count,
+            AgentReadingLens.allCases.count,
+            "a lens that asks for the same thing as another is not a choice"
+        )
+    }
+
+    // MARK: - Reader
+
+    func testAProviderThatCannotBeToldWhichModelToRunNeverCarriesAnAlias() {
+        let asked = AgentReadingOptions(provider: .codex, model: .opus)
+        XCTAssertEqual(asked.model, .providerDefault)
+
+        var options = AgentReadingOptions(provider: .claude, model: .opus)
+        XCTAssertEqual(options.model, .opus)
+        options.select(provider: .codex)
+        XCTAssertEqual(
+            options.model,
+            .providerDefault,
+            "changing provider carries the model with it rather than leaving another CLI's alias"
+        )
+    }
+
+    func testEachProviderIsInvokedTheWayItsOwnCLISpellsAOneShotReading() {
+        let claude = AgentCLITimelineSynthesizer.arguments(provider: .claude, model: .opus)
+        XCTAssertTrue(claude.contains("--print"))
+        XCTAssertTrue(claude.contains("stream-json"))
+        XCTAssertTrue(claude.contains("--safe-mode"))
+        XCTAssertTrue(claude.contains("--no-session-persistence"))
+        XCTAssertNotNil(
+            zip(claude, claude.dropFirst()).first { $0 == "--model" && $1 == "opus" },
+            "the model is spelled with the provider's own documented alias"
+        )
+
+        let codex = AgentCLITimelineSynthesizer.arguments(provider: .codex, model: .providerDefault)
+        XCTAssertEqual(codex.first, "exec")
+        XCTAssertTrue(codex.contains("--json"))
+        XCTAssertTrue(codex.contains("--skip-git-repo-check"))
+        XCTAssertFalse(codex.contains("--model"), "codex model ids are account-configured")
+        XCTAssertEqual(codex.last, "-", "codex reads the prompt from stdin like claude does")
+    }
+
+    /// Measured 2026-08-11 against the installed `codex exec --json`, exactly as recorded in the
+    /// task file: `thread.started`, `turn.started`, `item.completed` carrying the agent message,
+    /// `turn.completed`.
+    func testCodexEventsFoldIntoTheSameReadingClaudeStreamDoes() {
+        func read(_ line: String) -> AgentCLIStreamReading {
+            AgentCLIStreamReader.read(line: Data(line.utf8), provider: .codex)
+        }
+
+        XCTAssertEqual(read(#"{"type":"thread.started","thread_id":"019f"}"#), .connected)
+        XCTAssertEqual(read(#"{"type":"turn.started"}"#), .ignored)
+        XCTAssertEqual(
+            read(#"{"type":"item.completed","item":{"id":"i0","type":"agent_message","text":"{\"ok\":1}"}}"#),
+            .finished(.success(#"{"ok":1}"#))
+        )
+        XCTAssertEqual(read(#"{"type":"turn.completed","usage":{"output_tokens":9}}"#), .ignored)
+        XCTAssertEqual(
+            read(#"{"type":"item.completed","item":{"id":"i0","type":"reasoning","text":"thinking"}}"#),
+            .ignored,
+            "only the agent's message is the reply"
+        )
+    }
+
+    func testAProviderThatNeverStreamsIsNotKilledForSilence() {
+        XCTAssertEqual(
+            AgentCLITimelineSynthesizer.silenceSeconds(for: .claude),
+            AgentCLITimelineSynthesizer.silenceSeconds
+        )
+        XCTAssertNil(
+            AgentCLITimelineSynthesizer.silenceSeconds(for: .codex),
+            "silence is only evidence of death where the CLI streams while it works"
+        )
+    }
+
+    // MARK: - The request carries them
+
+    @MainActor
+    func testTheReadingRunsWithTheOptionsItWasStartedWith() async throws {
+        let recorder = RecordingSynthesizer()
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            synthesizer: recorder
+        )
+        model.readingOptions = AgentReadingOptions(
+            provider: .claude,
+            model: .opus,
+            span: .recentWork,
+            lens: .decisions
+        )
+
+        model.generateTimeline()
+        // Whatever the person picks next belongs to the next reading, not to this one.
+        model.readingOptions = AgentReadingOptions()
+        try await Fixture.settle(model)
+
+        XCTAssertEqual(recorder.observed?.lens, .decisions)
+        XCTAssertEqual(recorder.observed?.model, .opus)
+        XCTAssertEqual(recorder.observed?.span, .recentWork)
+        XCTAssertEqual(
+            model.readingOptionsInUse?.lens,
+            .decisions,
+            "the finished reading says which options produced it"
+        )
+    }
+
+    /// Cancelling ends a run, not the choices. The retry the pane offers is a fresh reading, so
+    /// it takes whatever is picked when it is asked for — including a different reader, which is
+    /// the most useful thing to change after one failed.
+    @MainActor
+    func testCancellingAReadingKeepsTheChoicesAndTheRetryTakesThem() async throws {
+        let recorder = RecordingSynthesizer()
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            synthesizer: recorder
+        )
+        model.readingOptions = AgentReadingOptions(span: .recentWork, lens: .problems)
+
+        model.generateTimeline()
+        try await Fixture.settle(model)
+        XCTAssertEqual(recorder.observed?.lens, .problems)
+        XCTAssertEqual(recorder.observed?.span, .recentWork)
+
+        model.generateTimeline()
+        model.cancelTimelineGeneration()
+        XCTAssertEqual(model.readingOptions.lens, .problems, "a cancel ends the run, not the choice")
+        XCTAssertEqual(model.readingOptions.span, .recentWork)
+
+        // A retry is a fresh reading, so it takes whatever is picked when it is asked for.
+        // Asserted on the pane rather than on the recorder: a cancelled run's task can still
+        // reach a synthesizer that does not check for cancellation, so what the recorder saw
+        // last is a race, while what the pane attributed the reading to is not.
+        model.readingOptions.lens = .decisions
+        model.generateTimeline()
+        try await Fixture.settle(model)
+        XCTAssertEqual(model.readingOptionsInUse?.lens, .decisions)
+        XCTAssertEqual(model.readingOptionsInUse?.span, .recentWork)
+    }
+
+    @MainActor
+    func testTheReaderChoiceIsOnlyTheCLIsThisMachineHas() async {
+        let model = Fixture.model(snapshot: Fixture.session(userTurns: 6, toolRuns: 6))
+        XCTAssertEqual(model.availableReaders, [], "nothing is offered before the scan answers")
+
+        await model.loadAvailableReaders(using: { [.codex] })
+
+        XCTAssertEqual(model.availableReaders, [.codex])
+        XCTAssertEqual(
+            model.readingOptions.provider,
+            .codex,
+            "a default reader this machine does not have is not a reader"
+        )
+    }
+
+    @MainActor
+    func testAScanThatFoundNothingLeavesTheReadingItsDefaultReader() async {
+        let model = Fixture.model(snapshot: Fixture.session(userTurns: 6, toolRuns: 6))
+        await model.loadAvailableReaders(using: { [] })
+
+        XCTAssertEqual(model.availableReaders, [])
+        XCTAssertEqual(
+            model.readingOptions.provider,
+            .claude,
+            "an empty scan is not a reason to leave the pane with no reader at all"
+        )
+    }
+
+    func testAFinishedReadingNamesEveryChoiceThatIsNotTheDefault() {
+        let asked = AgentReadingOptions(
+            provider: .claude,
+            model: .opus,
+            span: .recentWork,
+            lens: .decisions
+        ).summary
+        XCTAssertTrue(asked.contains(AgentCLI.claude.label))
+        XCTAssertTrue(asked.contains("Opus"))
+        XCTAssertTrue(asked.contains("recent work"))
+        XCTAssertTrue(asked.contains("decisions"))
+
+        XCTAssertFalse(
+            AgentReadingOptions().summary.contains("Default model"),
+            "a reading that took the CLI's own model has no model to report"
+        )
+    }
+
+    @MainActor
+    func testANarrowSpanReachesTheDigestTheReadingIsMadeFrom() async throws {
+        let recorder = RecordingSynthesizer()
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 60, toolRuns: 40),
+            synthesizer: recorder
+        )
+        model.readingOptions = AgentReadingOptions(span: .recentWork)
+
+        model.generateTimeline()
+        try await Fixture.settle(model)
+
+        XCTAssertEqual(
+            recorder.digest?.facts.count,
+            AgentReadingSpan.recentWork.maximumFacts,
+            "the span bounds the evidence before a model ever sees it"
+        )
+    }
+}
+
+/// Answers with a reading built from whatever digest it is given, and remembers what it was asked.
+private final class RecordingSynthesizer: AgentTimelineSynthesizer, @unchecked Sendable {
+    private let lock = NSLock()
+    private var seenOptions: AgentReadingOptions?
+    private var seenDigest: AgentTimelineDigest?
+
+    var observed: AgentReadingOptions? { lock.withLock { seenOptions } }
+    var digest: AgentTimelineDigest? { lock.withLock { seenDigest } }
+
+    func synthesize(
+        _ digest: AgentTimelineDigest,
+        options: AgentReadingOptions,
+        progress: @escaping @Sendable (AgentTimelineProgress) -> Void
+    ) async throws -> String {
+        lock.withLock {
+            seenOptions = options
+            seenDigest = digest
+        }
+        let anchors = digest.facts.prefix(4).map { "\"\($0.id)\"" }.joined(separator: ",")
+        return """
+        {"milestones":[{"title":"Read the session","whatChanged":"The pane produced a reading.",\
+        "whyItMattered":"It proves the request reached the synthesizer.","outcome":"settled",\
+        "anchors":[\(anchors)]}]}
+        """
     }
 }

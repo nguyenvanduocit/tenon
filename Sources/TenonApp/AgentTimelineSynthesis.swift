@@ -10,44 +10,58 @@ import Foundation
 /// for the shape the validator enforces. Keeping it here means a test can assert that the
 /// instruction and `AgentTimelineBounds` still agree.
 enum AgentTimelinePrompt {
-    static func text(for digest: AgentTimelineDigest) -> String {
+    /// The shape the validator enforces, quoted here so a test can hold the instruction and the
+    /// decoder to the same one.
+    static let schemaLine = """
+        {"milestones":[{"title":"...","whatChanged":"...","whyItMattered":"...",\
+        "outcome":"inProgress|settled|superseded","anchors":["fact-id","fact-id"]}]}
+        """
+
+    /// Everything the host will refuse a reading for, in one block every lens carries verbatim.
+    ///
+    /// It is a separate string rather than three similar paragraphs because the lens is a
+    /// person's choice and these are not: a reading asked for a different thing still has to
+    /// survive the same checks, and the cheapest way to guarantee that is to have one copy.
+    static func rules(forFacts factCount: Int) -> String {
         let ceiling = min(
             AgentTimelineBounds.maximumMilestones,
-            max(1, digest.facts.count / AgentTimelineBounds.minimumFactsPerMilestone)
+            max(1, factCount / AgentTimelineBounds.minimumFactsPerMilestone)
         )
+        return """
+        It is NOT one row per prompt, tool call, file edit or hook event. Group the prompts, \
+        runs, retries and checks that served one milestone under that milestone, and leave out \
+        repetitive exploration and incidental tool noise entirely — a fact you do not cite \
+        simply does not appear.
 
+        Return ONLY a JSON object, no prose and no code fence:
+
+        \(schemaLine)
+
+        Rules, all enforced by the host — a violation is rejected, not repaired:
+        - At most \(ceiling) milestones for this session. Fewer is better.
+        - `anchors` are fact ids copied EXACTLY from the list below. Inventing one is \
+        rejected. Every milestone needs at least one.
+        - A fact belongs to at most ONE milestone. Do not cite the same id twice.
+        - `title` is at most \(AgentTimelineBounds.maximumTitleLength) characters and must \
+        not restate one fact's own words.
+        - `whatChanged` and `whyItMattered` are one sentence each, at most \
+        \(AgentTimelineBounds.maximumProseLength) characters.
+        - `outcome` is `settled` only when the work finished and nothing later undid it, \
+        `superseded` when later work replaced or reverted it, `inProgress` when it is still \
+        open. A fact marked OPEN below can never be inside a `settled` milestone.
+        - Claim nothing the facts do not support. If the session is mostly setup and \
+        exploration, say that in one milestone rather than inventing several.
+        """
+    }
+
+    static func text(
+        for digest: AgentTimelineDigest,
+        lens: AgentReadingLens = .milestones
+    ) -> String {
         var lines: [String] = [
-            """
-            You are reading one terminal AI-agent session and writing the few milestones that \
-            explain it to a person who was not watching.
-
-            A milestone is a moment the session materially changed direction or state — \
-            "reproduced the focus loop", "found the competing focus writers", "changed the \
-            ownership rule", "verified the fix". It is NOT one row per prompt, tool call, file \
-            edit or hook event. Group the prompts, runs, retries and checks that served one \
-            milestone under that milestone, and leave out repetitive exploration and incidental \
-            tool noise entirely — a fact you do not cite simply does not appear.
-
-            Return ONLY a JSON object, no prose and no code fence:
-
-            {"milestones":[{"title":"...","whatChanged":"...","whyItMattered":"...",\
-            "outcome":"inProgress|settled|superseded","anchors":["fact-id","fact-id"]}]}
-
-            Rules, all enforced by the host — a violation is rejected, not repaired:
-            - At most \(ceiling) milestones for this session. Fewer is better.
-            - `anchors` are fact ids copied EXACTLY from the list below. Inventing one is \
-            rejected. Every milestone needs at least one.
-            - A fact belongs to at most ONE milestone. Do not cite the same id twice.
-            - `title` is at most \(AgentTimelineBounds.maximumTitleLength) characters and must \
-            not restate one fact's own words.
-            - `whatChanged` and `whyItMattered` are one sentence each, at most \
-            \(AgentTimelineBounds.maximumProseLength) characters.
-            - `outcome` is `settled` only when the work finished and nothing later undid it, \
-            `superseded` when later work replaced or reverted it, `inProgress` when it is still \
-            open. A fact marked OPEN below can never be inside a `settled` milestone.
-            - Claim nothing the facts do not support. If the session is mostly setup and \
-            exploration, say that in one milestone rather than inventing several.
-            """,
+            lens.framing,
+            "",
+            rules(forFacts: digest.facts.count),
             "",
             digest.isTruncated
                 ? "FACTS (the most recent \(digest.facts.count); earlier work is not shown):"
@@ -81,12 +95,15 @@ enum AgentTimelineProgress: Equatable, Sendable {
     case connected
     /// The reply is arriving.
     case writing(characters: Int)
+    /// The API pushed back and the CLI is waiting out its own backoff before trying again.
+    case retrying(attempt: Int)
 
     var message: String {
         switch self {
         case .launching: "Starting the agent CLI"
         case .connected: "Reading the session"
         case .writing(let characters): "Writing the reading — \(characters) characters"
+        case .retrying(let attempt): "The API is busy — retrying (attempt \(attempt))"
         }
     }
 }
@@ -104,13 +121,16 @@ enum AgentTimelineProgress: Equatable, Sendable {
 protocol AgentTimelineSynthesizer: Sendable {
     func synthesize(
         _ digest: AgentTimelineDigest,
+        options: AgentReadingOptions,
         progress: @escaping @Sendable (AgentTimelineProgress) -> Void
     ) async throws -> String
 }
 
-/// How a pane finds its synthesizer. Async because the answer is on the filesystem, and
-/// injectable because a headless test must be able to prove the whole loop without one.
-typealias AgentTimelineSynthesizerResolver = @Sendable () async -> (any AgentTimelineSynthesizer)?
+/// How a pane finds its synthesizer. Async because the answer is on the filesystem, injectable
+/// because a headless test must be able to prove the whole loop without one, and given the
+/// options because which CLI reads the session is one of them.
+typealias AgentTimelineSynthesizerResolver =
+    @Sendable (AgentReadingOptions) async -> (any AgentTimelineSynthesizer)?
 
 /// Why a reading did not arrive. Every case says something a person can act on, because on this
 /// surface an unexplained failure and an invented success look the same from the outside.
@@ -269,6 +289,53 @@ enum AgentTimelineDraftDecoder {
     }
 }
 
+/// When a run last said anything, when it started, and whether its quiet has been accounted
+/// for. All three are questions the watchdog asks every second, from a thread that is not the
+/// one answering them.
+///
+/// File-scope rather than nested because the silence rule is the part of this feature most worth
+/// asserting on its own, and a private nested class cannot be asserted at all.
+final class AgentRunActivity: @unchecked Sendable {
+    private let lock = NSLock()
+    private let started = Date()
+    private var last = Date()
+    private var explainedUntil: Date?
+
+    var silence: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
+    var elapsed: TimeInterval { Date().timeIntervalSince(started) }
+
+    /// Whether something the run said still accounts for the quiet since it said it.
+    var silenceIsExplained: Bool {
+        lock.withLock { explainedUntil.map { Date() < $0 } ?? false }
+    }
+
+    func touch() {
+        lock.withLock { last = Date() }
+    }
+
+    /// Records that the run named its own reason for going quiet, and how long it said that
+    /// reason would last.
+    ///
+    /// The excuse is a deadline rather than an amnesty, because the host is not guessing: the
+    /// CLI puts `retry_delay_ms` on the wire. It gets the delay it asked for plus the ordinary
+    /// silence budget to say something once the wait is over — a run that misses its own restart
+    /// is exactly the kind worth stopping.
+    ///
+    /// A retry that states no delay is the one case nothing here can bound, so it is excused
+    /// outright and the absolute ceiling is left in charge. That is a weaker answer than the
+    /// timed one and it is only reached when the CLI declines to say.
+    func explain(forSeconds seconds: TimeInterval?) {
+        lock.withLock {
+            guard let seconds else {
+                explainedUntil = .distantFuture
+                return
+            }
+            let budget = seconds + Double(AgentCLITimelineSynthesizer.silenceSeconds)
+            explainedUntil = Date().addingTimeInterval(budget)
+        }
+    }
+}
+
 /// What one line of the CLI's NDJSON stream says.
 enum AgentCLIStreamReading: Equatable, Sendable {
     /// Framing this host has no use for. Most lines are this, and that is fine.
@@ -277,6 +344,10 @@ enum AgentCLIStreamReading: Equatable, Sendable {
     case connected
     /// A piece of the reply arrived.
     case wrote(String)
+    /// The CLI hit a retryable API error and announced that it is backing off before the next
+    /// attempt, carrying the delay it intends to wait when it states one. The run is working,
+    /// and the quiet that follows is the backoff it just named — for as long as it named.
+    case retrying(attempt: Int, delay: TimeInterval?)
     /// The run reached its terminal event.
     case finished(Result<String, AgentTimelineFailure>)
 
@@ -286,6 +357,8 @@ enum AgentCLIStreamReading: Equatable, Sendable {
             true
         case let (.wrote(left), .wrote(right)):
             left == right
+        case let (.retrying(leftAttempt, leftDelay), .retrying(rightAttempt, rightDelay)):
+            leftAttempt == rightAttempt && leftDelay == rightDelay
         case let (.finished(left), .finished(right)):
             switch (left, right) {
             case let (.success(a), .success(b)): a == b
@@ -298,20 +371,70 @@ enum AgentCLIStreamReading: Equatable, Sendable {
     }
 }
 
-/// Reads one line of `claude --print --output-format stream-json --verbose`.
+/// Reads one line of the provider's own headless event stream.
 ///
-/// Pure, per line, so the CLI's shape is asserted against recorded fixtures rather than against
-/// a live login. Verified 2026-08-10 against the installed CLI: `{"type":"system",
+/// Pure, per line, so each CLI's shape is asserted against recorded fixtures rather than against
+/// a live login. Verified 2026-08-10 against the installed Claude CLI: `{"type":"system",
 /// "subtype":"init",…}`, `{"type":"stream_event","event":{"type":"content_block_delta",
 /// "delta":{"type":"text_delta","text":"…"}}}`, and
-/// `{"type":"result","subtype":"success","is_error":false,"result":"…"}`.
+/// `{"type":"result","subtype":"success","is_error":false,"result":"…"}`. Verified 2026-08-11
+/// against the installed Codex CLI: `{"type":"thread.started",…}`, `{"type":"turn.started"}`,
+/// `{"type":"item.completed","item":{"type":"agent_message","text":"…"}}`,
+/// `{"type":"turn.completed","usage":{…}}`.
 enum AgentCLIStreamReader {
-    static func read(line: Data) -> AgentCLIStreamReading {
+    static func read(line: Data, provider: AgentCLI = .claude) -> AgentCLIStreamReading {
         guard let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any]
         else { return .ignored }
+        switch provider {
+        case .claude: return claude(record)
+        case .codex: return codex(record)
+        }
+    }
+
+    /// Codex answers in one message rather than in deltas, so there is no `wrote` to report —
+    /// its liveness comes from the process, which is why silence is not a deadline for it.
+    private static func codex(_ record: [String: Any]) -> AgentCLIStreamReading {
+        switch record["type"] as? String {
+        case "thread.started":
+            return .connected
+
+        case "item.completed":
+            guard let item = record["item"] as? [String: Any],
+                  item["type"] as? String == "agent_message",
+                  let text = item["text"] as? String
+            else { return .ignored }
+            guard !text.isEmpty else {
+                return .finished(.failure(.malformedOutput("the CLI returned an empty reply")))
+            }
+            return .finished(.success(text))
+
+        case "error":
+            let detail = record["message"] as? String ?? "the agent CLI reported an error"
+            return .finished(.failure(.runFailed(detail)))
+
+        default:
+            // `turn.started`, `turn.completed` and reasoning items are framing around the one
+            // message that carries the reply.
+            return .ignored
+        }
+    }
+
+    private static func claude(_ record: [String: Any]) -> AgentCLIStreamReading {
         switch record["type"] as? String {
         case "system" where record["subtype"] as? String == "init":
             return .connected
+
+        case "system" where record["subtype"] as? String == "api_retry":
+            // Read off the frame the CLI actually builds, confirmed in the installed 2.1.227:
+            // `subtype:"api_retry",attempt:…retryAttempt,max_retries:…maxRetries,
+            // retry_delay_ms:…retryInMs,error_status:…error.status??null,error:…`. The counters
+            // are still optional here, because the subtype is the contract this deadline is bet
+            // on and a field name is a weaker thing to bet it on.
+            let milliseconds = record["retry_delay_ms"] as? Double
+            return .retrying(
+                attempt: record["attempt"] as? Int ?? 1,
+                delay: milliseconds.map { $0 / 1000 }
+            )
 
         case "stream_event":
             guard let event = record["event"] as? [String: Any],
@@ -362,23 +485,33 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
     static let maximumOutputBytes = 512 << 10
 
     let executableURL: URL
+    /// Which CLI this is. Answered once, when the synthesizer was resolved, so nothing later has
+    /// to reconcile a stored provider with a requested one.
+    let provider: AgentCLI
 
-    /// The installed agent CLI this host would use, or nil when none is on the person's PATH.
+    /// The installed agent CLI this host would use, or nil when that one is not on the person's
+    /// PATH.
     ///
     /// Reuses `AgentLaunchDetector` rather than probing again: where the agent binaries are is
     /// already one question with one answer in this app.
-    static func installed(detector: AgentLaunchDetector = AgentLaunchDetector()) -> Self? {
+    static func installed(
+        provider: AgentCLI = .claude,
+        detector: AgentLaunchDetector = AgentLaunchDetector()
+    ) -> Self? {
         let suggestions = detector.scan()
-        guard let claude = suggestions.first(where: { $0.agent == .claude }) else { return nil }
-        return Self(executableURL: claude.executableURL)
+        guard let match = suggestions.first(where: { $0.agent == provider }) else { return nil }
+        return Self(executableURL: match.executableURL, provider: provider)
     }
 
     func synthesize(
         _ digest: AgentTimelineDigest,
+        options: AgentReadingOptions,
         progress: @escaping @Sendable (AgentTimelineProgress) -> Void
     ) async throws -> String {
-        let prompt = AgentTimelinePrompt.text(for: digest)
+        let prompt = AgentTimelinePrompt.text(for: digest, lens: options.lens)
         let executableURL = executableURL
+        let provider = provider
+        let arguments = Self.arguments(provider: provider, model: options.model)
         let handle = ProcessHandle()
 
         return try await withTaskCancellationHandler {
@@ -387,6 +520,8 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
                     continuation.resume(
                         with: Self.run(
                             executableURL: executableURL,
+                            arguments: arguments,
+                            provider: provider,
                             prompt: prompt,
                             handle: handle,
                             progress: progress
@@ -399,31 +534,84 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         }
     }
 
-    /// The arguments a reading is worth.
+    /// The arguments a reading is worth, spelled the way each CLI spells a one-shot run.
     ///
-    /// `--safe-mode` because this run has one job — read the digest in the prompt and answer in
-    /// the schema the host validates — and every customization it would otherwise load is either
-    /// irrelevant to that or actively dangerous to it: a custom output style can break the JSON
-    /// the validator requires. Measured 2026-08-10 on this machine, dropping them takes a
-    /// trivial run from 8.1 s to 4.5 s of wall clock and from 11.3 s to 1.3 s of CPU.
+    /// For Claude: `--safe-mode` because this run has one job — read the digest in the prompt and
+    /// answer in the schema the host validates — and every customization it would otherwise load
+    /// is either irrelevant to that or actively dangerous to it: a custom output style can break
+    /// the JSON the validator requires. Measured 2026-08-10 on this machine, dropping them takes
+    /// a trivial run from 8.1 s to 4.5 s of wall clock and from 11.3 s to 1.3 s of CPU.
     /// `--no-session-persistence` because a reading is not a session anybody will resume, and
     /// writing one leaves a transcript that Agent Lens would then be able to find.
-    static let arguments = [
-        "--print",
-        "--output-format", "stream-json",
-        "--verbose",
-        "--include-partial-messages",
-        "--max-turns", "1",
-        "--safe-mode",
-        "--no-session-persistence",
-    ]
+    ///
+    /// For Codex, measured against the installed CLI on 2026-08-11: `exec --json` is the headless
+    /// one-shot, `--skip-git-repo-check` because the run is rooted in scratch space rather than in
+    /// the project, `-s read-only` because reading a digest never needs to write, and the trailing
+    /// `-` because that is how it takes its prompt from stdin.
+    static func arguments(provider: AgentCLI, model: AgentReadingModel) -> [String] {
+        switch provider {
+        case .claude:
+            var arguments = [
+                "--print",
+                "--output-format", "stream-json",
+                "--verbose",
+                "--include-partial-messages",
+                "--max-turns", "1",
+                "--safe-mode",
+                "--no-session-persistence",
+            ]
+            if let alias = model.alias { arguments += ["--model", alias] }
+            return arguments
+        case .codex:
+            var arguments = [
+                "exec",
+                "--json",
+                "--skip-git-repo-check",
+                "-s", "read-only",
+            ]
+            if let alias = model.alias { arguments += ["--model", alias] }
+            // `-` last, because `codex exec` reads its prompt from stdin only when the prompt
+            // argument is absent or is exactly that.
+            arguments.append("-")
+            return arguments
+        }
+    }
+
+    /// How long a run of this provider may say nothing, or nil when silence says nothing about
+    /// it.
+    ///
+    /// The silence rule was justified by the stream: a reading that is still writing is alive by
+    /// observation. A CLI that answers in one message at the end has no such signal, so the same
+    /// rule would kill healthy runs — the ceiling is the only honest bound there.
+    static func silenceSeconds(for provider: AgentCLI) -> Int? {
+        switch provider {
+        case .claude: silenceSeconds
+        // `codex exec --json` reports items as they complete rather than tokens as they arrive,
+        // so a healthy run is quiet for its whole reasoning turn. The ceiling is its only bound.
+        case .codex: nil
+        }
+    }
+
+    /// The readers this machine actually has, in the order `AgentCLI` declares them.
+    ///
+    /// Answered from the same detector `installed(provider:)` uses, so the list a person picks
+    /// from and the binary their run finds can never be two different questions.
+    static func installedProviders(
+        detector: AgentLaunchDetector = AgentLaunchDetector()
+    ) -> [AgentCLI] {
+        let found = Set(detector.scan().map(\.agent))
+        return AgentCLI.allCases.filter(found.contains)
+    }
 
     private static func run(
         executableURL: URL,
+        arguments: [String],
+        provider: AgentCLI,
         prompt: String,
         handle: ProcessHandle,
         progress: @escaping @Sendable (AgentTimelineProgress) -> Void
     ) -> Result<String, any Error> {
+        let silence = silenceSeconds(for: provider)
         let process = Process()
         process.executableURL = executableURL
         process.arguments = arguments
@@ -444,7 +632,7 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         }
         progress(.launching)
 
-        let activity = ActivityClock()
+        let activity = AgentRunActivity()
         // The deadline lives with the process, not with the caller's await: a CLI that never
         // writes and never exits would otherwise hold a pipe open for as long as the pane does.
         // It watches silence rather than duration — the stream is what makes that difference
@@ -454,7 +642,10 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         watchdog.setEventHandler {
             if activity.elapsed >= Double(ceilingSeconds) {
                 handle.expire(.ceiling)
-            } else if activity.silence >= Double(silenceSeconds) {
+            } else if let silence,
+                      !activity.silenceIsExplained,
+                      activity.silence >= Double(silence)
+            {
                 handle.expire(.silence)
             }
         }
@@ -475,7 +666,11 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
                     let line = Data(pending.prefix(length))
                     pending.removeFirst(length + 1)
                     guard !line.isEmpty else { continue }
-                    if let update = reading.consume(AgentCLIStreamReader.read(line: line)) {
+                    let event = AgentCLIStreamReader.read(line: line, provider: provider)
+                    if case .retrying(_, let delay) = event {
+                        activity.explain(forSeconds: delay)
+                    }
+                    if let update = reading.consume(event) {
                         progress(update)
                     }
                 }
@@ -507,7 +702,7 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
 
         switch handle.stopReason {
         case .silence:
-            return .failure(AgentTimelineFailure.stalled(silentSeconds: silenceSeconds))
+            return .failure(AgentTimelineFailure.stalled(silentSeconds: silence ?? silenceSeconds))
         case .ceiling:
             return .failure(AgentTimelineFailure.timedOut(seconds: ceilingSeconds))
         case .cancelled:
@@ -529,21 +724,6 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
             )
         }
         return .failure(AgentTimelineFailure.malformedOutput("the CLI wrote no result event"))
-    }
-
-    /// When the run last said anything, and when it started. Both questions the watchdog asks
-    /// every second, from a thread that is not the one answering them.
-    private final class ActivityClock: @unchecked Sendable {
-        private let lock = NSLock()
-        private let started = Date()
-        private var last = Date()
-
-        var silence: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
-        var elapsed: TimeInterval { Date().timeIntervalSince(started) }
-
-        func touch() {
-            lock.withLock { last = Date() }
-        }
     }
 
     /// Folds the stream into the two things the host needs from it: what to show now, and the
@@ -572,6 +752,10 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
                     }
                     reported = characters
                     return .writing(characters: characters)
+                case .retrying(let attempt, _):
+                    // Reported rather than throttled: a retry is rare, and it is the one thing
+                    // that explains a long quiet to the person watching.
+                    return .retrying(attempt: attempt)
                 case .finished(let value):
                     if result == nil { result = value }
                     return nil

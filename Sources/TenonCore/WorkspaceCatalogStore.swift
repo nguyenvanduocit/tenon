@@ -138,19 +138,41 @@ public enum WorkspaceCatalogSnapshot {
         public var pluginID: String?
         public var viewID: String?
         public var diff: DiffRecord?
+        public var agentSession: AgentSessionRecord?
 
         public init(
             type: String,
             path: String? = nil,
             pluginID: String? = nil,
             viewID: String? = nil,
-            diff: DiffRecord? = nil
+            diff: DiffRecord? = nil,
+            agentSession: AgentSessionRecord? = nil
         ) {
             self.type = type
             self.path = path
             self.pluginID = pluginID
             self.viewID = viewID
             self.diff = diff
+            self.agentSession = agentSession
+        }
+    }
+
+    public struct AgentSessionRecord: Equatable, Sendable, Codable {
+        public var provider: String
+        public var sessionID: String
+        public var transcriptPath: String
+        public var title: String?
+
+        public init(
+            provider: String,
+            sessionID: String,
+            transcriptPath: String,
+            title: String?
+        ) {
+            self.provider = provider
+            self.sessionID = sessionID
+            self.transcriptPath = transcriptPath
+            self.title = title
         }
     }
 
@@ -457,6 +479,13 @@ public enum WorkspaceCatalogSnapshot {
                 pluginID: pluginID.rawValue,
                 viewID: viewID
             )
+        case .agentSession(let ref):
+            return ContentRecord(type: "agentSession", agentSession: AgentSessionRecord(
+                provider: ref.provider.rawValue,
+                sessionID: ref.sessionID,
+                transcriptPath: ref.transcriptPath,
+                title: ref.title
+            ))
         case .diff(let request):
             switch request.source {
             case let .git(repoPath, path, staged, untracked, origPath):
@@ -503,6 +532,21 @@ public enum WorkspaceCatalogSnapshot {
                   isKnownPluginView(rawPluginID, viewID)
             else { return .empty }
             return .pluginView(pluginID: pluginID, viewID: viewID)
+        case "agentSession":
+            // A transcript that is gone is the whole content: there is no session to read and
+            // nothing the pane could honestly draw, so it comes back as the blank pane holding
+            // its place in the layout — the same answer a deleted file's pane gives.
+            guard let session = record.agentSession,
+                  let provider = AgentSessionProvider(rawValue: session.provider),
+                  isFileReadable(session.transcriptPath),
+                  let ref = AgentSessionRef(
+                      provider: provider,
+                      sessionID: session.sessionID,
+                      transcriptPath: session.transcriptPath,
+                      title: session.title
+                  )
+            else { return .empty }
+            return .agentSession(ref)
         case "diff":
             guard let diff = record.diff, isDirectory(diff.repoPath) else { return .empty }
             return .diff(DiffRequest(

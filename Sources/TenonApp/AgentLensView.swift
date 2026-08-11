@@ -407,6 +407,55 @@ struct AgentSessionLayout: Layout {
         )
     }
 
+    func explicitAlignment(
+        of guide: HorizontalAlignment,
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGFloat? {
+        Self.guidePosition(of: guide, across: bounds.width)
+    }
+
+    func explicitAlignment(
+        of guide: VerticalAlignment,
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGFloat? {
+        Self.guidePosition(of: guide, across: bounds.height)
+    }
+
+    /// Where a standard guide sits across this layout, read off the box rather than the content.
+    ///
+    /// This layout fills whatever it is offered — `sizeThatFits` returns the proposal — and puts
+    /// the account at the top-leading corner with the footer against the bottom edge. Its
+    /// leading edge, centre and trailing edge are therefore properties of the box alone, and no
+    /// subview has to be measured or placed to say where they are.
+    ///
+    /// A guide this layout does not recognise — a text baseline, or one an ancestor defined —
+    /// answers `nil` and takes the default. That is the expensive route, and it is the correct
+    /// one: a baseline is a fact about the content, and guessing the box's centre for it would
+    /// misalign the pane to buy speed.
+    static func guidePosition(of guide: HorizontalAlignment, across width: CGFloat) -> CGFloat? {
+        switch guide {
+        case .leading: 0
+        case .center: width / 2
+        case .trailing: width
+        default: nil
+        }
+    }
+
+    static func guidePosition(of guide: VerticalAlignment, across height: CGFloat) -> CGFloat? {
+        switch guide {
+        case .top: 0
+        case .center: height / 2
+        case .bottom: height
+        default: nil
+        }
+    }
+
     private func measuredFooter(proposal: ProposedViewSize, subviews: Subviews) -> CGSize {
         guard subviews.count > 1 else { return .zero }
         return subviews[1].sizeThatFits(
@@ -462,9 +511,14 @@ private struct AgentSessionView: View {
                     returnToEvidence: { model.returnToEvidence($0) }
                 )
             }
-            VStack(spacing: 0) {
-                Divider().overlay(TenonTheme.line)
-                composer
+            // A recorded session draws no composer at all, rather than a disabled one. There
+            // is nothing to type into: the pane holds no PTY, and a greyed-out field would
+            // still say "you could answer this here" about a session that ended.
+            if model.attachment.allowsSending {
+                VStack(spacing: 0) {
+                    Divider().overlay(TenonTheme.line)
+                    composer
+                }
             }
         }
         .background(TenonTheme.ink)
@@ -505,7 +559,8 @@ private struct AgentSessionView: View {
                             chooseOption: chooseOption,
                             openTerminal: openTerminal,
                             fileLinks: fileLinks,
-                            submittedOptionRequestID: model.submittedOptionRequestID
+                            submittedOptionRequestID: model.submittedOptionRequestID,
+                            allowsAnswering: model.attachment.allowsSending
                         )
                         .id(item.id)
                     }
@@ -657,6 +712,9 @@ private struct AgentTimelineRow: View {
     let openTerminal: () -> Void
     let fileLinks: AgentFileLinks
     let submittedOptionRequestID: String?
+    /// Whether an answer can reach anything. False for a recorded session, whose pending
+    /// question was answered — or abandoned — before this pane ever opened.
+    let allowsAnswering: Bool
 
     @ViewBuilder var body: some View {
         switch item.content {
@@ -679,7 +737,8 @@ private struct AgentTimelineRow: View {
                 inspect: { inspect(.interaction(request)) },
                 chooseOption: chooseOption,
                 openTerminal: openTerminal,
-                answerSubmitted: submittedOptionRequestID == request.id
+                answerSubmitted: submittedOptionRequestID == request.id,
+                allowsAnswering: allowsAnswering
             )
         case .diagnostic(let diagnostic):
             AgentSpineDiagnosticRow(
@@ -909,6 +968,7 @@ private struct AgentSpineInteractionRow: View {
     let chooseOption: (AgentInteractionRequest, AgentInteractionOption) -> Void
     let openTerminal: () -> Void
     let answerSubmitted: Bool
+    let allowsAnswering: Bool
 
     var body: some View {
         AgentSpineChrome(
@@ -938,7 +998,10 @@ private struct AgentSpineInteractionRow: View {
                         .foregroundStyle(TenonTheme.muted)
                         .textSelection(.enabled)
                 }
-                if request.state == .pending {
+                // A finished session that stopped mid-question still carries a pending
+                // request, and that is worth SHOWING — it is how the session ended. What it
+                // does not get is controls: nobody is waiting for the answer.
+                if request.state == .pending, allowsAnswering {
                     pendingControls
                 }
             }

@@ -125,7 +125,14 @@ struct AgentTimelineDigest: Equatable, Sendable {
     }
 
     /// Reads one snapshot into the bounded evidence a synthesis may see, or says why it cannot.
-    static func build(from snapshot: AgentLensSnapshot) -> Result<Self, AgentTimelineInsufficiency> {
+    ///
+    /// The span narrows that evidence before a model ever sees it, and can only narrow it: the
+    /// digest's own ceiling still applies, and both cuts are floored at the bar below which a
+    /// synthesis is refused outright.
+    static func build(
+        from snapshot: AgentLensSnapshot,
+        span: AgentReadingSpan = .wholeSession
+    ) -> Result<Self, AgentTimelineInsufficiency> {
         guard snapshot.provider != nil else { return .failure(.noSession) }
 
         // `timelineItems` rather than `sessionTimelineItems`: Chat deliberately hides completed
@@ -137,9 +144,15 @@ struct AgentTimelineDigest: Equatable, Sendable {
         var facts = items.compactMap(fact(from:))
         guard !facts.isEmpty else { return .failure(.empty) }
 
+        // The narrower of the two ceilings, floored at the bar: a span can only take facts away,
+        // and never enough of them to turn a readable session into a refused one.
+        let ceiling = max(
+            min(maximumFacts, span.maximumFacts),
+            AgentTimelineBounds.minimumFactsForSynthesis
+        )
         var isTruncated = false
-        if facts.count > maximumFacts {
-            facts.removeFirst(facts.count - maximumFacts)
+        if facts.count > ceiling {
+            facts.removeFirst(facts.count - ceiling)
             isTruncated = true
         }
         while facts.count > minimumFactsToKeep, totalCharacters(facts) > maximumTotalCharacters {

@@ -250,6 +250,49 @@ Feature: Supervise agent sessions through bounded checkable evidence
       But a run that produces nothing for the silence bound is stopped and says so
       And a run that never stops talking is stopped at the ceiling and says that instead
 
+    @req-al-fr-044 @req-al-fr-038 @timeline
+    Scenario: A busy API is waited out, not blamed on the reading
+      Given a reading is running and the API returns a retryable error
+      When the agent CLI announces that it is backing off before its next attempt
+      Then the pane says the API is busy and which attempt this is
+      And the quiet that follows the announcement does not expire the run
+      But a run that never speaks again is still stopped at the ceiling
+
+    @req-al-fr-040 @req-al-fr-030 @timeline
+    Scenario: A reading keeps the options it was started with
+      Given the reader, model, span and lens have been chosen on the invitation
+      When a reading is requested and different options are chosen while it runs
+      Then the run is taken with the options it started with
+      And the finished reading states those options rather than the pending ones
+
+    @req-al-fr-041 @req-al-fr-031 @timeline
+    Scenario Outline: Each reader is offered and invoked on its own terms
+      Given the machine's installed agent CLIs have been scanned
+      Then only those CLIs are offered as readers
+      When "<provider>" is chosen
+      Then the run is spelled "<invocation>"
+      And model choice is limited to "<models>"
+      And silence is treated as "<silence>"
+
+      Examples:
+        | provider | invocation                                 | models                       | silence          |
+        | claude   | one-shot print with a streaming reply      | the CLI's documented aliases | evidence of death |
+        | codex    | headless exec reading its prompt from stdin| the CLI's own configured model | nothing at all  |
+
+    @req-al-fr-042 @req-al-fr-025 @timeline
+    Scenario: A narrower span is a different question
+      Given a session with more facts than the narrow span admits
+      When a reading is requested over recent work rather than the whole session
+      Then the digest keeps the newest facts, says it was cut, and fingerprints differently
+      And no span takes the session below the six-fact bar that refuses a synthesis
+
+    @req-al-fr-043 @req-al-fr-028 @timeline
+    Scenario: A different lens changes the question, never the checks
+      Given the reading can be asked for milestones, problems or decisions
+      When each lens builds its instruction
+      Then every one carries the identical schema, anchor, partition and settled rules
+      And no two lenses ask for the same thing
+
     @req-al-fr-039 @req-al-fr-012 @discovery
     Scenario: A session is known before its provider writes the transcript
       Given a root hook declares the transcript this terminal's session will write
@@ -453,3 +496,48 @@ Feature: Supervise agent sessions through bounded checkable evidence
       When Lens presents the evidence
       Then each fact keeps its authority and freshness
       And provider prose is not relabeled as direct observation
+
+  Rule: A session that already happened is read by the same lens, and holds no PTY until resumed
+
+    @req-al-fr-045 @security
+    Scenario: A recorded session opens a pane that reads it with Agent Lens itself
+      Given a plugin lists a session it recorded and names its transcript
+      When it opens that reference through workspace.content.open.v1
+      Then the host resolves symlinks on both the path and the allowed provider roots
+      And a transcript under one of those roots opens a pane reading it with the chat spine, the evidence inspector, and the Timeline
+      And the pane that already reads a recorded session takes the next one rather than opening another
+
+    @req-al-fr-045 @security
+    Scenario: A named transcript the host cannot vouch for opens nothing
+      Given a plugin names a path that resolves outside every allowed provider root
+      When it opens that reference through workspace.content.open.v1
+      Then the refusal is typed invalid input
+      And no pane opens and no partial reference is built
+
+    @req-al-fr-046
+    Scenario: A recorded pane cannot say anything to anyone
+      Given a pane is reading a session that has already finished
+      Then it holds no terminal surface and starts no discovery
+      And it draws no composer
+      And a request left pending when the session ended is still shown with no control to answer it
+
+    @req-al-fr-047
+    Scenario: Resuming converts the pane that is reading the session
+      Given a recorded pane whose agent is installed on this machine
+      When the operator presses + Resume
+      Then the command line is composed by the one typed agent composer, carrying the options this person runs that agent with
+      And that same pane becomes a live terminal continuing the same session
+
+    @req-al-fr-047
+    Scenario: An unavailable agent states its reason before it is pressed
+      Given a recorded pane whose recording agent is not installed on this machine
+      Then the pane states why the session cannot be continued here
+      And the reading stays available
+
+    @req-al-fr-048
+    Scenario: A recorded pane survives a restart, and gives up its content when the transcript does not
+      Given a recorded pane is captured into the workspace catalog
+      When the workspace is restored and the transcript is still readable
+      Then the pane comes back carrying provider, session, transcript, and title
+      But when the transcript is gone, its provider is unrecognised, or its stored reference is malformed
+      Then the pane comes back empty, keeping its place in the layout

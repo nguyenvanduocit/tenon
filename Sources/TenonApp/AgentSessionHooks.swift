@@ -155,17 +155,11 @@ actor AgentSessionRegistry {
     }
 
     private func candidateURL(for event: AgentHookEvent) -> URL? {
-        guard let transcriptPath = event.transcriptPath, transcriptPath.hasPrefix("/") else {
-            return nil
-        }
-        let transcriptURL = URL(fileURLWithPath: transcriptPath)
-            .resolvingSymlinksInPath().standardizedFileURL
-        guard transcriptURL.pathExtension == "jsonl",
-              allowedTranscriptRoots.contains(where: {
-                  transcriptURL.path.hasPrefix($0.path + "/")
-              })
-        else { return nil }
-        return transcriptURL
+        guard let transcriptPath = event.transcriptPath else { return nil }
+        // A hook reports a path a provider chose, which is the same question the session list
+        // and the descriptor walk ask, so it is answered by the same rule. Existence is not
+        // required: Claude Code names the transcript it is about to write before writing it.
+        return AgentTranscriptPath.validated(transcriptPath, roots: allowedTranscriptRoots)
     }
 }
 

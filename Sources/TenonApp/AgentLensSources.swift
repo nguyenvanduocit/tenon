@@ -41,6 +41,9 @@ actor AgentLensDiscovery {
     private let claudeHookDegradation: String?
     private let processProvider: (@Sendable (UInt64) -> AgentProvider?)?
     private let processGroupProvider: (@Sendable (UInt64) -> UInt64?)?
+    /// One provider verdict per surface, keyed to the foreground process it was derived from.
+    private var providerVerdicts: [UUID: (pid: UInt64, verdict: AgentProvider?)] = [:]
+    private static let providerVerdictLimit = 128
 
     init(
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
@@ -71,9 +74,7 @@ actor AgentLensDiscovery {
     }
 
     func resolve(_ identity: AgentTerminalIdentity) async -> AgentLensResolution? {
-        guard let provider = processProvider?(identity.foregroundPID)
-            ?? provider(for: identity.foregroundPID)
-        else { return nil }
+        guard let provider = provider(for: identity) else { return nil }
         let roots = transcriptRoots(for: provider, cwd: identity.cwd)
 
         if let binding = await sessionRegistry.binding(
@@ -129,6 +130,33 @@ actor AgentLensDiscovery {
             return "\(provider.displayName) detected, but its Tenon hook is unavailable: \(degradation)"
         }
         return "\(provider.displayName) detected; waiting for its terminal-bound hook"
+    }
+
+    /// Which agent is running in this terminal, derived once per foreground process.
+    ///
+    /// Deriving it costs `proc_pidpath` plus a blocking `/bin/ps` fork, and `discoveryLoop`
+    /// asks every 750 ms for as long as the pane exists — `stop()` is reached only from
+    /// `AgentLensPool.retainOnly`, so a pane in a background workspace keeps asking too. The
+    /// answer is a property of the foreground process, so it is re-derived exactly when that
+    /// process changes, which is also what `/new` in a terminal produces.
+    ///
+    /// One entry per surface keeps the table proportional to panes rather than to uptime, and
+    /// the limit bounds it against a session that opens and closes panes all day. Dropping the
+    /// whole table costs one extra derivation per live pane and nothing else.
+    private func provider(for identity: AgentTerminalIdentity) -> AgentProvider? {
+        if let cached = providerVerdicts[identity.surfaceToken],
+           cached.pid == identity.foregroundPID
+        {
+            return cached.verdict
+        }
+
+        let verdict = processProvider?(identity.foregroundPID)
+            ?? provider(for: identity.foregroundPID)
+        if providerVerdicts.count >= Self.providerVerdictLimit {
+            providerVerdicts.removeAll(keepingCapacity: true)
+        }
+        providerVerdicts[identity.surfaceToken] = (identity.foregroundPID, verdict)
+        return verdict
     }
 
     private func provider(for pid: UInt64) -> AgentProvider? {
@@ -215,22 +243,17 @@ actor AgentLensDiscovery {
 
     /// Where a transcript is allowed to be, which a root session can state before it writes one.
     private func declared(_ candidate: URL, under roots: [URL]) -> URL? {
-        let resolved = candidate.resolvingSymlinksInPath().standardizedFileURL
-        guard resolved.pathExtension == "jsonl" else { return nil }
-        for root in roots {
-            let resolvedRoot = root.resolvingSymlinksInPath().standardizedFileURL.path
-            if resolved.path.hasPrefix(resolvedRoot + "/") { return resolved }
-        }
-        return nil
+        AgentTranscriptPath.validated(candidate, roots: roots)
     }
 
     /// The same question asked of a file that is already there, for a transcript found by
     /// walking a process's open descriptors rather than reported by its own session.
     private func validate(_ candidate: URL, under roots: [URL]) -> URL? {
-        guard let declared = declared(candidate, under: roots),
-              fileManager.fileExists(atPath: declared.path)
-        else { return nil }
-        return declared
+        AgentTranscriptPath.validatedExisting(
+            candidate,
+            roots: roots,
+            fileManager: fileManager
+        )
     }
 
     private func run(executable: String, arguments: [String]) -> String {

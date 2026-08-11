@@ -48,6 +48,9 @@ struct AgentSessionTimelineView: View {
         .tenonScrollbarStyle()
         .background(TenonTheme.ink)
         .accessibilityIdentifier("tenon.agentLens.timeline")
+        // Which CLIs this machine has is a filesystem answer, so it is asked off MainActor and
+        // only once the account is actually on screen.
+        .task { await model.loadAvailableReaders() }
     }
 
     // MARK: - States  @domain: agent-lens
@@ -59,14 +62,18 @@ struct AgentSessionTimelineView: View {
                 .foregroundStyle(TenonTheme.text)
             Text(
                 """
-                An agent reads the transcript and the lifecycle facts behind Chat and writes the \
-                few moments where this session changed direction — each one anchored back to the \
-                rows it came from.
+                An agent reads the transcript and the lifecycle facts behind Chat and answers in \
+                a few moments, each one anchored back to the rows it came from.
                 """
             )
             .font(TenonTheme.interfaceFont(size: 11.5))
             .foregroundStyle(TenonTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
+            readingControls
+            Text(model.readingOptions.lens.hint)
+                .font(TenonTheme.utilityFont(size: 9.5))
+                .foregroundStyle(TenonTheme.muted)
+                .fixedSize(horizontal: false, vertical: true)
             Button("Read this session") { model.generateTimeline() }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.small)
@@ -75,6 +82,117 @@ struct AgentSessionTimelineView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(14)
         .background(TenonTheme.chrome, in: .rect(cornerRadius: 8))
+    }
+
+    // MARK: - What the next reading is asked for  @domain: agent-lens
+
+    /// The four choices, folded to whatever the pane is wide enough for.
+    ///
+    /// They sit on the invitation rather than in the pane header because they belong to the
+    /// reading that has not been asked for yet: a run in flight keeps the options it started
+    /// with, and a header control would suggest it could be steered mid-flight.
+    private var readingControls: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(spacing: 8) {
+                readerPicker
+                modelPicker
+                spanPicker
+                lensPicker
+                Spacer(minLength: 0)
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                HStack(spacing: 8) {
+                    readerPicker
+                    modelPicker
+                    Spacer(minLength: 0)
+                }
+                HStack(spacing: 8) {
+                    spanPicker
+                    lensPicker
+                    Spacer(minLength: 0)
+                }
+            }
+            VStack(alignment: .leading, spacing: 6) {
+                readerPicker
+                modelPicker
+                spanPicker
+                lensPicker
+            }
+        }
+        .disabled(model.timelineGeneration.isRunning)
+    }
+
+    /// Only the CLIs this machine has, and only when there is more than one of them: a menu with
+    /// a single item is a control that cannot be used for anything.
+    @ViewBuilder
+    private var readerPicker: some View {
+        if model.availableReaders.count > 1 {
+            Picker("Reader", selection: readerBinding) {
+                ForEach(model.availableReaders, id: \.self) { reader in
+                    Text(reader.label).tag(reader)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+        }
+    }
+
+    @ViewBuilder
+    private var modelPicker: some View {
+        let choices = AgentReadingModel.choices(for: model.readingOptions.provider)
+        if choices.count > 1 {
+            Picker("Model", selection: modelBinding) {
+                ForEach(choices) { choice in
+                    Text(choice.title).tag(choice)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.menu)
+            .controlSize(.small)
+            .fixedSize()
+        }
+    }
+
+    private var spanPicker: some View {
+        Picker("How much of the session", selection: $model.readingOptions.span) {
+            ForEach(AgentReadingSpan.allCases) { span in
+                Text(span.title).tag(span)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .fixedSize()
+    }
+
+    private var lensPicker: some View {
+        Picker("What the reading looks for", selection: $model.readingOptions.lens) {
+            ForEach(AgentReadingLens.allCases) { lens in
+                Text(lens.title).tag(lens)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .controlSize(.small)
+        .fixedSize()
+    }
+
+    /// Provider and model are written through the options' own guard rather than assigned, so the
+    /// pane cannot leave a CLI holding another CLI's alias.
+    private var readerBinding: Binding<AgentCLI> {
+        Binding(
+            get: { model.readingOptions.provider },
+            set: { model.readingOptions.select(provider: $0) }
+        )
+    }
+
+    private var modelBinding: Binding<AgentReadingModel> {
+        Binding(
+            get: { model.readingOptions.model },
+            set: { model.readingOptions.select(model: $0) }
+        )
     }
 
     /// A run in flight, described by what it has actually done.
@@ -118,6 +236,10 @@ struct AgentSessionTimelineView: View {
                 tint: TenonTheme.amber
             )
             if failure.isRetryable {
+                // The controls come back with the retry rather than only on the invitation: the
+                // most useful thing to change after a reading failed is the reading — a CLI that
+                // is not installed, a model that was busy, a span that was too much to chew.
+                readingControls
                 Button("Try again") { model.generateTimeline() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
@@ -161,15 +283,27 @@ struct AgentSessionTimelineView: View {
     }
 
     private func summaryText(_ timeline: AgentSessionTimeline) -> some View {
-        Text(
-            "\(timeline.milestones.count) \(timeline.milestones.count == 1 ? "milestone" : "milestones") from \(timeline.factCount) facts"
-        )
-        .font(TenonTheme.utilityFont(size: 10, weight: .semibold))
-        .tracking(0.5)
-        .foregroundStyle(TenonTheme.muted)
-        .accessibilityLabel(
-            "\(timeline.milestones.count) milestones synthesized from \(timeline.factCount) session facts"
-        )
+        VStack(alignment: .leading, spacing: 2) {
+            Text(
+                "\(timeline.milestones.count) \(timeline.milestones.count == 1 ? "milestone" : "milestones") from \(timeline.factCount) facts"
+            )
+            .font(TenonTheme.utilityFont(size: 10, weight: .semibold))
+            .tracking(0.5)
+            .foregroundStyle(TenonTheme.muted)
+            .accessibilityLabel(
+                "\(timeline.milestones.count) milestones synthesized from \(timeline.factCount) session facts"
+            )
+            // What this reading was asked for, not what the pickers say now: the two differ the
+            // moment someone starts choosing the next one, and only the first explains what is
+            // on screen.
+            if let taken = model.readingOptionsInUse {
+                Text("Read by \(taken.summary)")
+                    .font(TenonTheme.utilityFont(size: 9.5))
+                    .foregroundStyle(TenonTheme.muted)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .accessibilityLabel("This reading was taken with \(taken.summary)")
+            }
+        }
     }
 
     private var refreshButton: some View {
@@ -255,7 +389,10 @@ private struct AgentMilestoneRow: View {
     }
 
     private var metadata: some View {
-        HStack(spacing: 6) {
+        // Read once: the drawn text and the spoken label are the same sentence, and this body
+        // sits inside a `ViewThatFits`, which evaluates its candidates.
+        let span = span
+        return HStack(spacing: 6) {
             Text(milestone.outcome.title.uppercased())
                 .font(TenonTheme.utilityFont(size: 8.5, weight: .semibold))
                 .tracking(0.6)
@@ -323,11 +460,7 @@ private struct AgentMilestoneRow: View {
     }
 
     private var span: String {
-        let formatter = DateFormatter()
-        formatter.dateFormat = "HH:mm"
-        let start = formatter.string(from: milestone.startedAt)
-        let end = formatter.string(from: milestone.endedAt)
-        return start == end ? start : "\(start)–\(end)"
+        AgentMilestoneSpan.text(from: milestone.startedAt, to: milestone.endedAt)
     }
 
     private var tint: Color {

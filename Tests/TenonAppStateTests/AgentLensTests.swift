@@ -1707,6 +1707,75 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
         XCTAssertEqual(resolution.confidence, .processOnly)
     }
 
+    /// The discovery loop asks every 750 ms per pane, forever — `stop()` is reached only from
+    /// `AgentLensPool.retainOnly`, so a pane in a background workspace keeps asking. Deriving
+    /// the provider means `proc_pidpath` plus a blocking `/bin/ps` fork, and the answer cannot
+    /// change while the foreground process does not.
+    func testResolveReusesTheProviderVerdictWhileTheForegroundProcessIsUnchanged() async throws {
+        let probes = ProbeCounter()
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let discovery = AgentLensDiscovery(
+            homeDirectory: workspace,
+            processProvider: { _ in
+                probes.increment()
+                return .claude
+            }
+        )
+        let identity = AgentTerminalIdentity(
+            slotID: UUID(),
+            surfaceToken: UUID(),
+            foregroundPID: 4242,
+            cwd: workspace,
+            title: "Claude"
+        )
+
+        for _ in 0 ..< 3 { _ = await discovery.resolve(identity) }
+
+        XCTAssertEqual(
+            probes.count,
+            1,
+            """
+            Three resolutions of one unchanged terminal derived the provider \(probes.count) \
+            times. In production each derivation forks /bin/ps and blocks on it, once per pane \
+            every 750 ms for as long as the pane exists.
+            """
+        )
+    }
+
+    /// The cache must not outlive the fact it caches: a new foreground process is a new
+    /// question, and `/new` in a terminal is exactly that.
+    func testResolveDerivesAgainWhenTheForegroundProcessChanges() async throws {
+        let probes = ProbeCounter()
+        let workspace = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
+        let discovery = AgentLensDiscovery(
+            homeDirectory: workspace,
+            processProvider: { _ in
+                probes.increment()
+                return .claude
+            }
+        )
+        let surfaceToken = UUID()
+        let slotID = UUID()
+        func identity(pid: UInt64) -> AgentTerminalIdentity {
+            AgentTerminalIdentity(
+                slotID: slotID,
+                surfaceToken: surfaceToken,
+                foregroundPID: pid,
+                cwd: workspace,
+                title: "Claude"
+            )
+        }
+
+        _ = await discovery.resolve(identity(pid: 4242))
+        _ = await discovery.resolve(identity(pid: 4243))
+
+        XCTAssertEqual(
+            probes.count,
+            2,
+            "a different foreground process is a different question and has to be asked"
+        )
+    }
+
     func testCodexHookBindingIsAuthoritativeAndScopedToSurfaceIncarnation() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
             .appendingPathComponent("tenon-agent-hook-binding-\(UUID().uuidString)", isDirectory: true)
@@ -2825,4 +2894,25 @@ private final class AgentLensTestSurface: TerminalSurface {
 
     func makeView() -> AnyView { AnyView(EmptyView()) }
     func sendText(_ text: String) { frames.append(text) }
+}
+
+/// Counts calls made from a `@Sendable` closure handed to an actor.
+///
+/// The probe runs on whatever executor the actor is using, so the count needs its own lock
+/// rather than an actor hop — an `await` inside the closure would change the thing measured.
+final class ProbeCounter: @unchecked Sendable {
+    private let lock = NSLock()
+    private var value = 0
+
+    func increment() {
+        lock.lock()
+        value += 1
+        lock.unlock()
+    }
+
+    var count: Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return value
+    }
 }

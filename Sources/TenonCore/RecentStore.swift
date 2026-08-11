@@ -220,9 +220,11 @@ public final class RecentStore {
                 "pluginID": pluginID.rawValue,
                 "viewID": viewID,
             ]
-        case .diff, .file:
-            // A diff or an open file is a transient, context-bound view; `decode` drops
-            // both so neither persists into the recently-opened list.
+        case .diff, .file, .agentSession:
+            // A diff, an open file, or a recorded session is a transient, context-bound
+            // view; `decode` drops them all, so none persists into the recently-opened
+            // list. A recorded session belongs there least of the three: the list of
+            // sessions is itself the durable index, and it is the plugin's to keep.
             return ["type": "transient"]
         case .empty:
             return ["type": "empty"]

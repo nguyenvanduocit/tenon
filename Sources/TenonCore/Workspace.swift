@@ -15,6 +15,9 @@ public enum SlotContent: Equatable, Sendable {
     /// The host's default diff view, showing the change described by `request`.
     /// Created by `workspace.tab.create.v1` with typed diff content.
     case diff(DiffRequest)
+    /// A session that has already happened, read with Agent Lens over its recorded
+    /// transcript. The pane holds no PTY until someone resumes it.
+    case agentSession(AgentSessionRef)
     case empty
 
     /// Whether a pane already showing `self` is where `content` belongs when the host is
@@ -30,7 +33,11 @@ public enum SlotContent: Equatable, Sendable {
              (.changes, .changes),
              (.automation, .automation),
              (.file, .file),
-             (.diff, .diff):
+             (.diff, .diff),
+             // Browsing a session list is the same motion as browsing a file tree: the pane
+             // that is already reading a recorded session takes the next one, so opening
+             // five of them in a row leaves one pane rather than five.
+             (.agentSession, .agentSession):
             return true
         case let (.pluginView(pluginID, viewID), .pluginView(otherPluginID, otherViewID)):
             return pluginID == otherPluginID && viewID == otherViewID
@@ -53,6 +60,11 @@ public enum SlotContent: Equatable, Sendable {
             return "plugin-view:\(pluginID.rawValue):\(viewID)"
         case .diff(let request):
             return "diff:\(request.fileName)"
+        case .agentSession(let ref):
+            // Provider and session id, and deliberately not the transcript path: the bus
+            // value is read by plugins and written into diagnostics, and a home directory is
+            // not something a pane's identity needs to publish.
+            return "agent-session:\(ref.provider.rawValue):\(ref.sessionID)"
         case .empty:
             return "empty"
         }
