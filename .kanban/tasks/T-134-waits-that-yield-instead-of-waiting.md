@@ -77,9 +77,34 @@ its interval, and how promptly a loaded machine runs that timer is not part of t
 
 ## The remaining sites
 
-`rg -l 'Task.yield\(\)' Tests/` finds twelve files. Not every one is wrong — a single
-`await Task.yield()` to let one continuation resume is fine. What must go is the **counted spin
-standing in for a wait**. Known instances:
+`rg -l 'Task.yield\(\)' Tests/` finds twelve files. Not every one is wrong, and they are not all
+wrong in the same way — read each before converting it. Three kinds, surveyed 2026-08-12:
+
+**(a) Waiting for a condition to become true.** These are the dangerous ones: under load the
+condition is still false when the count runs out, and the test reports a failure the code did not
+commit. All three that have actually turned CI red were this kind. Convert to a deadline plus
+`Task.sleep`. Still outstanding: `AgentLensTests.swift:1498` and `:2479` (waiting for a released
+model to deallocate — poll `weakModel == nil`), `AgentSessionTimelineTests.swift:1014`,
+`FileDocumentIOTests.swift:422`, `PaletteProviderTests.swift:244`.
+
+**(b) Waiting to prove something did *not* happen.** `IntentMailboxTests.swift:65` gives a second
+request "every chance to start, then requires that none did". A yield spin under load grants less
+real time, so this fails *open* — a false pass, not a false failure. Lower urgency, but a real
+sleep measures what the comment claims.
+
+**(c) Draining a cooperative queue, where yielding is the correct primitive.**
+`PaneFocusSettlementTests.swift:188` (`settle()`) says it outright: "a self-sustaining cycle never
+runs out of turns, so the bound has to be the assertion rather than the wait". Sleeping does not
+drain a queue; yielding does. **Leave these as yields** — raise the count if they ever prove tight.
+`CallerConsentTests.swift:860` (`allowConcurrentWorkToReachConsentBoundary`) sits between (b) and
+(c): no condition to poll, and it wants real elapsed time.
+
+Evidence that the remaining sites are not yet proven fragile: the full suite ran 2001/0 with
+sixteen busy loops at load average 38–114 on 2026-08-12, after the three (a) sites were fixed.
+That is not proof they are safe, only that they did not fail at that load — which is exactly the
+status the two-line table below records rather than overstates.
+
+Known instances:
 
 | File | Line | Iterations |
 |---|---|---|
