@@ -666,19 +666,35 @@ final class TabStripReorderTests: XCTestCase {
             // Asserted here rather than in each caller because a press that resolves to
             // nothing fails these tests as "the tab order did not change", which reads like a
             // reorder bug and is not one.
-            guard let target = frameView.hitTest(point) else {
-                return XCTFail("no view in the window claims \(point), so the press lands nowhere")
+            // The press goes to the strip's own control, found by identity rather than by
+            // hit-testing the whole window.
+            //
+            // `frameView.hitTest(point)` was doing this and is environment-dependent in a way
+            // that took six red CI runs to see: measured on 2026-08-12, the same press resolves
+            // to `TabStripSurface.SurfaceView` (frame 426x26) on a desktop and to `NSClipView`
+            // (frame 453x45) on a runner with no display session. A clip view does nothing with
+            // a press, so every gesture in this file reported "the tab order did not change" —
+            // a reorder bug that was never there. The strip is laid out differently and a
+            // scroll view's clip view ends up in front of it.
+            //
+            // What these tests exist to assert is that a real press through the real `NSControl`
+            // moves the tab, which is the T-101 lesson: driving the SwiftUI closure directly
+            // passes while a hardware drag still moves the window. That control is still what
+            // receives the event here. Which view AppKit happens to put in front of it is a
+            // different question, and the drag-region test plus `drag-region-probe.swift` are
+            // where it is asked, on a machine that has a screen to answer with.
+            guard let surface = Self.findSurface(in: frameView) else {
+                return XCTFail("the window holds no tab-strip surface for a press to reach")
             }
-            // A press that resolves to the hosting view rather than to something inside the strip
-            // is not a reorder bug, and saying so here is the difference between one CI run and
-            // five. `hitTest` returning non-nil proves only that *a* view answered.
-            print(
-                "TABSTRIP-DIAG press at \(point) resolved to \(target.className) "
-                    + "frame=\(target.frame) windowNumber=\(window.windowNumber) "
-                    + "onScreenList=\(NSWindow.windowNumbers(options: [])?.count ?? -1)"
-            )
-            pressTarget = target
-            target.mouseDown(with: event)
+            let inSurface = surface.convert(point, from: nil)
+            guard surface.bounds.contains(inSurface) else {
+                return XCTFail(
+                    "\(point) is outside the strip (bounds \(surface.bounds), point in surface "
+                        + "\(inSurface)), so this press would assert nothing about a chip"
+                )
+            }
+            pressTarget = surface
+            surface.mouseDown(with: event)
         case .leftMouseDragged:
             guard let target = pressTarget else {
                 return XCTFail("a drag arrived with no press holding the pointer")

@@ -109,3 +109,33 @@ here instead of only on CI.
 ## Owner / files (agent lock)
 
 Released — done.
+
+## What the sixth CI run finally measured, and what it cost
+
+The `NSWindow.sendEvent` / on-screen-list theory was **refuted by its own test**: the case written
+to prove it, `testAPressLandsOnTheChipInAWindowTheServerNeverPutOnScreen`, passes on a desktop
+with the window held off the on-screen list and fails on CI. Same code, same off-screen state, so
+off-screen-ness was never the variable. A local reproduction that produces the right symptom
+proves only that *some* mechanism produces it.
+
+The diagnostic added in `36baa19` answered it in one run. Identical press, two machines:
+
+| | class the press resolved to | frame |
+|---|---|---|
+| desktop | `TabStripSurface.SurfaceView` | 426 × 26 |
+| CI runner | `NSClipView` | 453 × 45 |
+
+A clip view does nothing with a press, so all four gestures reported "the tab order did not
+change" — a reorder bug that never existed. The strip lays out differently with no display
+session (26 pt against 45 pt), and a scroll view's clip view ends up in front of it.
+
+`send` now delivers to the strip's control found by identity, and asserts the point falls inside
+that control. What the tests are for is unchanged and is still the T-101 lesson: a real `NSEvent`
+through the real `NSControl`'s `mouseDown`, not the SwiftUI closure underneath it.
+
+**The coverage this gives up, stated plainly.** These tests no longer assert that AppKit puts the
+strip in front at a chip point. If a regression ever put a scroll view over the strip in the real
+app, tabs would be unclickable and this file would stay green. That assertion needs a machine with
+a screen — the CI comment at `.github/workflows/macos-ci.yml:85` already scopes such things to the
+`ui-smoke` lane, "because one flaky window server should not turn a code review red". It belongs
+there or in `scripts/internal/drag-region-probe.swift`, and it is not written yet.
