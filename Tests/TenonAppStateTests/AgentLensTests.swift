@@ -1892,6 +1892,23 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
             processGroupProvider: { _ in 42 }
         )
 
+        // Asked in two steps because the one-step version cannot say which half broke. This
+        // passes on a developer machine and has failed every run on CI, and "nil is not
+        // equal to <url>" is the same message whether the registry refused the path or the
+        // discovery refused the binding. The paths are in the messages for the same reason:
+        // the difference between them is the likeliest suspect and the invisible one.
+        let bound = await registry.binding(paneID: paneID, surfaceToken: surfaceToken)
+        XCTAssertNotNil(
+            bound,
+            """
+            the registry did not bind the declared transcript.
+            transcript: \(transcript.path)
+            resolved:   \(transcript.resolvingSymlinksInPath().standardizedFileURL.path)
+            root:       \(project.path)
+            root resolved: \(project.resolvingSymlinksInPath().standardizedFileURL.path)
+            """
+        )
+
         let resolution = await discovery.resolve(
             AgentTerminalIdentity(
                 slotID: paneID,
@@ -1902,7 +1919,15 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(resolution?.confidence, .exact)
+        XCTAssertEqual(
+            resolution?.confidence,
+            .exact,
+            """
+            bound transcript: \(bound?.transcriptURL.path ?? "<no binding>")
+            home:             \(home.path)
+            home resolved:    \(home.resolvingSymlinksInPath().standardizedFileURL.path)
+            """
+        )
         XCTAssertEqual(resolution?.transcriptURL, transcript.standardizedFileURL)
     }
 
