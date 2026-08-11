@@ -1,4 +1,6 @@
 #!/bin/zsh
+# tenon: render the app icon set from Design/AppIcon into the asset catalog
+# tenon-group: upkeep
 
 set -euo pipefail
 

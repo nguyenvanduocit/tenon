@@ -1,7 +1,7 @@
 name: Tenon
 
 options:
-  # scripts/setup-xcodegen.sh pins this exact version and CI installs it. Read it as the
+  # scripts/internal/setup-xcodegen.sh pins this exact version and CI installs it. Read it as the
   # version, not a floor: 2.46.0 reorders targets and embeds a framework nothing loads, so a
   # newer generator produces a different project from the committed one on an unchanged tree.
   minimumXcodeGenVersion: 2.45.4

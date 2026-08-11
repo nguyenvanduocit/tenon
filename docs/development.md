@@ -29,7 +29,7 @@ lives.
 
 The app consumes a pinned prebuilt Ghostty artifact. Setup downloads the
 xcframework and shell integration, syncs the public header into the thin
-`GhosttyKit` C shim, and compiles `scripts/ghostty.terminfo` into
+`GhosttyKit` C shim, and compiles `scripts/internal/ghostty.terminfo` into
 `Resources/terminfo` with `tic`. The terminfo entry is compiled rather than
 downloaded because the pinned release carries no terminfo asset — upstream holds
 it as Zig source and builds it with a toolchain this repository deliberately
@@ -37,9 +37,12 @@ never runs. Setup rebuilds it on every run, including when the downloaded
 artifact is already present and verified, since it is the one build input a
 verified GhosttyKit says nothing about.
 
+`./tenon dev` and `./tenon install` run setup themselves. Driving `xcodebuild`
+directly goes around the verbs, so it runs setup by hand:
+
 ```bash
-./scripts/setup-ghosttykit.sh
-./scripts/setup-xcodegen.sh
+./scripts/internal/setup-ghostty.sh
+./scripts/internal/setup-xcodegen.sh
 .build/tools/xcodegen/bin/xcodegen generate
 xcodebuild \
   -project Tenon.xcodeproj \
@@ -91,8 +94,8 @@ Use that pinned copy rather than one on `PATH`. The version is a build input:
 2.46.0 orders targets by declaration where 2.45.4 sorted them alphabetically, and
 it embeds `TenonIntentCore.framework` although nothing loads it dynamically. Either
 difference makes a generated project disagree with the committed one on a tree
-nobody edited, which is how CI failed for a day. `scripts/setup-xcodegen.sh` pins
-the version and checksum, `scripts/test-setup-xcodegen.sh` asserts the pin still
+nobody edited, which is how CI failed for a day. `scripts/internal/setup-xcodegen.sh` pins
+the version and checksum, `scripts/internal/setup-xcodegen.test.sh` asserts the pin still
 matches the published release, and `project.yml`'s `minimumXcodeGenVersion` names
 the same version.
 

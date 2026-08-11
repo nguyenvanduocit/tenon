@@ -8,7 +8,7 @@
 | Reviewers | feature engineers, test/CI, native UI, accessibility, localization, release, operations |
 | Created | 2026-08-09 |
 | Last reviewed | 2026-08-09 |
-| Related work | T-023, T-043, T-074, T-082, T-090, T-094, T-095 |
+| Related work | T-023, T-043, T-074, T-082, T-090, T-094, T-095, T-114, T-117, T-118, T-128 |
 | Normative sources | [`tdd.md`](../tdd.md), [`development.md`](../development.md), [`operations.md`](../operations.md), [`designs.md`](../designs.md), [`domains.md`](../domains.md), [`TenonUITests README`](../../Tests/TenonUITests/README.md) |
 | Acceptance specification | [`engineering-quality.feature`](engineering-quality.feature) |
 
@@ -155,6 +155,9 @@ along product responsibility while behavior tests remain unchanged.
 | `ENQ-FR-038` | Release packaging **MUST** produce a universal artifact, notarize and staple it, and verify a copy extracted back out of the published archive rather than the bundle verified in place. | shipped (T-114) | `@req-enq-fr-038` |
 | `ENQ-FR-039` | Distribution metadata — version, checksum, bundle identifier, minimum macOS — **MUST** be derived from the built artifact rather than transcribed into a cask or release note by hand. | shipped (T-114) | `@req-enq-fr-039` |
 | `ENQ-FR-040` | Every input the generated project declares **MUST** be produced by setup from a tracked or checksummed source, and setup **MUST** produce it even when the downloaded artifact is already installed and verified; an input that exists only on a developer's machine **MUST NOT** be a build requirement. | shipped (T-117) | `@req-enq-fr-040` |
+| `ENQ-FR-041` | The repository root **MUST** hold exactly one executable, a dispatcher that lists every verb with a one-line description read out of the scripts themselves; a script a person types **MUST** live at `scripts/<verb>.sh` and declare its own name, description and group, and a script only another script calls **MUST** live under `scripts/internal/`. | shipped (T-128) | `@req-enq-fr-041` |
+| `ENQ-FR-042` | Exactly one path in the repository **MUST** create a GitHub release, and it **MUST** run where the signing identity already lives; a second automated road **MUST NOT** exist, including as a dry-run or disabled remnant. | shipped (T-128) | `@req-enq-fr-042` |
+| `ENQ-FR-043` | No operator-facing document, script comment, or workflow step **MUST** name a script path that does not exist; the rule **MUST** be asserted rather than reviewed, because a moved script leaves no compile error behind. | shipped (T-128) | `@req-enq-fr-043` |
 
 ### Non-functional requirements
 
@@ -176,7 +179,7 @@ along product responsibility while behavior tests remain unchanged.
 
 ## 6. Acceptance and delivery
 
-[`engineering-quality.feature`](engineering-quality.feature) maps all 52 requirements. Evidence is
+[`engineering-quality.feature`](engineering-quality.feature) maps all 56 requirements. Evidence is
 the quality system itself: tests that reach each runner, mutation receipts, deterministic waits,
 source fitness gates, cache scripts, localization/catalog artifacts, hosted/XCUITest suites, CI
 configuration, and the pending T-090 spikes.
@@ -189,8 +192,9 @@ configuration, and the pending T-090 spikes.
 | 031…033 | design system, accessibility/localization/remediation and UI tests | shipped/continuous |
 | 034 and NFR-003/005/007/012 | T-090 research/spikes/decision matrix/GUI artifact contract | planned/partial |
 | 035…039 and NFR-013 | entitlements file and its fitness test, `release-sign.sh`/`release.sh`/`make-cask.sh`, release workflow, [`releasing.md`](../releasing.md) | shipped (T-114), proved end to end including a real notarization submission |
-| 040 and NFR-012 | `scripts/ghostty.terminfo`, `install_terminfo`/`terminfo_entry_body` in `setup-ghosttykit.sh`, their tests in `test-setup-ghosttykit.sh` | shipped (T-117); the generated project's last machine-local input became reproducible, which is what had been failing CI and would have failed the first tagged release |
-| 040 and NFR-012 | `scripts/setup-xcodegen.sh` + `scripts/test-setup-xcodegen.sh`, the generator call sites in `install.sh`/`release.sh`/both workflows, `project.yml`'s pinned version | shipped (T-118); the generator itself was the remaining unpinned build input, and `brew install` had already moved it out from under the committed project |
+| 040 and NFR-012 | `scripts/internal/ghostty.terminfo`, `install_terminfo`/`terminfo_entry_body` in `setup-ghostty.sh`, their tests in `setup-ghostty.test.sh` | shipped (T-117); the generated project's last machine-local input became reproducible, which is what had been failing CI and would have failed the first tagged release |
+| 040 and NFR-012 | `scripts/internal/setup-xcodegen.sh` + `scripts/internal/setup-xcodegen.test.sh`, the generator call sites in `install.sh`/`release.sh`/`macos-ci.yml`, `project.yml`'s pinned version | shipped (T-118); the generator itself was the remaining unpinned build input, and `brew install` had already moved it out from under the committed project |
+| 041…043 and NFR-009 | `tenon`, the five `scripts/*.sh` verbs and their `# tenon:` metadata, `scripts/internal/`, `scripts/publish.sh` as the only caller of `gh release create`, and `ScriptSurfaceFitnessTests` | shipped (T-128); the script layer had fourteen executables with no rule saying which were typed, and two of them published the same tag |
 
 Risks are testing mocks instead of boundaries, flaky XCUITest sprawl, pixel snapshots tied to OS/font
 noise, inaccessible test-only selectors, vacuous assertions, stale manifests, over-tagging, and
@@ -218,12 +222,18 @@ planned rather than being implied by existing UI tests.
 | 2026-08-10 (T-114) | one probe binary signed twice, differing only in the runtime flag | `libproc` results identical (638 pids; 419 readable; 219 EPERM; 635 paths) — closes PRD-016's signed-app feasibility question |
 | 2026-08-10 (T-114) | first real notarization submission, `9599ec16-d60a-4e7a-b6ad-d43bbfe981ef` | `status: Accepted` for the universal 0.1.0 archive; ticket stapled; a copy extracted back out of the published zip assessed `accepted / source=Notarized Developer ID`. Nothing in the entitlement set or signing shape had to change to pass |
 | 2026-08-10 (T-114) | `CODE_SIGNING_REQUIRED=NO` Release build | no `codesign` step runs at all, so `ENABLE_HARDENED_RUNTIME` has no effect and the `flags=0x2(adhoc)` present comes from the linker; the signing script, not the build setting, is the authority for a distributed artifact |
+| 2026-08-11 (T-120) | `ENQ-FR-017` — the four `TabStripReorderTests` gestures that failed four of five CI runs, repaired at their seam rather than rerun | not a flake and not load: `NSWindow.sendEvent` dispatches only for a window on the window server's on-screen list, and a runner with no display session never puts one there. Measured off that list — `windowNumber` assigned, `event.window` resolving, the frame view hit-testing to `TabStripSurface.SurfaceView`, `mouseDown:` never called. Holding every window in the file off that list reproduces exactly the four CI failures and leaves the other twelve green; routing the press through the window's own hit test makes all seventeen pass in both states, and `testAPressLandsOnTheChipInAWindowTheServerNeverPutOnScreen` keeps the runner's condition asserted on every machine |
 | 2026-08-11 (T-117) | shipped `Resources/terminfo` compared against `src/terminfo/ghostty.zig` at the pinned tag | capability sets equal at 268 each, none missing and none extra — the untracked directory really did hold the pinned Ghostty's entry, so committing it as source text preserved rather than guessed at the entry |
 | 2026-08-11 (T-117) | `tic -x` over the decompiled source | reproduces `67/ghostty` and `78/xterm-ghostty` byte-identically, so compiling at setup time is lossless and the committed text is the shipped artifact in reviewable form |
 | 2026-08-11 (T-117) | clean room: whole tree copied without `Resources/`, `GhosttyKit.xcframework` or the synced header, then `setup-ghosttykit.sh` + `xcodegen generate` | both succeed and the compiled terminfo is byte-identical to the copy shipped in 0.1.0 — the sequence that had failed on every CI run since 2026-08-07 |
 | 2026-08-11 (T-117) | `setup-ghosttykit.sh` run against a tree whose GhosttyKit is installed and verified | prints "already set up and verified" and still rebuilds the missing terminfo, which is the case the early return had been hiding |
 | 2026-08-11 (T-118) | the 2.46.0 the runner had poured, run over the unchanged spec | 21-line project diff: targets reordered, plus an Embed Frameworks phase copying `TenonIntentCore.framework`. `otool -L` on the shipped 0.1.0 binary and on `TenonCore` names only TenonCore, OrderedCollections and JSONSchema — nothing loads that framework, so the newer generator would ship a fourth one and change the artifact Apple notarized. The pin stayed at 2.45.4 on that evidence rather than on age |
 | 2026-08-11 (T-118) | `setup-xcodegen.sh` from a tree with no `.build/tools`, then the CI sequence | installs 2.45.4 against its recorded checksum, and `xcodegen generate` + `git diff --exit-code -- Tenon.xcodeproj` passes — the check that had failed since the generator moved |
-| 2026-08-11 (T-118) | mutation: pinned checksum replaced with zeros | `test-setup-xcodegen.sh` turns red naming both digests, and green again when restored — the pin is asserted against the published release rather than trusted |
+| 2026-08-11 (T-118) | mutation: pinned checksum replaced with zeros | `setup-xcodegen.test.sh` turns red naming both digests, and green again when restored — the pin is asserted against the published release rather than trusted |
+| 2026-08-11 (T-128) | `swift test --filter 'ScriptSurfaceFitnessTests\|testInstallChannelsKeepSingletonAndDurableStateIsolationClosed'`, written before the fixes | 5 executed, 6 failures across all four new cases: the root held **zero** executables (not one), `scripts/icon.sh` had no `# tenon:` line so `./tenon` printed it under "other" with an empty description, `.github/workflows/release.yml` and `scripts/publish.sh` both matched `gh release create`, and 37 stale script paths were named across 13 documents, workflows and script comments. The same filter after the fixes: 5 executed, 0 failures |
+| 2026-08-11 (T-128) | `.github/workflows/macos-ci.yml` read against the tree | six steps named four scripts that no longer existed (`scripts/setup-xcodegen.sh`, `scripts/setup-ghosttykit.sh`, `scripts/test-setup-ghosttykit.sh`, `scripts/test-setup-xcodegen.sh`), so CI would have failed on the next push for the rename rather than for any change under review. `ENQ-FR-043` exists because that class of breakage is invisible to the compiler and to review |
+| 2026-08-11 (T-128) | `scripts/internal/setup-ghostty.test.sh` and `scripts/internal/setup-xcodegen.test.sh` from their new home | "setup-ghostty integrity tests passed" rc=0; "setup-xcodegen pin tests passed" rc=0 |
+| 2026-08-11 (T-128) | `./tenon` and `./tenon nosuchverb` | usage lists five verbs under `everyday`/`release`/`upkeep`, each with the description read out of its own script, exit 0; an unknown verb prints the same list to stderr and exits 2 |
+| 2026-08-11 (T-128) | run `31418387621` (tag v0.1.0), recorded in the task file by the session that read it; not re-read before the deletion | died importing the certificate with `CERTIFICATE_P12:` and `CERTIFICATE_PASSWORD:` empty in its own env dump — `secrets.MACOS_CERTIFICATE_P12` was never set, so the CI road had never produced a release and the shipped 0.1.0 came off the local one. The deleted workflow remains recoverable from git history |
 
 Initial canonical PRD created 2026-08-09.

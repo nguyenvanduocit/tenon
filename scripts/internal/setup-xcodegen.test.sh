@@ -4,8 +4,8 @@
 # version is not the pinned one, and an archive whose bytes are not the recorded ones.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-source scripts/setup-xcodegen.sh
+cd "$(dirname "$0")/../.."
+source scripts/internal/setup-xcodegen.sh
 
 fixture_directory="$(mktemp -d "${TMPDIR:-/tmp}/tenon-xcodegen-test.XXXXXX")"
 trap 'rm -rf "$fixture_directory"' EXIT

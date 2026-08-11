@@ -3,6 +3,20 @@
 This file records notable changes to Tenon. Entries below the first release are grouped by
 date, which is how they were written before there was a version to group them under.
 
+## Unreleased
+
+### Changed
+
+- One door into the scripts. `./tenon` is the only executable at the repository root and
+  lists every verb with its own one-line description, read out of the scripts themselves.
+  What a person types is `scripts/<verb>.sh` — `dev`, `install`, `release`, `publish`,
+  `icon`; what a script calls is `scripts/internal/`. `./tenon install --staging` replaces
+  the separate staging installer.
+- One road out to a release. `./tenon publish` creates the GitHub release, and it runs from
+  the machine holding the Developer ID certificate. The tag-triggered release workflow that
+  had also called `gh release create` is removed: it never completed a run, because
+  `MACOS_CERTIFICATE_P12` was never set, and the published 0.1.0 came off the local road.
+
 ## 0.1.0 — 2026-08-11
 
 The first published build:
@@ -13,8 +27,8 @@ in a clean checkout.
 
 ### Fixed
 
-- `Resources/terminfo` is compiled by [`scripts/setup-ghosttykit.sh`](scripts/setup-ghosttykit.sh)
-  from [`scripts/ghostty.terminfo`](scripts/ghostty.terminfo) rather than expected to exist.
+- `Resources/terminfo` is compiled by [`scripts/internal/setup-ghostty.sh`](scripts/internal/setup-ghostty.sh)
+  from [`scripts/internal/ghostty.terminfo`](scripts/internal/ghostty.terminfo) rather than expected to exist.
   `project.yml` requires the directory, `.gitignore` excludes it, and nothing created it —
   so it lived on one developer machine, and every CI run since 2026-08-07 failed in spec
   validation while a tagged release would have failed at the same command. The committed
@@ -40,10 +54,10 @@ in a clean checkout.
 ### Added
 
 - A release pipeline: [`scripts/release.sh`](scripts/release.sh) builds universal, signs
-  inside-out through [`scripts/release-sign.sh`](scripts/release-sign.sh), notarizes,
-  staples, packages, and then verifies a copy extracted back out of the published archive.
-  [`scripts/make-cask.sh`](scripts/make-cask.sh) derives the Homebrew cask from that
-  artifact, and `.github/workflows/release.yml` runs both on a tag.
+  inside-out through [`scripts/internal/release-sign.sh`](scripts/internal/release-sign.sh),
+  notarizes, staples, packages, and then verifies a copy extracted back out of the published
+  archive. [`scripts/internal/make-cask.sh`](scripts/internal/make-cask.sh) derives the
+  Homebrew cask from that artifact.
 - `Tenon.entitlements`, granting `com.apple.security.cs.allow-jit` and nothing wider.
   `AppSigningFitnessTests` asserts that exact set, so widening it turns the suite red.
 - [`docs/releasing.md`](docs/releasing.md) — the procedure, the one-time certificate and

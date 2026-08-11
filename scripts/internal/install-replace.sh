@@ -2,14 +2,14 @@
 # install-replace.sh — stop the installed app, replace its bundle, sign it, prove the
 # result, and optionally launch it.
 #
-# This is the second half of ./install.sh, and it lives in its own file for one reason:
+# This is the second half of scripts/install.sh, and it lives in its own file for one reason:
 # when the person running the installer is sitting in a Tenon pane, these steps kill the
 # process their shell descends from. Everything here therefore has to be able to run
 # detached from that shell — same file, same order, called either in the foreground or
 # from a session the pane's teardown cannot reach. Splitting it is what keeps those two
 # situations from drifting into two different installers.
 #
-# It is not called directly; ./install.sh builds the bundle and passes everything through
+# It is not called directly; scripts/install.sh builds the bundle and passes everything through
 # the environment:
 #
 #   BUILT_APP        the freshly built .app to install
@@ -103,7 +103,7 @@ fi
 # --- Make it launchable (ad-hoc sign + clear quarantine) ---------------------
 # Ad-hoc and unhardened, deliberately. This machine built the bytes it is installing, so
 # it needs no certificate — which is what keeps several concurrent agents able to install
-# without one. `scripts/release-sign.sh` is the other path, for machines that did not.
+# without one. `release-sign.sh` beside it is the other path, for machines that did not.
 #
 # Do not add `--options runtime` here. Measured (T-114): the Hardened Runtime turns on
 # Library Validation, which requires every loaded dylib to share the process's Team ID.

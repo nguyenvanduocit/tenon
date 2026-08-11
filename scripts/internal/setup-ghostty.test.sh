@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
-source scripts/setup-ghosttykit.sh
+cd "$(dirname "$0")/../.."
+source scripts/internal/setup-ghostty.sh
 
 fixture_directory="$(mktemp -d "${TMPDIR:-/tmp}/tenon-ghostty-test.XXXXXX")"
 trap 'rm -rf "$fixture_directory"' EXIT
@@ -50,7 +50,7 @@ fi
 # all. A tic that silently drops `Tc` or `Sync` would otherwise ship a terminal that claims
 # less than Ghostty does.
 terminfo_destination="$fixture_directory/terminfo"
-install_terminfo scripts/ghostty.terminfo "$terminfo_destination"
+install_terminfo scripts/internal/ghostty.terminfo "$terminfo_destination"
 
 if [[ ! -f "$terminfo_destination/78/xterm-ghostty" || ! -f "$terminfo_destination/67/ghostty" ]]; then
     echo "install_terminfo did not compile both entry names" >&2
@@ -59,7 +59,7 @@ fi
 
 if ! diff -q \
     <(terminfo_entry_body "$terminfo_destination") \
-    <(grep -v '^#' scripts/ghostty.terminfo) >/dev/null; then
+    <(grep -v '^#' scripts/internal/ghostty.terminfo) >/dev/null; then
     echo "the compiled terminfo entry does not match its source" >&2
     exit 1
 fi
@@ -67,10 +67,10 @@ fi
 # A destination left behind by an older or corrupted install has to be replaced rather than
 # trusted, because the failure it causes appears at runtime inside the terminal.
 printf 'not a terminfo entry\n' >"$terminfo_destination/78/xterm-ghostty"
-install_terminfo scripts/ghostty.terminfo "$terminfo_destination"
+install_terminfo scripts/internal/ghostty.terminfo "$terminfo_destination"
 if ! diff -q \
     <(terminfo_entry_body "$terminfo_destination") \
-    <(grep -v '^#' scripts/ghostty.terminfo) >/dev/null; then
+    <(grep -v '^#' scripts/internal/ghostty.terminfo) >/dev/null; then
     echo "install_terminfo left a corrupted entry in place" >&2
     exit 1
 fi
@@ -81,4 +81,4 @@ if install_terminfo "$fixture_directory/absent.terminfo" \
     exit 1
 fi
 
-echo "setup-ghosttykit integrity tests passed"
+echo "setup-ghostty integrity tests passed"

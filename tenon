@@ -1,0 +1,72 @@
+#!/usr/bin/env bash
+# tenon — the only thing at the repository root you run by hand.
+#
+# A verb is a file. `./tenon dev` runs `scripts/dev.sh`, and everything after the verb is
+# passed to it untouched, so `./tenon install --staging` and `CLEAN=1 ./tenon dev` work the
+# way they would if you had called the script directly.
+#
+# Adding a verb means adding `scripts/<verb>.sh` with a `# tenon:` line describing itself.
+# This file never learns its name — the list below is read out of the scripts, because a
+# list kept in two places is a list that eventually disagrees with itself.
+#
+# Anything under scripts/internal/ is called by these scripts, never by a person.
+set -euo pipefail
+
+cd "$(dirname "$0")"
+readonly SCRIPTS="scripts"
+
+describe() { sed -n 's/^# tenon: //p' "$1" | head -1; }
+group_of() { sed -n 's/^# tenon-group: //p' "$1" | head -1; }
+verb_of() { basename "$1" .sh; }
+
+# Ordered by when you reach for them, not alphabetically. A script whose group is missing or
+# unrecognised still gets printed, under "other" — a verb that exists must never be invisible
+# here just because its metadata drifted.
+usage() {
+    local printed=" " group script verb
+    printf 'usage: ./tenon <verb> [arguments]\n'
+    for group in everyday release upkeep; do
+        printf '\n  %s\n' "$group"
+        for script in "$SCRIPTS"/*.sh; do
+            [ "$(group_of "$script")" = "$group" ] || continue
+            verb="$(verb_of "$script")"
+            printed="$printed$verb "
+            printf '    %-8s %s\n' "$verb" "$(describe "$script")"
+        done
+    done
+
+    local orphans=""
+    for script in "$SCRIPTS"/*.sh; do
+        verb="$(verb_of "$script")"
+        case "$printed" in *" $verb "*) continue ;; esac
+        orphans="$orphans$script "
+    done
+    if [ -n "$orphans" ]; then
+        printf '\n  other\n'
+        for script in $orphans; do
+            printf '    %-8s %s\n' "$(verb_of "$script")" "$(describe "$script")"
+        done
+    fi
+
+    printf '\nRun a verb with --help for its own options and environment overrides.\n'
+}
+
+[ $# -gt 0 ] || { usage; exit 0; }
+
+verb="$1"
+shift
+case "$verb" in
+    -h | --help | help)
+        usage
+        exit 0
+        ;;
+esac
+
+script="$SCRIPTS/$verb.sh"
+if [ ! -x "$script" ]; then
+    printf 'tenon: there is no verb named "%s"\n\n' "$verb" >&2
+    usage >&2
+    exit 2
+fi
+
+exec "$script" "$@"

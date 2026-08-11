@@ -69,16 +69,18 @@ still change between builds.
 To run the code you are working on instead:
 
 ```bash
-./scripts/setup-ghosttykit.sh   # once per clone
-./install.sh --launch           # build Release and install to /Applications
+./tenon install --launch   # build Release and install to /Applications
 ```
 
-That install is signed ad-hoc, which is all a machine needs to run software it
-just compiled itself. `./install-staging.sh` puts a second copy beside it under
-its own identity, so a candidate build can be exercised without replacing the
-one you are working in.
+`./tenon` on its own lists every verb; each one fetches the build inputs it needs,
+so there is nothing to set up first.
 
-A Homebrew cask is generated with each release (`scripts/make-cask.sh`), and
+That install is signed ad-hoc, which is all a machine needs to run software it
+just compiled itself. `./tenon install --staging` puts a second copy beside it
+under its own identity, so a candidate build can be exercised without replacing
+the one you are working in.
+
+A Homebrew cask is generated with each release (`scripts/internal/make-cask.sh`), and
 `brew install --cask` starts working once the repository is reachable without
 credentials — Homebrew fetches anonymously.
 
@@ -90,13 +92,16 @@ one deliberately is not.
 
 Tenon requires macOS 14+ and Xcode. The native app builds without a JavaScript
 toolchain. The project generator is not a prerequisite you install yourself:
-`scripts/setup-xcodegen.sh` fetches the exact pinned version, verifies its
+`scripts/internal/setup-xcodegen.sh` fetches the exact pinned version, verifies its
 checksum, and puts it in `.build/tools` — a different version generates a
 different project from the committed one.
 
+`./tenon dev` and `./tenon install` run both setup scripts themselves. Driving
+`xcodebuild` by hand goes around the verbs, so it runs them by hand too:
+
 ```bash
-./scripts/setup-ghosttykit.sh
-./scripts/setup-xcodegen.sh
+./scripts/internal/setup-ghostty.sh
+./scripts/internal/setup-xcodegen.sh
 .build/tools/xcodegen/bin/xcodegen generate
 xcodebuild \
   -project Tenon.xcodeproj \

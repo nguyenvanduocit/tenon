@@ -446,6 +446,36 @@ Feature: Produce fast honest evidence for domain rules and real native interacti
       Then it produces the missing input instead of reporting the installation current and returning
       And the input it produces is identical to the one the last release shipped
 
+    @req-enq-fr-041 @script-surface
+    Scenario: One door into the scripts
+      Given a person who has never run anything in this checkout
+      When they look at the repository root for something to run
+      Then exactly one file there is executable, and running it with no argument lists every verb
+      And each verb's one-line description is read out of that verb's own script rather than kept in a second list
+      And a script that only another script calls is not offered as a verb
+
+    @req-enq-fr-041 @script-surface
+    Scenario: A verb that forgets to describe itself is caught before a person meets it
+      Given a new script is added under scripts/
+      When it carries no description or names a group the dispatcher does not print
+      Then the fitness suite fails naming that script
+      And the failure says the verb would otherwise be listed with an empty description
+
+    @req-enq-fr-042 @release
+    Scenario: One road out to a published release
+      Given a version is ready to publish
+      When the release is created
+      Then exactly one file in the repository invoked the release-creating command
+      And it ran on the machine that already holds the signing identity
+      And no second automated road exists to publish the same tag, disabled or otherwise
+
+    @req-enq-fr-043 @script-surface @documentation
+    Scenario: A moved script cannot leave a stale command behind
+      Given a script is renamed or moved into internal plumbing
+      When the suite runs
+      Then every script path named by an operator document, a script comment, or a workflow step resolves to a file that exists
+      And the failure names the document and the path it names, because nothing else would have failed until someone typed the command
+
     @req-enq-nfr-013 @credentials
     Scenario: Signing credentials never enter the repository or the environment
       Given a release is cut locally or on a shared runner

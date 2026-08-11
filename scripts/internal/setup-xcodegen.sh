@@ -37,7 +37,7 @@ installed_version() {
 }
 
 main() {
-    cd "$(dirname "$0")/.."
+    cd "$(dirname "$0")/../.."
 
     if [[ "$(installed_version || true)" == "$VERSION" ]]; then
         echo "XcodeGen $VERSION already installed"

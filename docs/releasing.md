@@ -2,8 +2,8 @@
 
 How a build on this machine becomes something a stranger's Mac will run.
 
-`install.sh` and this document solve different problems, and the difference is the whole
-subject. `install.sh` puts a build on the machine that produced it: that machine already
+`./tenon install` and this document solve different problems, and the difference is the whole
+subject. `./tenon install` puts a build on the machine that produced it: that machine already
 trusts the bytes it just compiled, so an ad-hoc signature is enough and no certificate is
 involved — which matters, because several agents build in this tree concurrently and none
 of them should need one. A release goes to a machine that has never seen Tenon, where
@@ -16,7 +16,7 @@ two things to the code identity rather than to the path:
 
 - **TCC consent.** Tenon runs agents in real PTYs, so a shell child reaching
   `~/Documents` prompts on Tenon's behalf. Under ad-hoc, the grant belongs to a signature
-  that the next `./install.sh` replaces, and the prompt returns.
+  that the next `./tenon install` replaces, and the prompt returns.
 - **Keychain ACLs.** `SecretStore` writes `kSecClassGenericPassword` items
   (`Sources/TenonCore/SecretStore.swift:111`) whose access control names the app that
   created them.
@@ -62,9 +62,9 @@ with `NOTARY_PROFILE`.
 cp .env.example .env      # then fill in the identity, team, and profile name
 ```
 
-`scripts/release-sign.sh` reads it, and `scripts/release.sh` reaches it through that. It is
-gitignored, and an explicit value in the environment still beats the file, so a one-off
-`SIGN_IDENTITY=… ./scripts/release.sh` continues to work.
+`scripts/internal/release-sign.sh` reads it, and `scripts/release.sh` reaches it through
+that. It is gitignored, and an explicit value in the environment still beats the file, so a
+one-off `SIGN_IDENTITY=… ./tenon release` continues to work.
 
 What `.env` deliberately does not hold is the notarization password. It names
 `NOTARY_PROFILE`, and the profile created in step 2 holds the Apple ID and app-specific
@@ -76,8 +76,15 @@ secrets live.
 ## Cutting a release
 
 ```sh
-./scripts/release.sh          # verify, build universal, sign, notarize, staple, package
-./scripts/make-cask.sh        # write dist/tenon.rb from the artifact just built
+./tenon publish               # everything below, then verify a stranger can install it
+DRY_RUN=1 ./tenon publish     # everything except pushing a tag, release or cask
+```
+
+`publish` runs `./tenon release` for the artifact, so the artifact step is also available
+on its own while iterating on signing:
+
+```sh
+./tenon release               # verify, build universal, sign, notarize, staple, package
 ```
 
 `release.sh` refuses to continue when the generated Xcode project differs from the
@@ -123,7 +130,7 @@ this is not yet, and a tap costs nothing to run:
 
 ```sh
 gh repo create <owner>/homebrew-tap --public
-TAP_REPO=~/projects/homebrew-tap ./scripts/make-cask.sh
+TAP_REPO=~/projects/homebrew-tap ./tenon publish
 cd ~/projects/homebrew-tap && git add Casks/tenon.rb && git commit -m "tenon <version>" && git push
 ```
 
@@ -147,39 +154,22 @@ CLI itself from **Settings ▸ CLI ▸ Install**, which owns its location and ke
 to the running app; a second path to the same file lets a stale symlink outlive the bundle
 it points into.
 
-## Releasing from CI
+## One road out
 
-`.github/workflows/release.yml` runs the same two scripts on a tag push, so the artifact
-people install comes from a commit anyone can check out rather than from one laptop. Run
-it once with **workflow_dispatch → dry run** before trusting a tag: a dry run proves the
-build, the universal slices, the inside-out signature and the packaging — everything
-except Apple's verdict.
+`./tenon publish` is the only thing in this repository that creates a GitHub release. It
+runs `./tenon release` for the artifact, tags, uploads, writes the cask, and then
+downloads the published archive anonymously and installs it, so the last thing the
+procedure proves is the thing a stranger actually gets.
 
-The job imports the certificate into a keychain it creates and destroys, so nothing
-persists on a shared runner. Five repository secrets:
+The Developer ID certificate and its private key stay on the machine that holds them.
+Signing on a shared runner would mean exporting that key as a `.p12` into a repository
+secret — the one credential here that cannot be re-issued silently, since revoking it
+invalidates signatures on builds already distributed unless they were notarized and
+timestamped. `release-sign.sh` passes `--timestamp` for exactly that reason, and the key
+staying local is the cheaper half of the same protection.
 
-| Secret | Value |
-|---|---|
-| `MACOS_CERTIFICATE_P12` | the Developer ID certificate **and private key**, exported as `.p12`, base64-encoded |
-| `MACOS_CERTIFICATE_PASSWORD` | the password set while exporting that `.p12` |
-| `MACOS_SIGN_IDENTITY` | the identity string, e.g. `Developer ID Application: … (TEAMID)` |
-| `NOTARY_APPLE_ID` | Apple ID for notarization |
-| `NOTARY_TEAM_ID` | the same Team ID |
-| `NOTARY_PASSWORD` | an app-specific password |
-
-Exporting the `.p12`: Keychain Access → **My Certificates** → select the *Developer ID
-Application* row → right-click → Export. It must be exported from the My Certificates
-category, which is the one that includes the private key; exporting from Certificates
-yields a public certificate that signs nothing.
-
-```sh
-base64 -i Certificates.p12 | pbcopy   # then paste into the secret
-```
-
-Rotate these when someone with access leaves. The certificate is the one credential here
-that cannot be re-issued silently — revoking it invalidates signatures on builds already
-distributed unless they were notarized and timestamped, which is why `release-sign.sh`
-passes `--timestamp`.
+CI's job is therefore the build and the test suite (`.github/workflows/macos-ci.yml`), and
+the release is cut by a person who can see Apple's verdict as it arrives.
 
 ## What was measured, so it is not re-derived
 
@@ -200,7 +190,7 @@ Library not loaded: @rpath/OrderedCollections_….framework/…
 ```
 
 Signed with one Developer ID identity — app and all three frameworks — the same build
-launches. **Consequence:** `install.sh` stays ad-hoc and unhardened; adding `--options
+launches. **Consequence:** `./tenon install` stays ad-hoc and unhardened; adding `--options
 runtime` to its re-sign would break every local install. And `disable-library-validation`
 is *not* needed: signing everything together satisfies the rule that entitlement waives.
 
@@ -248,9 +238,9 @@ first attempt.
 ### Build settings are not the artifact
 
 `ENABLE_HARDENED_RUNTIME` in `project.yml` applies only when the build actually signs.
-`install.sh` passes `CODE_SIGNING_REQUIRED=NO`, under which `xcodebuild` runs no
+`./tenon install` passes `CODE_SIGNING_REQUIRED=NO`, under which `xcodebuild` runs no
 `codesign` step at all — the `flags=0x2(adhoc)` such a build carries comes from the
-linker. `scripts/release-sign.sh` is therefore the authority for what a distributed
+linker. `scripts/internal/release-sign.sh` is therefore the authority for what a distributed
 artifact is signed with, and it verifies the flag word on the bundle rather than trusting
 the setting that asked for it.
 

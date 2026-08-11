@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# install.sh — build a release Tenon.app and install it onto this machine,
-# replacing any previously installed copy.
+# tenon: build this checkout and install Tenon.app onto this machine
+# tenon-group: everyday
 #
 # The app resolves plugins/, ghostty/ and terminfo/ through
 # `Bundle.main.resourceURL`. Xcode builds that resource-bearing app bundle;
@@ -8,23 +8,42 @@
 #
 # Run it from anywhere, including a Tenon pane: replacing the app the caller is running
 # inside is detected here and handed to a detached installer, since these steps kill that
-# caller. See scripts/install-replace.sh.
+# caller. See scripts/internal/install-replace.sh.
 #
 # Usage:
-#   ./install.sh            # build Release, install to /Applications, replace old
-#   ./install.sh --launch   # ...and open Tenon after installing
+#   ./tenon install             # build Release, install to /Applications, replace old
+#   ./tenon install --launch    # ...and open Tenon after installing
+#   ./tenon install --staging   # install beside the stable app, as "Tenon Staging"
+#
+# --staging exists so a candidate build can be exercised without quitting the Tenon that
+# is hosting the session doing the work. The staging bundle carries its own name and
+# LaunchServices identity, so replacing it never touches /Applications/Tenon.app, and both
+# may stay open: production and staging are each singletons inside their own runtime channel.
 #
 # Overrides (env):
 #   APP_DEST=/some/dir      # install destination (default /Applications)
 #   CONFIGURATION=Debug     # xcodebuild configuration (default Release)
 #   ARCHS=x86_64            # override the single arch (default: this machine's arch)
 #   CLEAN=1                 # discard both build trees first (dependencies survive)
-#   INSTALL_APP_NAME=...    # installed bundle name (default Tenon.app)
-#   INSTALL_DISPLAY_NAME=... # installed app name (default Tenon)
-#   INSTALL_BUNDLE_ID=...   # installed bundle identifier (default dev.tenon.app)
+#   INSTALL_APP_NAME=...    # installed bundle name (overrides what --staging would pick)
+#   INSTALL_DISPLAY_NAME=... # installed app name
+#   INSTALL_BUNDLE_ID=...   # installed bundle identifier
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+
+LAUNCH=0
+STAGING=0
+for argument in "$@"; do
+    case "$argument" in
+        --launch) LAUNCH=1 ;;
+        --staging) STAGING=1 ;;
+        *)
+            echo "error: unknown argument '$argument'; expected --launch or --staging" >&2
+            exit 2
+            ;;
+    esac
+done
 
 APP_DEST="${APP_DEST:-/Applications}"
 CONFIGURATION="${CONFIGURATION:-Release}"
@@ -37,12 +56,20 @@ if [[ "$ARCHS" =~ [[:space:]] ]]; then
 fi
 # One derived data path for every configuration, and the CLI compiles in the same
 # SwiftPM scratch as `swift build` — so the dependency graph is checked out once and
-# the module cache is kept once. See scripts/prune-build-cache.sh.
+# the module cache is kept once. See scripts/internal/prune-build-cache.sh.
 DERIVED_DATA="$REPO_ROOT/.build/xcode"     # inside the gitignored .build/
 BUILT_APP_NAME="Tenon.app"
-APP_NAME="${INSTALL_APP_NAME:-Tenon.app}"
-DISPLAY_NAME="${INSTALL_DISPLAY_NAME:-Tenon}"
-BUNDLE_ID="${INSTALL_BUNDLE_ID:-dev.tenon.app}"
+# One compiled artifact, two identities. The channel decides the defaults; an explicit
+# INSTALL_* variable still wins, because naming one is the more specific instruction.
+if [ "$STAGING" -eq 1 ]; then
+    APP_NAME="${INSTALL_APP_NAME:-Tenon Staging.app}"
+    DISPLAY_NAME="${INSTALL_DISPLAY_NAME:-Tenon Staging}"
+    BUNDLE_ID="${INSTALL_BUNDLE_ID:-dev.tenon.app.staging}"
+else
+    APP_NAME="${INSTALL_APP_NAME:-Tenon.app}"
+    DISPLAY_NAME="${INSTALL_DISPLAY_NAME:-Tenon}"
+    BUNDLE_ID="${INSTALL_BUNDLE_ID:-dev.tenon.app}"
+fi
 
 case "$APP_NAME" in
     */*)
@@ -79,9 +106,6 @@ case "$CONFIGURATION" in
         exit 1
         ;;
 esac
-
-LAUNCH=0
-[ "${1:-}" = "--launch" ] && LAUNCH=1
 
 DEST_APP="$APP_DEST/$APP_NAME"
 
@@ -137,18 +161,18 @@ command -v swift >/dev/null 2>&1 || {
 
 # --- 2. Reclaim build junk before adding more of it --------------------------
 if [ -n "${CLEAN:-}" ]; then
-    DEEP=1 ./scripts/prune-build-cache.sh
+    DEEP=1 ./scripts/internal/prune-build-cache.sh
 else
-    ./scripts/prune-build-cache.sh
+    ./scripts/internal/prune-build-cache.sh
 fi
 
 # --- 3. Ghostty framework + resources (idempotent) ---------------------------
 step "Ensuring GhosttyKit.xcframework + resources"
-./scripts/setup-ghosttykit.sh
+./scripts/internal/setup-ghostty.sh
 
 # --- 4. Regenerate the Xcode project from project.yml (source of truth) -------
 step "Generating Tenon.xcodeproj from project.yml"
-./scripts/setup-xcodegen.sh
+./scripts/internal/setup-xcodegen.sh
 .build/tools/xcodegen/bin/xcodegen generate --use-cache
 
 # --- 5. Build the standalone CLI --------------------------------------------
@@ -202,9 +226,9 @@ echo "build cache kept for fast incremental installs: $(du -sh "$REPO_ROOT/.buil
 
 # --- 7. Replace the installed copy -------------------------------------------
 # Everything from here kills the app, so it lives in one script that can run either in
-# this shell or detached from it — see scripts/install-replace.sh.
+# this shell or detached from it — see scripts/internal/install-replace.sh.
 export BUILT_APP DEST_APP APP_DEST APP_NAME BUILT_APP_NAME DISPLAY_NAME BUNDLE_ID LAUNCH
-REPLACE="$REPO_ROOT/scripts/install-replace.sh"
+REPLACE="$REPO_ROOT/scripts/internal/install-replace.sh"
 
 if [ "$SELF_INSTALL" -eq 0 ]; then
     exec bash "$REPLACE"

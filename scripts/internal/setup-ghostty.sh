@@ -140,11 +140,11 @@ installation_is_current() {
 }
 
 main() {
-    cd "$(dirname "$0")/.."
+    cd "$(dirname "$0")/../.."
 
     # Before the early return, not after it: terminfo is compiled here rather than
     # downloaded, so a tree that already has a verified GhosttyKit can still be missing it.
-    install_terminfo scripts/ghostty.terminfo Resources/terminfo
+    install_terminfo scripts/internal/ghostty.terminfo Resources/terminfo
 
     if installation_is_current; then
         echo "GhosttyKit $TAG already set up and verified"

@@ -22,12 +22,11 @@
 # sourcekit-lsp's index store (.build/index-build) has its own dependency checkout, so
 # it is collected as well. An editor with background indexing on will rebuild it.
 #
-# Usage:
-#   ./scripts/prune-build-cache.sh          # drop duplicate trees, keep both real ones
-#   DEEP=1 ./scripts/prune-build-cache.sh   # also drop both build trees (deps survive)
+# `./tenon dev` and `./tenon install` run it before every build; `./tenon clean` is the way
+# to run it on its own, and `./tenon clean --deep` drops both build trees as well.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+cd "$(dirname "$0")/../.."
 BUILD=".build"
 [ -d "$BUILD" ] || exit 0
 
@@ -39,7 +38,7 @@ if pgrep -f 'swift-build|swift-frontend|swift-driver|xcodebuild' >/dev/null 2>&1
 fi
 
 # The trees and caches that make an incremental build fast.
-# `tools` holds the pinned project generator (scripts/setup-xcodegen.sh). Dropping it costs
+# `tools` holds the pinned project generator (scripts/internal/setup-xcodegen.sh). Dropping it costs
 # a 4 MB download on the next build and, unlike a cache, it is a verified build input.
 KEEP="arm64-apple-macosx xcode checkouts repositories artifacts prebuilts tools"
 

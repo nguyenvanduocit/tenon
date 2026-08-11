@@ -1,6 +1,6 @@
 // Measures the AppKit rule the tab strip depends on. Run it with:
 //
-//     swift scripts/drag-region-probe.swift
+//     swift scripts/internal/drag-region-probe.swift
 //
 // Why this exists: three fixes for T-101 shipped, each internally correct, because the rule
 // everyone reasoned from was false. macOS does *not* ask the hit-tested view whether a press

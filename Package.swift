@@ -75,7 +75,7 @@ let package = Package(
         ),
 
         // Thin C shim over the prebuilt GhosttyKit.xcframework (the Muxy pattern).
-        // ghostty.h is synced from the xcframework by scripts/setup-ghosttykit.sh;
+        // ghostty.h is synced from the xcframework by scripts/internal/setup-ghostty.sh;
         // the placeholder .c exists only so SwiftPM has something to compile.
         .target(name: "GhosttyKit", path: "GhosttyKit", publicHeadersPath: "."),
 

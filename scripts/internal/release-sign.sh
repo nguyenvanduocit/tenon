@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # release-sign.sh — turn a built Tenon.app into an artifact another machine will run.
 #
-# This is the distribution path. `install.sh` is the local path and stays ad-hoc: a
+# This is the distribution path. `./tenon install` is the local path and stays ad-hoc: a
 # machine that built the app already trusts it, and ad-hoc keeps every concurrent agent
 # free of certificates. The two differ in exactly one thing — whether the signature
 # names an identity macOS can remember across builds.
@@ -11,8 +11,8 @@
 # identity. Ad-hoc means a fresh install is a different app, which is why permission
 # prompts and `SecretStore` items do not survive one.
 #
-# Usage:
-#   ./scripts/release-sign.sh path/to/Tenon.app
+# Called by scripts/release.sh with the staged bundle:
+#   scripts/internal/release-sign.sh path/to/Tenon.app
 #
 # Configuration comes from `.env` at the repository root, which is gitignored; copy
 # `.env.example` to start one. Anything already exported wins over the file, so a one-off
@@ -32,7 +32,7 @@
 #     --apple-id <you@example.com> --team-id <TEAMID> --password <app-specific-password>
 set -euo pipefail
 
-REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 
 # Read before the arguments are checked, so a misconfigured file is reported by the same
 # run that would have used it. `set -a` exports what the file defines, which is how

@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-# release.sh — produce the artifacts a Tenon release consists of.
+# tenon: build the signed, notarized archive a release ships, into dist/
+# tenon-group: release
 #
 # Output lands in dist/:
 #   Tenon-<version>-macos.zip     universal app, signed, notarized, stapled
@@ -10,17 +11,20 @@
 # first launch on a machine that has never seen Tenon verifies without network.
 #
 # Usage:
-#   ./scripts/release.sh                 # full: verify, build, sign, notarize, package
-#   SKIP_TESTS=1 ./scripts/release.sh    # skip the suite (for iterating on packaging)
-#   SKIP_NOTARIZE=1 ./scripts/release.sh # sign but do not submit (no credentials needed)
+#   ./tenon release                 # full: verify, build, sign, notarize, package
+#   SKIP_TESTS=1 ./tenon release    # skip the suite (for iterating on packaging)
+#   SKIP_NOTARIZE=1 ./tenon release # sign but do not submit (no credentials needed)
+#
+# This builds the artifact and stops. `./tenon publish` is what puts it in front of other
+# people — it runs this first, then tags, releases and proves the result.
 #
 # Overrides (env):
 #   VERSION=x.y.z          # default: MARKETING_VERSION from the built Info.plist
-#   SIGN_IDENTITY=...      # passed through to release-sign.sh
-#   NOTARY_PROFILE=name    # passed through to release-sign.sh
+#   SIGN_IDENTITY=...      # passed through to internal/release-sign.sh
+#   NOTARY_PROFILE=name    # passed through to internal/release-sign.sh
 #
-# Why this is separate from install.sh: install.sh puts a build on the machine that made
-# it, where an ad-hoc signature is enough and no certificate should be required. This
+# Why this is separate from `./tenon install`: install puts a build on the machine that
+# made it, where an ad-hoc signature is enough and no certificate should be required. This
 # produces something for a machine that has never seen the app, which is a different job
 # with a different failure mode — see docs/releasing.md.
 set -euo pipefail
@@ -48,10 +52,10 @@ fi
 
 # --- 2. Dependencies and generated project -----------------------------------
 step "Fetching the pinned Ghostty artifact"
-./scripts/setup-ghosttykit.sh
+./scripts/internal/setup-ghostty.sh
 
 step "Regenerating the Xcode project"
-./scripts/setup-xcodegen.sh
+./scripts/internal/setup-xcodegen.sh
 .build/tools/xcodegen/bin/xcodegen generate
 if ! git diff --quiet -- Tenon.xcodeproj/project.pbxproj; then
     echo "error: the generated project differs from the committed one." >&2
@@ -68,7 +72,7 @@ else
 fi
 
 # --- 4. Build universal ------------------------------------------------------
-# A release runs on machines this one is not. install.sh builds a single arch on
+# A release runs on machines this one is not. `./tenon install` builds a single arch on
 # purpose; here both slices are the point.
 step "Building tenon-cli (universal)"
 swift build --configuration release --arch arm64 --arch x86_64 --product tenon-cli
@@ -134,7 +138,7 @@ echo "architectures: $(lipo -archs "$STAGED/Contents/MacOS/Tenon")"
 
 # --- 6. Sign, notarize, staple ----------------------------------------------
 step "Signing and notarizing"
-./scripts/release-sign.sh "$STAGED"
+./scripts/internal/release-sign.sh "$STAGED"
 
 # --- 7. Package --------------------------------------------------------------
 VERSION="${VERSION:-$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' \
@@ -174,5 +178,6 @@ $(printf '\033[1mRelease artifacts\033[0m')
   archive:   $ARCHIVE
   sha256:    $(cut -d' ' -f1 < "$ARCHIVE.sha256")
 
-Next: docs/releasing.md — publish the GitHub release, then update the Homebrew cask.
+Next: ./tenon publish — tag it, put it on GitHub, update the cask, and prove a stranger
+can install it. See docs/releasing.md.
 SUMMARY

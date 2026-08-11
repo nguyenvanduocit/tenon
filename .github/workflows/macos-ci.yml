@@ -28,15 +28,15 @@ jobs:
           swift --version
 
       - name: Install the pinned project generator
-        run: scripts/setup-xcodegen.sh
+        run: scripts/internal/setup-xcodegen.sh
 
       - name: Verify setup script integrity checks
         run: |
-          scripts/test-setup-ghosttykit.sh
-          scripts/test-setup-xcodegen.sh
+          scripts/internal/setup-ghostty.test.sh
+          scripts/internal/setup-xcodegen.test.sh
 
       - name: Install verified Ghostty artifacts
-        run: scripts/setup-ghosttykit.sh
+        run: scripts/internal/setup-ghostty.sh
 
       - name: Verify generated Xcode project is current
         run: |
@@ -98,10 +98,10 @@ jobs:
           swift --version
 
       - name: Install the pinned project generator
-        run: scripts/setup-xcodegen.sh
+        run: scripts/internal/setup-xcodegen.sh
 
       - name: Install verified Ghostty artifacts
-        run: scripts/setup-ghosttykit.sh
+        run: scripts/internal/setup-ghostty.sh
 
       - name: Generate the Xcode project
         run: .build/tools/xcodegen/bin/xcodegen generate

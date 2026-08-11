@@ -10,12 +10,8 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         let socket = try source("TenonApp/CLISocketServer.swift")
         let hooks = try source("TenonApp/AgentSessionHooks.swift")
         let cliInstaller = try source("TenonApp/CLICommandInstaller.swift")
-        let stableInstaller = try String(
-            contentsOf: packageRoot.appendingPathComponent("install.sh"),
-            encoding: .utf8
-        )
-        let stagingInstaller = try String(
-            contentsOf: packageRoot.appendingPathComponent("install-staging.sh"),
+        let installer = try String(
+            contentsOf: packageRoot.appendingPathComponent("scripts/install.sh"),
             encoding: .utf8
         )
 
@@ -74,15 +70,18 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             ["instanceChannel == .production", "InstallError.productionOnly"],
             file: "CLICommandInstaller.swift"
         )
+        // One installer, two channels: the `--staging` flag selects the identity, so the two
+        // bundle identifiers cannot drift apart the way two installer scripts could.
         assertContains(
-            stableInstaller,
-            ["INSTALL_BUNDLE_ID:-dev.tenon.app"],
-            file: "install.sh"
-        )
-        assertContains(
-            stagingInstaller,
-            ["INSTALL_BUNDLE_ID=\"dev.tenon.app.staging\""],
-            file: "install-staging.sh"
+            installer,
+            [
+                "--staging) STAGING=1 ;;",
+                "if [ \"$STAGING\" -eq 1 ]; then",
+                "BUNDLE_ID=\"${INSTALL_BUNDLE_ID:-dev.tenon.app.staging}\"",
+                "BUNDLE_ID=\"${INSTALL_BUNDLE_ID:-dev.tenon.app}\"",
+                "dev.tenon.app|dev.tenon.app.staging",
+            ],
+            file: "scripts/install.sh"
         )
     }
 
@@ -354,7 +353,9 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             palette,
             [
                 "PaletteIntentInvoker.send(",
-                "Text(key.display)",
+                // The assigned chord is displayed on the ranked row, handed to the shared
+                // chrome as its trailing accessory.
+                "trailing: match.command.key?.display",
             ],
             file: "PaletteOverlay.swift"
         )
@@ -581,7 +582,10 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "var agentSuggestions: [AgentLaunchSuggestion]",
                 "var launchAgent: ((AgentLaunchSuggestion) -> LauncherOutcome)?",
                 "var copyTabID: (() -> Void)?",
-                "Button(\"Copy Tab ID\", systemImage: \"doc.on.doc\")",
+                // The footer's presentation is the shared chrome every other row in the
+                // popover draws, so its geometry and hover come from one place
+                // (`CMD-NFR-008`); its behaviour is pinned by the chrome test below.
+                "title: Text(\"Copy Tab ID\")",
                 "tenon.launcher.copyTabID",
             ],
             file: "LauncherMenu.swift"
@@ -793,6 +797,88 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             commandIndex,
             ["public var paneFillersOnly: CommandIndex", "$0.isLauncher && $0.fillsPane"],
             file: "CommandIndex.swift"
+        )
+    }
+
+    /// Three kinds of row share one popover: a ranked command, a dynamic provider result,
+    /// and the tab's own Copy Tab ID utility. Only the first is a ranking answer, and for a
+    /// long time the row presentation took nothing else — it was typed on `CommandMatch`,
+    /// which carries `score` and `titleMatch`. Both other callers paid for that: the palette
+    /// fabricated a `CommandMatch(score: 0)` to obtain a row, and the launcher's footer
+    /// refused to and hand-rolled a `Button`, losing hover and selection entirely. `CMD-NFR-005`
+    /// had promised row hover the whole time with `source/design review` as its only evidence.
+    /// The chrome is now the presentation and the ranking is a separate question, so this
+    /// stands where the eye did.
+    func testEveryLauncherRowDrawsOneSharedChromeWhateverItsSemantics() throws {
+        let chrome = try source("TenonApp/PaletteRowChrome.swift")
+        let overlay = try source("TenonApp/PaletteOverlay.swift")
+        let launcher = try source("TenonApp/LauncherMenu.swift")
+
+        assertContains(
+            chrome,
+            [
+                "struct PaletteRowChrome: View",
+                "enum Density",
+                "@State private var isHovered",
+                ".onHover { isHovered = $0 }",
+            ],
+            file: "PaletteRowChrome.swift"
+        )
+        // Drawing a row must not require having won a ranking, which is the whole reason a
+        // local utility can reuse this. Prose is not a dependency, and the one place that
+        // must be free to name the ranking type is the rationale explaining why this type
+        // refuses it — so the ban is on code, with every comment tail dropped first.
+        let chromeCode = chrome
+            .split(separator: "\n", omittingEmptySubsequences: false)
+            .map { line in line.range(of: "//").map { line[..<$0.lowerBound] } ?? line }
+            .joined(separator: "\n")
+        for forbidden in ["CommandMatch", "Command(", "titleMatch", "score"] {
+            XCTAssertFalse(
+                chromeCode.contains(forbidden),
+                "PaletteRowChrome must stay ignorant of ranking, but names \(forbidden)"
+            )
+        }
+
+        // One implementation of the highlight. A second call site restating it is exactly how
+        // the footer came to have none.
+        for (name, implementation) in [
+            ("PaletteOverlay.swift", overlay),
+            ("LauncherMenu.swift", launcher),
+        ] {
+            XCTAssertFalse(
+                implementation.contains("isHovered") || implementation.contains(".onHover"),
+                "\(name) restates the row highlight instead of composing PaletteRowChrome"
+            )
+        }
+
+        // A dynamic provider result is appended, never ranked (`CMD-FR-003`), and no longer
+        // impersonates a ranked command to be drawn.
+        XCTAssertFalse(
+            overlay.contains("score: 0"),
+            "the palette still fabricates a CommandMatch to reuse the row presentation"
+        )
+
+        // The fixed tab utility draws through the same chrome and stays the one row that can
+        // never carry the selected accent, because it never enters the ranked order at all.
+        let footer = try sourceSlice(
+            launcher,
+            from: "if let copyTabID {",
+            before: ".frame(width: 300)"
+        )
+        assertContains(
+            footer,
+            [
+                "PaletteRowChrome(",
+                "isSelected: false",
+                "density: .compact",
+                "tenon.launcher.copyTabID",
+            ],
+            file: "LauncherMenu.swift Copy Tab ID footer"
+        )
+        XCTAssertTrue(
+            try source("TenonApp/LauncherListHeight.swift")
+                .contains("PaletteRowChrome.Density.compact.height"),
+            "the launcher's height arithmetic must read the same metrics the rows draw with"
         )
     }
 
@@ -1032,7 +1118,10 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             before: "public struct IntentPrincipal"
         )
         for (name, inventory, expectedCases) in [
-            ("CoreIntentName", coreIntentInventory, 46),
+            // 46 → 48 (T-132). This gate asks whether *automation* grew the inventory; the
+            // two added names are a terminal read and a tab close, and the `contains
+            // ("automation")` assertion below is what actually holds that line.
+            ("CoreIntentName", coreIntentInventory, 48),
             ("CoreIntentExecutionLane", laneInventory, 12),
             ("IntentAudience", audienceInventory, 5),
         ] {
