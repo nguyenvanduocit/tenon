@@ -839,11 +839,16 @@ final class CallerConsentTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
-        for _ in 0 ..< 2_000 {
+        // Wait on a deadline, and suspend rather than yield. `Task.yield()` reschedules onto the
+        // same cooperative pool, so a fixed number of yields is a hope about scheduling, not a
+        // bound: when the machine is busy the eight sends never reach the consent boundary and
+        // the spin reports a failure the code did not commit. Sleeping hands the pool back.
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if await probe.requestCount() >= expected {
                 return
             }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
         }
         XCTFail(
             "confirmation authorizer never received \(expected) request(s)",

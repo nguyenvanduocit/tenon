@@ -753,11 +753,15 @@ private actor StartBarrier {
         for continuation in pending { continuation.resume() }
     }
 
-    /// Bounded so a serial lane reports a failure instead of hanging the suite.
+    /// Bounded so a serial lane reports a failure instead of hanging the suite — but bounded by a
+    /// deadline, and suspending rather than yielding. A fixed number of `Task.yield()`s reschedules
+    /// onto the same cooperative pool without ever handing it back, so on a busy machine the lane
+    /// this waits for may never run and the count reports a concurrency failure that did not happen.
     func reachedFullStrength() async -> Bool {
-        for _ in 0 ..< 2_000 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if arrived >= expected { return true }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
         }
         return arrived >= expected
     }

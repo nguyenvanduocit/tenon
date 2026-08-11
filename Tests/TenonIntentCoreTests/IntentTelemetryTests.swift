@@ -96,9 +96,8 @@ final class IntentTelemetryTests: XCTestCase {
         await reporter.report(try IntentProgress(completed: 0))
         await reporter.report(try IntentProgress(completed: 1))
         await reporter.report(try IntentProgress(completed: 2))
-        try await Task.sleep(for: .milliseconds(140))
 
-        let values = await sink.values()
+        let values = await sink.valuesReaching(2, within: .seconds(5))
         XCTAssertEqual(values, [0, 2])
     }
 
@@ -149,5 +148,19 @@ private actor ProgressSinkProbe {
 
     func values() -> [Double] {
         recordedValues
+    }
+
+    /// Wait for the coalesced flush to land instead of sleeping a fixed margin past the
+    /// reporter's interval. What the reporter promises is that the latest pending value is
+    /// delivered *after* `minimumInterval` — how promptly a loaded machine gets round to running
+    /// that timer is not part of the promise, and a fixed sleep turns that difference into a
+    /// failure. Returns as soon as `count` values have arrived, so the assertion that follows is
+    /// still exact.
+    func valuesReaching(_ count: Int, within deadline: Duration) async -> [Double] {
+        let started = ContinuousClock.now
+        while recordedValues.count < count, ContinuousClock.now - started < deadline {
+            try? await Task.sleep(for: .milliseconds(10))
+        }
+        return recordedValues
     }
 }
