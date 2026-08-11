@@ -44,6 +44,8 @@ final class SpatialSlotCardView: NSView {
     /// re-dims its accessories even when the geometry did not move.
     private var appliedHeaderIsActive: Bool?
     private var contentHost: NSHostingView<AnyView>?
+    /// The rect the spoken position and the identifier were last written from.
+    private var appliedAccessibilityRect: GridRect?
     /// What the mounted content view tree IS, as a value. `configure` rebuilds that tree
     /// exactly when this changes, so it is also the only honest observable for the rule
     /// that keeps a live PTY alive: header state, attention state and focus state are
@@ -766,11 +768,22 @@ final class SpatialSlotCardView: NSView {
     /// is the one place a screen reader reports a group's state, and it used to hold a UUID and
     /// four raw grid numbers. The stable identity and exact rect a UI test needs ride the
     /// accessibility *identifier*, which is never spoken.
-    func updateAccessibilityValue(for slot: SpatialSlot) {
+    /// Both strings are pure functions of the rect, so an unchanged rect has nothing new to
+    /// say. `applyFrames` calls this for every displayed card on every layout pass and on every
+    /// `.leftMouseDragged`, and unlike the `card.frame` assignment beside it — which AppKit
+    /// short-circuits when the rect is unchanged — writing here means a UUID interpolation and
+    /// one or two `String(localized:)` lookups each time.
+    ///
+    /// Returns whether it wrote, so the saving is assertable rather than merely intended.
+    @discardableResult
+    func updateAccessibilityValue(for slot: SpatialSlot) -> Bool {
+        guard appliedAccessibilityRect != slot.rect else { return false }
+        appliedAccessibilityRect = slot.rect
         setAccessibilityIdentifier(
             "tenon.slot#\(slot.id.uuidString)@\(slot.rect.x),\(slot.rect.y),\(slot.rect.width),\(slot.rect.height)"
         )
         setAccessibilityValue(Self.spokenPosition(of: slot.rect))
+        return true
     }
 
     /// "Column 2, row 1, 2 by 1 cells" — the grid is one-based when spoken, because a person

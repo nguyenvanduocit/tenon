@@ -284,7 +284,8 @@ final class PluginPaneHeaderRouteTests: XCTestCase {
             automationActions: AutomationPaneActions(
                 runNow: { _, _ in },
                 setPaused: { _, _, _ in },
-                createWithAI: {}
+                createWithAI: {},
+                openRunDetail: { _, _ in }
             )
         )
         canvas.layout()

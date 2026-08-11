@@ -72,6 +72,13 @@ struct AppStatePaths: Sendable, Equatable {
         applicationSupportRoot.appendingPathComponent(".open-handler-approvals.json")
     }
 
+    /// The approvals a person has given callers (T-130), beside the open-handler choices
+    /// for the same reason: consent belongs to this person and this machine rather than to
+    /// one project, and it has to outlive the process that was given it.
+    var standingConsentFile: URL {
+        applicationSupportRoot.appendingPathComponent(".standing-consent.json")
+    }
+
     /// What the app recorded about its own health (T-092). Application-level and not
     /// workspace-level, because a stalled runloop is a fact about this process, not about
     /// whichever project happened to be open when it stalled.

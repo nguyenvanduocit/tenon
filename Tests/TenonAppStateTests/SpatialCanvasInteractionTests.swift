@@ -2536,7 +2536,8 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         let automationActions = AutomationPaneActions(
             runNow: { _, _ in },
             setPaused: { _, _, _ in },
-            createWithAI: {}
+            createWithAI: {},
+            openRunDetail: { _, _ in }
         )
         // Published through the real store rather than handed straight to `configure`,
         // so these tests exercise the whole chain a running app uses: publish → the

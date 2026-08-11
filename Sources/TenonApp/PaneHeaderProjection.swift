@@ -73,7 +73,11 @@ enum PaneHeaderProjection {
                 slotID: slot.id,
                 in: pluginViewSections
             )?.header ?? .empty
-        case .terminal, .changes, .file, .diff, .automation, .empty:
+        case .terminal, .changes, .file, .diff, .automation, .agentSession, .empty:
+            // A recorded session's header is host-native like the rest: the pane's own view
+            // pushes it to `PaneHeaderStore` once it knows what it is reading, so a session
+            // whose title arrives from the transcript names the pane the same way a live one
+            // does. The reference's `displayName` is what it publishes until then.
             return published ?? .empty
         }
     }

@@ -48,6 +48,25 @@ struct SpatialCanvasView: NSViewRepresentable {
         SpatialCanvasNSView()
     }
 
+    /// The canvas takes the space the stage gives it and proposes nothing of its own.
+    ///
+    /// T-121: without this, the question has an answer anyway — the wrong one. The stage's
+    /// `ZStack` asks its child for an ideal size, and a representable that stays silent sends
+    /// that question to AppKit, which answers it by running an Auto Layout fitting-size sweep
+    /// across every card, every pane host and every `NSTextField` beneath the canvas. The
+    /// sweep dirties the text fields it walks, so measuring re-arms the measurement, and with
+    /// enough panes open the main runloop stops completing turns altogether.
+    ///
+    /// It is the same rule `SpatialSlotCardView.layout()` and `AgentSessionLayout` already
+    /// keep one level down: a pane is sized by the canvas, never by what it contains.
+    func sizeThatFits(
+        _ proposal: ProposedViewSize,
+        nsView: SpatialCanvasNSView,
+        context: Context
+    ) -> CGSize? {
+        CGSize(width: proposal.width ?? 0, height: proposal.height ?? 0)
+    }
+
     func updateNSView(_ view: SpatialCanvasNSView, context: Context) {
         view.configure(
             tab: tab,

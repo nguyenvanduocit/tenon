@@ -46,6 +46,13 @@ final class DirectInventoryGateTests: XCTestCase {
         // family for host-private process facts plus a RESOURCE for a visibility-scoped
         // sampler, neither of which exists. Named, not hand-waved as difficulty.
         "the read-only process resource monitor (T-100). Built-in SwiftUI reads immutable `TelemetrySnapshot` values from `ProcessTelemetryCoordinator` and reveals a pane through the typed `WorkspaceStore.focusSlot` already DIRECT above. **why not a plugin": 1427,
+        // T-126. Added with its justification clause: the missing mechanism is a public
+        // reader for another principal's transcript bytes — no RESOURCE/STREAM tails a
+        // provider transcript for a plugin and no EVENT family carries decoded session
+        // facts across the boundary. Both are absent on purpose, which is the named missing
+        // thing rather than a difficulty. The plugin passes a reference through an intent
+        // that already exists; only the reading is DIRECT.
+        "reading a session that has already happened, and picking it up again (T-126). A plugin that lists sessions asks for a pane over one through the existing `workspace.content.open.v1` INTENT with `content.kind = agentSession` — the reference crosses the principal boundary as a bounded value and nothing else does. Everything after that door is same-owner DIRECT": 2243,
         "pure parsers, ranking, schemas, and value transformations": 58,
         "`tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the plugin runtime as pure string functions.": 126,
     ]

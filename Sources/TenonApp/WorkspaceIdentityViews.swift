@@ -48,7 +48,7 @@ enum WorkspaceIdentityFormMetrics {
 /// that workspace. Kept as one view so the mark, its size, and its tint are decided once.
 struct WorkspaceMark: View {
     let workspace: Workspace
-    var size: CGFloat = 11
+    var size: CGFloat = 15
 
     /// Which colour a mark is drawn in — every workspace in its own, whether or not it is
     /// the selected one.

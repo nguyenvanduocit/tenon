@@ -194,6 +194,7 @@ struct EmptyStateCard: View {
         case .file(let path): return (path as NSString).lastPathComponent
         case .pluginView(_, let viewID): return viewID
         case .diff(let request): return request.title
+        case .agentSession(let ref): return ref.displayName
         case .empty: return "Empty"
         }
     }
