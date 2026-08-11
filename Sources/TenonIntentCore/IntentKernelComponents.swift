@@ -21,6 +21,7 @@ public struct IntentKernelComponents: Sendable {
         telemetryCapacity: Int = 2_000,
         dispatcherLimits: IntentDispatcherLimits? = nil,
         confirmationAuthorizer: IntentConfirmationAuthorizer = .failClosed,
+        standingConsentWriter: StandingConsentWriter? = nil,
         progressSink: @escaping IntentDispatcher.ProgressSink = { _ in }
     ) throws {
         let resolvedIdempotencyLimits = try idempotencyLimits
@@ -30,7 +31,7 @@ public struct IntentKernelComponents: Sendable {
         let catalog = ContractCatalog(
             compiler: IntentSchemaCompiler(limits: schemaLimits)
         )
-        let policy = PolicyEngine()
+        let policy = PolicyEngine(standingConsentWriter: standingConsentWriter)
         let registry = ProviderRegistry()
         let providerActivation = ProviderActivationCoordinator(
             catalog: catalog,

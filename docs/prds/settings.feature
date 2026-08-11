@@ -254,3 +254,49 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
       Then the value comes from that installation's runtime configuration
       And the facility is non-routable, non-discoverable, capability-free, and lifecycle-bound
       And plugin code does not self-send an intent to read its own setting
+
+  Rule: One switch decides whether Tenon asks before a caller acts
+
+    @req-set-fr-021 @permissions
+    Scenario: The switch is on before anyone chooses
+      Given no app preferences blob exists, or one written before the switch existed
+      When AppPreferencesStore initializes
+      Then approving every permission request automatically is on
+      And a person who turned it off keeps that choice across launches
+
+    @req-set-fr-022 @permissions
+    Scenario Outline: With the switch on, no confirmation reaches the person
+      Given approving every permission request automatically is on
+      When a caller invokes a contract whose confirmation is <mode>
+      Then the invocation is approved without anything being presented
+      And the approval covers only that wave, writing no standing consent
+
+      Examples:
+        | mode |
+        | policy |
+        | always |
+
+    @req-set-fr-022 @permissions
+    Scenario: Turning the switch off restores asking with nothing carried over
+      Given the switch has been on and callers have been approved under it
+      When the person turns it off
+      Then the next `.policy` invocation is presented as a permission choice
+      And no consent recorded while it was on approves anything
+
+    @req-set-fr-023 @permissions
+    Scenario: A plugin's own confirmation is not the host's to answer
+      Given approving every permission request automatically is on
+      When a plugin asks the person to confirm its own destructive action
+      Then the confirmation is still presented
+
+    @req-set-fr-024 @permissions
+    Scenario: The page says what the switch costs and what it cannot reach
+      Given the Permissions page is open
+      Then it states that a plugin outside the bundled inventory runs its declared contracts unasked
+      And it states that declared use, audience, capability, scope, and provider eligibility are checked on every invocation regardless
+
+    @req-set-nfr-009 @permissions
+    Scenario: The answer follows the store rather than a copy of it
+      Given a confirmation arrives after the switch was changed in Settings
+      When the host takes its standing answer
+      Then the answer is the one the store holds now

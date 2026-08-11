@@ -94,13 +94,20 @@ final class AppIntentRuntime {
         bindings = collected
     }
 
+    // MARK: - Durable kernel state  @domain: intent-bus
+
     /// Opens and prepares durable kernel state away from the UI executor. The returned
     /// components are `Sendable`; the non-Sendable SQLite connection is consumed by the
     /// kernel's idempotency actor before this value crosses back to `MainActor`.
+    ///
+    /// Standing consent is both written and read here: the writer goes to the engine so a
+    /// grant is durable before it is remembered, and what an earlier launch kept is adopted
+    /// before any provider can be reached.
     @concurrent
     static func prepareKernel(
         stateRoot: URL,
-        confirmationAuthorizer: IntentConfirmationAuthorizer
+        confirmationAuthorizer: IntentConfirmationAuthorizer,
+        standingConsent: StandingConsentStore? = nil
     ) async throws -> IntentKernelComponents {
         try FileManager.default.createDirectory(
             at: stateRoot,
@@ -112,11 +119,20 @@ final class AppIntentRuntime {
                 isDirectory: false
             )
         )
-        return try IntentKernelComponents(
+        let components = try IntentKernelComponents(
             persistence: persistence,
-            confirmationAuthorizer: confirmationAuthorizer
+            confirmationAuthorizer: confirmationAuthorizer,
+            standingConsentWriter: standingConsent?.writer()
         )
+        // Adopted before any provider can be reached, so the first invocation of the launch
+        // sees the answers the person already gave rather than asking them again.
+        if let kept = standingConsent?.load(), !kept.isEmpty {
+            try await components.policy.restoreStandingConsents(kept)
+        }
+        return components
     }
+
+    // MARK: - Lifecycle  @domain: intent-bus
 
     func start() async throws {
         if isStarted {
@@ -177,6 +193,8 @@ final class AppIntentRuntime {
         }
         isStarted = false
     }
+
+    // MARK: - Dispatch surface  @domain: intent-bus
 
     func discover(
         as caller: IntentPrincipal,
@@ -242,6 +260,8 @@ final class AppIntentRuntime {
 }
 
 private extension AppIntentRuntime {
+    // MARK: - Activation  @domain: intent-bus
+
     func performStart() async throws {
         try Task.checkCancellation()
         let compiled = try await catalog.install()

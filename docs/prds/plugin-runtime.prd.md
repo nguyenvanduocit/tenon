@@ -183,7 +183,7 @@ VoiceOver, focus, semantic color, and non-color-only status.
 | `PRT-FR-019` | Intent list/describe discovery **MUST** return only the contracts visible to that installation principal and **MUST** remain reserved catalog control plane rather than self-sent intents. | shipped | `@req-prt-fr-019` |
 | `PRT-FR-020` | Policy **MUST** separately evaluate active generation, exact audience, declared use, capability, canonical path/URL pointers, invocation pane/workspace scope, network allowlist/redirect, consent, target eligibility, and provider readiness. | shipped | `@req-prt-fr-020` |
 | `PRT-FR-021` | For `.policy` consent, concurrent first calls for one installation/contract/fingerprint **MUST** share one prompt; approval **MUST** persist only after durable storage and survive hot reload for the same installation. | shipped | `@req-prt-fr-021` |
-| `PRT-FR-022` | `.always` contracts **MUST** prompt on every invocation; `.never` contracts **MUST NOT** create consent records; user-inventory plugins **MUST NOT** receive bundled standing consent. | shipped | `@req-prt-fr-022` |
+| `PRT-FR-022` | `.always` contracts **MUST** prompt on every invocation unless the operator has turned the host's Permissions switch on (`SET-FR-022`), which answers every confirmation; `.never` contracts **MUST NOT** create consent records; user-inventory plugins **MUST NOT** receive bundled standing consent. | shipped | `@req-prt-fr-022` |
 | `PRT-FR-023` | Disable, uninstall, trust withdrawal, or queued lifecycle supersession **MUST** revoke applicable consent and authority before later calls can enter; consent-persistence failure **MUST** fail closed. | shipped | `@req-prt-fr-023` |
 | `PRT-FR-024` | Host event subscription **MUST** be manifest/policy gated, deliver immutable facts without a reply channel, unsubscribe explicitly, and disappear on generation retirement. | shipped | `@req-prt-fr-024` |
 | `PRT-FR-025` | Plugin event publication **MUST** require a declared owner-local channel, prefix it with stable plugin ID, and deliver only to manifests declaring the fully qualified observed channel. | shipped | `@req-prt-fr-025` |
@@ -206,6 +206,7 @@ VoiceOver, focus, semantic color, and non-color-only status.
 | `PRT-FR-042` | Streaming process launch **MUST** own a POSIX process group (or equivalently race-free descendant set) so cancel/overflow/retirement terminates the leader and descendants before process-tree containment is claimed. | planned | `@req-prt-fr-042` |
 | `PRT-FR-043` | Finite filesystem/process/workspace/terminal/browser/UI/secrets/network/clipboard/OS operations **MUST** use canonical intents; removed handwritten helpers, runtime commands, and sidebar contribution **MUST NOT** be compatibility contracts. | shipped | `@req-prt-fr-043` |
 | `PRT-FR-044` | Plugins **MUST NOT** receive native `Process`, `FileHandle`, filesystem watcher, AppKit, pasteboard, Ghostty, WebKit, application-model, or provider-service objects. | shipped | `@req-prt-fr-044` |
+| `PRT-FR-046` | Standing consent **MUST** outlive the process it was given in: a grant **MUST** reach durable storage before the engine remembers it, a write failure **MUST** leave nothing granted, revocation **MUST** rewrite that store, and a launch **MUST** adopt what the previous one kept before any provider is reachable. | shipped | `@req-prt-fr-046` |
 | `PRT-FR-045` | Permission UX **MUST** be installation-scoped and low friction: trusted bundled/development provenance auto-grants declared capability policy; explicitly enabled local code is reviewed once at enablement or material manifest expansion; unchanged ordinary operations **MUST NOT** repeatedly prompt, while truly sensitive/irreversible actions **MAY** retain per-operation confirmation. | planned/partial | `@req-prt-fr-045` |
 
 ### Non-functional requirements
@@ -261,7 +262,8 @@ uses Tenon's design system. Source ownership begins in `plugin-host`, `plugin-se
 | 041 | no current process sandbox for user-authored JavaScript | planned; architecture/threat-model work required |
 | 042 | Foundation `Process.terminate()` stops the leader | planned; owned POSIX process-group launch/kill required |
 | 043…044 and NFR-001…012 | boundary law, capability providers, exact-inventory and shipped-plugin fitness | shipped/continuous; security wording remains partial with FR-041 |
-| 045/NFR-013 | current bundled standing consent and installation fingerprints are the base; consolidated local enable/authority review remains product-policy work | planned/partial; optimize developer velocity without bypassing declared boundaries |
+| 045/NFR-013 | bundled standing consent, installation fingerprints, cross-launch consent (FR-046) and the operator's Permissions switch are the base; consolidated local enable/authority review remains product-policy work | planned/partial; optimize developer velocity without bypassing declared boundaries |
+| 046 | `PolicyEngine` standing-consent writer/restore, `StandingConsentStore`, `StandingConsentPersistenceTests`, `StandingConsentStoreTests` | shipped |
 
 Rollout for FR-041 must define process host protocol, capability token, parent-death behavior,
 Seatbelt or equivalent profile, crash/restart policy, migration of contributions/resources, and a
@@ -282,11 +284,25 @@ source/test evidence; hard isolation and descendant containment remain pending; 
 low-friction installation policy, not repeated ceremony, and extra interruption requires concrete
 risk proportional to the action.
 
+Two decisions taken 2026-08-11 (T-130) correct claims this document had been making. First,
+consent was described as persisted from the beginning — `CallerConsentKey` omits the session
+revision precisely to say consent belongs to an installation — while the engine in fact held
+it in memory alone, so every approval died with the process and the next launch asked again.
+`PRT-FR-046` states the promise the code now keeps; the kernel still performs no I/O and takes
+a writer from the host. Second, the product owner chose a host-level switch that answers every
+confirmation, including `.always`, and it defaults to on. Its consequence is recorded rather
+than argued: a user-inventory plugin then runs its declared `.policy` contracts unasked, which
+is what `PRT-FR-006` and `PRT-FR-022` were written to prevent. `PRT-FR-022`'s unconditional
+wording is superseded to name the override. What the switch does **not** touch is the rest of
+`PRT-FR-020`: declared use, audience, capability, scope, and provider eligibility are still
+evaluated on every invocation.
+
 ## 9. Verification receipts and change history
 
 | Date | Worktree | Result | Exclusions |
 |---|---|---|---|
 | 2026-08-09 | current dirty tree, documentation audit | runtime inventory, source bounds, trust/identity, consent, lifecycle, resource and log tests mapped | no new runtime test execution in this documentation-only pass; FR-041/042 intentionally pending |
+| 2026-08-11 | T-130, shared `main` | `swift test --filter StandingConsentPersistenceTests` 7/0 and `--filter StandingConsentStoreTests` 6/0; mutation-checked by removing the durable write from the contract grant, which fails 5 of the 13 | full-suite red at the time belonged to T-123/T-124/T-126/T-128, none in consent or policy |
 
 Initial canonical PRD created 2026-08-09. It supersedes historical task shapes where they conflict
 with the accepted interaction boundary or current source, without deleting the evidence artifacts.

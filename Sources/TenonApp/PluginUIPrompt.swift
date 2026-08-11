@@ -72,6 +72,17 @@ final class PluginUIState {
             <= CoreIntentPayloadPolicy.maximumInlineTextCharacters
     }
 
+    /// Where the operator's standing answer to permission confirmations comes from.
+    ///
+    /// A closure the composition root points at the preferences store, read at the moment a
+    /// confirmation arrives rather than copied into a stored flag — so the switch in
+    /// Settings governs the next request with nothing to keep in step and nothing to go
+    /// stale. It starts off: the safe direction for a wiring mistake is asking a question
+    /// nobody wanted rather than silently answering one nobody saw, and only one of those
+    /// two failures is visible.
+    @ObservationIgnored
+    var bypassesPermissionPrompts: @MainActor @Sendable () -> Bool = { false }
+
     @ObservationIgnored private var registrations: [UUID: Registration] = [:]
     @ObservationIgnored private var toastTasks: [UUID: Task<Void, Never>] = [:]
 
@@ -194,9 +205,27 @@ final class PluginUIState {
         }
     }
 
+    /// Points the permission answer at the live preferences store. One call, at the
+    /// composition root, and every later change to the switch is already accounted for.
+    func adopt(_ preferences: AppPreferencesStore) {
+        bypassesPermissionPrompts = { preferences.preferences.bypassAllPermissionPrompts }
+    }
+
+    /// Takes the operator's standing answer, or nothing when they still have to be asked.
+    ///
+    /// `.allowOnce` and not `.alwaysAllow`: the switch leaves no consent record behind, so
+    /// turning it off restores asking with nothing carried over from the time it was on.
+    /// A remembered grant would outlive the switch and quietly keep approving.
+    func standingPermissionAnswer() -> IntentConfirmationDecision? {
+        bypassesPermissionPrompts() ? .allowOnce : nil
+    }
+
     func confirmationAuthorizer() -> IntentConfirmationAuthorizer {
         IntentConfirmationAuthorizer { [weak self] request in
             guard let self else { return .denied }
+            if let standing = await self.standingPermissionAnswer() {
+                return standing
+            }
             do {
                 let title = request.contract.title
                     ?? request.contract.name.rawValue

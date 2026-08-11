@@ -113,7 +113,7 @@ the previous value and exposes an error. Removing the selected plugin falls back
 - `SET-FR-007` — Automation global enabled and per-schedule paused keys MUST persist and advance only their relevant process-local policy revisions.
 - `SET-FR-008` — App preferences MUST persist as one JSON blob under `app.preferences` and fall back completely to defaults if the blob is unreadable.
 - `SET-FR-009` — Missing fields in an older blob MUST decode to current defaults; an unknown pane-width value MUST degrade to no maximum without failing other fields.
-- `SET-FR-010` — Settings navigation MUST contain General, manifest-declared plugin pages, Automation, CLI, and Extensions in one flat source list.
+- `SET-FR-010` — Settings navigation MUST contain General, manifest-declared plugin pages, Automation, Permissions, CLI, and Extensions in one flat source list.
 - `SET-FR-011` — General MUST present new-pane defaults/width, sidebar startup/width, host accent, and selectable current app version.
 - `SET-FR-012` — Browser configuration MUST be rendered from the browser plugin manifest, not a hardcoded Browser route.
 - `SET-FR-013` — A plugin page MUST group specs by first-seen optional group while preserving manifest order.
@@ -124,6 +124,10 @@ the previous value and exposes an error. Removing the selected plugin falls back
 - `SET-FR-018` — Failed save MUST restore the previous UI value and show an error; it MUST NOT publish uncommitted actor state.
 - `SET-FR-019` — Extensions and plugin pages MUST show enable state, permissions, violations/errors, and serialize enable/disable lifecycle operations.
 - `SET-FR-020` — If a selected plugin disappears, detail MUST fail-soft to General.
+- `SET-FR-021` — Permissions MUST present one switch governing whether the host answers permission confirmations itself, defaulting to on, persisted in the app preferences blob, and decoding to that default when an older blob omits it.
+- `SET-FR-022` — With the switch on, every confirmation — `.policy` and `.always` alike — MUST be approved without presenting UI, and the approval MUST be wave-local so that turning the switch off restores asking with no consent record written while it was on.
+- `SET-FR-023` — The switch MUST govern permission confirmations only; a plugin's own `ui.confirm` interaction MUST still be presented.
+- `SET-FR-024` — The Permissions page MUST state, in the page, what the switch surrenders for plugins outside the bundled inventory and what policy checks still run regardless of it.
 
 ### Non-functional requirements
 
@@ -135,6 +139,7 @@ the previous value and exposes an error. Removing the selected plugin falls back
 - `SET-NFR-006` — `tenon.settings` MUST remain the closed plugin-private SCOPED FACILITY: non-routable, non-discoverable, capability-free, and tied to runtime installation.
 - `SET-NFR-007` — All controls MUST have labels, keyboard behavior, progress/error state, and non-color accessibility meaning.
 - `SET-NFR-008` — Settings status reads/CLI install work MUST avoid filesystem/process I/O from SwiftUI `body` or MainActor blocking paths.
+- `SET-NFR-009` — The permission answer MUST be read from the preferences store when a confirmation arrives rather than cached in presentation state, so a change in Settings governs the next request with no synchronization step that can drift.
 
 ## 8. Acceptance specification
 
@@ -178,8 +183,15 @@ source list and manifest-driven browser settings.
 | 2026-08-09 | flat source-list Settings is canonical | T-002 General/Browser/Plugins tabs |
 | 2026-08-09 | Browser settings are plugin manifest settings | hardcoded Browser page |
 | 2026-08-09 | app and plugin settings use separate stores/identities | one undifferentiated preferences store |
+| 2026-08-11 | a Permissions page carries one switch that answers every confirmation, on by default, chosen by the product owner with its consequence stated: a plugin outside the bundled inventory then runs its declared contracts unasked, which is what `PRT-FR-006`/`PRT-FR-022` were written to prevent. Recorded rather than re-argued. | permission confirmation as the only path, with no operator control over it |
 
 ## 13. Verification receipts
+
+2026-08-11 (T-130): `swift test --filter PermissionBypassTests` — 10 tests, 0 failures, over
+the real `CoreIntentCatalog` contracts in both confirmation modes. Mutation-checked:
+returning `.alwaysAllow` instead of `.allowOnce` from the standing answer fails 3 of them.
+The Permissions page itself has no offscreen snapshot — Settings is a window scene and
+`PaneViewSnapshotWriter` photographs panes — so its layout is unverified by machine.
 
 Current focused suites: `AppPreferencesTests`, `WorkspaceDefaultContentTests`,
 `PluginSettingsSchemaTests`, plugin persistence/identity/limits tests, builtins changed-event
@@ -191,3 +203,4 @@ remains required only when native Settings appearance changes.
 | Date | Author | Change |
 |---|---|---|
 | 2026-08-09 | Codex | Reconciled T-002 with current manifest-driven source-list Settings. |
+| 2026-08-11 | Claude | T-130: added the Permissions page and its switch (`SET-FR-021`…`024`, `SET-NFR-009`). |

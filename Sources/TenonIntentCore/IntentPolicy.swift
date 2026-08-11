@@ -729,6 +729,40 @@ public struct CallerWideConsentKey: Sendable, Equatable, Hashable, Codable {
     }
 }
 
+/// Every standing consent the engine holds, in the shape a host can keep.
+///
+/// Consent belongs to an installation rather than to a process, and until this existed the
+/// engine held it in memory alone — so every approval a person gave died with the app and
+/// the next launch asked again. The kernel still performs no I/O: it hands this value to a
+/// writer the host supplies and lets the host decide where it lives.
+public struct StandingConsentSnapshot: Sendable, Equatable, Codable {
+    public let contracts: Set<CallerConsentKey>
+    public let callers: Set<CallerWideConsentKey>
+
+    public static let empty = StandingConsentSnapshot(contracts: [], callers: [])
+
+    public var isEmpty: Bool {
+        contracts.isEmpty && callers.isEmpty
+    }
+
+    public init(
+        contracts: Set<CallerConsentKey>,
+        callers: Set<CallerWideConsentKey>
+    ) {
+        self.contracts = contracts
+        self.callers = callers
+    }
+}
+
+/// Where consent is kept between launches.
+///
+/// It runs **before** the engine remembers a grant, so a write that fails leaves nothing
+/// approved: durable first, in-memory second, and a throw is fail-closed by construction
+/// rather than by remembering to check. Revocation writes through the same door, so a
+/// plugin disabled with the app closed cannot come back consented.
+public typealias StandingConsentWriter =
+    @Sendable (StandingConsentSnapshot) throws -> Void
+
 enum CallerConsentGrantTarget: Sendable, Equatable {
     case contract(CallerConsentKey)
     case caller(CallerWideConsentKey)
@@ -896,10 +930,14 @@ public actor PolicyEngine {
     private var standingCallerConsents: Set<CallerConsentKey> = []
     private var standingCallerWideConsents: Set<CallerWideConsentKey> = []
     private var revisionWaiters: [UUID: RevisionWaiter] = [:]
+    private let standingConsentWriter: StandingConsentWriter?
 
-    public init() {}
+    public init(standingConsentWriter: StandingConsentWriter? = nil) {
+        self.standingConsentWriter = standingConsentWriter
+    }
 
     init(initialRevisionForTesting: UInt64) {
+        standingConsentWriter = nil
         revisionValue = initialRevisionForTesting
     }
 
@@ -1034,6 +1072,10 @@ public actor PolicyEngine {
             return
         }
         try prepareRevisionAdvance()
+        try writeStandingConsents(
+            contracts: standingCallerConsents.union([key]),
+            callers: standingCallerWideConsents
+        )
         standingCallerConsents.insert(key)
         commitRevisionAdvance()
     }
@@ -1049,6 +1091,10 @@ public actor PolicyEngine {
                     return
                 }
                 try prepareRevisionAdvance()
+                try writeStandingConsents(
+                    contracts: standingCallerConsents.union([key]),
+                    callers: standingCallerWideConsents
+                )
                 standingCallerConsents.insert(key)
 
             case let .caller(key):
@@ -1056,6 +1102,10 @@ public actor PolicyEngine {
                     return
                 }
                 try prepareRevisionAdvance()
+                try writeStandingConsents(
+                    contracts: standingCallerConsents,
+                    callers: standingCallerWideConsents.union([key])
+                )
                 standingCallerWideConsents.insert(key)
             }
             commitRevisionAdvance()
@@ -1069,8 +1119,51 @@ public actor PolicyEngine {
             return
         }
         try prepareRevisionAdvance()
+        try writeStandingConsents(
+            contracts: standingCallerConsents,
+            callers: standingCallerWideConsents.union([key])
+        )
         standingCallerWideConsents.insert(key)
         commitRevisionAdvance()
+    }
+
+    /// Adopts the consent a previous launch left behind.
+    ///
+    /// It writes nothing back — this state arrived from the store — and advances the
+    /// revision once for the whole set rather than once per key. Restoring is additive:
+    /// consent seeded during activation and consent read from disk are the same authority
+    /// and neither cancels the other.
+    public func restoreStandingConsents(
+        _ snapshot: StandingConsentSnapshot
+    ) throws {
+        let contracts = standingCallerConsents.union(snapshot.contracts)
+        let callers = standingCallerWideConsents.union(snapshot.callers)
+        guard contracts != standingCallerConsents
+            || callers != standingCallerWideConsents
+        else {
+            return
+        }
+        try prepareRevisionAdvance()
+        standingCallerConsents = contracts
+        standingCallerWideConsents = callers
+        commitRevisionAdvance()
+    }
+
+    /// Puts the consent state that is *about* to hold through the host's writer.
+    ///
+    /// Called between `prepareRevisionAdvance()` and the assignment, so a writer that
+    /// throws leaves the engine exactly as it was and the caller sees the failure. That
+    /// ordering is what makes persistence failure fail closed by construction.
+    private func writeStandingConsents(
+        contracts: Set<CallerConsentKey>,
+        callers: Set<CallerWideConsentKey>
+    ) throws {
+        guard let standingConsentWriter else {
+            return
+        }
+        try standingConsentWriter(
+            StandingConsentSnapshot(contracts: contracts, callers: callers)
+        )
     }
 
     public func hasStandingConsent(
@@ -1097,6 +1190,10 @@ public actor PolicyEngine {
             return
         }
         try prepareRevisionAdvance()
+        try writeStandingConsents(
+            contracts: standingCallerConsents.subtracting([key]),
+            callers: standingCallerWideConsents
+        )
         standingCallerConsents.remove(key)
         commitRevisionAdvance()
     }
@@ -1107,6 +1204,10 @@ public actor PolicyEngine {
             return
         }
         try prepareRevisionAdvance()
+        try writeStandingConsents(
+            contracts: standingCallerConsents,
+            callers: standingCallerWideConsents.subtracting([key])
+        )
         standingCallerWideConsents.remove(key)
         commitRevisionAdvance()
     }
@@ -1129,6 +1230,10 @@ public actor PolicyEngine {
             return
         }
         try prepareRevisionAdvance()
+        try writeStandingConsents(
+            contracts: standingCallerConsents.subtracting(revokedContracts),
+            callers: standingCallerWideConsents.subtracting(revokedCallers)
+        )
         standingCallerConsents.subtract(revokedContracts)
         standingCallerWideConsents.subtract(revokedCallers)
         commitRevisionAdvance()

@@ -255,6 +255,32 @@ Feature: Run declared plugins with bounded authority and generation-owned lifeti
         | never | no consent record is created |
         | policy from a user inventory plugin | no bundled standing consent is preseeded |
 
+    @req-prt-fr-022 @consent-mode @permissions
+    Scenario: The operator's switch is the one thing that answers an always contract
+      Given the host's Permissions switch approves every permission request automatically
+      When a plugin invokes a contract whose confirmation is always
+      Then the invocation is approved without prompting
+      And the approval creates no standing consent record
+
+    @req-prt-fr-046 @durable-consent
+    Scenario: An approval outlives the process it was given in
+      Given a person approves a policy contract for one caller
+      When the app is relaunched
+      Then the same caller invokes that contract without being asked again
+
+    @req-prt-fr-046 @durable-consent
+    Scenario: What could not be kept was never granted
+      Given the standing-consent store cannot be written
+      When a person approves a policy contract
+      Then the grant fails closed and the engine holds no consent for it
+
+    @req-prt-fr-046 @durable-consent
+    Scenario: Withdrawal reaches the kept state as well as memory
+      Given a caller holds standing consent that was kept for the next launch
+      When its authority is withdrawn
+      Then the kept state is rewritten without it
+      And a later launch restores no consent for that caller
+
     @req-prt-fr-023 @revocation
     Scenario Outline: Authority withdrawal wins lifecycle races
       Given an invocation is queued while the plugin is <transition>

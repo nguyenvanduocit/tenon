@@ -7,9 +7,10 @@ import TenonIntentCore
 /// sidebar on the left, a grouped `Form` detail on the right.
 ///
 /// The sidebar is **flat** — General, then one entry per plugin that declares settings
-/// (drawn generically from its manifest, no plugin-specific Swift), then Extensions for
-/// enable/permissions of every plugin. A plugin's settings pane looks exactly like a
-/// built-in one because the same `PluginSettingsForm` renders both.
+/// (drawn generically from its manifest, no plugin-specific Swift), then the host's own
+/// pages: Automation, Permissions, CLI, and Extensions for enable/permissions of every
+/// plugin. A plugin's settings pane looks exactly like a built-in one because the same
+/// `PluginSettingsForm` renders both.
 struct SettingsView: View {
     var host: PluginHost
     @Bindable var prefs: AppPreferencesStore
@@ -41,6 +42,7 @@ struct SettingsView: View {
 
                 Section {
                     sidebarRow(.automation, "Automation", "clock.arrow.circlepath")
+                    sidebarRow(.permissions, "Permissions", "hand.raised.fill")
                     sidebarRow(.cli, "CLI", "terminal.fill")
                     sidebarRow(.extensions, "Extensions", "puzzlepiece.extension.fill")
                 }
@@ -75,6 +77,8 @@ struct SettingsView: View {
             GeneralSettingsDetail(prefs: prefs).navigationTitle("General")
         case .automation:
             AutomationSettingsDetail(prefs: prefs).navigationTitle("Automation")
+        case .permissions:
+            PermissionsSettingsDetail(prefs: prefs).navigationTitle("Permissions")
         case .cli:
             CLISettingsDetail(instanceChannel: instanceChannel).navigationTitle("CLI")
         case .extensions:
@@ -97,6 +101,7 @@ struct SettingsView: View {
 private enum SettingsRoute: Hashable {
     case general
     case automation
+    case permissions
     case cli
     case extensions
     case plugin(PluginID)
@@ -142,6 +147,65 @@ private struct AutomationSettingsDetail: View {
                 Text("When off, Tenon advances schedule clocks but suppresses scheduled "
                     + "events, so re-enabling does not replay missed runs. Run Now remains "
                     + "available in the Automation view on the Canvas.")
+            }
+        }
+        .tenonScrollbarStyle()
+        .formStyle(.grouped)
+    }
+}
+
+// MARK: - Permissions  @domain: intent-bus
+
+/// The "Permissions" page: one switch deciding whether Tenon asks before a caller runs a
+/// contract that declared it needs asking, or answers for you.
+///
+/// The page states the consequence rather than leaving it in the word "dangerously". A
+/// person turning this off wants to know what comes back, and a person leaving it on
+/// deserves to read what they are keeping.
+private struct PermissionsSettingsDetail: View {
+    @Bindable var prefs: AppPreferencesStore
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle(
+                    "Approve every permission request automatically",
+                    isOn: $prefs.preferences.bypassAllPermissionPrompts
+                )
+            } footer: {
+                Text("On, nothing is ever asked: plugins, the CLI, and agents run every "
+                    + "operation they declared without stopping for you — including the "
+                    + "irreversible ones, like deleting a stored secret. Off, Tenon asks "
+                    + "once per caller and remembers your answer.")
+            }
+
+            if prefs.preferences.bypassAllPermissionPrompts {
+                Section {
+                    Label {
+                        Text("A plugin you install from outside Tenon's own bundle runs "
+                            + "everything its manifest declares, and you are not asked "
+                            + "first. Its manifest is then the only place that says what "
+                            + "it may do — Extensions lists it.")
+                    } icon: {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                    .font(.callout)
+                    .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Section {
+                Text("What this switch cannot reach: an intent still has to be declared by "
+                    + "the caller's manifest, allowed for its audience, hold the capability "
+                    + "and the workspace, pane, path or host scope it names, and reach a "
+                    + "provider willing to serve it. Those run on every invocation whether "
+                    + "this is on or off. The switch answers the confirmation, nothing else.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Still enforced")
             }
         }
         .tenonScrollbarStyle()

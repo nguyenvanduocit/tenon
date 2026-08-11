@@ -97,6 +97,16 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     /// Host-owned per-schedule pauses. The manifest still owns the declaration; this
     /// preference only controls whether its scheduled firing is delivered automatically.
     public var pausedAutomationSchedules: Set<AutomationScheduleKey>
+    /// Whether the host answers every permission confirmation itself instead of asking.
+    ///
+    /// On by default, which is a product decision taken with its consequence stated: a
+    /// plugin the person installed from outside the bundled inventory then runs its
+    /// declared `.policy` contracts, and even the `.always` ones, without anyone being
+    /// asked. What the switch cannot reach is the rest of the policy path — declared use,
+    /// audience, capability, scope, and provider eligibility are checked on every single
+    /// invocation either way, exactly as they are behind standing consent. It answers the
+    /// confirmation phase and nothing else.
+    public var bypassAllPermissionPrompts: Bool
 
     public init(
         newTabContent: DefaultPaneContent = .terminal,
@@ -107,7 +117,8 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         sidebarWidth: Double = 232,
         accent: AccentColor = .amber,
         automationSchedulesEnabled: Bool = true,
-        pausedAutomationSchedules: Set<AutomationScheduleKey> = []
+        pausedAutomationSchedules: Set<AutomationScheduleKey> = [],
+        bypassAllPermissionPrompts: Bool = true
     ) {
         self.newTabContent = newTabContent
         self.newSplitContent = newSplitContent
@@ -118,6 +129,7 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         self.accent = accent
         self.automationSchedulesEnabled = automationSchedulesEnabled
         self.pausedAutomationSchedules = pausedAutomationSchedules
+        self.bypassAllPermissionPrompts = bypassAllPermissionPrompts
     }
 
     public init(from decoder: any Decoder) throws {
@@ -154,5 +166,11 @@ public struct AppPreferences: Equatable, Sendable, Codable {
             Set<AutomationScheduleKey>.self,
             forKey: .pausedAutomationSchedules
         ) ?? defaults.pausedAutomationSchedules
+        // A preferences blob written before this switch existed carries the default, which
+        // is on. Someone who has already turned it off has the key, so their choice stands.
+        bypassAllPermissionPrompts = try container.decodeIfPresent(
+            Bool.self,
+            forKey: .bypassAllPermissionPrompts
+        ) ?? defaults.bypassAllPermissionPrompts
     }
 }
