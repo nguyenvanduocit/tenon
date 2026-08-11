@@ -635,6 +635,20 @@ final class TabStripReorderTests: XCTestCase {
         ) else {
             return XCTFail("could not build a \(type) event")
         }
+        // Checked here rather than in each caller because an injected event that routes
+        // nowhere fails these tests as "the tab order did not change", which reads like a
+        // reorder bug and is not one. Every test that needs a press to *do* something fails
+        // on CI while the one that needs a press to change nothing passes, so the suspect is
+        // delivery, and delivery needs a window the window server actually knows about.
+        XCTAssertNotEqual(
+            window.windowNumber,
+            0,
+            "the window never reached the window server, so no injected event can route to it"
+        )
+        XCTAssertNotNil(
+            event.window,
+            "event built for window number \(window.windowNumber) resolved to no window"
+        )
         window.sendEvent(event)
     }
 
