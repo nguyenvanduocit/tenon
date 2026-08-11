@@ -379,13 +379,39 @@ Current DIRECT inventory:
   shutdown that cancels and awaits quiescence — but it is host-private and publishes no public
   resource protocol. Its exclusion from plugin, CLI, and agent reach is deliberate and is a
   privacy boundary, not an oversight: process names and PIDs stay inside the local app UI;
+- reading a session that has already happened, and picking it up again (T-126). A plugin that
+  lists sessions asks for a pane over one through the existing `workspace.content.open.v1`
+  INTENT with `content.kind = agentSession` — the reference crosses the principal boundary as
+  a bounded value and nothing else does. Everything after that door is same-owner DIRECT: the
+  host re-decides containment itself with `AgentTranscriptPath`, against its own provider
+  roots and with symlinks resolved on both sides, and a path that does not resolve inside one
+  is refused as invalid input, so no pane opens. The pane then mounts the same host-native
+  Agent Lens a live pane mounts, reading a transcript instead of a PTY. What that pane may do
+  is the pure `AgentLensAttachment` rule rather than a check repeated per view: a recorded
+  attachment starts no discovery, holds no terminal surface, and can never report `canSend` —
+  so a finished session that stopped mid-question still SHOWS the question and offers no
+  control to answer it. `+ Resume` composes through `AgentLaunchComposer`, the one typed
+  composer that already turns "run this agent, on this work" into a command line, and converts
+  that same pane in place through `WorkspaceStore.setSlotContent` plus
+  `SurfacePool.sendTextWhenReady`. **why no new mechanism:** the reference is content a pane
+  holds, so it is `SlotContent`, and it needs no new intent, `tenon` member, principal,
+  capability, or manifest declaration — the sessions plugin already declares
+  `workspace.content.open.v1`. **why the host re-validates:** the caller is untrusted and the
+  path is on this person's disk; the plugin's word that a file is a transcript is a claim, not
+  an authority, and the rule that settles it is the same one the hook server and the
+  descriptor walk use. **why not a plugin:** the missing mechanism is a public reader for
+  another principal's transcript bytes — no RESOURCE/STREAM exposes a tailed provider
+  transcript to a plugin, and no EVENT family carries decoded session facts across the
+  boundary. Both are deliberately absent: a plugin holding a supervisor's agent transcripts
+  is the privacy boundary `AL-NFR-003` exists to keep closed, so the reading stays host-side
+  and the plugin passes a reference instead;
 - pure parsers, ranking, schemas, and value transformations;
 - `tenon.path.join/normalize/basename/dirname/extname`, implemented entirely inside the
   plugin runtime as pure string functions.
 
 #### Adding a DIRECT entry
 
-This inventory has 18 entries, pinned in `DirectInventoryGateTests`.
+This inventory has 19 entries, pinned in `DirectInventoryGateTests`.
 
 Step 4 of the ordered decision law is self-ratifying. The five same-owner conditions in
 **Terms** — one semantic owner, no caller principal, no independent lifetime, no public
@@ -510,11 +536,11 @@ requires the change protocol below.
 | File/OS | `file.reveal.v1`, `file.open.v1`, `url.open.v1` | plugin, CLI, agent |
 | Clipboard | `clipboard.write.v1` | plugin |
 | Process | `process.exec.v1` | plugin, CLI, agent |
-| Terminal | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1`, `terminal.wait.v1` | plugin, CLI, agent |
+| Terminal | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1`, `terminal.process.read.v1`, `terminal.wait.v1` | plugin, CLI, agent |
 | Browser surface | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` | plugin |
 | User interaction | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1`, `ui.toast.v1` | plugin |
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
-| Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
+| Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
 | Network | `network.fetch.v1` | plugin, CLI, agent |
 | Agent | `agent.inventory.v1`, `agent.command.v1` | plugin, CLI, agent |
 
@@ -538,8 +564,8 @@ execution topology is the following closed map:
 | `system` | `file.reveal.v1`, `file.open.v1`, `url.open.v1`, `clipboard.write.v1` |
 | `process` | `process.exec.v1` |
 | `network` | `network.fetch.v1` |
-| `workspace` | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
-| `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1` |
+| `workspace` | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
+| `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1`, `terminal.process.read.v1` |
 | `terminalWait` | `terminal.wait.v1` |
 | `browser` | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` |
 | `userPrompt` | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1` |

@@ -58,7 +58,7 @@ one reviewed change.
 | [`design-plugin-views.md`](design-plugin-views.md) | native declarative view tree | implemented |
 | [`design-plugin-view-instances.md`](design-plugin-view-instances.md) | per-pane plugin view identity/lifecycle | implemented |
 | [`design-diagnostics.md`](design-diagnostics.md) | what the app records about its own health, and what it deliberately never records | implemented (T-092) |
-| [`design-pane-hosting.md`](design-pane-hosting.md) | a pane is sized by the canvas, never by its content | implemented (T-091) |
+| [`design-pane-hosting.md`](design-pane-hosting.md) | a pane is sized by the canvas, never by its content; the boundaries that must answer a size question, the stall runbook, and what has been measured and refuted | implemented (T-091, T-121) |
 
 “Implemented” means the described path exists and is covered by the repository's test
 layers. It does not claim the current dirty worktree is green; use command receipts from
@@ -73,6 +73,7 @@ layers. It does not claim the current dirty worktree is green; use command recei
 | [`research-human-agent-supervision.md`](research-human-agent-supervision.md) | Attention Inbox hypothesis and falsifiable metrics | research, not implementation |
 | [`research-plugin-runtimes.md`](research-plugin-runtimes.md) | runtime/sandbox evidence gathered under the former Tessera name | historical, non-normative |
 | [`research-reference-terminals.md`](research-reference-terminals.md) | engineering lessons from kero and muxy | historical, non-normative |
+| [`reports/2026-08-11-cli-capability-survey.html`](reports/2026-08-11-cli-capability-survey.html) | 379-row matrix of `tenon-cli` against orca and herdr, with the refute verdict behind every gap | dated evidence; never revised to stay current |
 | [`naming.md`](naming.md) | naming decision and namespace evidence | historical decision record |
 | [`superpowers/specs/2026-07-30-process-resource-monitor-design.md`](superpowers/specs/2026-07-30-process-resource-monitor-design.md) | process-resource monitor exploration | design snapshot; reclassify before implementation |
 

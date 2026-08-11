@@ -18,18 +18,34 @@ normative for interaction mechanism selection.**
 - `docs/research-plugin-runtimes.md` — historical runtime/sandbox evidence written under
   the former name “Tessera.” Its old architecture recommendations are non-normative.
 - `docs/naming.md` — naming decision record. If a new name is ever needed for anything public (packages, orgs, domains), run the sweep battery there before proposing.
+- `docs/reports/2026-08-11-cli-capability-survey.html` — 379 rows measuring `tenon-cli`
+  against orca (223 commands) and herdr (80 socket methods, 24 push events), each "Tenon
+  lacks this" cell already attacked by an agent paid to refute it. **Read it before you
+  propose a CLI capability, and before you reject one.** It separates three things the raw
+  count hides: what Tenon deliberately refuses (orchestration, browser, remote — `VISION.md:8-9`
+  states the refusal), what a service already in the app can reach with one `cli`-audience
+  catalog entry, and what is blocked behind PTY ownership living in the AppKit process. It is
+  **dated evidence, not a status board**: it is never edited to stay current, and when it and
+  the tree disagree the tree wins. Anything actionable in it becomes a `.kanban` task and a
+  decision-log entry in the owning PRD — the report is where a claim came from, never where
+  its status lives.
 
 ## Commands
 
 All commands run from the repository root:
 
 ```bash
-./scripts/setup-ghosttykit.sh   # once per clone: downloads the pinned GhosttyKit.xcframework (~130 MB)
-swift run tenon         # build + launch the app (opens a window; needs a GUI session)
+./tenon                 # every verb a person types, with one line each
+./tenon dev             # build + launch the app (opens a window; needs a GUI session)
 swift test              # headless test suite, ~1s — the evidence bar for every change
 swift test --filter testFailedReloadRetainsActiveSessionAndContributions   # single test by name
 swift build             # compile check only
 ```
+
+`./tenon dev` fetches the pinned GhosttyKit.xcframework (~130 MB) on its first run.
+`swift run tenon` goes around the verbs, so a clone that has never run one needs
+`./scripts/internal/setup-ghostty.sh` before `swift run`, `swift build`, or `xcodebuild`
+can find the framework.
 
 Environment variables: `TENON_STUB_TERMINAL=1` (stub terminal pane, no PTY — plugin loop unchanged), `TENON_PLUGINS_DIR=/path` (point the host at a different plugin folder), `TENON_TRUST_PLUGIN_INVENTORY=1` (stand that folder in for the app bundle so its plugins carry bundled standing consent instead of prompting; matched exactly — `true` leaves it untrusted). Standing consent is host-owned: the bundled inventory has it, a directory named by `TENON_PLUGINS_DIR` earns it only through that flag.
 
@@ -37,9 +53,9 @@ Builds live in two trees inside the gitignored `.build`: `arm64-apple-macosx/`
 (SwiftPM) and `xcode/` — one derived data path shared by every configuration. The
 dependency graph is checked out once, into `checkouts/` + `repositories/`, which every
 `xcodebuild` invocation reads by carrying `-clonedSourcePackagesDirPath .build`; omit
-that flag and Xcode silently clones a second 616 MB copy. `./scripts/prune-build-cache.sh`
+that flag and Xcode silently clones a second 616 MB copy. `./scripts/internal/prune-build-cache.sh`
 collects any other build tree that appears (`DEEP=1` drops both real ones too, keeping
-the dependencies), and `./dev.sh` / `./install.sh` run it before they build, so the
+the dependencies), and `./tenon dev` / `./tenon install` run it before they build, so the
 cache stops at a few gigabytes instead of growing without bound.
 
 No lint/format configuration exists yet.
@@ -279,7 +295,7 @@ The plugin form boots the real host over the real inventory and mounts the same 
 There is one behaviour the suite provably cannot reach, and it has its own probe:
 
 ```bash
-swift scripts/drag-region-probe.swift   # the title bar's drag region, on-screen, exit 0 = rule holds
+swift scripts/internal/drag-region-probe.swift   # the title bar's drag region, on-screen, exit 0 = rule holds
 ```
 
 The window server takes a press in the title-bar band from a **drag region** AppKit uploads
