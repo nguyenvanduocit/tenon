@@ -18,13 +18,17 @@ enum CLICommandExecutor {
     ) async -> CLIResult {
         switch action {
         case .ping:
-            return .ok(.object([
-                "protocolVersion": .integer(Int64(CLIProtocol.version)),
-                "pid": .integer(
-                    Int64(ProcessInfo.processInfo.processIdentifier)
-                ),
-                "active": .bool(NSApp.isActive),
-            ]))
+            return .ok(
+                pingPayload(
+                    protocolVersion: CLIProtocol.version,
+                    processID: ProcessInfo.processInfo.processIdentifier,
+                    isActive: NSApp.isActive,
+                    version: AppVersion.current,
+                    socketPath: pingSocketPath(
+                        for: (try? AppInstanceChannel.resolve()) ?? .production
+                    )
+                )
+            )
 
         case .appFocus:
             NSApp.activate(ignoringOtherApps: true)
@@ -77,6 +81,42 @@ enum CLICommandExecutor {
                 return .error(CLIError(intentFailure: failure))
             }
         }
+    }
+}
+
+extension CLICommandExecutor {
+    /// The exact `ping` answer, as a pure value.
+    ///
+    /// Everything here is a fact about this *process*: which wire it speaks, which pid it
+    /// is, whether it holds the foreground, which build it is, and where its control socket
+    /// lives. `CLI-FR-027` keeps that boundary — a caller cannot read provider, plugin, or
+    /// health readiness out of a liveness probe, which is what `CLI-FR-014` meant by
+    /// "without claiming provider readiness" and what `DRM-FR-043` walls off separately.
+    nonisolated static func pingPayload(
+        protocolVersion: Int,
+        processID: Int32,
+        isActive: Bool,
+        version: AppVersion,
+        socketPath: String
+    ) -> IntentValue {
+        .object([
+            "protocolVersion": .integer(Int64(protocolVersion)),
+            "pid": .integer(Int64(processID)),
+            "active": .bool(isActive),
+            // Two fields rather than `AppVersion.summary`: a script comparing releases
+            // wants the bare version, and a build with no `Info.plist` still has to say
+            // so — `swift run tenon` reports the em dash rather than a shipped nothing.
+            "version": .string(version.short),
+            "build": .string(version.build),
+            "socketPath": .string(socketPath),
+        ])
+    }
+
+    /// The socket this channel's server binds. Derived from the same
+    /// `AppInstanceChannel.socketPath()` `CLISocketServer.clientSocketPath` uses, so ping
+    /// cannot answer with a path belonging to the other channel.
+    nonisolated static func pingSocketPath(for channel: AppInstanceChannel) -> String {
+        channel.socketPath()
     }
 }
 

@@ -225,6 +225,20 @@ Feature: Operate native terminal panes with bounded automation and owned process
       And no page exceeds 2000 rows or the inline byte bound
       And the final cursor is null
 
+    @req-term-fr-026 @process-identity
+    Scenario: Process read names the tty and the foreground process
+      Given a scoped terminal surface is live
+      When terminal.process.read.v1 succeeds
+      Then it returns paneID, ttyName, and foregroundPID
+      And it returns no CPU, memory, or footprint figure
+
+    @req-term-fr-026 @process-identity
+    Scenario: A pane with no live surface says so instead of failing
+      Given a terminal pane the canvas has never displayed
+      When terminal.process.read.v1 succeeds
+      Then ttyName and foregroundPID are both null
+      And a pane that is not a terminal fails with terminal-unavailable
+
     @req-term-fr-014 @invalidation
     Scenario: Moving scrollback invalidates positional continuation
       Given page one issued a cursor encoding total row count

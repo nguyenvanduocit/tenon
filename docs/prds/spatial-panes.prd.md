@@ -295,9 +295,11 @@ intrinsic/min/max sizing options back upward.
 | `SP-FR-021` | Pane attention **MUST** distinguish working, idle, finished-unseen, seen, and exited; quietness alone **MUST NOT** create unseen, a real finish/exit while unviewed **MUST**, and later output **MUST NOT** acknowledge it. | must | shipped | `@req-sp-fr-021` |
 | `SP-FR-022` | A pane is viewed only while the app is frontmost, its workspace is selected, and it is displayed in the active tab; pane/tab/workspace/titlebar projections **MUST** read the same machine, and a background unseen burst **MUST** produce at most one notification. | must | shipped | `@req-sp-fr-022` |
 | `SP-FR-023` | A never-viewed pane **MUST** own no terminal surface, PTY, or renderer; first display **MUST** materialize once and flush queued input; the resource **MUST** survive hiding/moving/focus and terminate exactly when its slot leaves the catalog. | must | shipped | `@req-sp-fr-023` |
-| `SP-FR-024` | Pane content **MUST** accept the canvas-assigned frame and publish no sizing options upward; an unchanged hosted lazy pane **MUST** converge to a bounded update count. This requirement **MUST NOT** be cited as proof that the T-091 incident root cause is fixed. | must | partial: bound/mitigation shipped, incident proof open | `@req-sp-fr-024` |
+| `SP-FR-024` | Pane content **MUST** accept the canvas-assigned frame and publish no sizing options upward; an unchanged hosted lazy pane **MUST** converge to a bounded update count. This requirement covers a pane's own hosting view; the stage above it is `SP-FR-027`. | must | shipped | `@req-sp-fr-024` |
 | `SP-FR-025` | `workspace.pane.owner.v1` **MUST** accept one pane UUID, search the whole catalog including unselected/paged workspaces, and return only owning workspace UUID/path and tab UUID to plugin, CLI, or agent callers; malformed/unknown panes **MUST** fail deterministically. | must | shipped | `@req-sp-fr-025` |
 | `SP-FR-026` | Each pane **MUST** speak useful one-based grid position/extent, focused state, and attention words; exact UUID/geometry **MUST** remain available non-verbally to tests/tools; non-color shapes and accessible empty-region/Copy ID actions **MUST** exist. | must | shipped | `@req-sp-fr-026` |
+| `SP-FR-027` | The canvas **MUST** answer the size it is proposed, so measuring the stage never reaches AppKit's fitting-size path and never sweeps Auto Layout across the card tree. A canvas that answers nothing sends that question to AppKit, whose sweep dirties the text fields it walks and re-arms the measurement that caused it. | must | shipped | `@req-sp-fr-027` |
+| `SP-FR-028` | `workspace.tab.close.v1` **MUST** close the tab named by invocation scope, with every pane under it, as a `.destructive` contract confirmed under `.policy`. It **MUST NOT** infer a tab from the selection, and it **MUST** refuse a workspace's only tab with `dev.tenon.core.close-refused` rather than report a success that removed nothing. | must | shipped | `@req-sp-fr-028` |
 
 ### Non-functional requirements
 
@@ -313,7 +315,7 @@ intrinsic/min/max sizing options back upward.
 | `SP-NFR-008` | security | Plugins **MUST NOT** receive host view objects, geometry transactions, terminal resources, or another instance's header actions; pane-owner read **MUST** expose only its bounded structural response. | shipped | runtime/provider/header route tests |
 | `SP-NFR-009` | input ownership | Resize edges, close, interactive header items, bare drag band, body surface, and empty canvas **MUST** have disjoint deterministic hit/menu/cursor ownership. | shipped | point-sweep AppKit tests |
 | `SP-NFR-010` | maintainability | Spatial math, interaction decisions, AppKit canvas mounting, card hit-testing, representable bridging, header solving, focus routing, and attention projection **MUST** remain separate responsibility owners with current domain tags. | shipped | source/domain fitness; T-095 owned by PRD-015 for cross-cutting audit |
-| `SP-NFR-011` | incident evidence | A sustained main-runloop stall **MUST** record a bounded automatic process sample outside the main thread, once per stall occurrence, without collecting pane contents beyond diagnostic stack/process metadata. | shipped in diagnostics; incident reproduction open | diagnostics tests and T-091 runbook |
+| `SP-NFR-011` | incident evidence | A sustained main-runloop stall **MUST** record a bounded automatic process sample outside the main thread, once per stall occurrence, without collecting pane contents beyond diagnostic stack/process metadata. | shipped, and the recorded sample is what identified the T-121 root cause | diagnostics tests and T-091/T-121 runbook |
 | `SP-NFR-012` | verification honesty | Tests and docs **MUST** distinguish measured production evidence, deterministic bounds, candidate mitigation, and human-only behavior; no green harness may be represented as a reproduced fix for T-091. | shipped documentation constraint | review gate |
 
 ## 8. Acceptance specification
@@ -326,7 +328,9 @@ intrinsic/min/max sizing options back upward.
 | SP-FR-018…020, SP-NFR-006…010 | one header and routing | schema/layout/store/projection/plugin-route and hosted canvas tests |
 | SP-FR-021…023, SP-NFR-003…005, 011 | attention and lazy lifetime | pure state, projection/notifier, lifecycle, relaunch tests |
 | SP-FR-024, SP-NFR-003, 011…012 | update convergence and incident status | pane hosting/update-bound tests plus T-091 diagnostics/runbook |
+| SP-FR-027 | the canvas answers its own size | pane hosting tests measuring whether the question reaches Auto Layout |
 | SP-FR-025…026, SP-NFR-005, 007…008 | owner intent/accessibility | intent catalog/provider and accessibility tests |
+| SP-FR-028 | tab close is destructive, scoped, and refuses the last tab | intent catalog/provider tests over `WorkspaceStore.closeTab` |
 
 ## 9. Product and architecture constraints
 
@@ -415,8 +419,10 @@ resource exactly once.
 | SP-FR-018…020 | shipped | header schema, layout, stores, projections, action routes | pane header schema/layout/store/projection/plugin-route suites and fitness tests | complex plugin headers still need snapshot sampling |
 | SP-FR-021…022 | shipped | `PaneActivity`, projections, notifier, 200 ms poll | `PaneActivityTests`, `PaneAttentionTests`, accessibility tests | manual long-command multi-pane observation remains open in T-029 |
 | SP-FR-023, SP-NFR-004 | shipped | lazy `SurfacePool`, placeholder seed, pool reconciliation | `SurfaceLifecycleTests`, restored pane/relaunch tests | hidden viewed-pane GPU reduction is partial/unquantified |
-| SP-FR-024, SP-NFR-003, 011…012 | partial | no sizing options, lazy-list shape fitness, update bound, stall sampler | `PaneHostingSizingTests`, `PaneUpdateTurnBoundTests`, diagnostics tests | real T-091 incident not reproduced; root cause unproven |
+| SP-FR-024, SP-NFR-003, 011…012 | shipped | no sizing options, lazy-list shape fitness, update bound, stall sampler | `PaneHostingSizingTests`, `PaneUpdateTurnBoundTests`, diagnostics tests | incident reproduced and sampled under T-121 |
+| SP-FR-027 | shipped | `SpatialCanvasView.sizeThatFits` | `PaneHostingSizingTests` | measured offscreen; not yet observed in the installed app |
 | SP-FR-025 | shipped | core intent catalog + workspace provider + catalog owner join | core intent/catalog/provider tests across unselected/paged workspace | no known gap |
+| SP-FR-028 | shipped | `CoreIntentCatalog.workspaceTabClose` + `WorkspaceIntentProvider.closeTab` over `WorkspaceStore.closeTab` | `PaneProcessAndTabCloseContractTests`, `PaneProcessAndTabCloseIntentTests` | `workspace.pane.split.v1` still discards the pane it creates — see the 2026-08-12 decision-log entry; that half of T-132 is not delivered |
 | SP-FR-026, SP-NFR-005 | shipped | card/canvas accessibility and attention vocabulary | attention accessibility and hosted canvas tests | complete VoiceOver installed-app journey remains manual |
 | SP-NFR-010 | shipped | coordinator responsibility split and domain tags | domain/fitness suites; detailed cross-cutting work moves to PRD-015 | none for current shape |
 
@@ -473,9 +479,22 @@ resource exactly once.
 | 2026-08-08 | Pane content publishes no sizing options and a convergence bound stays permanent. | canvas already owns size; content-derived ideal measurement is unnecessary | default `NSHostingView` sizing options |
 | 2026-08-09 | Invalid move clears/rolls back; invalid resize retains last valid preview. | current source and tests are authoritative | T-059's uniform “hold last valid” narrative |
 | 2026-08-09 | T-091 is mitigated/observable, not closed. | no real reproduction or proven root cause exists | any implication that the sizing cleanup fixed the incident |
+| 2026-08-12 | `workspace.tab.close.v1` refuses a workspace's only tab instead of emptying it. | `WorkspaceCatalog.closeTab` has always kept the last tab (`Workspace.swift:613`, pinned by `WorkspaceTests.swift:209`), and it signals that by returning no events. A pass-through adapter would therefore have answered success while removing nothing — the failure mode a scripted caller looping over tabs hits first. `dev.tenon.core.close-refused` is the same code `workspace.pane.close.v1` already declares for a refused removal. | the assumption in T-132 that tab close is a straight pass-through |
+| 2026-08-12 | `workspace.pane.split.v1` still returns nothing, and widening it is NOT deferred on cost — it is a **major mint** this task's file set cannot carry. | Its output is a closed object with no properties. Adding `paneID` is "add any top-level input/output field to a closed object", which `docs/design-intent-bus.md:620-624` answers "same major? no", `FC-NFR-009` states as "closed schemas MUST not widen inside one major", and `IAR-NFR-008` repeats. `filesystem.directory.list.v2` is the standing precedent and its v1 was removed outright. So the correct change is `workspace.pane.split.v2`, and that reaches `plugins/core-commands/{manifest.json,main.js}`, `plugins/file-explorer/{manifest.json,main.js}` — both name `workspace.pane.split.v1` in `uses`, so an unmigrated manifest breaks their split commands — plus `FileExplorerPluginTests`, `CoreCommandsPluginTests`, `design-command-palette.md`, `design-pane-slots.md`, and `architecture-interaction-boundaries.md`. None of those is in T-132's claimed file set. | T-132's criterion (d), which names `workspace.pane.split.v1` and assumes a same-major edit |
+| 2026-08-11 | The canvas answers the size it is proposed; silence is not neutral, it routes the question to AppKit. | a `sample` of the stalled process put 2395 of 3461 main-thread samples in `_ZStackLayout.sizeThatFits` → `AppKitPlatformViewHost.fittingSize` → `_populateEngineWithConstraintsForViewSubtree`, and the sweep dirtied the `NSTextField`s it measured | the 2026-08-09 reading that the root cause was unproven |
 
 ## 13. Verification receipts
 
+- 2026-08-12, T-132, `SP-FR-028`: `PaneProcessAndTabCloseContractTests` 3 / 0 and
+  `PaneProcessAndTabCloseIntentTests` 6 / 0, both **red first** — the contract half on
+  "workspace.tab.close.v1 is not in the closed core inventory", the provider half on
+  "no provider binding for workspace.tab.close.v1". Three behaviours are separately asserted:
+  a two-tab workspace loses the scoped tab and every pane under it; the same call against a
+  one-tab workspace comes back `dev.tenon.core.close-refused` with the tab still there; and an
+  unscoped call comes back `dev.tenon.core.tab-not-found` without guessing at the selection.
+  ⚠️ Not covered: no test drives tab close through the real dispatcher's `.policy`
+  confirmation, so what is proved is the provider's behaviour and the contract's declared
+  effects, not that a CLI caller is actually prompted.
 - Geometry/workspace suites cover valid grids, placement, split, absorption, fill-width,
   fraction resize, cycles, duplicate, stale baselines, affected IDs, and atomic no-ops.
 - Hosted AppKit canvas tests cover empty anchors, drag thumbnail, cross-tab routing,
@@ -485,9 +504,26 @@ resource exactly once.
   lifecycle, built-in projections, plugin instance routing, and generation retirement.
 - Attention/lifecycle suites cover the pure state machine, viewed projection, notification
   coalescing, lazy surface creation, queued text, retention, exact release, and relaunch.
-- Pane hosting/update-bound suites prove current no-sizing and convergence contracts. The
-  T-091 task's production sample and dogfood run remain evidence that neither current harness
-  nor sizing options alone reproduces the historical incident.
+- Pane hosting/update-bound suites prove current no-sizing and convergence contracts.
+- 2026-08-11, T-121: the stall was reproduced in the installed 0.1.0 app and sampled while it
+  ran. `beatSequence` held at 3147538 for over five minutes — the main runloop completed no
+  turn at all — while footprint climbed 550 → 2810 MB at ~500 MB/min at 100% CPU; it does not
+  recover. `sample` put **2395 of 3461 main-thread samples** in
+  `_ZStackLayout.sizeThatFits` → `PlatformViewLayoutEngine.sizeThatFits` →
+  `AppKitPlatformViewHost.fittingSize` → `_populateEngineWithConstraintsForViewSubtree`, with
+  `-[NSTextFieldCell _invalidateEffectiveFont]` (92) inside the measuring pass, and a further
+  981 in `LazySubviewPlacements.updateValue()` → `LazyLayoutViewCache.updatePrefetchPhases()`,
+  whose `Update.Action` buffer copies whole on every append. `SP-FR-027` answers the first;
+  the incident record is at
+  `~/Library/Application Support/Tenon/diagnostics/incidents/2cb0ff1f-…/0001-ded16be7/`.
+- 2026-08-11, `SP-FR-027`: `PaneHostingSizingTests` 7 / 0 and full suite **1879 / 0**. The
+  production pin was red before the change. Its control pair measures the mechanism rather
+  than the source — a representable declaring no size is queried through Auto Layout, one
+  declaring it is queried zero times — and `testAnsweringZeroIdealStillFillsTheStage` rebuilds
+  `ContentView.swift:99`'s infinite frame to prove the canvas still receives every remaining
+  point; mutating its answer to `.zero` turns that test red at 0.0 against an expected 277.0.
+  NOT VERIFIED: the fix has not been observed in a running app, because installing over the
+  running Tenon would destroy the panes of every other session working in it.
 - Historical aggregate test counts remain dated receipts, not a claim that this documentation
   change reran the full repository suite.
 
@@ -496,3 +532,4 @@ resource exactly once.
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-09 | Created canonical PRD from current spatial/header/focus/attention/resource source, twelve tasks, and focused tests; recorded T-059 supersession and T-091 partial status. | Codex |
+| 2026-08-11 | Added SP-FR-027 after T-121 reproduced the stall and sampled it; moved SP-FR-024 and the T-091 row off partial. | Claude |

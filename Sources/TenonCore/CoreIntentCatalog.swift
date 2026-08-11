@@ -26,6 +26,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case terminalOpen = "terminal.open.v1"
     case terminalViewportRead = "terminal.viewport.read.v1"
     case terminalScrollbackRead = "terminal.scrollback.read.v1"
+    case terminalProcessRead = "terminal.process.read.v1"
     case terminalWait = "terminal.wait.v1"
     case browserSurfaceLoad = "browser.surface.load.v1"
     case browserSurfaceBack = "browser.surface.back.v1"
@@ -42,6 +43,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case workspacePaneOwner = "workspace.pane.owner.v1"
     case workspaceTabCreate = "workspace.tab.create.v1"
     case workspaceTabFocus = "workspace.tab.focus.v1"
+    case workspaceTabClose = "workspace.tab.close.v1"
     case workspacePaneSplit = "workspace.pane.split.v1"
     case workspacePaneFocus = "workspace.pane.focus.v1"
     case workspacePaneClose = "workspace.pane.close.v1"
@@ -114,11 +116,13 @@ public extension CoreIntentName {
              .terminalOpen,
              .terminalViewportRead,
              .terminalScrollbackRead,
+             .terminalProcessRead,
              .terminalWait,
              .workspaceState,
              .workspacePaneOwner,
              .workspaceTabCreate,
              .workspaceTabFocus,
+             .workspaceTabClose,
              .workspacePaneSplit,
              .workspacePaneFocus,
              .workspacePaneClose,
@@ -211,6 +215,7 @@ public extension CoreIntentName {
              .workspacePaneOwner,
              .workspaceTabCreate,
              .workspaceTabFocus,
+             .workspaceTabClose,
              .workspacePaneSplit,
              .workspacePaneFocus,
              .workspacePaneClose,
@@ -226,7 +231,8 @@ public extension CoreIntentName {
              .terminalRun,
              .terminalOpen,
              .terminalViewportRead,
-             .terminalScrollbackRead:
+             .terminalScrollbackRead,
+             .terminalProcessRead:
             .terminalImmediate
 
         case .terminalWait:
@@ -1233,6 +1239,45 @@ private extension CoreIntentCatalog {
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
+                .terminalProcessRead,
+                title: "Read terminal process identity",
+                description: """
+                Names the PTY device and the foreground process of the \
+                terminal identified by invocation scope. Both are null for a \
+                pane whose surface has not materialised and for one whose \
+                shell has exited, so an absent answer is stated rather than \
+                implied. This is process identity, not resource telemetry: no \
+                CPU, memory, or footprint figure crosses this contract.
+                """,
+                input: emptyInput,
+                output: CoreIntentSchema.root(
+                    properties: [
+                        "paneID": CoreIntentSchema.uuid,
+                        "ttyName": CoreIntentSchema.nullable(
+                            CoreIntentSchema.string(
+                                minLength: 1,
+                                maxLength: 1_024
+                            )
+                        ),
+                        "foregroundPID": CoreIntentSchema.nullable(
+                            CoreIntentSchema.integer(
+                                minimum: 1,
+                                maximum: 4_294_967_295
+                            )
+                        ),
+                    ],
+                    required: ["paneID", "ttyName", "foregroundPID"]
+                ),
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.read),
+                errors: ["dev.tenon.core.terminal-unavailable"],
+                bindings: [terminalRead],
+                admission: .background,
+                timeout: .seconds(5),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
                 .terminalWait,
                 title: "Wait for terminal condition",
                 description: """
@@ -1635,6 +1680,31 @@ private extension CoreIntentCatalog {
                 bindings: [workspaceControl],
                 admission: .interactive,
                 timeout: .seconds(5),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .workspaceTabClose,
+                title: "Close tab",
+                description: """
+                Closes the tab identified by invocation scope, with every pane \
+                under it. A workspace always keeps one tab, so closing its only \
+                tab is refused rather than emptied.
+                """,
+                input: emptyInput,
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(
+                    .destructive,
+                    confirmation: .policy
+                ),
+                errors: [
+                    "dev.tenon.core.tab-not-found",
+                    "dev.tenon.core.close-refused",
+                ],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(10),
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
@@ -2128,11 +2198,26 @@ private enum CoreIntentSchema {
         required: ["key"]
     )
 
+    /// The reference a caller may name a recorded session with. `transcriptPath` passes the
+    /// schema on shape alone; whether this host may READ that path is decided after the schema,
+    /// against the provider roots with symlinks resolved, and refused as invalid input.
+    static let agentSessionContent = object(
+        properties: [
+            "kind": string(constant: "agentSession"),
+            "provider": string(enumValues: ["codex", "claude"]),
+            "sessionID": string(minLength: 1, maxLength: 256),
+            "transcriptPath": path,
+            "title": nullable(string(maxLength: 1_024)),
+        ],
+        required: ["kind", "provider", "sessionID", "transcriptPath"]
+    )
+
     static let workspaceContentInput = oneOf([
         contentKind("terminal"),
         contentKind("changes"),
         contentKind("automation"),
         contentKind("empty"),
+        agentSessionContent,
         object(
             properties: [
                 "kind": string(constant: "file"),
@@ -2192,6 +2277,7 @@ private enum CoreIntentSchema {
         contentKind("changes"),
         contentKind("automation"),
         contentKind("empty"),
+        agentSessionContent,
         object(
             properties: [
                 "kind": string(constant: "file"),

@@ -38,10 +38,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 46, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 46)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 46)
-        XCTAssertEqual(compiled.dispatchRules.count, 46)
+        XCTAssertEqual(revisions, Array(repeating: 48, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 48)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 48)
+        XCTAssertEqual(compiled.dispatchRules.count, 48)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -65,8 +65,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 46)
-        XCTAssertEqual(actualNames.count, 46)
+        XCTAssertEqual(Set(actualNames).count, 48)
+        XCTAssertEqual(actualNames.count, 48)
 
         let forbiddenFragments = [
             "tenon.",
@@ -786,7 +786,9 @@ final class CoreIntentCatalogTests: XCTestCase {
             openContractNames
         )
 
-        XCTAssertEqual(CoreIntentName.allCases.count, 46)
+        // 46 → 48 (T-132): `terminal.process.read.v1` and `workspace.tab.close.v1`, each a
+        // `cli`-audience contract over a typed service the host UI already called.
+        XCTAssertEqual(CoreIntentName.allCases.count, 48)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -836,6 +838,7 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .workspacePaneOwner,
                 .workspaceTabCreate,
                 .workspaceTabFocus,
+                .workspaceTabClose,
                 .workspacePaneSplit,
                 .workspacePaneFocus,
                 .workspacePaneClose,
@@ -852,6 +855,7 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .terminalOpen,
                 .terminalViewportRead,
                 .terminalScrollbackRead,
+                .terminalProcessRead,
             ],
             .terminalWait: [.terminalWait],
             .browser: [
@@ -1063,6 +1067,12 @@ private extension CoreIntentCatalogTests {
                     "totalRows",
                 ]
             ),
+            .terminalProcessRead: SchemaShape(
+                [],
+                required: [],
+                output: ["paneID", "ttyName", "foregroundPID"],
+                requiredOutput: ["paneID", "ttyName", "foregroundPID"]
+            ),
             .terminalWait: SchemaShape(
                 ["condition", "timeoutMs"],
                 required: ["condition"],
@@ -1151,6 +1161,7 @@ private extension CoreIntentCatalogTests {
                 requiredOutput: []
             ),
             .workspaceTabFocus: emptyShape(),
+            .workspaceTabClose: emptyShape(),
             .workspacePaneSplit: SchemaShape(
                 ["axis"],
                 required: ["axis"],
@@ -1227,6 +1238,7 @@ private extension CoreIntentCatalogTests {
             .terminalOpen: ["terminal.write"],
             .terminalViewportRead: ["terminal.read"],
             .terminalScrollbackRead: ["terminal.read"],
+            .terminalProcessRead: ["terminal.read"],
             .terminalWait: ["terminal.read"],
             .browserSurfaceLoad: ["web.view"],
             .browserSurfaceBack: ["web.view"],
@@ -1243,6 +1255,7 @@ private extension CoreIntentCatalogTests {
             .workspacePaneOwner: [],
             .workspaceTabCreate: ["workspace.control"],
             .workspaceTabFocus: ["workspace.control"],
+            .workspaceTabClose: ["workspace.control"],
             .workspacePaneSplit: ["workspace.control"],
             .workspacePaneFocus: ["workspace.control"],
             .workspacePaneClose: ["workspace.control"],

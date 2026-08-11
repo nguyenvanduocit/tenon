@@ -167,7 +167,7 @@ panes keep that channel's intended path rather than falling back.
 | `CLI-FR-011` | The wire **MUST** speak exact protocol v3 as one bounded newline-delimited JSON request and response per connection. | shipped | `@req-cli-fr-011` |
 | `CLI-FR-012` | Requests **MUST** accept only `v`, `id`, `action`, and object `params`; unknown/malformed/oversize input **MUST** return a closed control error. | shipped | `@req-cli-fr-012` |
 | `CLI-FR-013` | The action set **MUST** be exactly `ping`, `app.focus`, `intent.list`, `intent.describe`, and `intent.send`. | shipped | `@req-cli-fr-013` |
-| `CLI-FR-014` | `ping` **MUST** report protocol version, process ID, and active state without claiming provider readiness. | shipped | `@req-cli-fr-014` |
+| `CLI-FR-014` | `ping` **MUST** report protocol version, process ID, and active state without claiming provider readiness. | superseded by `CLI-FR-027` 2026-08-12 | `@req-cli-fr-014` |
 | `CLI-FR-015` | `app.focus` **MUST** activate the existing app and bring its primary window forward. | shipped | `@req-cli-fr-015` |
 | `CLI-FR-016` | `intent.list` and `intent.describe` **MUST** expose only policy-filtered contracts callable by the CLI principal; hidden names **MUST** appear not found. | shipped | `@req-cli-fr-016` |
 | `CLI-FR-017` | `intent.send` **MUST** use the production dispatcher with canonical input, scope, target, idempotency, timeout, policy, provider selection, validation, and telemetry. | shipped | `@req-cli-fr-017` |
@@ -180,6 +180,7 @@ panes keep that channel's intended path rather than falling back.
 | `CLI-FR-024` | The server **MUST** cap live connections, answer excess load as busy, watchdog an unreturned handler, and settle/close/release each permit exactly once. | shipped | `@req-cli-fr-024` |
 | `CLI-FR-025` | Server teardown **MUST** settle pending clients as unavailable and release socket and claim ownership in safe order. | shipped | `@req-cli-fr-025` |
 | `CLI-FR-026` | Success/failure/usage **MUST** use exit codes 0/1/2 respectively and machine-readable JSON for server replies. | shipped | `@req-cli-fr-026` |
+| `CLI-FR-027` | `ping` **MUST** answer exactly `{protocolVersion, pid, active, version, build, socketPath}` — facts about this process and no others. `socketPath` **MUST** be derived from the same resolved `AppInstanceChannel` the server binds, so a channel can never report the other's socket, and `version`/`build` **MUST** report the unknown marker for a build carrying no `Info.plist` version keys. It **MUST NOT** carry any provider, contract, plugin, or health field. | shipped | `@req-cli-fr-027` |
 
 ### Non-functional requirements
 
@@ -197,7 +198,7 @@ panes keep that channel's intended path rather than falling back.
 
 ## 8. Acceptance specification
 
-[`cli-control.feature`](cli-control.feature) tags all 34 requirements. Pure codec/parser,
+[`cli-control.feature`](cli-control.feature) tags all 35 requirements. Pure codec/parser,
 socket integration, dispatcher, packaging checks, channel state, and installed Settings
 verification are the evidence seams. The bare-Xcode-Archive limitation remains an explicit
 operational exclusion rather than an unverified promise.
@@ -224,7 +225,7 @@ Settings follows `docs/designs.md`; command output is stable machine-readable JS
 | 001…005 | installer, `install.sh`, channel/env composition | shipped; bare Archive excluded |
 | 006…010 | `AppInstanceChannel`, `CLISocketServer`, socket tests | shipped |
 | 011…013/018/020/026 | v3 codec/action parser/client tests | shipped |
-| 014…019 | `CLICommandExecutor`, intent boundary tests | shipped |
+| 014…019, 027 | `CLICommandExecutor`, intent boundary tests, `CLIPingPayloadTests` | shipped; `CLI-FR-027` restates the ping payload `CLI-FR-014` scoped |
 | 021…023 | CLI builder, terminal provider, consent deadline tests | shipped |
 | 024…025 | connection permits/watchdog/drain tests | shipped |
 | NFR set | fitness, saturation, packaging, installed checklist | shipped under stated release path |
@@ -251,6 +252,8 @@ intent contract. Protocol v4 requires exact migration/rejection tests; current v
 | 2026-07-31 | Disconnect cancellation is optional optimization; deadline is correctness bound. | avoids unbounded work without premature kqueue design | original T-050 checkbox |
 | 2026-08-06 | Only ping and app focus directly control the app; domain work is intents. | interaction boundary law | old domain CLI verbs |
 | 2026-08-09 | Current wire is v3. | `CLIProtocol.version == 3` and current tests | `design-cli.md` wire-v2 text |
+| 2026-08-12 | `ping` widens to carry build and socket path, and `CLI-FR-014` is superseded rather than edited. | The first thing a script does is find the app; `{protocolVersion, pid, active}` answered neither "which build is this" nor "where do I send the next request". Every added field is still a fact about *this process*, so the line `CLI-FR-014` drew — no claim about provider readiness — is intact and is now asserted directly by `CLIPingPayloadTests`, which pins the exact key set rather than only the additions. It is superseded rather than reworded because a shipped requirement stating a narrower payload was true when written. | `CLI-FR-014`'s three-field payload |
+| 2026-08-12 | `ping` resolves its socket path from `AppInstanceChannel` inside `CLICommandExecutor` rather than receiving the server's bound path. | Both sides derive the path from the same resolved channel — `CLISocketServer.clientSocketPath` is `socketPath ?? instanceChannel.socketPath()` and its bind target is that same value — so the two cannot disagree in production, and a ping can only arrive at all on a socket that bound. The alternative, threading `cliServer.clientSocketPath` through the one call site, would have edited `TenonApp.swift`, which another task held at the time. ⚠️ The consequence to revisit: if a future degraded-bind path ever serves requests on a path other than the channel's own, this derivation would report the wrong one, and the fix is to pass the server's value in. | passing the bound path from the caller |
 | 2026-08-10 | The installer detaches its replacement half when run from inside the app it replaces, rather than refusing. | the only terminal a person working on Tenon has open is a Tenon pane, and refusing would send them to another app to install this one. Detaching is not a preference: `TerminalJobTerminator.sweep` lists victims with `ps -t <tty>` and escalates to SIGKILL, so leaving the terminal session is the one thing that survives — measured, a `nohup` child is still listed and dies, a `setsid` child is not listed and completes | installing only from outside the app |
 
 Open operational question: if Xcode Archive becomes a supported release path, it must gain an
@@ -263,6 +266,8 @@ equivalent self-contained SwiftPM CLI build/copy/verification step rather than a
 | 2026-08-09 | current dirty tree, docs audit | current CLI/channel/socket/parser/executor/installer source and task receipts | canonical v3 behavior mapped | no live socket or installed button run in this pass |
 | 2026-08-10 | current tree, T-113 | `CLI-NFR-009` self-install: ancestry detection, detached survival, and the whole replace path | detection returned self-install for `/Applications/Tenon.app` and ordinary for two other bundles, run from a real Tenon pane; in a `forkpty` PTY, a `nohup` child was listed by `ps -t <tty>` and killed by a simulated sweep while a `setsid` child was absent from the list and ran to completion; a foreground staging install went build → quit → wait → replace → sign → verify → `exit=0`; a forced-branch copy of the installer, differing from the real one by the single `if` line, handed off to the detached installer, which quit staging, waited, replaced, signed, verified, and reopened it after its caller had exited | the detached path was proved against `Tenon Staging.app`, not against `Tenon.app` — a real self-install kills the session doing the verifying, so the one thing not directly observed is a live Tenon replacing itself |
 | 2026-08-10 | current tree, T-115 | the app/CLI instance channel after the bundle identifier moved from `com.firegroup.tenon` to `dev.tenon.app` | the control socket path and single-instance channel are derived from the bundle identifier, so both ends moved together: `CLISocketServerTests` resolved the closed channels for the new production and staging identifiers, and `InteractionBoundaryFitnessTests` confirmed the installer scripts and `AppInstanceChannel` agree on the same pair. Both suites were **red first** against the old identifier, which is how the rename found every file that carried it. Full suite 1872 / 0 | the identifier is proved consistent in-tree, not on disk: no install replaced the running app in this session, so a live socket handshake under the new identifier is unobserved, and any `/Applications` bundle still carrying the old identifier remains launchable by it |
+
+| 2026-08-12 | current tree, T-132 | `CLI-FR-027`: the exact `ping` payload | `CLIPingPayloadTests` 4 / 0 against the pure `CLICommandExecutor.pingPayload`. The assertions were proved to bite by **mutation**: deleting the `socketPath` line from the payload turns 2 of the 4 red (exact-object equality and the exact-key-set check), and the file was restored byte-identically from a `cmp`-verified copy. Both channels' reported paths are asserted equal to `AppInstanceChannel.socketPath()` and unequal to each other; an unversioned bundle reports `AppVersion.unknown` for both version fields | no live socket: the payload is asserted as a pure value, so what is unproven is the wiring — that `execute(.ping:)` reaches this function with `NSApp.isActive` and the real resolved channel is source-level, not observed over a socket. `tenon-cli --version` also remains an unknown command; the task's item (e) named it and this change does not add a client verb |
 
 ## 14. Change history
 

@@ -485,12 +485,26 @@ Feature: Arrange live panes without losing identity, focus, or attention
       And the card assigns the body frame from its own bounds
 
     @req-sp-fr-024 @req-sp-nfr-011 @req-sp-nfr-012 @update-bound
-    Scenario: An unchanged hosted lazy pane converges without closing the incident
+    Scenario: An unchanged hosted lazy pane converges
       Given a real pane host contains a scrolling lazy list and receives no state changes
       When the run loop is observed across consecutive settled intervals
       Then its body evaluation count stops increasing
       And the evidence is recorded as a bound and mitigation
-      But the historical production update-loop incident remains open until reproduced and explained
+      And the stage-level measurement that drove the reproduced stall is covered by SP-FR-027
+
+    @req-sp-fr-027 @hosting
+    Scenario: The canvas answers the size it is proposed
+      Given the stage asks the canvas how large it wants to be
+      When the canvas is measured
+      Then it answers the proposed width and height
+      And no fitting-size sweep runs over the cards beneath it
+
+    @req-sp-fr-027 @hosting
+    Scenario: A canvas that answers nothing sends the question to AppKit
+      Given a representable that declares no size of its own sits inside a stack
+      When the stack computes its size
+      Then AppKit is asked for a fitting size
+      And answering it walks the subtree the stack was measuring
 
     @req-sp-fr-024 @req-sp-nfr-011 @incident
     Scenario: A future sustained main-runloop stall records evidence automatically
@@ -518,6 +532,25 @@ Feature: Arrange live panes without losing identity, focus, or attention
         | input | result |
         | text that is not a UUID | an invalid-input error |
         | a UUID not present anywhere in the catalog | a workspace-unavailable error |
+
+    @req-sp-fr-028 @tab-close
+    Scenario: Closing a scoped tab takes every pane under it
+      Given a workspace holds two tabs and the caller names one of them
+      When the caller sends the versioned tab-close request
+      Then that tab and all of its panes leave the catalog
+      And the other tab is untouched
+
+    @req-sp-fr-028 @tab-close @errors
+    Scenario Outline: Tab close refuses rather than reporting an empty success
+      Given a programmatic tab-close request carries <scope>
+      When the request is evaluated
+      Then it returns <result> without changing workspace state
+
+      Examples:
+        | scope | result |
+        | no tab at all | a tab-not-found error |
+        | a tab UUID no workspace holds | a tab-not-found error |
+        | the only tab of its workspace | a close-refused error |
 
     @req-sp-fr-026 @req-sp-nfr-005 @accessibility
     Scenario: VoiceOver hears useful pane position instead of implementation identifiers

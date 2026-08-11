@@ -696,6 +696,19 @@ run for every call. `always` presents only Allow Once and never reads or records
 consent. Denial is wave-local, so a later request can ask again; unanswered prompts expire at
 the caller's deadline.
 
+Standing consent belongs to an installation rather than to a process — `CallerConsentKey`
+omits the session revision to say so — and it is kept between launches through a
+`StandingConsentWriter` the host supplies. The engine calls it *before* it remembers a grant,
+so a write that fails leaves nothing approved; revocation writes through the same door, and a
+launch adopts what the previous one kept via `restoreStandingConsents` before any provider is
+reachable. The kernel performs no I/O of its own: where consent lives is the host's decision
+(`Sources/TenonApp/StandingConsentStore.swift`).
+
+Whether a confirmation is *presented* is a separate, host-owned question. Tenon's Permissions
+setting answers every confirmation — `policy` and `always` alike — with Allow Once, writing no
+standing consent, so turning it off restores asking with nothing carried over. It reaches only
+the confirmation phase; every other check in this document runs regardless.
+
 For core contracts, the core catalog is authoritative. Plugin-owned metadata is untrusted:
 missing fields get pessimistic defaults (`write`, `none`, `policy`, `external: true`) and
 cannot lower host policy. This follows MCP's useful risk vocabulary without treating

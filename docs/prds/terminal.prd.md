@@ -235,6 +235,7 @@ terminate. Current app quit does not call this removal path and remains pending.
 - `TERM-FR-023` — Process-table parsing/inspection MUST reject invalid/root groups, no-tty rows, incomplete identity, and recycled/stale target assumptions.
 - `TERM-FR-024` — App quit MUST explicitly terminate every materialized terminal through the same surface seam before process exit; this is currently not delivered.
 - `TERM-FR-025` — Relaunch MUST create a fresh shell only; it MUST NOT claim restoration of PTY, job tree, or scrollback.
+- `TERM-FR-026` — `terminal.process.read.v1` MUST return `{paneID, ttyName, foregroundPID}` for the terminal in scope, answering null for both facts when the pane holds no live surface rather than failing, and MUST carry no resource-telemetry field.
 
 ### Non-functional requirements
 
@@ -242,7 +243,7 @@ terminate. Current app quit does not call this removal path and remains pending.
 - `TERM-NFR-002` — Runtime/surface access MUST remain MainActor-confined; process-table reads, signal escalation waits, and other blocking work MUST stay off-main.
 - `TERM-NFR-003` — Callback identity MUST use monotonic non-reused tokens resolving weak views so teardown cannot dereference released Swift objects.
 - `TERM-NFR-004` — All public command/text/output/cursor/page/timeout fields MUST have explicit schema and runtime bounds.
-- `TERM-NFR-005` — All six terminal intents MUST use programmatic `{plugin, cli, agent}` exposure, declared-use gates, `terminal.write` or `terminal.read`, and canonical lanes.
+- `TERM-NFR-005` — All seven terminal intents MUST use programmatic `{plugin, cli, agent}` exposure, declared-use gates, `terminal.write` or `terminal.read`, and canonical lanes.
 - `TERM-NFR-006` — Scrollback cursor and returned pane UUID MUST remain bounded values, never caller-owned resource handles.
 - `TERM-NFR-007` — Termination MUST be explicit, idempotent at catalog ownership, bounded to two process-table scans/one wait, and re-scan before escalation to reduce PID-reuse risk.
 - `TERM-NFR-008` — Plugins MUST use `tenon.intents.send`; no handwritten terminal capability API or native terminal object may reappear.
@@ -297,6 +298,7 @@ lifetime. Public work remains finite and programmatic.
 |---|---|---|
 | native surface/input TERM-FR-001…006 | shipped; human beep check owed | key/clipboard/Ghostty smoke |
 | public intents TERM-FR-007…017 | shipped | catalog/provider/paging/idle tests |
+| process identity TERM-FR-026 | shipped | `PaneProcessAndTabCloseContractTests`, `PaneProcessAndTabCloseIntentTests` |
 | pane close TERM-FR-018…023 | shipped; installed nohup recheck owed | lifecycle/real-process tests |
 | app quit TERM-FR-024, NFR-010 | open | explicit pool drain + quit integration/live test |
 | fresh relaunch TERM-FR-025 | shipped | catalog/surface lifecycle tests |
@@ -330,6 +332,8 @@ the catalog merely to kill resources.
 | 2026-08-09 | cursor is a value, not a handle | assumption that paging implies RESOURCE |
 | 2026-08-09 | tty sweep plus escalation owns pane close | libghostty deallocation-only behavior |
 | 2026-08-09 | app quit remains open | any broad claim that T-084 completed all teardown |
+| 2026-08-11 | `terminal.process.read.v1` answers nulls for a pane with no live surface instead of failing. | The other reads fail with `terminal-surface-not-ready` because there is genuinely nothing to read. Process identity is different: "no process is running in this pane" is the answer a supervisor wants, and an error would make it indistinguishable from "no such pane". The contract is total over resolvable terminal panes. | the assumption that every terminal read shares one readiness precondition |
+| 2026-08-11 | Exposing tty name and foreground PID to `cli`/`agent` does not breach `DRM-FR-043`. | That requirement walls *resource telemetry* — CPU, memory, footprint — off from the CLI, and none of it crosses this contract. What crosses is process identity the same caller can already obtain through `process.exec.v1`; `SurfacePool.terminalProvenance(for:)` is simply the accurate source for it. | reading `DRM-FR-043` as a ban on every monitor-adjacent fact |
 
 ## 13. Verification receipts
 
@@ -340,6 +344,7 @@ the catalog merely to kill resources.
 | read/wait | catalog/provider/ScrollbackPaging/IdleDetector tests | Ghostty scrollback C edge uses smoke/stub evidence |
 | close teardown | pure parser, stub terminate, real PTY process tests | installed original nohup recheck |
 | app quit | source audit proves no pool drain | implementation, integration test, live survivor check |
+| process identity (2026-08-11, T-132) | `PaneProcessAndTabCloseContractTests` 3/0 and `PaneProcessAndTabCloseIntentTests` 6/0, both **red first** — the contract half failed on `terminal.process.read.v1 is not in the closed core inventory`, the provider half on `no provider binding for terminal.process.read.v1`. A materialised stub pane answers `/dev/ttys012` and PID 4242; a pane that never materialised answers nulls; a `.changes` pane is refused with `dev.tenon.core.terminal-unavailable`. | no live PTY: `ttyName`/`foregroundPID` come from a stub surface, so what is proved is that the provider reports what `SurfacePool` holds, not that libghostty fills it correctly — that edge is `TERM-FR-006`'s and predates this change |
 
 ## 14. Change history
 

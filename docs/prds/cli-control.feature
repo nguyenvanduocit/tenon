@@ -162,12 +162,25 @@ Feature: Control the correct local Tenon instance through canonical intents
         | intent.send | canonical intent adapter |
         | terminal.write | unknown_action |
 
-    @req-cli-fr-014 @ping
+    @req-cli-fr-014 @req-cli-fr-027 @ping
     Scenario: Ping proves server liveness only
       Given the app can answer its control socket
       When the client sends ping
-      Then the result contains protocol version, process ID, and active state
+      Then the result contains protocol version, process ID, active state, version, build, and socket path
+      And it carries no provider, contract, plugin, or health field
       And it makes no promise that every provider is ready
+
+    @req-cli-fr-027 @ping
+    Scenario Outline: Ping identifies the exact build and channel it answers for
+      Given the running app resolved the <channel> instance channel
+      When the client sends ping
+      Then the reported socket path is that channel's own socket
+      And a build carrying no Info.plist version keys reports the unknown marker
+
+      Examples:
+        | channel |
+        | production |
+        | staging |
 
     @req-cli-fr-015 @focus
     Scenario: Focus activates the existing primary

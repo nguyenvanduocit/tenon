@@ -88,6 +88,12 @@ final class WorkspaceIntentProvider {
                 return await self.focusTab(envelope: envelope)
             },
             IntentProviderBinding(
+                intentID: try CoreIntentName.workspaceTabClose.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return await self.closeTab(envelope: envelope)
+            },
+            IntentProviderBinding(
                 intentID: try CoreIntentName.workspacePaneSplit.intentID
             ) { envelope, context in
                 try context.checkCancellation()
@@ -233,7 +239,7 @@ private extension WorkspaceIntentProvider {
     func createTab(envelope: IntentEnvelope) -> IntentProviderReply {
         do {
             let object = try AppIntentProviderSupport.object(envelope.input)
-            let content = try object["content"].map(Self.content(from:))
+            let content = try object["content"].map { try Self.content(from: $0) }
             switch EmptyGridLauncherPlacement.consumeReservedTabCreation(
                 scope: envelope.scope,
                 content: content,
@@ -300,6 +306,39 @@ private extension WorkspaceIntentProvider {
               selectScopedTab(envelope.scope)
         else {
             return failure(codes.tabNotFound, reason: "tab-scope-not-found")
+        }
+        return AppIntentProviderSupport.emptySuccess
+    }
+
+    /// `workspace.tab.close.v1` — the public adapter over the same `WorkspaceStore.closeTab`
+    /// the tab bar's close button calls DIRECT.
+    ///
+    /// Two refusals, told apart because a caller acts differently on each. No tab in scope
+    /// is `tab-not-found`: the intent will not guess at the selection for a destructive
+    /// operation. A workspace's only tab is `close-refused`, because `WorkspaceCatalog`
+    /// keeps it (`Workspace.swift:613`) and a caller looping over tabs meets that case
+    /// first — reporting success there would claim a removal that never happened.
+    func closeTab(envelope: IntentEnvelope) -> IntentProviderReply {
+        guard envelope.input == .object([:]) else {
+            return AppIntentProviderSupport.invalidInput(.expectedObject)
+        }
+        guard let tabID = envelope.scope.tabID,
+              let owner = store.catalog.workspaces.first(where: { workspace in
+                  workspace.tabs.contains { $0.id == tabID }
+              }),
+              envelope.scope.workspaceID.map({ $0 == owner.id }) ?? true
+        else {
+            return failure(codes.tabNotFound, reason: "tab-scope-not-found")
+        }
+        guard owner.tabs.count > 1 else {
+            return failure(codes.closeRefused, reason: "last-tab-cannot-close")
+        }
+
+        store.closeTab(tabID, in: owner.id)
+        guard !(store.catalog.workspaces.first { $0.id == owner.id }?
+            .tabs.contains { $0.id == tabID } ?? false)
+        else {
+            return failure(codes.closeRefused, reason: "tab-close-refused")
         }
         return AppIntentProviderSupport.emptySuccess
     }
@@ -598,10 +637,56 @@ private extension WorkspaceIntentProvider {
         AppIntentProviderSupport.failure(code: code, reason: reason)
     }
 
-    static func content(from value: IntentValue) throws -> SlotContent {
+}
+
+/// The typed parse of the `content` a caller names, kept reachable inside the module.
+///
+/// It is the door a plugin knocks on — the one place an untrusted caller's idea of "a pane
+/// holding this" becomes a `SlotContent` — so it is swept directly, against real files and
+/// real symlinks, rather than only through whichever intent happens to call it.
+extension WorkspaceIntentProvider {
+    /// `transcriptRoots` is a parameter rather than a constant so the containment rule can be
+    /// swept against real symlinks in a temporary directory. Production always takes the
+    /// default, which is this user's own two provider roots.
+    nonisolated static func content(
+        from value: IntentValue,
+        transcriptRoots: [URL] = AgentTranscriptPath.allowedRoots()
+    ) throws -> SlotContent {
         let object = try AppIntentProviderSupport.object(value)
         let kind = try AppIntentProviderSupport.string("kind", in: object)
         switch kind {
+        case "agentSession":
+            let rawProvider = try AppIntentProviderSupport.string("provider", in: object)
+            guard let provider = AgentSessionProvider(rawValue: rawProvider) else {
+                throw AppIntentInputError.missingOrInvalidField("provider")
+            }
+            let rawPath = try AppIntentProviderSupport.string("transcriptPath", in: object)
+            // The caller is a plugin naming a file on this person's disk, so containment is
+            // decided here, with symlinks resolved on both sides, and decided BEFORE a
+            // reference exists. A path that does not resolve under one of the provider roots
+            // is a typed invalid-input refusal: no pane opens, and nothing partial is built.
+            guard let transcript = AgentTranscriptPath.validated(rawPath, roots: transcriptRoots)
+            else {
+                throw AppIntentInputError.missingOrInvalidField("transcriptPath")
+            }
+            let title: String?
+            switch object["title"] {
+            case .none, .some(.null):
+                title = nil
+            case let .some(.string(value)):
+                title = value
+            default:
+                throw AppIntentInputError.missingOrInvalidField("title")
+            }
+            guard let ref = AgentSessionRef(
+                provider: provider,
+                sessionID: try AppIntentProviderSupport.string("sessionID", in: object),
+                transcriptPath: transcript.path,
+                title: title
+            ) else {
+                throw AppIntentInputError.missingOrInvalidField("sessionID")
+            }
+            return .agentSession(ref)
         case "terminal":
             return .terminal
         case "changes":
@@ -713,7 +798,9 @@ private extension WorkspaceIntentProvider {
             throw AppIntentInputError.missingOrInvalidField("kind")
         }
     }
+}
 
+private extension WorkspaceIntentProvider {
     struct WorkspaceCursor: Equatable {
         let snapshotID: UUID
         let offset: Int
@@ -914,6 +1001,14 @@ private extension WorkspaceIntentProvider {
             ])
         case let .diff(request):
             diffContentValue(request)
+        case let .agentSession(ref):
+            .object([
+                "kind": .string("agentSession"),
+                "provider": .string(ref.provider.rawValue),
+                "sessionID": .string(ref.sessionID),
+                "transcriptPath": .string(ref.transcriptPath),
+                "title": ref.title.map(IntentValue.string) ?? .null,
+            ])
         }
     }
 

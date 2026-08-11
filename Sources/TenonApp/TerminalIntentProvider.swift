@@ -72,6 +72,14 @@ final class TerminalIntentProvider {
                 return reply
             },
             IntentProviderBinding(
+                intentID: try CoreIntentName.terminalProcessRead.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                let reply = await self.readProcess(envelope: envelope)
+                try context.checkCancellation()
+                return reply
+            },
+            IntentProviderBinding(
                 intentID: try CoreIntentName.terminalWait.intentID
             ) { envelope, context in
                 try context.checkCancellation()
@@ -338,6 +346,35 @@ private extension TerminalIntentProvider {
                     "cursor": next.map { .string($0.encoded) } ?? .null,
                     "invalidated": .bool(false),
                     "totalRows": .integer(Int64(lines.count)),
+                ])
+            )
+        }
+    }
+
+    /// `terminal.process.read.v1` — which PTY the pane owns, and what is running on it.
+    ///
+    /// The pool has published this pair since the resource monitor needed it
+    /// (`SurfacePool.terminalProvenance(for:)`); this is the same read, for a caller
+    /// outside the app. It is total on purpose: a pane with no surface, or one whose shell
+    /// has exited, answers with nulls rather than an error, so "nothing is running here"
+    /// stays distinguishable from "there is no such pane".
+    func readProcess(envelope: IntentEnvelope) -> IntentProviderReply {
+        guard envelope.input == .object([:]) else {
+            return AppIntentProviderSupport.invalidInput(.expectedObject)
+        }
+        switch terminalTarget(for: envelope.scope) {
+        case let .unavailable(reason):
+            return failure(reason)
+        case let .resolved(paneID):
+            let provenance = surfaces.terminalProvenance(for: [paneID])[paneID]
+            return .success(
+                .object([
+                    "paneID": .string(paneID.uuidString),
+                    "ttyName": provenance?.ttyName
+                        .map(IntentValue.string) ?? .null,
+                    "foregroundPID": provenance?.foregroundPID
+                        .flatMap(Int64.init(exactly:))
+                        .map(IntentValue.integer) ?? .null,
                 ])
             )
         }
