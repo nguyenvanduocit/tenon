@@ -382,14 +382,26 @@ final class AgentsRunTests: XCTestCase {
         let topLevel = await bridge.recorded.map(\.intentID)
 
         XCTAssertEqual(reply, .success(.object([:])))
+        // The run's shape is asserted at the two ends, where the order is a guarantee, and as a
+        // set in the middle, where it is not.
+        //
+        // `agents.run` starts `terminal.wait.v1` WITHOUT awaiting it and only then writes the
+        // command, deliberately: a wait armed after the command runs loses every short run
+        // (PluginRuntimeBootstrap.swift:553-565). So the two are in flight together, and which
+        // one crosses into this recorder's actor first is a scheduling detail — CI observed
+        // write before wait on 2026-08-11 (run 31531099048) having observed wait before write
+        // the run before, on the same tree. Asserting the arrival order here asserts the test
+        // double's scheduling, not the code: the double is called directly through `nestedSend`
+        // and never passes the per-pane lane that orders these for real.
+        XCTAssertEqual(nested.first, "terminal.open.v1", "the run has to open a pane first")
         XCTAssertEqual(
-            nested,
-            [
-                "terminal.open.v1",
-                "terminal.wait.v1",
-                "terminal.write.v1",
-                "terminal.scrollback.read.v1",
-            ],
+            nested.last,
+            "terminal.scrollback.read.v1",
+            "the transcript is read last, after the wait has settled"
+        )
+        XCTAssertEqual(
+            Set(nested.dropFirst().dropLast()),
+            ["terminal.wait.v1", "terminal.write.v1"],
             "every step of the run must ride the invoking call's nested channel"
         )
         XCTAssertEqual(

@@ -42,10 +42,34 @@ while ContinuousClock.now < deadline {
 }
 ```
 
-Done in `Tests/TenonIntentCoreTests/CallerConsentTests.swift:861` and
-`Tests/TenonIntentCoreTests/IntentMailboxTests.swift:757` (`reachedFullStrength`). A generous
-deadline costs nothing when the condition is met — the loop returns as soon as it is true, and the
-consent suite went from a hard failure to 21/0 in 0.873 s.
+Done in `Tests/TenonIntentCoreTests/CallerConsentTests.swift:861`,
+`Tests/TenonIntentCoreTests/IntentMailboxTests.swift:757` (`reachedFullStrength`) and
+`:648` (`waitForRunning`). A generous deadline costs nothing when the condition is met — the loop
+returns as soon as it is true, and the consent suite went from a hard failure to 21/0 in 0.873 s.
+
+**Deferring the rest was a mistake, and CI charged for it.** This task was written listing the
+remaining sites as future work. One run later, `waitForRunning` — item 6 on that list — turned CI
+red (`testALaneIsSerialByDefault`, run 31531099048), having passed 2001/0 on the run before on the
+same tree. A list of known-fragile waits is not a plan; each one is red the day the machine is
+busy enough. Take the whole sweep in one change.
+
+## A second failure this uncovered, which is not a wait at all
+
+`AgentsRunTests.testAgentsRunUsesTheProvidingCallWhenGivenIt` asserted the exact arrival order of
+the nested calls and flipped between runs: CI saw `open, write, wait, read` on 31531099048 and
+`open, wait, write, read` the run before.
+
+That order is not something the code promises. `agents.run` starts `terminal.wait.v1` **without
+awaiting it** and only then writes the command — deliberately, because a wait armed after the
+command runs loses every short run (`PluginRuntimeBootstrap.swift:553-565`). The two are therefore
+in flight together, and which crosses into the test's `NestedSendRecorder` actor first is a
+scheduling detail. The double is called straight through `nestedSend` and never passes the
+per-pane lane that orders these for real, so asserting arrival order there asserts the harness.
+
+The assertion now pins what is actually guaranteed — `open` first, `scrollback.read` last, and the
+pair between them as a set. **This is worth revisiting properly**: whether the host guarantees that
+a wait submitted before a write is armed first, through the pane lane, is a real question about
+`agents.run`'s contract, and no test covers it today.
 
 The same reasoning retired a fixed `Task.sleep(for: .milliseconds(140))` in
 `IntentTelemetryTests` on the same day: the reporter promises the coalesced value arrives *after*

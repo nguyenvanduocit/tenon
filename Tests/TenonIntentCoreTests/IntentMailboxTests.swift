@@ -645,11 +645,12 @@ final class IntentMailboxTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) async {
-        for _ in 0 ..< 1_000 {
+        let deadline = ContinuousClock.now + .seconds(10)
+        while ContinuousClock.now < deadline {
             if await mailbox.snapshot().runningRequestIDs.isEmpty == false {
                 return
             }
-            await Task.yield()
+            try? await Task.sleep(for: .milliseconds(5))
         }
         XCTFail("Mailbox never started a request", file: file, line: line)
     }
