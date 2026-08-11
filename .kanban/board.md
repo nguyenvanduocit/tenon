@@ -4,6 +4,7 @@
 ## Backlog
 
 ## Todo
+- [T-120](tasks/T-120-four-tab-tests-that-only-hold-on-a-desktop.md) Four tab tests that only hold on a desktop — high/M — four `TabStripReorderTests` that inject `NSEvent`s failed one CI run and passed a rerun of the same commit; 12 of 16 in that suite passed both times, including the real-title-bar hit test, so the window and hit-testing work on a runner and only event *delivery* is unreliable there. Flake in the shared suite, first visible now that CI reaches the test step.
 
 ## Doing
 
