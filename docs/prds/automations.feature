@@ -115,6 +115,26 @@ Feature: Author, schedule, inspect, and supervise bounded JavaScript automations
       And each row names exact schedule, instant, trigger, lateness, and delivered or dropped
       And copy says Recent and never calls delivery business success
 
+    @req-au-fr-029 @canvas
+    Scenario Outline: A run leads to the panel of the plugin that received it
+      Given a schedule has run and its owning plugin <registration>
+      When the person selects that run in recent activity
+      Then <outcome>
+
+      Examples:
+        | registration | outcome |
+        | registers one shared view | that view is placed as ordinary workspace content through typed host services |
+        | registers several shared views | the first it registered is placed, and the same run opens the same one every time |
+        | registers only per-pane views, or none | the run stays evidence and offers no control that opens nothing |
+
+    @req-au-nfr-009 @attention
+    Scenario: A firing takes no screen
+      Given scheduled automations run every few minutes while the person is working
+      When a firing is delivered and its script finds something a human must clear
+      Then no pane is placed, focused, or raised by the firing
+      And the finding waits in a status line and in the plugin's own panel
+      And the panel appears when the person goes to that run, and at no other moment
+
     @req-au-fr-015 @architecture
     Scenario: Host UI reads automation state directly
       Given the person opens Canvas and runs a schedule

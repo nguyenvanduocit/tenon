@@ -65,6 +65,11 @@ struct TenonApp: App {
                         },
                         createWithAI: {
                             composition.openAutomationAuthoringPane()
+                        },
+                        openRunDetail: { pluginID, viewID in
+                            composition.store.openContent(
+                                .pluginView(pluginID: pluginID, viewID: viewID)
+                            )
                         }
                     )
                 )
@@ -315,7 +320,10 @@ private struct AppStartupPreparation: Sendable {
         let recentWorkspaces = RecentWorkspaceStore.load(from: recentWorkspacesURL)
         let kernel = try await AppIntentRuntime.prepareKernel(
             stateRoot: paths.runtimeStateRoot,
-            confirmationAuthorizer: confirmationAuthorizer
+            confirmationAuthorizer: confirmationAuthorizer,
+            standingConsent: StandingConsentStore(
+                fileURL: paths.standingConsentFile
+            )
         )
         let pluginPersistence = try PluginHostPersistence(
             stateRoot: paths.pluginStateRoot
@@ -413,6 +421,9 @@ final class AppComposition {
     static func make(paths: AppStatePaths? = nil) async throws -> AppComposition {
         let userInterface = PluginUIState()
         let prefs = AppPreferencesStore.shared
+        // The Permissions switch governs whether a confirmation is presented at all. Read
+        // live from the store, so changing it in Settings needs no further wiring.
+        userInterface.adopt(prefs)
         let prepared = try await AppStartupPreparation.prepare(
             paths: paths,
             launchContent: prefs.preferences.newWorkspaceContent.slotContent(),

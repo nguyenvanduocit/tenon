@@ -248,8 +248,18 @@ new public `tenon` member.
   delivery outcome (a live, subscribed generation took the event, or it dropped).
   Reconcile never touches it: recent evidence survives hot reloads of the plugin it
   describes. UI copy says `Recent` rather than claiming evicted records are still part of a
-  whole-session total. A deep link from a row into a per-plugin log surface waits on such a
-  surface existing.
+  whole-session total. Selecting a row places the owning plugin's own registered shared view
+  as ordinary workspace content, through the same typed store call
+  `workspace.content.open.v1` adapts — the run is host evidence of delivery, and the panel
+  beside it is the only surface that knows what the run did. A plugin whose views are all
+  per-pane has no shared panel to lead to, so its rows stay evidence and draw no control.
+  That navigation is the whole of it: a deep link into a per-plugin log surface still waits
+  on such a surface existing.
+
+  This is also the only moment such a panel appears. A firing places nothing — the schedule
+  runs while a person is in the middle of something else, and a pane that arrives unasked
+  costs more attention than the finding is usually worth. A script with something a human
+  must clear says so in one status-bar line and waits to be visited.
 
 ## Recorded non-goals (follow-ups)
 

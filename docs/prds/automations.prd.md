@@ -124,6 +124,7 @@ visible pane and returns bounded transcript evidence.
 | `AU-FR-026` | `Promise.all`, pipelines, loops, conditions, and retries **MUST** remain ordinary JS under generation outbound-intent bounds. | shipped | `@req-au-fr-026` |
 | `AU-FR-027` | The fleet-review example **MUST** remain opt-in, executable in tests, launch three supervised panes, aggregate transcripts, and publish one verdict. | shipped/headless | `@req-au-fr-027` |
 | `AU-FR-028` | Installed verification **MUST** cover Canvas pixels, Run Now/history, AI-authored working script, and a true-provider command that may finish before wait arms. | planned verification | `@req-au-fr-028` |
+| `AU-FR-029` | A run in Canvas recent activity **MUST** lead to its owning plugin's own registered shared view, placed through typed workspace services DIRECT on that selection alone; a run whose plugin registers no shared view **MUST** present as evidence rather than as a control. | shipped | `@req-au-fr-029` |
 
 ### Non-functional requirements
 
@@ -137,10 +138,11 @@ visible pane and returns bounded transcript evidence.
 | `AU-NFR-006` | evidence | UI **MUST** say attempted/delivered and Recent, never infer business success or completeness beyond retained history. | shipped | `@req-au-nfr-006` |
 | `AU-NFR-007` | architecture | Zero schedule-specific public `tenon` members/core intents; mechanisms **MUST** keep CONTRIBUTION/EVENT/DIRECT/INTENT classifications. | shipped | `@req-au-nfr-007` |
 | `AU-NFR-008` | verification | Headless tests/mutations **MUST** be complemented by installed interaction and true-provider receipts. | partial | `@req-au-nfr-008` |
+| `AU-NFR-009` | attention | A firing **MUST NOT** place, focus, or raise a surface on its own; a script with something a human must clear **MUST** carry it on a channel that costs nothing to ignore, and panes a script opens through its own declared terminal intents remain its visible supervised panes rather than host-directed navigation. | partial: the shipped inventory obeys it; the host does not yet refuse a firing that disobeys | `@req-au-nfr-009` |
 
 ## 6. Acceptance, architecture, and ownership
 
-[`automations.feature`](automations.feature) maps all 36 requirements. Schedule declaration is
+[`automations.feature`](automations.feature) maps all 38 requirements. Schedule declaration is
 CONTRIBUTION; firing EVENT; UI/scheduler state DIRECT; script actions INTENT; timers/watchers and
 agent supervision use existing RESOURCE lifetimes. Scheduler owns nextDue, pause epochs, and
 history; PluginHost owns delivery; plugin runtime owns script generation; workspace/terminal
@@ -154,6 +156,7 @@ services own authoring/fleet panes. No app principal or automation capability AP
 | 019…021 | authoring pure tests and composition | shipped; installed flow owed |
 | 022…027 | AgentsRun/fleet integration/example | shipped headlessly; fast-provider race owed |
 | 028 and NFR-005/008 | human checklist | pending |
+| 029 and NFR-009 | run-detail projection and row control suites; installed inventory read | shipped; host refusal of a self-opening firing not attempted |
 
 Risks: calling delivery success; authority laundering through a broker; replay after pause; shell
 injection; wait missing an ultra-fast completion. Mitigations are exact UI vocabulary, caller-
@@ -164,11 +167,24 @@ Decisions: local machine time with no dead timezone metadata; manual run never s
 single-file header must open the file; user inventory is durable/untrusted; `agents.run` is a
 runtime function rather than broker intent; cross-restart catch-up is unimplemented and excluded.
 
+2026-08-11, T-125 — a run leads to the panel; the panel does not come to the operator. Three
+installed plugins were opening a pane from inside their own `automation.fired` handler, so a
+five-minute schedule could take the screen from work in progress. The recorded non-goal *"log
+deep link before a log product exists"* stands: `AU-FR-029` navigates to a view the plugin has
+already contributed and invents no log surface. Host enforcement of `AU-NFR-009` was considered
+and deliberately not taken — refusing `workspace.content.open.v1` inside a firing would also
+remove a script's ability to raise something genuinely urgent, and that trade needs a real case
+before the boundary decides it. The rule is therefore stated here and kept by the inventory, not
+by the dispatcher; a firing that disobeys it is a bug in the plugin, findable by reading its
+handler. The signal those panes carried moved to `tenon.statusBar.set`, which is in the
+permission-free tier and costs nothing to ignore.
+
 ## 8. Verification and change history
 
 | Date | Worktree | Result | Exclusions |
 |---|---|---|---|
 | 2026-08-09 | current dirty tree, docs audit | current design/source/tasks/tests reconciled | installed Canvas/authoring and true-provider fast command not run |
+| 2026-08-11 | current dirty tree, T-125 | `AU-FR-029` and `AU-NFR-009` landed; automation suite green, run-detail projection and row control asserted headlessly; the three installed plugins parse and hold no pane-opening send or `workspace.control` permission | the row was not clicked in a running app; no installed screenshot; the host still permits a firing to open a pane |
 
 Initial canonical PRD created 2026-08-09 to preserve the complete automation product and its
 remaining verification boundary.

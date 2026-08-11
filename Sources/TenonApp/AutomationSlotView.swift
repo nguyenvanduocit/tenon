@@ -9,6 +9,10 @@ struct AutomationPaneActions {
     let runNow: (PluginID, String) async -> Void
     let setPaused: (PluginID, String, Bool) -> Void
     let createWithAI: () -> Void
+    /// Opens the panel behind one run. Typed workspace placement called DIRECT, because
+    /// this pane and the pane it opens have the same owner (invariant 6) — the operator
+    /// asked to look, so the surface arrives on that gesture and on no other.
+    let openRunDetail: (PluginID, String) -> Void
 }
 
 /// Compact geometry budget for the operations surface. Important dimensions stay pure
@@ -106,9 +110,46 @@ struct AutomationScheduleSummary: Identifiable, Equatable {
     }
 }
 
+/// Where an activity row leads. A run record proves delivery and nothing further, so the
+/// detail behind a run is the panel its receiving plugin draws — the one surface that
+/// knows what the run actually did.
+struct AutomationRunDetailTarget: Equatable {
+    let pluginID: PluginID
+    let viewID: String
+    let title: String
+}
+
 /// Pure product projections shared by SwiftUI and regression tests. The host can prove
 /// event delivery, not business success, so every metric and label uses that exact fact.
 enum AutomationPanePresentation {
+    /// The panel an activity row opens, or nil when the receiving plugin draws none.
+    ///
+    /// Only a shared view qualifies, and that restriction is what makes the projection
+    /// total. A shared view contributes its section from the moment it is registered,
+    /// whether or not a pane shows it (`PluginRuntime.makeViewSnapshots()`), so asking
+    /// this question of a closed panel still answers. An instanced view contributes one
+    /// section per OPEN instance instead: it is a pane's private surface, and a run row
+    /// pointing at it would have to invent both which instance was meant and what to do
+    /// when none is open.
+    ///
+    /// Among shared views the first in publish order wins — the plugin's own registration
+    /// order, which every other contribution surface already presents
+    /// (`PluginContributionProjection`).
+    static func runDetail(
+        for pluginID: PluginID,
+        in sections: [PluginViewSection]
+    ) -> AutomationRunDetailTarget? {
+        sections
+            .first { $0.pluginID == pluginID && !$0.instanced }
+            .map {
+                AutomationRunDetailTarget(
+                    pluginID: pluginID,
+                    viewID: $0.viewID,
+                    title: $0.title
+                )
+            }
+    }
+
     static func scheduleKey(
         pluginID: PluginID,
         scheduleID: String
@@ -459,12 +500,21 @@ struct AutomationSlotView: View {
         hasSchedules: Bool
     ) -> some View {
         if let summary {
+            let runDetail = AutomationPanePresentation.runDetail(
+                for: summary.pluginID,
+                in: host.pluginViews
+            )
             AutomationScheduleDetail(
                 summary: summary,
                 records: AutomationPanePresentation.records(for: summary.id, in: records),
+                runDetail: runDetail,
                 schedulesEnabled: schedulesEnabled,
                 isRunning: runningScheduleKeys.contains(summary.id),
                 runNow: { run(summary) },
+                openRunDetail: {
+                    guard let runDetail else { return }
+                    actions.openRunDetail(runDetail.pluginID, runDetail.viewID)
+                },
                 setPaused: {
                     actions.setPaused(
                         summary.pluginID,
@@ -890,9 +940,11 @@ private struct AutomationScheduleNavigatorRow: View {
 private struct AutomationScheduleDetail: View {
     let summary: AutomationScheduleSummary
     let records: [AutomationRunRecord]
+    let runDetail: AutomationRunDetailTarget?
     let schedulesEnabled: Bool
     let isRunning: Bool
     let runNow: () -> Void
+    let openRunDetail: () -> Void
     let setPaused: () -> Void
 
     private var state: AutomationScheduleState {
@@ -909,7 +961,9 @@ private struct AutomationScheduleDetail: View {
                 AutomationDefinitionSection(summary: summary)
                 AutomationActivitySection(
                     records: records,
+                    detail: runDetail,
                     canRetry: summary.availability.isReady && !isRunning,
+                    openDetail: openRunDetail,
                     retry: runNow
                 )
             }
@@ -1049,7 +1103,9 @@ private struct AutomationDefinitionSection: View {
 
 private struct AutomationActivitySection: View {
     let records: [AutomationRunRecord]
+    let detail: AutomationRunDetailTarget?
     let canRetry: Bool
+    let openDetail: () -> Void
     let retry: () -> Void
 
     var body: some View {
@@ -1082,7 +1138,9 @@ private struct AutomationActivitySection: View {
                     ForEach(records) { record in
                         AutomationActivityRow(
                             record: record,
+                            detail: detail,
                             canRetry: canRetry,
+                            openDetail: openDetail,
                             retry: retry
                         )
                         AutomationDivider()
@@ -1096,31 +1154,28 @@ private struct AutomationActivitySection: View {
 
 private struct AutomationActivityRow: View {
     let record: AutomationRunRecord
+    let detail: AutomationRunDetailTarget?
     let canRetry: Bool
+    let openDetail: () -> Void
     let retry: () -> Void
 
     var body: some View {
         HStack(spacing: 8) {
-            Image(
-                systemName: record.delivered
-                    ? "checkmark.circle.fill"
-                    : "exclamationmark.circle.fill"
-            )
-            .foregroundStyle(record.delivered ? TenonTheme.muted : TenonTheme.amber)
-            .accessibilityHidden(true)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(record.delivered ? "Event delivered" : "Event not delivered")
-                    .font(TenonTheme.interfaceFont(size: 11, weight: .semibold))
-                Text(AutomationPanePresentation.evidenceText(record))
-                    .font(TenonTheme.utilityFont(size: 9))
-                    .foregroundStyle(TenonTheme.muted)
-                    .lineLimit(1)
+            // The row is the way into the panel, and the only way: a firing puts nothing
+            // on screen by itself, so the surface arrives when someone comes looking for
+            // it. A run whose plugin draws no panel stays text — a control that opens
+            // nothing teaches an operator to stop trusting the ones that do.
+            if let detail {
+                Button(action: openDetail) { evidence }
+                    .buttonStyle(.plain)
+                    .help("Open \(detail.title)")
+                    .accessibilityHint("Opens \(detail.title)")
+                    .accessibilityIdentifier(
+                        "tenon.automation.run.detail.\(detail.pluginID.rawValue)"
+                    )
+            } else {
+                evidence
             }
-            Spacer(minLength: 8)
-            Text(record.firedAt.formatted(.relative(presentation: .named)))
-                .font(TenonTheme.utilityFont(size: 9))
-                .foregroundStyle(TenonTheme.muted)
-                .lineLimit(1)
             if !record.delivered {
                 Button(action: retry) {
                     Image(systemName: "arrow.clockwise")
@@ -1137,6 +1192,34 @@ private struct AutomationActivityRow: View {
         .accessibilityElement(children: .contain)
         .accessibilityLabel(record.delivered ? "Event delivered" : "Event not delivered")
         .accessibilityValue(AutomationPanePresentation.evidenceText(record))
+    }
+
+    private var evidence: some View {
+        HStack(spacing: 8) {
+            Image(
+                systemName: record.delivered
+                    ? "checkmark.circle.fill"
+                    : "exclamationmark.circle.fill"
+            )
+            .foregroundStyle(record.delivered ? TenonTheme.muted : TenonTheme.amber)
+            .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(record.delivered ? "Event delivered" : "Event not delivered")
+                    .font(TenonTheme.interfaceFont(size: 11, weight: .semibold))
+                    .foregroundStyle(TenonTheme.text)
+                Text(AutomationPanePresentation.evidenceText(record))
+                    .font(TenonTheme.utilityFont(size: 9))
+                    .foregroundStyle(TenonTheme.muted)
+                    .lineLimit(1)
+            }
+            Spacer(minLength: 8)
+            Text(record.firedAt.formatted(.relative(presentation: .named)))
+                .font(TenonTheme.utilityFont(size: 9))
+                .foregroundStyle(TenonTheme.muted)
+                .lineLimit(1)
+        }
+        .frame(maxWidth: .infinity)
+        .contentShape(Rectangle())
     }
 }
 
