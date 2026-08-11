@@ -177,7 +177,8 @@ final class TabStripReorderTests: XCTestCase {
         window.titlebarAppearsTransparent = true
         window.titleVisibility = .hidden
         window.contentView = NSHostingView(rootView: AnyView(bar))
-        // Offscreen: laid out and hit-testable without appearing on anyone's display.
+        // As far out of the way as a titled window's constrained origin allows: laid out and
+        // hit-testable wherever it lands.
         window.setFrameOrigin(NSPoint(x: -8_000, y: -8_000))
         window.orderFront(nil)
         window.contentView?.layoutSubtreeIfNeeded()
@@ -293,10 +294,10 @@ final class TabStripReorderTests: XCTestCase {
     ///
     /// Every earlier assertion here stops one step short of the thing that kept failing in a
     /// person's hands: the hit test is right, the rule is right, and a tab still did not move.
-    /// This drives `NSWindow.sendEvent` — the same entry point AppKit uses for a real press —
-    /// through `ShellTitleBar` itself and asks the workspace whether the tab ended up
-    /// somewhere else. An earlier reading of this seam concluded synthetic events never reach
-    /// a view; that reading was wrong, and it cost two failed fixes.
+    /// This drives a real `NSEvent` press-drag-release through `ShellTitleBar` itself — routed
+    /// by the window's own hit test, as `send` describes — and asks the workspace whether the
+    /// tab ended up somewhere else. An earlier reading of this seam concluded synthetic events
+    /// never reach a view; that reading was wrong, and it cost two failed fixes.
     func testARealPressAndDragOnTheStripMovesTheTabItStartedOn() throws {
         let bar = try titleBar()
         let store = bar.store
@@ -621,6 +622,27 @@ final class TabStripReorderTests: XCTestCase {
         )
     }
 
+    /// The view holding the pointer for the length of one press. AppKit hands every drag and
+    /// the release to whichever view took the `mouseDown`, wherever the pointer has travelled
+    /// to since, so the gesture below is delivered the same way.
+    private var pressTarget: NSView?
+
+    /// One event of a real gesture, routed the way the window routes one: the frame view
+    /// hit-tests the press, whatever answers receives it, and that view keeps the rest of the
+    /// press. Both halves are the shipped ones — the shipped view tree answers the hit test,
+    /// and the shipped `mouseDown/mouseDragged/mouseUp` overrides do the work — so the
+    /// question these tests ask about the title-bar band is unchanged.
+    ///
+    /// `NSWindow.sendEvent` is not what drives it, because that method dispatches only for a
+    /// window the window server carries on its on-screen list, and a machine running the
+    /// suite without a display session never puts one there. Measured on a window held off
+    /// that list: `windowNumber` is assigned, `event.window` resolves, and the frame view
+    /// hit-tests the press to the strip's own surface — while `mouseDown:` is never called at
+    /// all. Every assertion that needs a press to *do* something then fails as "the tab order
+    /// did not change", which is a sentence about reordering describing a window that was
+    /// never on screen. `testAPressLandsOnTheChipInAWindowTheServerNeverPutOnScreen` holds
+    /// this seam in place; the window server's own half of the routing is asserted by
+    /// `testTheChipsAreOutsideTheDragRegionTheWindowServerMovesTheWindowFrom`.
     private func send(_ type: NSEvent.EventType, at point: NSPoint, in window: NSWindow) {
         guard let event = NSEvent.mouseEvent(
             with: type,
@@ -635,26 +657,80 @@ final class TabStripReorderTests: XCTestCase {
         ) else {
             return XCTFail("could not build a \(type) event")
         }
-        // Checked here rather than in each caller because an injected event that routes
-        // nowhere fails these tests as "the tab order did not change", which reads like a
-        // reorder bug and is not one. Every test that needs a press to *do* something fails
-        // on CI while the one that needs a press to change nothing passes, so the suspect is
-        // delivery, and delivery needs a window the window server actually knows about.
-        XCTAssertNotEqual(
-            window.windowNumber,
-            0,
-            "the window never reached the window server, so no injected event can route to it"
-        )
-        XCTAssertNotNil(
-            event.window,
-            "event built for window number \(window.windowNumber) resolved to no window"
-        )
-        window.sendEvent(event)
+
+        switch type {
+        case .leftMouseDown:
+            guard let frameView = window.contentView?.superview else {
+                return XCTFail("the window has no frame view for a press to resolve against")
+            }
+            // Asserted here rather than in each caller because a press that resolves to
+            // nothing fails these tests as "the tab order did not change", which reads like a
+            // reorder bug and is not one.
+            guard let target = frameView.hitTest(point) else {
+                return XCTFail("no view in the window claims \(point), so the press lands nowhere")
+            }
+            pressTarget = target
+            target.mouseDown(with: event)
+        case .leftMouseDragged:
+            guard let target = pressTarget else {
+                return XCTFail("a drag arrived with no press holding the pointer")
+            }
+            target.mouseDragged(with: event)
+        case .leftMouseUp:
+            guard let target = pressTarget else {
+                return XCTFail("a release arrived with no press holding the pointer")
+            }
+            pressTarget = nil
+            target.mouseUp(with: event)
+        default:
+            XCTFail("\(type) is not part of a primary-button gesture")
+        }
     }
 
-    /// A real hidden-titlebar window, offscreen: laid out and hit-testable without appearing
-    /// on anyone's display, and carrying the title-bar band the whole bug lives in.
-    private func mount(_ view: some View, size: CGSize) -> NSWindow {
+    /// The condition every other gesture test in this file is silently mounted on, asserted
+    /// once on its own: a press reaches the chip in a window the window server never listed.
+    ///
+    /// That is the state a runner with no display session leaves every window in, and it is
+    /// where four of these tests spent five CI runs red while hit-testing, the drag region,
+    /// the reorder rules and the strip's own measurements were all provably intact. Pressing
+    /// a chip here fails the moment delivery goes back through `NSWindow.sendEvent`.
+    func testAPressLandsOnTheChipInAWindowTheServerNeverPutOnScreen() throws {
+        let bar = try titleBar()
+        let store = bar.store
+        let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
+
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300), onScreen: false)
+        defer { window.orderOut(nil) }
+        XCTAssertFalse(
+            NSWindow.windowNumbers(options: [])?
+                .contains(NSNumber(value: window.windowNumber)) ?? false,
+            "this window has to be off the on-screen list for the test to be asking anything"
+        )
+
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview))
+        )
+        let body = surface.convert(
+            NSPoint(x: surface.bounds.maxX - 40, y: surface.bounds.midY),
+            to: nil
+        )
+        send(.leftMouseDown, at: body, in: window)
+        send(.leftMouseUp, at: body, in: window)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.activeTabID,
+            ids.last,
+            "a press must reach the chip in a window no display ever showed"
+        )
+    }
+
+    /// A real hidden-titlebar window carrying the title-bar band the whole bug lives in, put
+    /// as far out of the way as AppKit allows — a titled window's origin is constrained back
+    /// onto whatever screen exists, so on a desktop this lands in a corner rather than
+    /// nowhere. `onScreen: false` leaves it unordered, which is the state a machine with no
+    /// display session leaves every window in.
+    private func mount(_ view: some View, size: CGSize, onScreen: Bool = true) -> NSWindow {
         _ = NSApplication.shared
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -689,7 +765,7 @@ final class TabStripReorderTests: XCTestCase {
         content.addSubview(hosting)
         window.contentView = content
         window.setFrameOrigin(NSPoint(x: -8_000, y: -8_000))
-        window.makeKeyAndOrderFront(nil)
+        if onScreen { window.makeKeyAndOrderFront(nil) }
         window.contentView?.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.5))
         window.contentView?.layoutSubtreeIfNeeded()

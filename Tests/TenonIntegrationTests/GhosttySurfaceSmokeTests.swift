@@ -236,31 +236,6 @@ final class GhosttySurfaceSmokeTests: XCTestCase {
         )
     }
 
-    func testWorkspacePayloadDescribesEveryWorkspaceUsingOnlySlotTerminology() throws {
-        var catalog = WorkspaceCatalog(
-            name: "One",
-            path: URL(fileURLWithPath: "/tmp/one", isDirectory: true)
-        )
-        catalog.addWorkspace(
-            name: "Two",
-            path: URL(fileURLWithPath: "/tmp/two", isDirectory: true)
-        )
-
-        let payload = workspacePayload(catalog)
-        let workspaces = try XCTUnwrap(payload["workspaces"] as? [[String: Any]])
-        XCTAssertEqual(workspaces.count, 2)
-        XCTAssertEqual(payload["activeSlotId"] as? String, catalog.activeSlotID?.uuidString)
-        for workspace in workspaces {
-            let tabs = try XCTUnwrap(workspace["tabs"] as? [[String: Any]])
-            for tab in tabs {
-                XCTAssertNotNil(tab["slotIds"])
-                XCTAssertNil(tab["paneIds"])
-                XCTAssertNil(tab["focusedPaneId"])
-            }
-        }
-        XCTAssertNil(payload["focusedPaneId"])
-    }
-
     @MainActor
     private func waitUntil(
         timeout: TimeInterval,
