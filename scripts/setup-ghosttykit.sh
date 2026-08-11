@@ -162,10 +162,10 @@ main() {
 
     echo "==> Downloading GhosttyKit $TAG from $REPO"
     curl --fail --location --show-error --proto '=https' --tlsv1.2 \
-        --retry 3 --output "$xcframework_archive" \
+        --retry 3 --retry-all-errors --output "$xcframework_archive" \
         "https://github.com/$REPO/releases/download/$TAG/GhosttyKit.xcframework.tar.gz"
     curl --fail --location --show-error --proto '=https' --tlsv1.2 \
-        --retry 3 --output "$resources_archive" \
+        --retry 3 --retry-all-errors --output "$resources_archive" \
         "https://github.com/$REPO/releases/download/$TAG/GhosttyKit-resources.tar.gz"
 
     echo "==> Verifying pinned SHA-256 checksums"

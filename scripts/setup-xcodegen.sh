@@ -52,8 +52,12 @@ main() {
     trap "rm -rf '$staging'" EXIT
 
     echo "==> Downloading XcodeGen $VERSION from $REPO"
+    # --retry-all-errors because plain --retry ignores TLS failures, and a runner behind a
+    # flaky proxy hits exactly those: one CI run failed here with "self signed certificate"
+    # and the identical command succeeded seconds later. Retrying is safe precisely because
+    # the checksum below is pinned — bytes from a proxy that rewrote them still fail.
     curl --fail --location --show-error --proto '=https' --tlsv1.2 \
-        --retry 3 --output "$staging/xcodegen.zip" \
+        --retry 3 --retry-all-errors --output "$staging/xcodegen.zip" \
         "https://github.com/$REPO/releases/download/$VERSION/xcodegen.zip"
 
     echo "==> Verifying pinned SHA-256 checksum"
