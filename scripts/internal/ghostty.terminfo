@@ -2,7 +2,7 @@
 #
 # Upstream keeps this as Zig (`src/terminfo/ghostty.zig` in muxy-app/ghostty) and compiles
 # it during a build that never runs here, and the pinned release ships no terminfo asset —
-# so the entry is carried in the form `tic` accepts and `scripts/setup-ghosttykit.sh`
+# so the entry is carried in the form `tic` accepts and `scripts/internal/setup-ghostty.sh`
 # compiles it into `Resources/terminfo` at setup time.
 #
 # Provenance, measured against `src/terminfo/ghostty.zig` at tag build-2026-04-29: the

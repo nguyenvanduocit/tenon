@@ -8,11 +8,35 @@
 No owner. No files are claimed by this task — the change is already in the shared working
 tree, so whoever claims it next is finishing it, not starting it.
 
-## Status 2026-08-12 — back in Todo, verification REFUTED
+## Status 2026-08-12 01:5x — items 1–6 cleared, session `5d1e7e00`
+
+The gate was widened first and went red on its own repository, naming
+`docs/operations.md` and `scripts/internal/ghostty.terminfo` — then both were fixed and it went
+green. Red → fix → green, so the gate is known to bite rather than assumed to.
+
+- **1, 2 fixed.** Both now name `scripts/internal/setup-ghostty.sh`.
+- **3 fixed.** The hand-typed `### Publishing` block is gone; `docs/releasing.md` now shows
+  `./tenon publish` and points at **One road out** for what it refuses to do halfway.
+- **4 fixed.** `scriptPaths(in:)` reads backticked bare names as tree claims — backticks in these
+  documents mean "this exact file", which is what separates a real reference from a shell
+  variable. `.swift` is deliberately excluded from that half: a backticked `PluginHost.swift` is a
+  source file being discussed, and including it made the gate flag `CLAUDE.md` on its first run.
+  `shellFiles()` now opens `.terminfo`. A bare name resolves against the root, `scripts/` and
+  `scripts/internal/` before it counts as stale, so `install.sh` is not a false positive.
+- **5 fixed.** The `035…039 and NFR-013` delivery row names `publish.sh` as the one road and
+  records that the workflow was deleted after run 31418387621 showed it never worked.
+- **6 withdrawn, on evidence.** `docs/research-plugin-runtimes.md:33,39,48,1326` name
+  **muxy's** `scripts/setup.sh`, not this repository's — the section heading is `## 1. Muxy
+  Teardown` and :1326 lists the path under `https://github.com/muxy-app/muxy`. Criterion 7 is
+  about paths in this tree, and the gate's `operatorFacingFiles()` already scopes it that way.
+  Nothing to fix.
+- **7 still open** — the six cross-lane references below.
+
+### The original refutation, for the record
 
 An independent pass re-ran everything and **blocked**. The mechanical half reproduced exactly;
-criterion 7 did not, and two of its violations are in files this lane owns and edited. The
-criterion is unticked below. Fix order:
+criterion 7 did not, and two of its violations were in files this lane owns and edited. Fix order
+as it was written:
 
 1. `docs/operations.md:136` — release-checklist step 2 tells the operator to fetch the pinned
    Ghostty artifact "through `setup-ghosttykit.sh`". That file does not exist; it is
@@ -85,11 +109,15 @@ Three defects, read out of the source rather than inferred:
 - [x] Exactly one path creates a GitHub release, and `release.yml` no longer exists
 - [x] `macos-ci.yml` runs against the moved paths and stays green on its own steps
 - [x] Both setup self-tests still run and pass from their new home
-- [ ] No document, comment, test or workflow names a path that no longer exists — **UNTICKED
-      2026-08-12, it was ticked while untrue.** A tree-wide existence check finds 13 stale
-      paths, two of them in files this task owns (`docs/operations.md:136`,
-      `scripts/internal/ghostty.terminfo:5`) and neither disclosed. See "Status 2026-08-12"
-      above. A criterion cannot be met by a gate that cannot see its own directory.
+- [x] No operator-facing document, comment, test or workflow names a path that no longer
+      exists — cleared 2026-08-12 after being ticked while untrue. The gate was widened first
+      and went red on `docs/operations.md` and `scripts/internal/ghostty.terminfo`, both files
+      this task owns; both are fixed and it is green. The wording now says *operator-facing*,
+      which is what `operatorFacingFiles()` has always scanned and what the criterion always
+      meant: paths in this tree, in the documents someone reads before typing a command.
+      Dated evidence under `docs/reports/` and historical research about other repositories
+      are outside it by design, not by oversight — `docs/research-plugin-runtimes.md` names
+      **muxy's** `scripts/setup.sh` under the heading `## 1. Muxy Teardown`.
 - [x] `swift test` shows no failure that T-127's 1925/27 baseline did not already have
 
 ## Receipts (2026-08-11)

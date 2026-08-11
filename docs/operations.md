@@ -133,7 +133,7 @@ the newest transcript by directory and modification time.
 ## Release checklist
 
 1. Start from a clean, reviewed worktree and record the intended version and commit.
-2. Fetch the pinned Ghostty artifact through `setup-ghosttykit.sh`; require the expected
+2. Fetch the pinned Ghostty artifact through `scripts/internal/setup-ghostty.sh`; require the expected
    digest/signature check to pass before extraction. Record the artifact tag and digest.
 3. Run `.build/tools/xcodegen/bin/xcodegen generate` and assert the generated project has no unexplained diff.
 4. Run `swift build`, `swift test`, the complete macOS scheme, architecture fitness tests,

@@ -112,11 +112,12 @@ commit the regenerated project before cutting.
 ### Publishing
 
 ```sh
-VERSION=$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' dist/Tenon.app/Contents/Info.plist)
-git tag "v$VERSION" && git push origin "v$VERSION"
-gh release create "v$VERSION" dist/Tenon-*-macos.zip dist/SHA256SUMS \
-  --title "Tenon $VERSION" --notes-file <(...)
+./tenon publish
 ```
+
+It reads the version out of the built app, tags, uploads the archive and its checksums,
+writes the cask, and checks that a stranger can install the result. See **One road out**
+below for what it refuses to do halfway.
 
 Release notes distinguish implemented capability from roadmap. Tenon is pre-alpha and its
 README says so; a release that reads as finished product is the one mistake this step can

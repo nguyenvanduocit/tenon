@@ -99,9 +99,7 @@ final class ScriptSurfaceFitnessTests: XCTestCase {
         var stale: [String] = []
         for file in try operatorFacingFiles() {
             guard let body = try? String(contentsOf: file, encoding: .utf8) else { continue }
-            for named in scriptPaths(in: body) where !FileManager.default.fileExists(
-                atPath: packageRoot.appendingPathComponent(named).path
-            ) {
+            for named in scriptPaths(in: body) where !namesSomethingReal(named) {
                 stale.append("\(relativePath(file)) names \(named)")
             }
         }
@@ -162,7 +160,7 @@ private extension ScriptSurfaceFitnessTests {
         return try roots.flatMap { root -> [URL] in
             try FileManager.default
                 .contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
-                .filter { $0.pathExtension == "sh" || $0.pathExtension == "swift" }
+                .filter { ["sh", "swift", "terminfo"].contains($0.pathExtension) }
         }
     }
 
@@ -184,19 +182,46 @@ private extension ScriptSurfaceFitnessTests {
         return try named + automationFiles()
     }
 
-    /// A path is only a claim about the tree when it is anchored — `./something.sh` or a path
-    /// under `scripts/`. A bare word ending in `.sh` is usually a shell variable.
+    /// A path is only a claim about the tree when something marks it as one. Two things do:
+    /// an anchor — `./something.sh`, or a path under `scripts/` — and backticks, which in these
+    /// documents mean "this exact file". A bare unquoted word ending in `.sh` is usually a shell
+    /// variable, and stays out.
+    ///
+    /// The backtick half is not decoration. It is the hole the first version of this gate left:
+    /// `docs/operations.md` told the operator to fetch Ghostty "through `setup-ghosttykit.sh`"
+    /// for a day after that script was renamed, and the anchored pattern could not see it.
     func scriptPaths(in body: String) -> Set<String> {
-        let pattern = "(\\./|scripts/)[A-Za-z0-9_./-]*\\.(sh|swift|terminfo)"
-        guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let patterns = [
+            "(\\./|scripts/)[A-Za-z0-9_./-]*\\.(sh|swift|terminfo)",
+            // Unanchored, so it stays off `.swift`: a backticked bare `PluginHost.swift` is a
+            // source file being discussed, while a backticked bare `install.sh` is a thing to run.
+            "`[A-Za-z0-9_-]+\\.(sh|terminfo)`",
+        ]
         let range = NSRange(body.startIndex..<body.endIndex, in: body)
         var found: Set<String> = []
-        for match in expression.matches(in: body, range: range) {
-            guard let matched = Range(match.range, in: body) else { continue }
-            var path = String(body[matched])
-            if path.hasPrefix("./") { path.removeFirst(2) }
-            found.insert(path)
+        for pattern in patterns {
+            guard let expression = try? NSRegularExpression(pattern: pattern) else { continue }
+            for match in expression.matches(in: body, range: range) {
+                guard let matched = Range(match.range, in: body) else { continue }
+                var path = String(body[matched])
+                path = path.trimmingCharacters(in: CharacterSet(charactersIn: "`"))
+                if path.hasPrefix("./") { path.removeFirst(2) }
+                found.insert(path)
+            }
         }
         return found
+    }
+
+    /// A name with no slash names a file, not a location: `install.sh` is the one in `scripts/`.
+    /// Resolve it the way a reader would before calling it stale.
+    func namesSomethingReal(_ named: String) -> Bool {
+        let candidates: [URL] = named.contains("/")
+            ? [packageRoot.appendingPathComponent(named)]
+            : [
+                packageRoot.appendingPathComponent(named),
+                scriptsRoot.appendingPathComponent(named),
+                scriptsRoot.appendingPathComponent("internal").appendingPathComponent(named),
+            ]
+        return candidates.contains { FileManager.default.fileExists(atPath: $0.path) }
     }
 }
