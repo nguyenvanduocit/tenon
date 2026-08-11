@@ -164,6 +164,7 @@
 		56A1B612FDC3BB326C76452B /* TreeSitterTSX in Frameworks */ = {isa = PBXBuildFile; productRef = 87A8153D7A49DB8431941151 /* TreeSitterTSX */; };
 		56CABD761BA3C2F3D44D9C06 /* IntentMailboxTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBB249D8703636764D511539 /* IntentMailboxTests.swift */; };
 		58086ED6B669F23EF28FE51A /* PaneAttentionNotifier.swift in Sources */ = {isa = PBXBuildFile; fileRef = D45A0FDB41A3DC26194A3CAC /* PaneAttentionNotifier.swift */; };
+		58D49C5783A5177E3269F115 /* JSONSchema in Frameworks */ = {isa = PBXBuildFile; productRef = 88A3CC2847923CA153F7CABC /* JSONSchema */; };
 		58DF7C90D7A685C776B61B84 /* NewPaneSizing.swift in Sources */ = {isa = PBXBuildFile; fileRef = 6DB938BDA8AAB88B6D8FB0B0 /* NewPaneSizing.swift */; };
 		59C02949D0EBA1CB046C3234 /* CLIProtocolTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2371B2BC76A4186B40333A18 /* CLIProtocolTests.swift */; };
 		5B83519DC2C96101187873CE /* SecretIntentProvider.swift in Sources */ = {isa = PBXBuildFile; fileRef = A2D313D0A41077A0BD9C97CA /* SecretIntentProvider.swift */; };
@@ -1026,6 +1027,14 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		983E35F8F5962B156DB9A8D6 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				58D49C5783A5177E3269F115 /* JSONSchema in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 		F33FC48C57B7C977A53AD075 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
@@ -1766,6 +1775,7 @@
 			buildConfigurationList = 4EBD7BB6F649C255FEB9C1F3 /* Build configuration list for PBXNativeTarget "TenonAppStateTests" */;
 			buildPhases = (
 				C98B5C1F31BD09E02847D930 /* Sources */,
+				983E35F8F5962B156DB9A8D6 /* Frameworks */,
 			);
 			buildRules = (
 			);
@@ -1774,6 +1784,7 @@
 			);
 			name = TenonAppStateTests;
 			packageProductDependencies = (
+				88A3CC2847923CA153F7CABC /* JSONSchema */,
 			);
 			productName = TenonAppStateTests;
 			productReference = 9E03CFCF7C93B2B92A765573 /* TenonAppStateTests.xctest */;
@@ -2983,6 +2994,11 @@
 		87A8153D7A49DB8431941151 /* TreeSitterTSX */ = {
 			isa = XCSwiftPackageProductDependency;
 			productName = TreeSitterTSX;
+		};
+		88A3CC2847923CA153F7CABC /* JSONSchema */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = 4010C27169EBC0449F0E6D18 /* XCRemoteSwiftPackageReference "swift-json-schema" */;
+			productName = JSONSchema;
 		};
 		8FA30FBBDDD56E6B5626B069 /* STTextView-Plugin-Neon */ = {
 			isa = XCSwiftPackageProductDependency;

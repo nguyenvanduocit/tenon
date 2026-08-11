@@ -204,6 +204,12 @@ targets:
           - "**/.omc/**"
     dependencies:
       - target: Tenon
+      # SwiftPM hands this to the bundle through the target under test; Xcode does not, so a
+      # file naming a JSONSchema type compiles under `swift test` and fails to LINK under
+      # `xcodebuild test`. That is the same two-worlds drift the comment above is about, and it
+      # cost a CI run: "Undefined symbol: type metadata accessor for JSONSchema.Schema".
+      - package: SwiftJSONSchema
+        product: JSONSchema
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.app-state-tests
