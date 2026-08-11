@@ -185,7 +185,12 @@ actor AgentLensDiscovery {
         }
     }
 
-    private static func claudeProjectSlug(_ path: String) -> String {
+    /// Not private so a test builds its fixture directory with this rule rather than a
+    /// second copy of it. A test that re-derives the name gets it right only for paths whose
+    /// characters happen to survive both rules, which is why the one that guessed
+    /// `replacingOccurrences(of: "/", with: "-")` passed here for weeks and failed on a
+    /// runner whose temporary directory contains an underscore.
+    static func claudeProjectSlug(_ path: String) -> String {
         String(path.unicodeScalars.map { scalar in
             let value = scalar.value
             let isASCIIAlphaNumeric = (48...57).contains(value) ||

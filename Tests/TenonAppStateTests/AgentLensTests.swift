@@ -1673,11 +1673,11 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
     func testClaudeWithoutHookDoesNotAttachAnotherTranscriptFromSameDirectory() async throws {
         let fileManager = FileManager.default
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("tenon-claude-stable-identity-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("tenon_claude.stable-identity-\(UUID().uuidString)", isDirectory: true)
         let home = root.appendingPathComponent("home", isDirectory: true)
         let workspace = root.appendingPathComponent("workspace", isDirectory: true)
         let project = home.appendingPathComponent(
-            ".claude/projects/-" + workspace.path.dropFirst().replacingOccurrences(of: "/", with: "-"),
+            ".claude/projects/" + AgentLensDiscovery.claudeProjectSlug(workspace.path),
             isDirectory: true
         )
         try fileManager.createDirectory(at: project, withIntermediateDirectories: true)
@@ -1857,11 +1857,11 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
 
     func testClaudeHookBindingMatchesAProviderChildInTheSameProcessGroup() async throws {
         let root = URL(fileURLWithPath: NSTemporaryDirectory(), isDirectory: true)
-            .appendingPathComponent("tenon-claude-process-group-\(UUID().uuidString)", isDirectory: true)
+            .appendingPathComponent("tenon_claude.process-group-\(UUID().uuidString)", isDirectory: true)
         let home = root.appendingPathComponent("home", isDirectory: true)
         let workspace = root.appendingPathComponent("workspace", isDirectory: true)
         let project = home.appendingPathComponent(
-            ".claude/projects/-" + workspace.path.dropFirst().replacingOccurrences(of: "/", with: "-"),
+            ".claude/projects/" + AgentLensDiscovery.claudeProjectSlug(workspace.path),
             isDirectory: true
         )
         let transcript = project.appendingPathComponent("claude-session.jsonl")
