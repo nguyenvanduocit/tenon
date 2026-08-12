@@ -26,7 +26,7 @@ final class LazyListSizingFitnessTests: XCTestCase {
             encoding: .utf8
         )
         let sessionStart = try XCTUnwrap(
-            source.range(of: "private struct AgentSessionView")
+            source.range(of: "struct AgentSessionView")
         )
         let timelineStart = try XCTUnwrap(
             source.range(

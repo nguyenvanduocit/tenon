@@ -483,7 +483,12 @@ struct AgentScrollTurnGate {
     }
 }
 
-private struct AgentSessionView: View {
+/// Visible to `TenonAppStateTests` so the update-loop bound is measured on this view itself.
+///
+/// T-141: the bound used to be measured against a hand-written imitation of this view, and the
+/// imitation left out what froze the app — selectable text, and the mount-time bottom scroll.
+/// A convergence test that cannot mount the shipping view proves the fixture converges.
+struct AgentSessionView: View {
     @Bindable var model: AgentLensViewModel
     let openTerminal: () -> Void
     let fileLinks: AgentFileLinks
@@ -772,7 +777,7 @@ private struct AgentSpineChrome<Content: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .top, spacing: 8) {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
             ZStack(alignment: .top) {
                 Canvas { context, size in
                     var path = Path()
@@ -996,7 +1001,6 @@ private struct AgentSpineInteractionRow: View {
                     Text(request.detail)
                         .font(.caption)
                         .foregroundStyle(TenonTheme.muted)
-                        .textSelection(.enabled)
                 }
                 // A finished session that stopped mid-question still carries a pending
                 // request, and that is worth SHOWING — it is how the session ended. What it
@@ -1111,7 +1115,6 @@ private struct AgentSpineDiagnosticRow: View {
                 Text(diagnostic.message)
                     .font(.caption)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .textSelection(.enabled)
                 Text(occurredAt, style: .time)
                     .font(TenonTheme.utilityFont(size: 9.5))
                     .foregroundStyle(TenonTheme.muted)
@@ -1193,7 +1196,6 @@ private struct AgentLensInspector: View {
                 Text(item.detail)
                     .font(.caption)
                     .foregroundStyle(TenonTheme.muted)
-                    .textSelection(.enabled)
             }
             AgentEvidenceDetails(evidence: item.evidence)
         }
@@ -1247,7 +1249,6 @@ private struct AgentContextInspectorRow: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(message.text)
                     .font(.caption)
-                    .textSelection(.enabled)
                 AgentEvidenceDetails(evidence: message.evidence)
             }
             .padding(.top, 6)
@@ -1301,7 +1302,6 @@ private struct AgentEvidenceDetails: View {
                 .frame(width: 62, alignment: .leading)
             Text(value)
                 .font(.caption2)
-                .textSelection(.enabled)
                 .lineLimit(label == "Location" ? 3 : 1)
                 .truncationMode(.middle)
         }

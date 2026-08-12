@@ -111,11 +111,21 @@ private struct AgentMarkdownBlockView: View {
         }
     }
 
+    /// Deliberately not selectable, and neither is any other row Agent Lens draws.
+    ///
+    /// `.textSelection(.enabled)` wraps every `Text` in SwiftUI's `SelectionOverlay`, an
+    /// `NSViewRepresentable`. Its `updateNSView` configures a real `NSTextField` on each update —
+    /// font, attributed string, alignment through `FallbackAlignmentProvider` — and
+    /// `-[NSControl setFont:]` invalidates that field's intrinsic content size from *inside* the
+    /// pass that is measuring it, so the pass arms the next one. Measured at **17.5% of a
+    /// spinning main thread** in incident `0001-81aede1d`, with the pane frozen and footprint
+    /// climbing. A transcript pane holds hundreds of these rows inside a lazy list, so the cost
+    /// is per row, per update, forever. Selection belongs behind a per-row Copy affordance that
+    /// costs nothing until it is used; it does not belong in the measurement path (T-141).
     private func prose(_ text: String) -> some View {
         Text(AgentMarkdownInline.attributed(text, codeStyle: textStyle, fileLinks: fileLinks))
             .font(.system(textStyle).weight(weight))
             .foregroundStyle(tint)
-            .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -149,7 +159,6 @@ private struct AgentMarkdownListView: View {
                     ))
                         .font(.system(textStyle).weight(weight))
                         .foregroundStyle(tint)
-                        .textSelection(.enabled)
                         .fixedSize(horizontal: false, vertical: true)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
@@ -210,7 +219,6 @@ private struct AgentMarkdownCodeView: View {
                 Text(source)
                     .font(TenonTheme.utilityFont(size: 11.5))
                     .foregroundStyle(TenonTheme.text)
-                    .textSelection(.enabled)
                     .padding(.horizontal, 9)
                     .padding(.vertical, 7)
             }
@@ -310,7 +318,6 @@ private struct AgentMarkdownTableView: View {
         Text(AgentMarkdownInline.attributed(cell, codeStyle: textStyle, fileLinks: fileLinks))
             .font(.system(textStyle).weight(weight))
             .foregroundStyle(tint)
-            .textSelection(.enabled)
             .fixedSize(horizontal: false, vertical: true)
     }
 
