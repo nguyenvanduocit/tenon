@@ -524,6 +524,15 @@ already hold to do anything with the answer — which is also why neither contra
 capability. The pane that ends up running the line stays with `terminal.open.v1`: this pair
 answers *what to run*, never *where*.
 
+`agent.ask.v1` (T-139) is also one finite INTENT result: an answered typed value or an
+expired status. The pane owns the bounded question record so cancelling or losing the
+asking process does not erase the human-visible evidence, but no record handle is returned
+and dropping the call grants no control over that lifetime. Built-in Agent Lens subscribes
+DIRECT to the same `AgentAskStore`; the public adapter does not expose that internal stream.
+One pending question per pane, 64 retained records, 16 choices, 16 evidence anchors, and a
+55-second question deadline bound the state. A human or exact agent principal is only the
+recipient identity: routing the record schedules, queues, or places no agent work.
+
 #### Canonical core intent inventory
 
 The inventory, audience profile, and execution-lane classification are closed and
@@ -542,7 +551,7 @@ requires the change protocol below.
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
 | Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
 | Network | `network.fetch.v1` | plugin, CLI, agent |
-| Agent | `agent.inventory.v1`, `agent.command.v1` | plugin, CLI, agent |
+| Agent | `agent.inventory.v1`, `agent.command.v1`, `agent.ask.v1` | plugin, CLI, agent |
 
 Core intents have exactly two audience profiles:
 
@@ -572,6 +581,7 @@ execution topology is the following closed map:
 | `userNotification` | `ui.toast.v1` |
 | `secrets` | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` |
 | `agentImmediate` | `agent.inventory.v1`, `agent.command.v1` |
+| `agentWait` | `agent.ask.v1` |
 
 Every core intent belongs to exactly one lane. Every lane owns a distinct bounded mailbox,
 which bounds both what may be **queued** and how many of its requests may be **running**.
@@ -583,6 +593,7 @@ change protocol below.
 | Lane | Concurrency | Why |
 |---|---|---|
 | `terminalWait` | 8 | `terminal.wait.v1` blocks until a pane-scoped condition holds. Waits are independent, each scoped to its own pane, hold nothing, and have no order between them. Serial, a second supervised agent could not be waited on at all — see the resolved counterexample under **Falsification**. Bounded at 8 because supervision is human-scale. |
+| `agentWait` | 8 | `agent.ask.v1` waits on independent pane-owned records. Each has one pane, one exact recipient, and its own deadline; no request holds terminal or workspace state, and ordering across panes is meaningless. |
 | every other lane | 1 | Filesystem, workspace, process, terminal writes: ordering is the property that makes the lane mean something. |
 
 Global admission, authority, generation leasing, cancellation, health, and retirement apply

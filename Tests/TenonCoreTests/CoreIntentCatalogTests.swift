@@ -38,10 +38,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 48, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 48)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 48)
-        XCTAssertEqual(compiled.dispatchRules.count, 48)
+        XCTAssertEqual(revisions, Array(repeating: 49, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 49)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 49)
+        XCTAssertEqual(compiled.dispatchRules.count, 49)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -65,8 +65,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 48)
-        XCTAssertEqual(actualNames.count, 48)
+        XCTAssertEqual(Set(actualNames).count, 49)
+        XCTAssertEqual(actualNames.count, 49)
 
         let forbiddenFragments = [
             "tenon.",
@@ -401,6 +401,62 @@ final class CoreIntentCatalogTests: XCTestCase {
                     "paneID": .string(paneID.uuidString),
                     "condition": .string("exit"),
                     "met": .bool(false),
+                ])
+            ).isValid
+        )
+    }
+
+    func testAgentAskRequiresEvidenceARecipientAndABoundedTypedChoice() async throws {
+        let compiled = try await CoreIntentCatalog(
+            components: makeKernel()
+        ).install()
+        let ask = try contract(.agentAsk, in: compiled)
+        let valid = IntentValue.object([
+            "question": .string("Ship it?"),
+            "choices": .array([
+                .object([
+                    "id": .string("yes"),
+                    "label": .string("Ship"),
+                    "value": .bool(true),
+                ]),
+            ]),
+            "evidence": .array([
+                .object([
+                    "label": .string("Patch"),
+                    "url": .string("file:///tmp/patch.diff"),
+                ]),
+            ]),
+            "recipient": .object(["kind": .string("human")]),
+            "timeoutMs": .integer(55_000),
+        ])
+
+        XCTAssertTrue(try ask.validateInput(valid).isValid)
+        guard case var .object(withoutEvidence) = valid else {
+            return XCTFail("fixture must be an object")
+        }
+        withoutEvidence["evidence"] = .array([])
+        XCTAssertFalse(
+            try ask.validateInput(.object(withoutEvidence)).isValid,
+            "a question without evidence is not a declared question"
+        )
+        withoutEvidence["evidence"] = valid.objectValue?["evidence"]
+        withoutEvidence["timeoutMs"] = .integer(55_001)
+        XCTAssertFalse(try ask.validateInput(.object(withoutEvidence)).isValid)
+        XCTAssertTrue(
+            try ask.validateOutput(
+                .object([
+                    "questionID": .string(UUID().uuidString),
+                    "status": .string("answered"),
+                    "value": .integer(2),
+                ])
+            ).isValid
+        )
+        XCTAssertTrue(
+            try ask.validateOutput(
+                .object([
+                    "questionID": .string(UUID().uuidString),
+                    "status": .string("expired"),
+                    "value": .null,
                 ])
             ).isValid
         )
@@ -786,9 +842,8 @@ final class CoreIntentCatalogTests: XCTestCase {
             openContractNames
         )
 
-        // 46 → 48 (T-132): `terminal.process.read.v1` and `workspace.tab.close.v1`, each a
-        // `cli`-audience contract over a typed service the host UI already called.
-        XCTAssertEqual(CoreIntentName.allCases.count, 48)
+        // 48 → 49 (T-139): one bounded evidence-backed question with a pane-owned record.
+        XCTAssertEqual(CoreIntentName.allCases.count, 49)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -868,6 +923,7 @@ final class CoreIntentCatalogTests: XCTestCase {
             .userNotification: [.uiToast],
             .secrets: [.secretsGet, .secretsSet, .secretsDelete],
             .agentImmediate: [.agentInventory, .agentCommand],
+            .agentWait: [.agentAsk],
         ]
         XCTAssertEqual(
             Set(expectedExecutionLanes.keys),
@@ -881,6 +937,12 @@ final class CoreIntentCatalogTests: XCTestCase {
                 expectedExecutionLanes[lane],
                 lane.rawValue
             )
+        }
+        XCTAssertEqual(CoreIntentExecutionLane.terminalWait.maxConcurrentRequests, 8)
+        XCTAssertEqual(CoreIntentExecutionLane.agentWait.maxConcurrentRequests, 8)
+        for lane in CoreIntentExecutionLane.allCases
+        where ![.terminalWait, .agentWait].contains(lane) {
+            XCTAssertEqual(lane.maxConcurrentRequests, 1, lane.rawValue)
         }
 
         XCTAssertEqual(
@@ -1209,6 +1271,18 @@ private extension CoreIntentCatalogTests {
                     "handoff",
                 ]
             ),
+            .agentAsk: SchemaShape(
+                ["question", "choices", "evidence", "recipient", "timeoutMs"],
+                required: [
+                    "question",
+                    "choices",
+                    "evidence",
+                    "recipient",
+                    "timeoutMs",
+                ],
+                output: ["questionID", "status", "value"],
+                requiredOutput: ["questionID", "status", "value"]
+            ),
         ]
     }
 
@@ -1270,6 +1344,7 @@ private extension CoreIntentCatalogTests {
             // grant nothing a caller that may already write to a terminal did not have.
             .agentInventory: ["terminal.write"],
             .agentCommand: ["terminal.write"],
+            .agentAsk: ["terminal.write"],
         ]
     }
 

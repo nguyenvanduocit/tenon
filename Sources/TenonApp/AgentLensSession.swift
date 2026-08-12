@@ -261,6 +261,7 @@ final class AgentLensViewModel {
 
     private(set) var snapshot = AgentLensSnapshot.empty
     private(set) var timelineItems: [AgentTimelineItem] = []
+    private(set) var declaredQuestion: AgentQuestionRecord?
     private(set) var resolution: AgentLensResolution?
     private(set) var isSending = false
     /// Which reading of the attached session the Session renderer draws. Local host UI state:
@@ -304,6 +305,8 @@ final class AgentLensViewModel {
     @ObservationIgnored private let discovery: AgentLensDiscovery
     @ObservationIgnored private var discoveryTask: Task<Void, Never>?
     @ObservationIgnored private var streamTask: Task<Void, Never>?
+    @ObservationIgnored private var questionTask: Task<Void, Never>?
+    @ObservationIgnored private let questions: AgentAskStore
     @ObservationIgnored private var coordinator: AgentLensSessionCoordinator?
     @ObservationIgnored private var inputQueue: AgentLensInputQueue?
     @ObservationIgnored private var consecutiveMisses = 0
@@ -332,6 +335,7 @@ final class AgentLensViewModel {
         terminalPool: SurfacePool?,
         discovery: AgentLensDiscovery,
         attachment: AgentLensAttachment = .live,
+        questions: AgentAskStore = AgentAskStore(),
         resolveTimelineSynthesizer: @escaping AgentTimelineSynthesizerResolver =
             AgentLensViewModel.installedTimelineSynthesizer
     ) {
@@ -339,6 +343,7 @@ final class AgentLensViewModel {
         self.terminalPool = terminalPool
         self.discovery = discovery
         self.attachment = attachment
+        self.questions = questions
         self.resolveTimelineSynthesizer = resolveTimelineSynthesizer
         self.diagnosticsPaneOrdinal = DiagnosticsRuntimeSignals.shared.registerAgentLensPane()
         // A live pane opens on its terminal because someone is typing into it. A recorded one
@@ -388,6 +393,7 @@ final class AgentLensViewModel {
 
     func start() {
         guard discoveryTask == nil else { return }
+        observeDeclaredQuestions()
         // A recorded session is attached once, from the reference the pane was opened with.
         // There is no process to poll for, and polling would report the session as ended.
         guard attachment.startsDiscovery else {
@@ -408,12 +414,56 @@ final class AgentLensViewModel {
         discoveryTask = nil
         streamTask?.cancel()
         streamTask = nil
+        questionTask?.cancel()
+        questionTask = nil
         if let coordinator { Task { await coordinator.stop() } }
         if let inputQueue { Task { await inputQueue.stop() } }
         coordinator = nil
         inputQueue = nil
         optionSubmissionGate.reconcile(pendingRequestID: nil)
         discardTimeline()
+    }
+
+    /// The pane-owned declared channel outranks provider extraction. A separate stream is
+    /// created for this model, because `AsyncStream` divides values between consumers rather
+    /// than broadcasting one stream to every pane surface.
+    private func observeDeclaredQuestions() {
+        guard questionTask == nil else { return }
+        let slotID = slotID
+        let questions = questions
+        questionTask = Task { [weak self] in
+            let updates = await questions.updates(matching: .pane(slotID))
+            for await record in updates {
+                guard !Task.isCancelled else { break }
+                self?.receiveDeclaredQuestion(record)
+            }
+        }
+    }
+
+    func receiveDeclaredQuestion(_ record: AgentQuestionRecord) {
+        guard record.paneID == slotID else { return }
+        if record.state == .pending, record.recipient == .human {
+            declaredQuestion = record
+        } else if declaredQuestion?.id == record.id {
+            declaredQuestion = nil
+        }
+    }
+
+    func answerDeclaredQuestion(with choice: AgentQuestionChoice) async -> Bool {
+        guard let question = declaredQuestion,
+              question.state == .pending,
+              question.choices.contains(where: { $0.id == choice.id })
+        else { return false }
+        do {
+            try await questions.answer(
+                questionID: question.id,
+                responder: AppIntentRuntime.userPrincipal,
+                choiceID: choice.id
+            )
+            return true
+        } catch {
+            return false
+        }
     }
 
     // MARK: - The synthesized reading  @domain: agent-lens
@@ -856,15 +906,18 @@ enum AgentHookLensBus {
 @MainActor
 final class AgentLensPool {
     private let discovery: AgentLensDiscovery
+    private let questions: AgentAskStore
     private let resolveTimelineSynthesizer: AgentTimelineSynthesizerResolver
     private var models: [UUID: AgentLensViewModel] = [:]
 
     init(
         discovery: AgentLensDiscovery = AgentLensDiscovery(),
+        questions: AgentAskStore = AgentAskStore(),
         resolveTimelineSynthesizer: @escaping AgentTimelineSynthesizerResolver =
             AgentLensViewModel.installedTimelineSynthesizer
     ) {
         self.discovery = discovery
+        self.questions = questions
         self.resolveTimelineSynthesizer = resolveTimelineSynthesizer
         AgentHookLensBus.attach(self)
     }
@@ -879,6 +932,7 @@ final class AgentLensPool {
             slotID: slotID,
             terminalPool: terminalPool,
             discovery: discovery,
+            questions: questions,
             resolveTimelineSynthesizer: resolveTimelineSynthesizer
         )
         models[slotID] = model
@@ -903,6 +957,7 @@ final class AgentLensPool {
             terminalPool: nil,
             discovery: discovery,
             attachment: .recorded(ref),
+            questions: questions,
             resolveTimelineSynthesizer: resolveTimelineSynthesizer
         )
         models[slotID] = model
@@ -913,6 +968,7 @@ final class AgentLensPool {
         for key in models.keys where !slotIDs.contains(key) {
             models[key]?.stop()
             models.removeValue(forKey: key)
+            Task { await questions.closePane(key) }
         }
     }
 }

@@ -53,6 +53,22 @@ final class AppIntentRuntime {
         )
     }
 
+    /// Reifies a caller-designated question recipient, never the caller itself.
+    ///
+    /// Principal construction remains centralized here so an adapter cannot accidentally
+    /// turn input text into its own authority. `AgentAskStore.answer` still requires this
+    /// exact identity before it settles an agent-addressed question.
+    static func agentQuestionRecipientPrincipal(
+        id: String,
+        sessionRevision: UInt64
+    ) -> IntentPrincipal {
+        IntentPrincipal(
+            id: id,
+            kind: .agent,
+            sessionRevision: sessionRevision
+        )
+    }
+
     /// How many agent panes keep a registered grant set before the oldest is retired.
     ///
     /// Panes come and go for the life of the process, and every mint writes into the policy
@@ -65,6 +81,7 @@ final class AppIntentRuntime {
     private let catalog: CoreIntentCatalog
     private let bindings: [IntentProviderBinding]
     private let workspaceStore: WorkspaceStore
+    let agentQuestions: AgentAskStore
     /// The narrowed grant set every agent pane receives, computed once from the compiled
     /// catalog alongside the CLI's. Empty until then, which is the one case
     /// `agentPrincipal(forPane:)` refuses to mint in.
@@ -81,10 +98,12 @@ final class AppIntentRuntime {
         workspaceStore: WorkspaceStore,
         terminalSurfaces: SurfacePool,
         webSurfaces: PluginWebSurfacePool,
-        userInterface: PluginUIState
+        userInterface: PluginUIState,
+        agentQuestions: AgentAskStore = AgentAskStore()
     ) throws {
         self.kernel = kernel
         self.workspaceStore = workspaceStore
+        self.agentQuestions = agentQuestions
         catalog = CoreIntentCatalog(components: kernel)
 
         var collected: [IntentProviderBinding] = []
@@ -121,7 +140,9 @@ final class AppIntentRuntime {
             ).bindings()
         )
         collected.append(
-            contentsOf: try AgentIntentProvider().bindings()
+            contentsOf: try AgentIntentProvider(
+                questions: agentQuestions
+            ).bindings()
         )
         bindings = collected
     }

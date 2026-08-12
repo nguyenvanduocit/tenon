@@ -439,3 +439,50 @@ Feature: Control and coordinate live coding agents through one bounded semantic 
       When a minted agent principal invokes it
       Then the confirmation required is always, not the caller's standing consent
       And the same contract invoked by the person keeps their standing consent
+
+  Rule: An agent raises one evidence-backed hand without typing a vendor key dialect
+
+    @req-ac-fr-038 @req-ac-fr-039 @declared-question
+    Scenario: The pane keeps the question when the asking process dies
+      Given an agent declares its own bounded question with offered typed choices and evidence
+      When the asking process dies after the pane-owned record is published
+      Then its intent waiter is cancelled
+      And the pending record remains visible and answerable against that pane
+      And choosing an offered answer settles through the typed store without terminal input
+
+    @req-ac-fr-038 @req-ac-nfr-001 @bounds
+    Scenario Outline: An unbounded or evidence-free question is refused
+      Given agent.ask.v1 contains <input>
+      When contract validation runs
+      Then <outcome>
+
+      Examples:
+        | input | outcome |
+        | one or more evidence links and a timeout from 1 through 55000 milliseconds | the bounded question may be recorded |
+        | no evidence links | validation fails before a record exists |
+        | a timeout above 55000 milliseconds | validation fails before a record exists |
+        | an array, object, or null choice value | validation fails because an offered result must be typed scalar data |
+
+    @req-ac-fr-040 @agent-recipient
+    Scenario: Another agent is an exact recipient, not work for a scheduler
+      Given a declared question names one exact agent principal as its recipient
+      When the record is routed
+      Then it uses the same pane-owned question store as a human question
+      And only that exact principal may answer it
+      And no process, pane, queue, or agent work is created
+
+    @req-ac-nfr-002 @concurrency
+    Scenario: Declared questions do not block immediate agent work
+      Given eight independent pane-scoped agent questions are waiting
+      When inventory or command composition is requested
+      Then the questions occupy the bounded agentWait lane
+      And serial agentImmediate work continues making progress
+
+    @req-ac-nfr-008 @req-ac-nfr-010 @accessibility
+    Scenario: Declared authority is visible and inferred fallback says what it is
+      Given Agent Lens has a declared question and provider-inferred history
+      When the pane is read by pointer, keyboard, or VoiceOver
+      Then the declared card names its pane, asker, choices, evidence, and remaining time
+      And native buttons answer the typed record in place
+      And provider-extracted questions say Provider inference and lower authority
+      And their terminal action remains only a labelled inferred fallback

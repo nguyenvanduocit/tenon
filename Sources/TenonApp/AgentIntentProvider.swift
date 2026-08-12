@@ -14,6 +14,9 @@ final class AgentIntentProvider {
     private struct ErrorCodes {
         let unavailable: IntentErrorCode
         let handoffUnresolved: IntentErrorCode
+        let questionPending: IntentErrorCode
+        let questionCapacity: IntentErrorCode
+        let questionPaneClosed: IntentErrorCode
 
         init() throws {
             unavailable = .domain(
@@ -24,14 +27,34 @@ final class AgentIntentProvider {
                     "dev.tenon.core.agent-handoff-unresolved"
                 )
             )
+            questionPending = .domain(
+                try IntentDomainErrorCode(
+                    "dev.tenon.core.agent-question-pending"
+                )
+            )
+            questionCapacity = .domain(
+                try IntentDomainErrorCode(
+                    "dev.tenon.core.agent-question-capacity"
+                )
+            )
+            questionPaneClosed = .domain(
+                try IntentDomainErrorCode(
+                    "dev.tenon.core.agent-question-pane-closed"
+                )
+            )
         }
     }
 
     private let detector: AgentLaunchDetector
+    private let questions: AgentAskStore
     private let codes: ErrorCodes
 
-    init(detector: AgentLaunchDetector = AgentLaunchDetector()) throws {
+    init(
+        detector: AgentLaunchDetector = AgentLaunchDetector(),
+        questions: AgentAskStore = AgentAskStore()
+    ) throws {
         self.detector = detector
+        self.questions = questions
         codes = try ErrorCodes()
     }
 
@@ -50,6 +73,14 @@ final class AgentIntentProvider {
             ) { envelope, context in
                 try context.checkCancellation()
                 let reply = await self.command(envelope: envelope)
+                try context.checkCancellation()
+                return reply
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.agentAsk.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                let reply = await self.ask(envelope: envelope)
                 try context.checkCancellation()
                 return reply
             },
@@ -142,6 +173,135 @@ private extension AgentIntentProvider {
                 .missingOrInvalidField("$")
             )
         }
+    }
+
+    func ask(envelope: IntentEnvelope) async -> IntentProviderReply {
+        do {
+            guard let paneID = envelope.scope.paneID else {
+                throw AppIntentInputError.missingOrInvalidField("scope.paneID")
+            }
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            let result = try await questions.ask(
+                AgentAskRequest(
+                    paneID: paneID,
+                    asker: envelope.caller,
+                    recipient: try recipient(in: object),
+                    question: try AppIntentProviderSupport.string(
+                        "question",
+                        in: object
+                    ),
+                    choices: try choices(in: object),
+                    evidence: try evidence(in: object),
+                    timeoutMilliseconds: try requiredInteger(
+                        "timeoutMs",
+                        in: object
+                    )
+                )
+            )
+            return .success(.object([
+                "questionID": .string(result.questionID.uuidString),
+                "status": .string(result.status.rawValue),
+                "value": result.value ?? .null,
+            ]))
+        } catch AgentAskStoreError.questionAlreadyPending {
+            return AppIntentProviderSupport.failure(
+                code: codes.questionPending,
+                reason: "pane-already-has-question"
+            )
+        } catch AgentAskStoreError.capacityExceeded {
+            return AppIntentProviderSupport.failure(
+                code: codes.questionCapacity,
+                reason: "question-capacity-reached",
+                retryable: true
+            )
+        } catch AgentAskStoreError.paneClosed {
+            return AppIntentProviderSupport.failure(
+                code: codes.questionPaneClosed,
+                reason: "pane-closed"
+            )
+        } catch is CancellationError {
+            return .failure(IntentProviderFailure(code: .kernel(.cancelled)))
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return AppIntentProviderSupport.invalidInput(
+                .missingOrInvalidField("$")
+            )
+        }
+    }
+
+    func recipient(
+        in object: [String: IntentValue]
+    ) throws -> AgentQuestionRecipient {
+        guard case let .object(recipient)? = object["recipient"] else {
+            throw AppIntentInputError.missingOrInvalidField("recipient")
+        }
+        switch try AppIntentProviderSupport.string("kind", in: recipient) {
+        case "human":
+            return .human
+        case "agent":
+            let revision = try requiredInteger(
+                "sessionRevision",
+                in: recipient
+            )
+            guard let revision = UInt64(exactly: revision) else {
+                throw AppIntentInputError.missingOrInvalidField(
+                    "recipient.sessionRevision"
+                )
+            }
+            return .agent(
+                AppIntentRuntime.agentQuestionRecipientPrincipal(
+                    id: try AppIntentProviderSupport.string(
+                        "principalID",
+                        in: recipient
+                    ),
+                    sessionRevision: revision
+                )
+            )
+        default:
+            throw AppIntentInputError.missingOrInvalidField("recipient.kind")
+        }
+    }
+
+    func choices(
+        in object: [String: IntentValue]
+    ) throws -> [AgentQuestionChoice] {
+        try AppIntentProviderSupport.objectArray("choices", in: object).map {
+            choice in
+            guard let value = choice["value"] else {
+                throw AppIntentInputError.missingOrInvalidField("choices.value")
+            }
+            return AgentQuestionChoice(
+                id: try AppIntentProviderSupport.string("id", in: choice),
+                label: try AppIntentProviderSupport.string("label", in: choice),
+                value: value
+            )
+        }
+    }
+
+    func evidence(
+        in object: [String: IntentValue]
+    ) throws -> [AgentQuestionEvidence] {
+        try AppIntentProviderSupport.objectArray("evidence", in: object).map {
+            item in
+            AgentQuestionEvidence(
+                label: try AppIntentProviderSupport.string("label", in: item),
+                url: try AppIntentProviderSupport.string("url", in: item)
+            )
+        }
+    }
+
+    func requiredInteger(
+        _ key: String,
+        in object: [String: IntentValue]
+    ) throws -> Int {
+        guard let value = try AppIntentProviderSupport.optionalInteger(
+            key,
+            in: object
+        ) else {
+            throw AppIntentInputError.missingOrInvalidField(key)
+        }
+        return value
     }
 
     /// The session's own agent need not be installed — it recorded a transcript, it does not

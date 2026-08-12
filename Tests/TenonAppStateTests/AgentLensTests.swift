@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import TenonCore
+import TenonIntentCore
 @testable import TenonApp
 import XCTest
 
@@ -2486,6 +2487,62 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
         XCTAssertEqual(event?.processGroupID, 77)
         XCTAssertEqual(event?.provider, .claude)
         XCTAssertEqual(event?.sessionID, "root-session")
+    }
+
+    func testDeclaredQuestionProjectionAnswersThroughTheTypedStoreWithoutTerminalInput()
+        async throws
+    {
+        let store = AgentAskStore()
+        let paneID = UUID()
+        let updates = await store.updates(matching: .pane(paneID))
+        var iterator = updates.makeAsyncIterator()
+        let request = AgentAskRequest(
+            paneID: paneID,
+            asker: IntentPrincipal(
+                id: "agent:pane:\(paneID.uuidString)",
+                kind: .agent,
+                sessionRevision: 1
+            ),
+            recipient: .human,
+            question: "Use the canary channel?",
+            choices: [
+                AgentQuestionChoice(
+                    id: "canary",
+                    label: "Canary",
+                    value: .string("canary")
+                ),
+            ],
+            evidence: [
+                AgentQuestionEvidence(
+                    label: "Review",
+                    url: "file:///tmp/review.html"
+                ),
+            ],
+            timeoutMilliseconds: 30_000
+        )
+        let asking = Task.detached { try await store.ask(request) }
+        let firstUpdate = await iterator.next()
+        let question = try XCTUnwrap(firstUpdate)
+        let model = AgentLensViewModel(
+            slotID: paneID,
+            terminalPool: nil,
+            discovery: AgentLensDiscovery(),
+            questions: store
+        )
+
+        model.receiveDeclaredQuestion(question)
+        XCTAssertEqual(model.declaredQuestion?.id, question.id)
+        let answered = await model.answerDeclaredQuestion(
+            with: question.choices[0]
+        )
+        XCTAssertTrue(answered)
+        let result = try await asking.value
+        XCTAssertEqual(result.value, .string("canary"))
+
+        let settledRecord = await store.question(id: question.id)
+        let settled = try XCTUnwrap(settledRecord)
+        model.receiveDeclaredQuestion(settled)
+        XCTAssertNil(model.declaredQuestion)
     }
 
     private func waitUntil(

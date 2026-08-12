@@ -56,6 +56,7 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case networkFetch = "network.fetch.v1"
     case agentInventory = "agent.inventory.v1"
     case agentCommand = "agent.command.v1"
+    case agentAsk = "agent.ask.v1"
 
     public var intentID: IntentID {
         get throws {
@@ -134,7 +135,8 @@ public extension CoreIntentName {
              .workspaceSelect,
              .networkFetch,
              .agentInventory,
-             .agentCommand:
+             .agentCommand,
+             .agentAsk:
             .programmatic
         }
     }
@@ -158,6 +160,7 @@ public enum CoreIntentExecutionLane: String, CaseIterable, Sendable, Hashable {
     case userNotification
     case secrets
     case agentImmediate
+    case agentWait
 
     /// How many of this lane's intents may execute at once.
     ///
@@ -166,7 +169,12 @@ public enum CoreIntentExecutionLane: String, CaseIterable, Sendable, Hashable {
     /// terminal, running one at a time is the property that makes the ordering mean
     /// something.
     ///
-    /// `terminalWait` is the exception, and it earns it. Its only intent is
+    /// `terminalWait` and `agentWait` are the exceptions, and they earn it. Their intents
+    /// block on independent pane-owned conditions without holding the serial immediate
+    /// mailbox. `terminalWait` waits on terminal state; `agentWait` waits on one declared
+    /// question that is already bounded by both its own expiry and the dispatcher deadline.
+    ///
+    /// Specifically, `terminalWait`'s only intent is
     /// `terminal.wait.v1`, whose whole job is to block until a pane-scoped condition holds:
     /// waits are mutually independent, each scoped to its own pane, hold no resource, and
     /// have no meaningful order between them. Serializing them made supervising two agents
@@ -176,7 +184,7 @@ public enum CoreIntentExecutionLane: String, CaseIterable, Sendable, Hashable {
     /// supervision is human-scale: a person watches a handful of panes, not a thousand.
     public var maxConcurrentRequests: Int {
         switch self {
-        case .terminalWait:
+        case .terminalWait, .agentWait:
             8
         case .filesystem, .system, .process, .network, .workspace,
              .terminalImmediate, .browser, .userPrompt, .userNotification,
@@ -260,6 +268,9 @@ public extension CoreIntentName {
         case .agentInventory,
              .agentCommand:
             .agentImmediate
+
+        case .agentAsk:
+            .agentWait
         }
     }
 }
@@ -2050,6 +2061,95 @@ private extension CoreIntentCatalog {
                 timeout: .seconds(5),
                 trustedProviderID: trustedProviderID
             ),
+            try CoreIntentRuleData.definition(
+                .agentAsk,
+                title: "Ask a bounded agent question",
+                description: """
+                Records one evidence-backed question against the pane in scope and waits \
+                until its exact human or agent recipient chooses an offered typed value, \
+                or until the caller-declared deadline expires. The record belongs to the \
+                pane rather than the asking process; this intent schedules and types \
+                nothing into a terminal.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "question": CoreIntentSchema.string(
+                            minLength: 1,
+                            maxLength: 8 * 1_024
+                        ),
+                        "choices": CoreIntentSchema.array(
+                            items: CoreIntentSchema.object(
+                                properties: [
+                                    "id": CoreIntentSchema.string(
+                                        minLength: 1,
+                                        maxLength: 128
+                                    ),
+                                    "label": CoreIntentSchema.string(
+                                        minLength: 1,
+                                        maxLength: 256
+                                    ),
+                                    "value": CoreIntentSchema.agentTypedValue,
+                                ],
+                                required: ["id", "label", "value"]
+                            ),
+                            minItems: 1,
+                            maxItems: AgentAskStore.maximumChoiceCount
+                        ),
+                        "evidence": CoreIntentSchema.array(
+                            items: CoreIntentSchema.object(
+                                properties: [
+                                    "label": CoreIntentSchema.string(
+                                        minLength: 1,
+                                        maxLength: 256
+                                    ),
+                                    "url": CoreIntentSchema.url,
+                                ],
+                                required: ["label", "url"]
+                            ),
+                            minItems: 1,
+                            maxItems: AgentAskStore.maximumEvidenceCount
+                        ),
+                        "recipient": CoreIntentSchema.agentQuestionRecipient,
+                        "timeoutMs": CoreIntentSchema.integer(
+                            minimum: 1,
+                            maximum: Int64(
+                                AgentAskStore.maximumTimeoutMilliseconds
+                            )
+                        ),
+                    ],
+                    required: [
+                        "question",
+                        "choices",
+                        "evidence",
+                        "recipient",
+                        "timeoutMs",
+                    ]
+                ),
+                output: CoreIntentSchema.root(
+                    properties: [
+                        "questionID": CoreIntentSchema.uuid,
+                        "status": CoreIntentSchema.string(
+                            enumValues: ["answered", "expired"]
+                        ),
+                        "value": CoreIntentSchema.nullable(
+                            CoreIntentSchema.agentTypedValue
+                        ),
+                    ],
+                    required: ["questionID", "status", "value"]
+                ),
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.write),
+                errors: [
+                    "dev.tenon.core.agent-question-pending",
+                    "dev.tenon.core.agent-question-capacity",
+                    "dev.tenon.core.agent-question-pane-closed",
+                ],
+                bindings: [terminalWrite],
+                admission: .background,
+                timeout: .seconds(60),
+                trustedProviderID: trustedProviderID
+            ),
         ]
     }
 }
@@ -2159,6 +2259,32 @@ private enum CoreIntentSchema {
         items: string(maxLength: 8_192),
         maxItems: 64
     )
+
+    /// JSON Schema treats an integer as both `integer` and `number`, so this union is
+    /// `anyOf`, not `oneOf`; otherwise every integer would match twice and be refused.
+    static let agentTypedValue = IntentValue.object([
+        "anyOf": .array([
+            boolean,
+            integer(),
+            .object(["type": .string("number")]),
+            string(maxLength: 8 * 1_024),
+        ])
+    ])
+
+    static let agentQuestionRecipient = oneOf([
+        object(
+            properties: ["kind": string(constant: "human")],
+            required: ["kind"]
+        ),
+        object(
+            properties: [
+                "kind": string(constant: "agent"),
+                "principalID": string(minLength: 1, maxLength: 512),
+                "sessionRevision": integer(minimum: 0),
+            ],
+            required: ["kind", "principalID", "sessionRevision"]
+        ),
+    ])
 
     static let textInput = object(
         properties: [

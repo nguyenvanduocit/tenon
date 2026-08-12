@@ -351,9 +351,9 @@ from [`designs.md`](../designs.md); Herdr informs workflow only, never Tenon pix
 | `AC-FR-035` | A session **MUST** resume through its own provider's spelling when the requested agent recorded it, and **MUST** otherwise be handed to the requested agent as a prompt naming that session's transcript path and its recording agent; a cross-agent request with no transcript path **MUST** fail typed with `agent-handoff-unresolved` rather than starting an agent with no context. | must | shipped | `@req-ac-fr-035` |
 | `AC-FR-036` | One composition **MUST** produce every agent command line Tenon runs: built-in UI calls it DIRECT and every public caller reaches it through `agent.command.v1`; no plugin may assemble an agent command line or shell quoting of its own. | must | shipped | `@req-ac-fr-036` |
 | `AC-FR-037` | An intent that originates inside a pane running an agent **MUST** carry a principal of kind `agent`, minted by the host from the pane's own identity. It **MUST NOT** borrow the human's `cli:local-user`. | must | shipped | `@req-ac-fr-037`; `CLICommandExecutor.callerPrincipal`, `AppIntentRuntime.agentPrincipal(forPane:)`, `AgentCallerAdmission.candidate/admit`, `AgentPaneOccupancyReader.candidates`; `AgentPrincipalMintTests`, `AgentCallerAdmissionTests`, `CLISocketServerTests.testTheHandlerReceivesTheKernelsPeerProcessIDForTheConnection` |
-| `AC-FR-038` | `agent.ask.v1` **MUST** let a running agent declare a question in its own words with offered choices, evidence anchors, and a caller-set deadline bounded by the host, block until answered or expired, and return a typed value rather than keystrokes. | must | proposed | `@req-ac-fr-038` |
-| `AC-FR-039` | A declared question **MUST** be recorded against the pane, not the asking process, so it survives context compaction, provider timeout, and the death of the agent that asked. | must | proposed | `@req-ac-fr-039` |
-| `AC-FR-040` | A question **MAY** be addressed to the human or to another agent principal; the host **MUST** route and record both identically and **MUST NOT** schedule, queue, or place any work as a result. | must | proposed | `@req-ac-fr-040` |
+| `AC-FR-038` | `agent.ask.v1` **MUST** let a running agent declare a question in its own words with offered choices, evidence anchors, and a caller-set deadline bounded by the host, block until answered or expired, and return a typed value rather than keystrokes. | must | shipped | `@req-ac-fr-038`; `CoreIntentCatalogTests.testAgentAskRequiresEvidenceARecipientAndABoundedTypedChoice`, `AgentAskIntentProviderTests.testThePublicBindingBlocksThenReturnsTheChosenTypedValue` |
+| `AC-FR-039` | A declared question **MUST** be recorded against the pane, not the asking process, so it survives context compaction, provider timeout, and the death of the agent that asked. | must | shipped | `@req-ac-fr-039`; `AgentAskStoreTests.testKillingTheAskerDetachesItsWaiterButLeavesThePaneRecordAnswerable` |
+| `AC-FR-040` | A question **MAY** be addressed to the human or to another agent principal; the host **MUST** route and record both identically and **MUST NOT** schedule, queue, or place any work as a result. | must | shipped | `@req-ac-fr-040`; `AgentAskStoreTests.testAnAgentRecipientUsesTheSameRouteWithoutSchedulingAnything` |
 | `AC-FR-041` | State an agent declares about itself — including `needsHuman` — **MUST** outrank state Tenon infers from the screen, and inferred state **MUST** report itself as inference. | must | proposed | `@req-ac-fr-041` |
 | `AC-FR-042` | An agent principal **MUST** be able to read a bounded snapshot of its peers — pane, declared status, and last declared claim — without reading their transcripts. | must | proposed | `@req-ac-fr-042` |
 
@@ -370,7 +370,7 @@ from [`designs.md`](../designs.md); Herdr informs workflow only, never Tenon pix
 | `AC-NFR-007` | compatibility | Existing terminal intents, CLI framing, Agent Lens behavior, and `tenon.agents.run` **MUST** remain source-compatible; unsupported or older integrations degrade to `unknown`. | planned | `@req-ac-nfr-007` |
 | `AC-NFR-008` | design/accessibility | Any host-native state projection **MUST** reuse TenonTheme, Launcher/Palette density, non-color status, keyboard focus, and VoiceOver labels; no feature-local tokens are allowed. | planned | `@req-ac-nfr-008` |
 | `AC-NFR-009` | verification | Headless contract/mutation proof **MUST** be complemented by installed Claude and Codex receipts covering fast turn, queued turn, question response, delegated approval, interrupt, replacement, standing consent, and three-agent concurrency. | planned | `@req-ac-nfr-009` |
-| `AC-NFR-010` | portability | The declared channel **MUST** be the only first-class source of an agent's questions and status. Provider-specific extraction (today `ClaudeToolFacts`) **MAY** remain as labelled inference of lower authority, and **MUST NOT** be extended to a new provider to add a capability. | must | proposed | `@req-ac-nfr-010` |
+| `AC-NFR-010` | portability | The declared channel **MUST** be the only first-class source of an agent's questions and status. Provider-specific extraction (today `ClaudeToolFacts`) **MAY** remain as labelled inference of lower authority, and **MUST NOT** be extended to a new provider to add a capability. | must | partial | `@req-ac-nfr-010`; question half shipped through `AgentDeclaredQuestionCard` and the labelled inferred fallback in `AgentSpineInteractionRow`; declared status remains `AC-FR-041` |
 
 ## 8. Acceptance specification
 
@@ -396,6 +396,7 @@ exercise observable behavior; source symbols and test names remain in the delive
 | Built-in Agent Lens/attention reads state or submits a human gesture | TenonApp → typed service | DIRECT | Same semantic owner, no public adapter or independent lifetime | no app principal; add/enlarge DIRECT inventory only with required justification |
 | `agent.inventory.v1`, `agent.command.v1` | plugin/CLI/agent → host | INTENT (shipped) | Two finite replies over host-owned knowledge — what is installed, and the line that would run it. Neither starts anything, so neither owns a lifetime | shipped: two core intents, programmatic audience, `agentImmediate` lane, `terminal.write` binding |
 | Built-in Launcher composes the same line | TenonApp → `AgentLaunchComposer` | DIRECT (shipped) | Same semantic owner as the composition; one implementation, reached two ways | no second public path; `AgentLaunchSuggestion.commandLine` delegates |
+| `agent.ask.v1` | plugin/CLI/agent → host | INTENT (shipped) | One bounded answered-or-expired result; a pane-owned record survives caller loss without returning a public handle | shipped: one core intent, programmatic audience, `agentWait` lane, `terminal.write` binding |
 | `agent.list.v1`, `agent.get.v1` | plugin/CLI/agent → host | INTENT | One bounded finite reply across a public principal boundary | add two core intents, programmatic audience, `agentImmediate` lane |
 | `agent.start.v1` | plugin/CLI/agent → host | INTENT | One finite start/readiness result; pane process remains separately owned by terminal surface | add core intent, programmatic audience, `agentWait` lane |
 | `agent.rename.v1` | plugin/CLI/agent → host | INTENT | One finite metadata mutation across a public principal boundary | add core intent, programmatic audience, `agentImmediate` lane |
@@ -405,20 +406,23 @@ exercise observable behavior; source symbols and test names remain in the delive
 | `agentRef` | host → caller → host | pure value carried by INTENT | Dropping it leaks nothing; re-presentation proves continuity like a cursor | no resource/control-plane operation |
 | Read transcript, focus/close pane, place topology | existing public principals → host | existing INTENT | Existing terminal/workspace contracts already own these finite operations | no duplicate agent contracts |
 
-Two of the additions have shipped (T-104) and the rest remain planned:
+Three additions have shipped (T-104 and T-139) and the rest remain planned:
 
 ```text
 agent.inventory.v1   shipped
 agent.command.v1     shipped
+agent.ask.v1         shipped
 ```
 
 | Contract | Required scope | Input | One terminal result |
 |---|---|---|---|
 | `agent.inventory.v1` | none | `{}` | `{ agents: [{ id, label, arguments, habit }] }` |
 | `agent.command.v1` | none | `{ agent, prompt?, session?: { agent, sessionID, transcriptPath? }, includeUserOptions? }` | `{ agent, commandLine, arguments, handoff }` |
+| `agent.ask.v1` | `paneID` | `{ question, choices: [{ id, label, value }], evidence: [{ label, url }], recipient, timeoutMs }` | `{ questionID, status: answered\|expired, value }` |
 
-Their domain errors are `dev.tenon.core.agent-unavailable` and
-`dev.tenon.core.agent-handoff-unresolved`; a malformed session identifier or a control
+Their domain errors include `dev.tenon.core.agent-unavailable`,
+`dev.tenon.core.agent-handoff-unresolved`, and the finite question pending/capacity/pane-closed
+set; a malformed session identifier or a control
 character in any token is refused as kernel `invalidInput` before composition.
 
 The planned canonical core intent addition is exact:
@@ -463,8 +467,9 @@ existing policy, scope, deadline, cancellation, admission, provider, and host-un
 An implementation may refine a message, but must not route these failures through terminal text
 parsing.
 
-The planned execution-lane addition is also exact: `agentImmediate` is serial and owns
-list/get/rename; `agentWait` has concurrency 8 and owns start/prompt/respond/wait. The
+The execution-lane addition is also exact: `agentImmediate` is serial and owns the shipped
+inventory/command pair plus planned list/get/rename; `agentWait` has concurrency 8 and owns
+the shipped ask plus planned start/prompt/respond/wait. The
 implementation change must update
 `docs/architecture-interaction-boundaries.md`, `CoreIntentName`, audience and lane switches,
 catalog definitions, provider registration, capability bindings, source inventories, and fitness
@@ -472,7 +477,8 @@ tests together. It may not weaken a test in isolation.
 
 ### Native design-system constraints
 
-No new native surface is required for the first vertical slice. State appearing in existing
+The shipped ask slice adds one card inside existing Agent Lens rather than a new window or
+navigation surface. State appearing in existing
 Agent Lens, attention, pane header, notification, Launcher, or Palette surfaces must use their
 current anatomy and `TenonTheme`. A later inventory screen must first define a compact density
 budget from Launcher/Palette rather than copy Herdr's TUI rows or tokens.
@@ -481,7 +487,7 @@ budget from Launcher/Palette rather than copy Herdr's TUI rows or tokens.
 
 | Product domain | Existing owner/source | Expected change | Retrieval/tests |
 |---|---|---|---|
-| planned `agent-control` | not yet declared; first source addition must add it to `docs/domains.md` with Excludes | typed normalized state, aliases, interaction envelopes, opaque references, finite start/rename/prompt/respond/wait semantics | retrieve starting set by new tag, then search every touched symbol edge |
+| `agent-control` | declared in `docs/domains.md`; `AgentAskStore` now owns declared questions and existing launch/provider sources own composition | typed normalized state, aliases, interaction envelopes, opaque references, finite ask/start/rename/prompt/respond/wait semantics | retrieve starting set by tag, then search every touched symbol edge |
 | `agent-lens` | Agent Lens domain, hook server, registry, reducer, input queue | expose normalized lifecycle plus one bounded current interaction envelope; keep history, tools, and evidence private | AgentLens/provider fixtures and boundary tests |
 | `terminal-surface` | SurfacePool and terminal provider | foreground identity, guarded input, surface incarnation, available-shell check | hosted surface/provider tests |
 | `intent-bus` | CoreIntentCatalog and dispatcher | seven contracts, two lanes, progressive confirmation policy, capability/telemetry | catalog, mailbox, fitness, latency tests |
@@ -545,7 +551,7 @@ be followed by symbol-edge search.
 - Initial providers are exactly Claude and Codex; unsupported providers do not borrow a label or
   screen heuristic and remain ordinary terminal processes.
 - Older/missing provider hooks yield explicit `unknown`/insufficient-authority behavior.
-- Existing public names and behavior remain unchanged. The seven new names are versioned from
+- Existing public names and behavior remain unchanged. Every new name is versioned from
   their first release and cannot be renamed without normal contract migration.
 - CLI protocol framing does not change unless the catalog projection itself requires a wire
   version update; domain work remains `intent send`.
@@ -563,6 +569,7 @@ be followed by symbol-edge search.
 | `AC-FR-025` | planned | `examples/agent-coordinator` or reviewed successor | headless + installed three-agent receipt | validate provider cost/time |
 | `AC-NFR-001…009` | planned | bounds, lanes, redaction, lifecycle, UI reuse | unit/integration/performance/Instruments/manual receipts | no implementation |
 | `AC-FR-031…036` | shipped | `AgentLaunchComposer` (`Sources/TenonApp/AgentLaunchCommand.swift`), `AgentIntentProvider`, the `agentInventory`/`agentCommand` rows in `CoreIntentCatalog`, `AgentLaunchSuggestion.commandLine`, and the two shipped plugins that call them | `AgentLaunchCommandTests`, `AgentIntentProviderTests`, `CoreIntentCatalogTests`, `InteractionBoundaryFitnessTests`, `KanbanPluginTests`, `WorkspaceScopedViewStateTests` | no CLI-audience receipt against a real machine; the handoff prompt is unproven against a live agent on the other side |
+| `AC-FR-038…040`, question half of `AC-NFR-010` | shipped / partial | `AgentAskStore`, `agent.ask.v1`, `AgentIntentProvider`, `AgentDeclaredQuestionCard`, labelled inferred fallback | `AgentAskStoreTests`, `AgentAskIntentProviderTests`, catalog and boundary fitness, Agent Lens typed-path test; installed signed-app standard/narrow screenshots and System Events AX action receipt | true-provider invocation receipt pending; declared status remains `AC-FR-041` |
 
 ### Phases
 
@@ -626,6 +633,7 @@ registration together; terminal intents, `tenon.agents.run`, and Agent Lens rema
 
 | Date | Decision | Rationale/evidence | Requirements affected | Supersedes |
 |---|---|---|---|---|
+| 2026-08-13 | `agent.ask.v1` caps its own requested expiry at 55 seconds inside the kernel's existing 60-second dispatch ceiling. | The PRD's 10-minute figure is an upper bound, not a promised duration. Leaving five seconds lets an expired typed result settle before the outer dispatcher deadline and avoids widening CLI and global dispatcher limits in a question-only slice. | FR-038, NFR-001/002 | widening the whole dispatcher and CLI timeout envelope to 10 minutes |
 | 2026-08-12 | The agent declares; Tenon does not scrape. `agent.ask.v1` (agent states its own question) becomes the first-class path, ahead of `agent.respond.v1` (Tenon extracts a provider's question and answers it). | Extraction needs a scraper per provider — `Sources/TenonApp/ClaudeToolFacts.swift:74-92` parses Claude's `AskUserQuestion` schema today, and each new agent is another one. Nothing implements `agent.respond.v1` yet, so redirecting costs no shipped behaviour. | FR-038…040, NFR-010 | `agent.respond.v1` as the primary answer path; it survives as the labelled fallback for providers that do not declare |
 | 2026-08-12 | An AI may orchestrate other AIs through Tenon's primitives. Tenon still owns no scheduler, queue, task graph, or dispatch loop. | Product owner's direction, 2026-08-12. The substrate is largely shipped already — `agent.inventory.v1`, `agent.command.v1`, `terminal.open/write/wait/scrollback.read.v1` are all `.programmatic`, so one agent can already start another and read its result; what is missing is identity, peer observation and a durable ask channel. Evidence that the loop belongs outside the host: orca retired its own coordinator (`orchestration coordinator-start` → "Retired: load the current orchestration skill") and never implemented `decompose()` (`references/orca/src/main/runtime/orchestration/coordinator.ts:185-196`). Building a scheduler here would adopt what the broadest rival abandoned. | FR-037, FR-040, FR-042 | the reading of `VISION.md:8-9` that treats agent-initiated spawning as out of scope |
 | 2026-08-12 | The agent principal is minted from the pane, not self-asserted. | `IntentPrincipal.Kind.agent` is constructed in exactly one place in the repository and it is a spoof-rejection test (`Tests/TenonIntentCoreTests/IntentPolicyTests.swift:707`); nothing in `Sources/` mints one, so every agent call arrives as `cli:local-user` with `filesystem: .all, panes: .any` (`Sources/TenonApp/AppIntentRuntime.swift:31-35, 383-405`) and the dispatcher's agent hardening at `IntentDispatcher.swift:1253-1263` is unreachable by construction. Self-assertion would keep it unreachable. | FR-037 | none |
@@ -653,6 +661,7 @@ registration together; terminal intents, `tenon.agents.run`, and Agent Lens rema
 
 | Date | Worktree/commit | Environment | Scope/command | Result | Known exclusions |
 |---|---|---|---|---|---|
+| 2026-08-13 | current dirty tree, Codex goal `019ff7b0` (T-139) | loaded macOS host (starting load averages `13.64 20.85 22.70`); signed app from Xcode 17C52; System Events accessibility inspection | focused store/provider/catalog/boundary/lens/domain suites **83/0**; full `swift test --disable-automatic-resolution` **2,082/0** in 201.061 s; `xcodegen generate`; `xcodebuild build-for-testing` `TEST BUILD SUCCEEDED`; standard 900x620 and narrow 420x620 screenshots; AX enumeration plus `AXPress` | **`AC-FR-038…040` shipped; question half of `AC-NFR-010` shipped.** `agent.ask.v1` blocks on the bounded eight-wide `agentWait` lane and returns a scalar typed choice; `AgentAskStore` retains pane-owned records when the asker's waiter is cancelled, routes exact agent recipients without scheduling, and settles answer/expiry/pane close once. The installed card names pane, asker, remaining time, choices and evidence; System Events found named `AXButton`/`AXLink` nodes with stable identifiers and help, and pressing the first AX choice removed the card through typed settlement. SHA-256: standard `f4649c530d1a0b7dded12b9068337fbcb91801d46c649df3b29c091bcad818ea`; narrow `99e254a38f27126c1e3f32979cd4bd29092c29ae4df836f443796c59233e6dd7`. | No installed Claude or Codex invoked the public contract end to end; provider adoption remains the true-provider receipt. Declared status is separate `AC-FR-041`; no scheduler or agent-to-agent consumer surface shipped. |
 | 2026-08-12 | current dirty tree, session `5d1e7e00` (T-136) | headless `swift test --disable-automatic-resolution` on macOS (Darwin 25.4.0); `xcodebuild build-for-testing` on Xcode 17C52; live-process probes on the same machine | `AgentPrincipalMintTests` 10, `AgentCallerAdmissionTests` 20 (14 existing + 6 occupancy), `CLISocketServerTests` +1; full suite `Executed 2051 tests, with 0 failures`; `xcodebuild build-for-testing` `** TEST BUILD SUCCEEDED **`; `xcodegen generate` then `git diff -- Tenon.xcodeproj` shows only the added test file | **`AC-FR-037` shipped — the `.agent` principal now exists in production.** `CLISocketServer` reads `LOCAL_PEERPID` on the accept thread before the client sends a byte and carries it on the request; `AgentPaneOccupancyReader` builds candidates from the hook binding registry cross-checked against `SurfacePool.agentTerminalIdentity`; `CLICommandExecutor.callerPrincipal` walks `pbi_ppid` outward and mints `agent:pane:<uuid>` through `AppIntentRuntime.agentPrincipal(forPane:)`, whose grants are `trustedGrants(reachesTheNetwork: false)` — strictly narrower than the CLI's on the network axis, identical everywhere else. `IntentDispatcher.effectiveConfirmation` is now reachable: driven from a minted principal it answers `.always`, and it answers `.policy` for the person. Mutation-checked one at a time, each restored and re-compared byte-for-byte afterwards: `return .always` → `contract.effects.confirmation` reddens `testTheDispatchersAgentHardeningFiresOnAMintedPrincipal`; the mint returning `cliPrincipal` reddens `testACallFromInsideAnAgentPaneCarriesTheAgentPrincipal`; admitting the first candidate without the ancestry walk reddens `testACallerOutsideEveryAgentSubtreeStaysCLI`; `reachesTheNetwork: false` → `true` reddens `testTheAgentPrincipalIsStrictlyNarrowerThanTheCLIPrincipal`; dropping the declared/observed process-group cross-check reddens `testAPaneThatMovedOnFromItsBoundAgentIsNotACandidate`; replacing the accept-time `LOCAL_PEERPID` read with `.unknown` reddens `testTheHandlerReceivesTheKernelsPeerProcessIDForTheConnection`. The spoof test at `IntentPolicyTests.swift:707` passes unchanged. | **`AC-FR-041` and `AC-FR-042` untouched — not started this session.** Three honest limits on what shipped: (1) identity arrives late, because `AgentSessionRegistry.record` needs a session-bearing hook, so an agent's calls before its first tool call mint `.cli`; (2) `bypassAllPermissionPrompts` still answers the forced `.always` with `.allowOnce` before any prompt is drawn (`PluginUIPrompt.swift:225-231`, default `true` at `AppPreferences.swift:121`), so on a default install the re-ask is granted without a human seeing it — the guard is now *reachable* and *recorded in telemetry*, and it is *not yet a barrier* until the switch is defaulted off or made to exclude agent-audience open contracts; (3) a third-party plugin may declare an intent for `[.cli]` without `.agent`, in which case an agent-minted caller is denied `audienceCannotInvoke` where the person succeeds — correct behaviour by the audience system, but a real difference from the identity it replaces. No shipped plugin declares such an intent (all use `["plugin", "user"]`). |
 | 2026-08-09 | current dirty Tenon tree; Herdr reference 0.8.0 | source inspection only | README/docs plus agent schema, CLI, wait, event hub, detection, integrations, persistence; Tenon Agent Lens, runtime helper, PRDs, architecture law | PRD and acceptance model drafted from source evidence | no build, provider run, UI run, or implementation exists |
 | 2026-08-12 | current dirty tree, session `workflow-T136` | headless `swift test` on macOS 15.4 (Darwin 25.4.0); live-process probes on the same machine | `AgentCallerAdmissionTests` 14, `AgentCallerProvenanceTests` 5; full suite `Executed 2020 tests, with 0 failures` | **`AC-FR-037` stays `proposed` — the decidable rule landed, the mint did not.** `AgentCallerAdmission` (pane admission from process ancestry) and `AgentCallerProvenance` (`LOCAL_PEERPID` + `pbi_ppid`) are green, but nothing in `Sources/` constructs an `.agent` principal yet: the socket does not capture the peer pid, `CLICommandExecutor` still passes `cliPrincipal`, and the narrowed capability grant is unwritten. Blocked on an open design question — agent occupancy per pane is known only to `AgentLensPool`, which is populated when a human opens Agent Lens (`Sources/TenonApp/AgentLensSession.swift:857-886`), so minting from it would make identity depend on whether someone looked. `AC-FR-041`/`AC-FR-042` not started. Mutation-checked: ambiguity refusal and the `pid > 1` launchd guard each turn a named test red when removed; loosening `didFill` to `returnCode >= 0` is an **equivalent** mutation here, since the `parent > 1` guard below already rejects a zeroed struct. One earlier full run under load reported 1 failure whose name was lost to a `tail -40` capture; two later full runs were green, so it is unidentified and presumed the T-134 flake class rather than shown to be |

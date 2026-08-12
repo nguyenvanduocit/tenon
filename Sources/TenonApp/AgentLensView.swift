@@ -570,6 +570,17 @@ struct AgentSessionView: View {
                         .id(item.id)
                     }
 
+                    if let question = model.declaredQuestion {
+                        AgentDeclaredQuestionCard(
+                            question: question,
+                            answer: { choice in
+                                await model.answerDeclaredQuestion(with: choice)
+                            }
+                        )
+                        .padding(.vertical, 8)
+                        .id("declared-question-\(question.id.uuidString)")
+                    }
+
                     // Keep the breathing room inside the target so its bottom edge is
                     // also the real end of the scroll content. Parent bottom padding
                     // would leave scrollTo(bottomID) one inset short of the true bottom.
@@ -633,6 +644,14 @@ struct AgentSessionView: View {
                     // The revision arrives before the new row has completed layout.
                     // Coalesce the burst and scroll once on the next main-loop turn using the
                     // newest bottom geometry. Obsolete requests must never form a queue.
+                    scheduleBottomScroll(using: proxy)
+                } else {
+                    unseenUpdates += 1
+                }
+            }
+            .onChange(of: model.declaredQuestion?.id) { oldID, newID in
+                guard newID != nil, newID != oldID else { return }
+                if isPinnedToBottom {
                     scheduleBottomScroll(using: proxy)
                 } else {
                     unseenUpdates += 1
@@ -985,7 +1004,9 @@ private struct AgentSpineInteractionRow: View {
             VStack(alignment: .leading, spacing: 6) {
                 HStack(spacing: 6) {
                     AgentSpineTag(
-                        title: request.kind == .approval ? "Approval" : "Question",
+                        title: request.kind == .approval
+                            ? "Inferred approval"
+                            : "Inferred question",
                         tint: request.state == .pending ? TenonTheme.amber : TenonTheme.muted
                     )
                     Text(request.state.displayTitle)
@@ -1006,6 +1027,9 @@ private struct AgentSpineInteractionRow: View {
                 // request, and that is worth SHOWING — it is how the session ended. What it
                 // does not get is controls: nobody is waiting for the answer.
                 if request.state == .pending, allowsAnswering {
+                    Text("Provider inference • lower authority")
+                        .font(.caption2)
+                        .foregroundStyle(TenonTheme.muted)
                     pendingControls
                 }
             }
@@ -1016,7 +1040,11 @@ private struct AgentSpineInteractionRow: View {
 
     @ViewBuilder private var pendingControls: some View {
         if request.options.isEmpty {
-            Button(request.kind == .approval ? "Review in Terminal" : "Answer in Terminal") {
+            Button(
+                request.kind == .approval
+                    ? "Review in Terminal (inferred)"
+                    : "Answer in Terminal (inferred)"
+            ) {
                 openTerminal()
             }
             .buttonStyle(.bordered)

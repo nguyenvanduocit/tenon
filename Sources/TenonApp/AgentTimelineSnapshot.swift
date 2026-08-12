@@ -1,4 +1,4 @@
-// @domain: agent-lens
+// @domain: agent-lens, agent-control
 import AppKit
 import SwiftUI
 import TenonCore
@@ -9,6 +9,8 @@ import TenonCore
 ///     TENON_TIMELINE_SNAPSHOT=/tmp/timeline.png swift run tenon
 ///     TENON_TIMELINE_SNAPSHOT_SIZE=380x620 TENON_TIMELINE_SNAPSHOT=/tmp/narrow.png swift run tenon
 ///     TENON_TIMELINE_SNAPSHOT_STATE=running swift run tenon
+///     TENON_TIMELINE_SNAPSHOT_STATE=question swift run tenon
+///     TENON_TIMELINE_ACCESSIBILITY_HOLD=30 TENON_TIMELINE_SNAPSHOT_STATE=question swift run tenon
 ///
 /// A test proves a view tree has the right *shape* and says nothing about its geometry —
 /// `docs/design-plugin-views.md` records a board that passed 24 tests and rendered as cards
@@ -31,6 +33,7 @@ enum AgentTimelineSnapshot {
     private static func render(to path: String, state: String, size: CGSize) -> Never {
         _ = NSApplication.shared
         let session = sampleSession()
+        let questions = AgentAskStore()
         let terminalPool = SurfacePool(backendName: "Timeline snapshot") { _, _ in
             StubTerminalSurface()
         }
@@ -38,10 +41,46 @@ enum AgentTimelineSnapshot {
             slotID: UUID(),
             terminalPool: terminalPool,
             discovery: AgentLensDiscovery(),
+            questions: questions,
             resolveTimelineSynthesizer: { _ in SnapshotSynthesizer(state: state) }
         )
-        model.account = .timeline
-        model.receive(state == "insufficient" ? shortSession() : session)
+        model.account = state == "question" ? .chat : .timeline
+        model.receive(["insufficient", "question"].contains(state) ? shortSession() : session)
+        model.start()
+
+        let questionTask: Task<AgentAskResult?, Never>?
+        if state == "question" {
+            let request = sampleQuestion(paneID: model.slotID)
+            let publishedQuestion = SnapshotQuestionBox()
+            questionTask = Task.detached {
+                try? await questions.ask(request)
+            }
+            Task.detached {
+                let deadline = ContinuousClock.now + .seconds(5)
+                while ContinuousClock.now < deadline {
+                    if let record = await questions.pendingQuestions(for: .human).first {
+                        publishedQuestion.store(record)
+                        return
+                    }
+                    try? await Task.sleep(for: .milliseconds(10))
+                }
+            }
+            let questionDeadline = Date(timeIntervalSinceNow: 5)
+            while model.declaredQuestion == nil, Date() < questionDeadline {
+                if let record = publishedQuestion.load() {
+                    model.receiveDeclaredQuestion(record)
+                }
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.02))
+            }
+            guard model.declaredQuestion != nil else {
+                FileHandle.standardError.write(
+                    Data("snapshot: declared question did not publish\n".utf8)
+                )
+                exit(4)
+            }
+        } else {
+            questionTask = nil
+        }
 
         // The reader list is a filesystem answer the live pane gets from `.task`, and an offscreen
         // render never runs one — so it is asked for here, and the invitation is photographed with
@@ -57,7 +96,7 @@ enum AgentTimelineSnapshot {
         // `insufficient` is drawn from the snapshot, not from a generation, so asking for a
         // reading there would be asking the account to refuse one — the picture is the same
         // either way, and this says which state is being photographed.
-        if state != "idle", state != "insufficient" {
+        if !["idle", "insufficient", "question"].contains(state) {
             model.generateTimeline()
             // `running` is photographed mid-flight, once the run has said something about
             // itself — a picture taken before the first report would show the launching state
@@ -94,13 +133,29 @@ enum AgentTimelineSnapshot {
             for: slot.id
         )
 
-        withExtendedLifetime(terminalPool) {
-            PaneViewSnapshotWriter.write(
+        let content = if state == "question" {
+            AnyView(
+                AgentSessionView(
+                    model: model,
+                    openTerminal: {},
+                    fileLinks: .none
+                )
+            )
+        } else {
+            AnyView(
                 AgentSessionTimelineView(
                     model: model,
                     returnToEvidence: { _ in },
                     startsExpanded: ProcessInfo.processInfo.environment["TENON_TIMELINE_SNAPSHOT_EVIDENCE"] == "1"
-                ),
+                )
+            )
+        }
+
+        holdAccessibilityWindowIfRequested(content, size: size)
+
+        withExtendedLifetime((terminalPool, questionTask)) {
+            PaneViewSnapshotWriter.write(
+                content,
                 slot: slot,
                 title: "claude — tenon",
                 headerStore: headers,
@@ -108,6 +163,42 @@ enum AgentTimelineSnapshot {
                 to: path
             )
         }
+    }
+
+    // MARK: - Installed accessibility inspection  @domain: agent-control, agent-lens
+
+    @MainActor
+    private static func holdAccessibilityWindowIfRequested(_ view: AnyView, size: CGSize) {
+        let environment = ProcessInfo.processInfo.environment
+        guard let rawSeconds = environment["TENON_TIMELINE_ACCESSIBILITY_HOLD"],
+              let seconds = TimeInterval(rawSeconds), seconds > 0
+        else {
+            return
+        }
+
+        let hosting = NSHostingView(rootView: view)
+        hosting.frame = NSRect(origin: .zero, size: size)
+        NSApp.setActivationPolicy(.regular)
+        NSApp.finishLaunching()
+        let window = NSWindow(
+            contentRect: hosting.frame,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        window.title = "Tenon Agent Question Accessibility"
+        window.contentView = hosting
+        window.makeKeyAndOrderFront(nil)
+        window.orderFrontRegardless()
+        NSApp.activate(ignoringOtherApps: true)
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.6))
+        hosting.layoutSubtreeIfNeeded()
+        FileHandle.standardError.write(Data("snapshot: accessibility window ready\n".utf8))
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { exit(0) }
+        NSApp.run()
+        exit(0)
     }
 
     private static func size(_ value: String?) -> CGSize {
@@ -148,6 +239,39 @@ enum AgentTimelineSnapshot {
             ),
         ]
         return snapshot
+    }
+
+    @MainActor
+    private static func sampleQuestion(paneID: UUID) -> AgentAskRequest {
+        AgentAskRequest(
+            paneID: paneID,
+            asker: AppIntentRuntime.agentPrincipal(forPane: paneID),
+            recipient: .human,
+            question: "The implementation is verified. Which release path should I take?",
+            choices: [
+                AgentQuestionChoice(
+                    id: "draft",
+                    label: "Open a draft PR",
+                    value: .string("draft")
+                ),
+                AgentQuestionChoice(
+                    id: "hold",
+                    label: "Hold for review",
+                    value: .string("hold")
+                ),
+            ],
+            evidence: [
+                AgentQuestionEvidence(
+                    label: "Focused test receipt",
+                    url: "file:///tmp/tenon-agent-ask-focused-tests.txt"
+                ),
+                AgentQuestionEvidence(
+                    label: "Architecture decision",
+                    url: "https://example.com/tenon/agent-ask-boundary"
+                ),
+            ],
+            timeoutMilliseconds: AgentAskStore.maximumTimeoutMilliseconds
+        )
     }
 
     private static func sampleSession() -> AgentLensSnapshot {
@@ -206,7 +330,7 @@ enum AgentTimelineSnapshot {
 
         func synthesize(
             _ digest: AgentTimelineDigest,
-            options: AgentReadingOptions,
+            options _: AgentReadingOptions,
             progress: @escaping @Sendable (AgentTimelineProgress) -> Void
         ) async throws -> String {
             switch state {
@@ -271,5 +395,22 @@ enum AgentTimelineSnapshot {
                 }
             return "{\"milestones\":[\(body.joined(separator: ","))]}"
         }
+    }
+}
+
+private final class SnapshotQuestionBox: @unchecked Sendable {
+    private let lock = NSLock()
+    private var record: AgentQuestionRecord?
+
+    func store(_ record: AgentQuestionRecord) {
+        lock.lock()
+        self.record = record
+        lock.unlock()
+    }
+
+    func load() -> AgentQuestionRecord? {
+        lock.lock()
+        defer { lock.unlock() }
+        return record
     }
 }

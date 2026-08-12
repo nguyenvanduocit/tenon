@@ -480,6 +480,9 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
 
     func testAgentLensStaysHostInternalDirectAndUsesBoundedResourceStreams() throws {
         let view = try source("TenonApp/AgentLensView.swift")
+        let declaredQuestion = try source(
+            "TenonApp/AgentDeclaredQuestionCard.swift"
+        )
         let session = try source("TenonApp/AgentLensSession.swift")
         let sources = try source("TenonApp/AgentLensSources.swift")
         let hooks = try source("TenonApp/AgentSessionHooks.swift")
@@ -495,6 +498,32 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 // A file the agent cited opens the host's own pane, so the click carries a
                 // typed callback out to the composition root rather than a public boundary.
                 "var openFile: (@MainActor @Sendable (String) -> Void)?",
+            ],
+            file: "AgentLensView.swift"
+        )
+        assertContains(
+            declaredQuestion,
+            [
+                "struct AgentDeclaredQuestionCard: View",
+                "Text(\"Declared question\")",
+                "Text(verbatim: choice.label)",
+                "Link(destination: destination)",
+                "seconds remaining",
+                "tenon.agentQuestion",
+                "tenon.agentQuestion.choice.",
+                "AgentQuestionAccessibilityControl",
+                "view.setAccessibilityLabel(label)",
+                "view.setAccessibilityTitle(label)",
+                "override func hitTest(_: NSPoint) -> NSView?",
+                "override func accessibilityPerformPress() -> Bool",
+            ],
+            file: "AgentDeclaredQuestionCard.swift"
+        )
+        assertContains(
+            view,
+            [
+                "Provider inference • lower authority",
+                "Answer in Terminal (inferred)",
             ],
             file: "AgentLensView.swift"
         )
@@ -1118,11 +1147,11 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             before: "public struct IntentPrincipal"
         )
         for (name, inventory, expectedCases) in [
-            // 46 → 48 (T-132). This gate asks whether *automation* grew the inventory; the
-            // two added names are a terminal read and a tab close, and the `contains
-            // ("automation")` assertion below is what actually holds that line.
-            ("CoreIntentName", coreIntentInventory, 48),
-            ("CoreIntentExecutionLane", laneInventory, 12),
+            // 48 → 49 and 12 → 13 (T-139). The addition is one finite agent question and
+            // its bounded wait lane; the `contains("automation")` assertion below is what
+            // continues to hold the automation boundary.
+            ("CoreIntentName", coreIntentInventory, 49),
+            ("CoreIntentExecutionLane", laneInventory, 13),
             ("IntentAudience", audienceInventory, 5),
         ] {
             XCTAssertEqual(

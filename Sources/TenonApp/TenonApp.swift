@@ -523,6 +523,7 @@ final class AppComposition {
             terminalSurfaces.seedSpawnDirectory(cwd, for: slotID)
         }
         let webSurfaces = PluginWebSurfacePool()
+        let agentQuestions = AgentAskStore()
         let agentLens = AgentLensPool(
             discovery: AgentLensDiscovery(
                 sessionRegistry: prepared.agentSessionRegistry,
@@ -536,14 +537,16 @@ final class AppComposition {
                     server: prepared.agentHookServer,
                     installResult: prepared.claudeHookInstallResult
                 )
-            )
+            ),
+            questions: agentQuestions
         )
         let intentRuntime = try AppIntentRuntime(
             kernel: prepared.kernel,
             workspaceStore: store,
             terminalSurfaces: terminalSurfaces,
             webSurfaces: webSurfaces,
-            userInterface: userInterface
+            userInterface: userInterface,
+            agentQuestions: agentQuestions
         )
         // Two inventories, ordered (T-062). The primary one ships with the app and is
         // sealed — writing into a signed bundle breaks its signature and the next
