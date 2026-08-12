@@ -124,9 +124,40 @@ That separates the two hypotheses without a stack, which the previous note said 
 **The change that follows** (this session): the test now observes the exit through
 `surface.onProcessExit`, the same callback `SurfacePool` uses, instead of polling into C. Its own
 comment already said it meant to "exercise the normal close callback used by SurfacePool" — it just
-never wired one. If CI goes green, H-teardown is confirmed by the strongest evidence available. If
-it stays red, the crash-collector step added alongside prints the faulting frame and the answer
-arrives anyway. Falsifiable either way, which is the point.
+never wired one.
+
+### H-teardown confirmed, and the remaining question is much smaller
+
+Run `31579046795`, first run after the change: **zero occurrences of "runner exited with code"** —
+the string that named this failure on every previous run. The host no longer dies. Polling
+`ghostty_surface_process_exited` on a torn-down surface was the crash, established by behaviour
+rather than by a stack.
+
+Run `31581606850` then answered the follow-up with the diagnostic:
+
+```
+GhosttySurfaceSmokeTests.swift:131: XCTAssertTrue failed —
+the close callback SurfacePool relies on never fired; ghostty_surface_process_exited=true
+```
+
+**`process_exited=true`.** So the child exits, on time, and libghostty simply never asks the host to
+close the surface. That kills "the shell never exited" outright.
+
+### What is left, in order of what the evidence favours
+
+1. **The short-lived-command threshold is not cleared on the VM.** The test's own comment names it:
+   "Ghostty intentionally keeps very short-lived commands on an error surface", which is why
+   `pumpRunLoop(for: 1)` sits above the Ctrl-D. An error surface has `process_exited == true` and
+   never closes — exactly what CI reports. Against it: the measured child lifetime is 1.178 s, which
+   ought to clear any small threshold. *Probe:* raise the pump to 3 s and see if the callback arrives.
+2. **The close never reaches our handler.** `closeSurface` resolves the view through
+   `view(fromTokenBits:)` (`GhosttySurface.swift:481-483`); if that returns nil the callback is
+   dropped silently. *Probe:* have the test assert the token resolves, or log inside `closeSurface`.
+3. **Delivery needs a runloop mode the test does not run.** `waitUntil` spins
+   `RunLoop.main.run(mode: .default, before:)` (`:265`). Production is a live app runloop.
+   *Probe:* pump `.common` as well, or drain the main queue explicitly.
+
+(1) is one line and settles itself either way, so it goes first.
 
 One artifact separates them: the crash report, and nothing was collecting it. The
 `.ghosttycrash` is certain — the runner's own log prints its path. The macOS `.ips` under
