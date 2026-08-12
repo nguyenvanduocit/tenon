@@ -86,9 +86,71 @@ Tenon exposes primitives, an AI owns the loop. See the 2026-08-12 decision-log e
 - [ ] `swift test` green **run while the machine is loaded** (see T-134 — an idle run hides this class)
 - [ ] `docs/prds/agent-control.prd.md` rows moved to `shipped` with a dated receipt
 
+## Measurement that changed the design (2026-08-12, session `workflow-T136`)
+
+The design of record was "match the caller's controlling terminal against the pane's PTY".
+**It does not work, and the measurement is the reason the task is not finished.**
+
+`claude` holds a controlling terminal; the shell it spawns to run a tool command does not.
+Measured three independent ways on this machine, with the Bash-tool sandbox **on and off**:
+
+| probe | `claude` (pid 18432) | its tool subprocess |
+|---|---|---|
+| `proc_bsdinfo.e_tdev` | `268435476` | `UInt32.max` (none) |
+| `ps -o tty=` | `ttys020` | `??` |
+| `open("/dev/tty")` | succeeds | fails |
+
+A tty rule would mint nothing in production — the same disease this task exists to cure. The
+design brief's contrary measurement (`node`/`caffeinate` children of `claude` inheriting the
+tty) is true but measured the wrong children: those are not the channel an agent runs
+`tenon-cli` through.
+
+**Ancestry replaces it.** `setsid` does not change a parent, so walking `pbi_ppid` from
+`LOCAL_PEERPID` still reaches the agent. It is also strictly more precise for what this
+product must tell apart: a human typing at the pane's shell prompt descends from the *shell*,
+not from the agent. No CLI wire-protocol change is needed.
+
+## Landed
+
+- `AgentCallerAdmission.admit` + `.ancestry` — the whole decidable rule, pure, 14 tests
+- `AgentCallerProvenance` — `LOCAL_PEERPID` + `pbi_ppid` readers, 5 tests against live pids
+- PRD decision log: the tty→ancestry reversal, and the `bypassAllPermissionPrompts` finding
+
+## Not landed — the mint is not wired, so no `.agent` principal exists in production yet
+
+Remaining, in order: capture the peer pid at `CLISocketServer` accept and widen `onRequest`;
+assemble `[AgentPaneCandidate]`; mint in `CLICommandExecutor`; grant the new principal a set
+strictly narrower than `cliPrincipal`'s (skipping this makes every agent call fail
+`missingCapability`).
+
+**The open design question that stopped it**, and it is not mechanical: nothing today answers
+"which panes are running an agent" independently of the UI. `AgentLensPool.models`
+(`Sources/TenonApp/AgentLensSession.swift:857-886`) is populated lazily by `model(for:)` when
+a pane's Agent Lens is opened, so minting from it would make a caller's *identity* depend on
+whether a human had looked at the pane. That is the wrong foundation for a policy input.
+Either `SurfacePool`'s foreground pid gets classified independently of Agent Lens, or agent
+occupancy becomes host-owned state Agent Lens reads rather than owns.
+
+`AC-FR-041` and `AC-FR-042` were not started; both sit behind the mint.
+
 ## Owner / files (agent lock)
 
-_Unclaimed._ Expected: `Sources/TenonApp/AppIntentRuntime.swift`,
+**Claimed by session `workflow-T136`** (2026-08-12). Files locked:
+
+Released on 2026-08-12 — the session ended without wiring the mint, so nothing is held. Files
+actually written (all landed green; none left mid-edit):
+
+- `Sources/TenonCore/AgentCallerAdmission.swift` (new)
+- `Sources/TenonApp/AgentCallerProvenance.swift` (new)
+- `Tests/TenonCoreTests/AgentCallerAdmissionTests.swift` (new)
+- `Tests/TenonAppStateTests/AgentCallerProvenanceTests.swift` (new)
+- `docs/prds/agent-control.prd.md` (decision log + receipt)
+
+Untouched, and free for the next session: `AppIntentRuntime.swift`, `CLICommandExecutor.swift`,
+`CLISocketServer.swift`, `TenonApp.swift`, `PaneActivity.swift`, and `CoreIntentCatalog.swift`
+(⚠️ the last is also in T-133's expected set — check the board before editing).
+
+Original expectation: `Sources/TenonApp/AppIntentRuntime.swift`,
 `Sources/TenonApp/CLICommandExecutor.swift`, `Sources/TenonApp/AgentSessionHooks.swift`,
 `Sources/TenonCore/PaneActivity.swift`, `Sources/TenonCore/CoreIntentCatalog.swift`,
 `Sources/TenonIntentCore/IntentDispatcher.swift` (read-mostly), plus tests and the PRD pair.

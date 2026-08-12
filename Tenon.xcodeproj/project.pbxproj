@@ -88,6 +88,7 @@
 		303F86CDD083A2349EF32956 /* EditableFieldDraftTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5A35AEEA39D0F8AD5897F046 /* EditableFieldDraftTests.swift */; };
 		3075FC5181A17BC6A183CCA9 /* WorkspaceIdentity.swift in Sources */ = {isa = PBXBuildFile; fileRef = FB1A1D0DE3A99919D7A1D29C /* WorkspaceIdentity.swift */; };
 		30B30AB70E8CCD9BD2457B64 /* PluginContributionProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 38F11E649B8DC04DCCC68460 /* PluginContributionProjectionTests.swift */; };
+		30F68DA78530A829420D661C /* AgentCallerProvenanceTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E23B635B62C87DFCCD3AA240 /* AgentCallerProvenanceTests.swift */; };
 		3163EAE93BDEC49F6474F9F4 /* AutomationScheduler.swift in Sources */ = {isa = PBXBuildFile; fileRef = E2C4175CD09305E5B5966A1E /* AutomationScheduler.swift */; };
 		31B886004367E61ED9568EE3 /* TenonCore.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 71419D9C95E459C67BB35B01 /* TenonCore.framework */; };
 		31D253A342AEA7811473436D /* SwiftTreeSitter in Frameworks */ = {isa = PBXBuildFile; productRef = D215474652784D64060516A0 /* SwiftTreeSitter */; };
@@ -129,6 +130,7 @@
 		466BDE9F929BBE52255BFFFC /* LauncherOutcome.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3D7AC1A4773D6C223052ECC6 /* LauncherOutcome.swift */; };
 		46E28211B78814085844D23B /* AppMarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 84E92606B304312273C19FA8 /* AppMarkTests.swift */; };
 		46E38D20E4C675F2E10C12B2 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 79AB955BF76B531620065514 /* Assets.xcassets */; };
+		482265D32C8DE681FF02AA13 /* AgentCallerAdmissionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 79C16448905111E645578685 /* AgentCallerAdmissionTests.swift */; };
 		483AFC80455CD0BA66D31673 /* PinnedThreadExecutor.swift in Sources */ = {isa = PBXBuildFile; fileRef = DD59C9FFB05E4ED3BE5FA60A /* PinnedThreadExecutor.swift */; };
 		48955AACF0A365A2231ED82C /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = BFAA9110693CED794F37CB39 /* libsqlite3.tbd */; };
 		49EA1A930526CFF07DD74BE2 /* AgentLensFileLinks.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2EE31B27805AFC382CDBFF25 /* AgentLensFileLinks.swift */; };
@@ -176,6 +178,7 @@
 		5D1258B4A8B6AA13C2FE67DD /* DiffRowsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8527A43CBE979A2FAF38FD5B /* DiffRowsTests.swift */; };
 		5D8C034B41AFFB75DD25AC65 /* WorkspaceCatalogRelaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8B96C3EF58DE3E116E2F1ECC /* WorkspaceCatalogRelaunchTests.swift */; };
 		5DD62A9604B6DBE66EE14130 /* CLISocketServer.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2BB541B1CE4147B683D1059F /* CLISocketServer.swift */; };
+		5EC5E1D4206A25BFEC45F11A /* AgentCallerAdmission.swift in Sources */ = {isa = PBXBuildFile; fileRef = 810A21ED271CDA98B94465BD /* AgentCallerAdmission.swift */; };
 		5FC8C74B0D319FB48F2E4B4E /* NewPaneSizingTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E5FF8C98628FAACF35831230 /* NewPaneSizingTests.swift */; };
 		606FB8B1081A303F9E171DF7 /* PluginKeyBindingCommands.swift in Sources */ = {isa = PBXBuildFile; fileRef = DEA1FF07313856CCD26C4694 /* PluginKeyBindingCommands.swift */; };
 		609226E3ECA4C92C6AEDD32F /* AgentLensSession.swift in Sources */ = {isa = PBXBuildFile; fileRef = 733CEBFD396532D674A09D87 /* AgentLensSession.swift */; };
@@ -258,6 +261,7 @@
 		94150A1F4E04B878009176D8 /* ContractCatalog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B183A61859DCC0137084599 /* ContractCatalog.swift */; };
 		95000BE8F0DBC7FA28E78FE4 /* GhosttyKit.xcframework in Frameworks */ = {isa = PBXBuildFile; fileRef = D6C3533F805F83796630E9DD /* GhosttyKit.xcframework */; };
 		9520A01CC91A3B3F4A13C0A9 /* ClaudeToolFacts.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1EC392762EDE32BDD21B4568 /* ClaudeToolFacts.swift */; };
+		9614F903DD46FD0A3DC850F9 /* AgentCallerProvenance.swift in Sources */ = {isa = PBXBuildFile; fileRef = 50F57532ADF2639A73BC2CC4 /* AgentCallerProvenance.swift */; };
 		97C87F8AD29DEB0CA460E107 /* TenonLog.swift in Sources */ = {isa = PBXBuildFile; fileRef = 76D900C51F9B6F6CF5AE0EC0 /* TenonLog.swift */; };
 		97D84DD3AD342C7E9A1EB930 /* AgentHookLensProjectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 106C01345A5344F31643A999 /* AgentHookLensProjectionTests.swift */; };
 		994E696A5565A1F857483445 /* JSONSchema in Frameworks */ = {isa = PBXBuildFile; productRef = 150C6C4B4C1FEBF4E73EAA05 /* JSONSchema */; };
@@ -675,6 +679,7 @@
 		4F5A618460403A51315D3BE6 /* TenonIntentCore.framework */ = {isa = PBXFileReference; explicitFileType = wrapper.framework; includeInIndex = 0; path = TenonIntentCore.framework; sourceTree = BUILT_PRODUCTS_DIR; };
 		4F95455F49BE70F444B720ED /* SourceEditorView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SourceEditorView.swift; sourceTree = "<group>"; };
 		50458BFE448456EC31606B91 /* STTextView */ = {isa = PBXFileReference; lastKnownFileType = folder; name = STTextView; path = Vendor/STTextView; sourceTree = SOURCE_ROOT; };
+		50F57532ADF2639A73BC2CC4 /* AgentCallerProvenance.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallerProvenance.swift; sourceTree = "<group>"; };
 		50F5B95DD3144F20D623F9F1 /* PaneCwdSubscriptionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneCwdSubscriptionTests.swift; sourceTree = "<group>"; };
 		51F5F0F8217938C01CA95F37 /* IntentProvider.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentProvider.swift; sourceTree = "<group>"; };
 		52EE5EA8C90067B69F455F45 /* SpatialCanvasNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpatialCanvasNSView.swift; sourceTree = "<group>"; };
@@ -764,6 +769,7 @@
 		79250E8DFFA21C0236E9C2C8 /* AgentFleetIntegrationTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentFleetIntegrationTests.swift; sourceTree = "<group>"; };
 		792BF923FA652970B6AC449D /* PaneHeaderStoreTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneHeaderStoreTests.swift; sourceTree = "<group>"; };
 		79AB955BF76B531620065514 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		79C16448905111E645578685 /* AgentCallerAdmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallerAdmissionTests.swift; sourceTree = "<group>"; };
 		7A04AD477F3AD997358BBEC1 /* AgentHookAdmissionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentHookAdmissionTests.swift; sourceTree = "<group>"; };
 		7BD79B89A6D97114282068CE /* AgentTranscriptPath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentTranscriptPath.swift; sourceTree = "<group>"; };
 		7C84A2EB80FE9509B155CFC8 /* AgentLensAttachment.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentLensAttachment.swift; sourceTree = "<group>"; };
@@ -778,6 +784,7 @@
 		80A872C195408949302BEFD7 /* WindowChrome.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WindowChrome.swift; sourceTree = "<group>"; };
 		80DF19405F89B6019D267984 /* Tenon.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Tenon.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		80F2A904F91D5E261C453DE1 /* PaneUpdateTurnBoundTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneUpdateTurnBoundTests.swift; sourceTree = "<group>"; };
+		810A21ED271CDA98B94465BD /* AgentCallerAdmission.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallerAdmission.swift; sourceTree = "<group>"; };
 		816ABDCC5FE3AB2D1C159370 /* PluginOpenHandlerCandidacyTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PluginOpenHandlerCandidacyTests.swift; sourceTree = "<group>"; };
 		82271F56D00C9B4025F190CD /* TerminalProcessTreeTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TerminalProcessTreeTests.swift; sourceTree = "<group>"; };
 		82A49C3C43D25D41BFE929F7 /* TenonIntegrationTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = TenonIntegrationTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
@@ -929,6 +936,7 @@
 		E044D5023A24121ED4BFFF16 /* IntentTestSupport.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentTestSupport.swift; sourceTree = "<group>"; };
 		E1E5058BD4D9D50A4939B722 /* AppInstanceChannel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppInstanceChannel.swift; sourceTree = "<group>"; };
 		E212D4767F3E910547604224 /* README.md */ = {isa = PBXFileReference; lastKnownFileType = net.daringfireball.markdown; path = README.md; sourceTree = "<group>"; };
+		E23B635B62C87DFCCD3AA240 /* AgentCallerProvenanceTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AgentCallerProvenanceTests.swift; sourceTree = "<group>"; };
 		E2C4175CD09305E5B5966A1E /* AutomationScheduler.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AutomationScheduler.swift; sourceTree = "<group>"; };
 		E2F74EA0AB04C9BD3D34B2F5 /* IntentContract.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = IntentContract.swift; sourceTree = "<group>"; };
 		E436C6140EB3C2222B48D128 /* PaneHostingSizingTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PaneHostingSizingTests.swift; sourceTree = "<group>"; };
@@ -1136,6 +1144,7 @@
 		6CB020040CC0E0EBAAFE18C9 /* TenonAppStateTests */ = {
 			isa = PBXGroup;
 			children = (
+				E23B635B62C87DFCCD3AA240 /* AgentCallerProvenanceTests.swift */,
 				56CF97F88EEBFAAB7FE28B48 /* AgentCLIRetryTests.swift */,
 				79250E8DFFA21C0236E9C2C8 /* AgentFleetIntegrationTests.swift */,
 				7A04AD477F3AD997358BBEC1 /* AgentHookAdmissionTests.swift */,
@@ -1273,6 +1282,7 @@
 		C267E5E8F70F11912BBF4743 /* TenonCore */ = {
 			isa = PBXGroup;
 			children = (
+				810A21ED271CDA98B94465BD /* AgentCallerAdmission.swift */,
 				735F069CF6D2510F2D2BC6CB /* AgentSessionRef.swift */,
 				DD3FAC0AA8058DD8C89B15F3 /* AppPreferences.swift */,
 				8DE4E2954E1881972A533ABF /* AutomationRunHistory.swift */,
@@ -1352,6 +1362,7 @@
 		CD9B9D42CE36439750BE8808 /* TenonApp */ = {
 			isa = PBXGroup;
 			children = (
+				50F57532ADF2639A73BC2CC4 /* AgentCallerProvenance.swift */,
 				F2F382DFA9293F3CC8954D05 /* AgentHookInstallStatus.swift */,
 				B9820B0AA99EF5E53BB1E3B3 /* AgentHookLensProjection.swift */,
 				150C3D78AC6CDB601DAB25C4 /* AgentIntentProvider.swift */,
@@ -1514,6 +1525,7 @@
 		F3357AC7793297ABF379B40F /* TenonCoreTests */ = {
 			isa = PBXGroup;
 			children = (
+				79C16448905111E645578685 /* AgentCallerAdmissionTests.swift */,
 				2C1821E62110DA75DC5C1EEA /* AgentRecordedSessionTests.swift */,
 				5A4BA184031D9A3F29EE5482 /* AgentsRunTests.swift */,
 				2E49FE293F17FE7E13CE39F6 /* AppPreferencesTests.swift */,
@@ -1867,6 +1879,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				482265D32C8DE681FF02AA13 /* AgentCallerAdmissionTests.swift in Sources */,
 				24F4798B8A46E9D0FC1D1D7A /* AgentRecordedSessionTests.swift in Sources */,
 				DC69575C5BDCAC9C55041D1E /* AgentsRunTests.swift in Sources */,
 				2BFE74EC549CB06425D1B4F9 /* AppPreferencesTests.swift in Sources */,
@@ -2001,6 +2014,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				5EC5E1D4206A25BFEC45F11A /* AgentCallerAdmission.swift in Sources */,
 				A237E597E37707CCCE7F1D22 /* AgentSessionRef.swift in Sources */,
 				82871EB255AF37AF3D7F41F4 /* AppPreferences.swift in Sources */,
 				226E811F31C3FBF5F1950AA2 /* AutomationRunHistory.swift in Sources */,
@@ -2088,6 +2102,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				9614F903DD46FD0A3DC850F9 /* AgentCallerProvenance.swift in Sources */,
 				ABA715A889B03DD8EBAD41F6 /* AgentHookInstallStatus.swift in Sources */,
 				178F2F6A9310E02392F4C674 /* AgentHookLensProjection.swift in Sources */,
 				D9DA43599CF2F5F583488B16 /* AgentIntentProvider.swift in Sources */,
@@ -2209,6 +2224,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				A304769CCFB28D7147EA0498 /* AgentCLIRetryTests.swift in Sources */,
+				30F68DA78530A829420D661C /* AgentCallerProvenanceTests.swift in Sources */,
 				167715B4DAFA7AAEAD0E373B /* AgentFleetIntegrationTests.swift in Sources */,
 				12EDDBD26A8635D9D251369B /* AgentHookAdmissionTests.swift in Sources */,
 				97D84DD3AD342C7E9A1EB930 /* AgentHookLensProjectionTests.swift in Sources */,
