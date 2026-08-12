@@ -145,19 +145,26 @@ close the surface. That kills "the shell never exited" outright.
 
 ### What is left, in order of what the evidence favours
 
-1. **The short-lived-command threshold is not cleared on the VM.** The test's own comment names it:
-   "Ghostty intentionally keeps very short-lived commands on an error surface", which is why
-   `pumpRunLoop(for: 1)` sits above the Ctrl-D. An error surface has `process_exited == true` and
-   never closes — exactly what CI reports. Against it: the measured child lifetime is 1.178 s, which
-   ought to clear any small threshold. *Probe:* raise the pump to 3 s and see if the callback arrives.
-2. **The close never reaches our handler.** `closeSurface` resolves the view through
-   `view(fromTokenBits:)` (`GhosttySurface.swift:481-483`); if that returns nil the callback is
-   dropped silently. *Probe:* have the test assert the token resolves, or log inside `closeSurface`.
-3. **Delivery needs a runloop mode the test does not run.** `waitUntil` spins
-   `RunLoop.main.run(mode: .default, before:)` (`:265`). Production is a live app runloop.
-   *Probe:* pump `.common` as well, or drain the main queue explicitly.
+1. ~~**The short-lived-command threshold is not cleared on the VM.**~~ **DEAD.** Run `31582888515`
+   raised `pumpRunLoop` from 1 s to 3 s and the result is unchanged: still
+   `process_exited=true`, still no callback. The threshold is not what CI is hitting.
+2. **The close never reaches our handler — leading candidate.** The registration is present and
+   correct: `rt.close_surface_cb` is set on the app runtime (`GhosttySurface.swift:208-210`), and
+   `closeSurfaceCallback` hops to the main actor (`:352-364`). But `closeSurface` then resolves the
+   view through `view(fromTokenBits:)` (`:481-483` → `:489-492`), which is
+   `liveViews[token]?.value` — a registry of **weak** boxes. A token that does not resolve makes the
+   callback a silent no-op, which is precisely the observed behaviour: the child exits, ghostty asks
+   for a close, and nothing happens.
+   *Probe, one line:* log inside `closeSurface` whether the view resolved. That distinguishes "we
+   were never called" from "we were called and dropped it", and it is worth keeping afterwards —
+   a close that resolves to nothing should never be silent.
+3. **Delivery needs a runloop the test does not spin — weakened.** `wakeupCallback` posts
+   `shared.tick()` through `DispatchQueue.main.async` (`:238-248`) and `tick` calls
+   `ghostty_app_tick` (`:223`). `waitUntil` spins `RunLoop.main.run(mode: .default, before:)`
+   (`:265`), which does drain the main queue, so the tick should happen. Keep it only as a fallback
+   if (2) shows the callback never arrives at all.
 
-(1) is one line and settles itself either way, so it goes first.
+Order: (2), then (3) only if (2) shows no call. Both are one log line apart from an answer.
 
 One artifact separates them: the crash report, and nothing was collecting it. The
 `.ghosttycrash` is certain — the runner's own log prints its path. The macOS `.ips` under
