@@ -73,12 +73,49 @@ jobs:
           -resultBundlePath .build/integration.xcresult
           CODE_SIGNING_ALLOWED=NO
 
+      # This lane's one recurring failure is not an assertion: the test host crashes, and
+      # xcodebuild answers by printing every test line as passing followed by
+      # `** TEST FAILED **`. Five readings of the plain log found nothing, because the only
+      # thing that names a crash — the report — was never collected. Print it where the
+      # failure is actually read, and keep it.
+      - name: Collect crash reports from the hosted lane
+        if: always()
+        run: |
+          mkdir -p .build/crash-reports
+          for report in "$HOME"/Library/Logs/DiagnosticReports/Tenon*.ips; do
+            [ -f "$report" ] || continue
+            echo "::group::$report"
+            cat "$report"
+            echo "::endgroup::"
+            cp "$report" .build/crash-reports/
+          done
+          # Ghostty's own capture, written by the *next* launch when the previous one died.
+          # It is a sentry envelope rather than text, so it is kept instead of printed; the
+          # `.ips` above is the one that names the signal and the faulting thread.
+          for report in "$HOME"/.local/state/ghostty/crash/*.ghosttycrash; do
+            [ -f "$report" ] || continue
+            echo "ghostty crash capture: $report ($(wc -c <"$report") bytes)"
+            cp "$report" .build/crash-reports/
+          done
+          if [ -z "$(ls -A .build/crash-reports)" ]; then
+            echo "No crash reports on this runner."
+          fi
+
       - name: Keep the integration result bundle
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: integration-xcresult
           path: .build/integration.xcresult
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Keep the crash reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: integration-crash-reports
+          path: .build/crash-reports
           if-no-files-found: ignore
           retention-days: 7
 

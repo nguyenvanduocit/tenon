@@ -105,11 +105,27 @@ final class GhosttySurfaceSmokeTests: XCTestCase {
             isARepeat: false,
             keyCode: 2
         ))
+        // Observe the exit the way `SurfacePool` observes it, through the close callback, rather
+        // than by polling `processExited` — which calls `ghostty_surface_process_exited` on the C
+        // surface every time it is read (`GhosttySurface.swift:1201-1203`).
+        //
+        // That distinction is the whole of this test's CI failure. libghostty asks the host to
+        // close the surface when the child exits, and `closeSurface` forwards that to
+        // `onProcessExit` (`GhosttySurface.swift:481-483`). Production wires it —
+        // `SurfacePool.swift:146` — and this test left it nil, so nothing acted on the close while
+        // the poll kept calling into a surface libghostty had already torn down. Measured across
+        // three CI runs, the host dies 1.111 s / 1.178 s / 1.180 s after the child spawns, which is
+        // `pumpRunLoop(for: 1)` above plus surface start — the Ctrl-D landing on time, not a shell
+        // dying on its own.
+        var exitReported = false
+        surface.onProcessExit = { exitReported = true }
+        defer { surface.onProcessExit = nil }
+
         XCTAssertFalse(surface.nativeView.performKeyEquivalent(with: controlD))
         surface.nativeView.keyDown(with: controlD)
         XCTAssertTrue(waitUntil(timeout: 8) {
-            surface.processExited
-        }, "processExited=\(surface.processExited)")
+            exitReported
+        }, "the close callback SurfacePool relies on never fired")
     }
 
     @MainActor
