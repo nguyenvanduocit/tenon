@@ -90,7 +90,12 @@ final class GhosttySurfaceSmokeTests: XCTestCase {
         // Ghostty intentionally keeps very short-lived commands on an error
         // surface. Let this real shell pass that threshold so Ctrl-D exercises
         // the normal close callback used by SurfacePool.
-        pumpRunLoop(for: 1)
+        // Three seconds rather than one, to settle whether that threshold is what CI is hitting.
+        // The child measurably lives 1.178 s on the runner and still leaves the surface unclosed
+        // with `process_exited == true`, which is what an error surface looks like — so either the
+        // threshold is larger than a second there, or the close is lost somewhere else and this
+        // extra wait changes nothing. Either outcome removes a hypothesis, which one second cannot.
+        pumpRunLoop(for: 3)
 
         surface.focus()
         let controlD = try XCTUnwrap(NSEvent.keyEvent(
