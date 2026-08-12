@@ -4,6 +4,20 @@ import Foundation
 import TenonCore
 import TenonIntentCore
 
+/// What the kernel says about the process that opened this connection.
+///
+/// The only identity material the control plane has, and deliberately so: the CLI envelope
+/// is closed in both directions and carries no credential field, so a caller cannot type its
+/// way into being someone. `nil` means the socket could not name the peer, and every rule
+/// downstream reads that as "the ordinary CLI user".
+struct CLIRequestOrigin: Equatable, Sendable {
+    let peerProcessID: Int32?
+
+    /// A request whose peer was never named — an in-process caller, or a connection the
+    /// kernel would not answer for.
+    static let unknown = Self(peerProcessID: nil)
+}
+
 /// The local control-plane adapter.
 ///
 /// App activation is the only direct shell effect. Discovery and every domain
@@ -14,8 +28,17 @@ import TenonIntentCore
 enum CLICommandExecutor {
     static func execute(
         _ action: CLIAction,
-        runtime: AppIntentRuntime
+        runtime: AppIntentRuntime,
+        origin: CLIRequestOrigin = .unknown,
+        agentPanes: () async -> [AgentPaneCandidate] = { [] },
+        ancestry: (Int32) -> [Int32] = AgentCallerProvenance.ancestry(ofProcess:)
     ) async -> CLIResult {
+        let caller = await callerPrincipal(
+            origin: origin,
+            runtime: runtime,
+            agentPanes: agentPanes,
+            ancestry: ancestry
+        )
         switch action {
         case .ping:
             return .ok(
@@ -37,7 +60,7 @@ enum CLICommandExecutor {
 
         case .intentList:
             let snapshot = await runtime.discover(
-                as: AppIntentRuntime.cliPrincipal
+                as: caller
             )
             return .ok(
                 .array(snapshot.items.map(discoverySummary))
@@ -45,7 +68,7 @@ enum CLICommandExecutor {
 
         case let .intentDescribe(intentID):
             let snapshot = await runtime.discover(
-                as: AppIntentRuntime.cliPrincipal
+                as: caller
             )
             guard let item = snapshot.items.first(where: {
                 $0.name == intentID
@@ -68,7 +91,7 @@ enum CLICommandExecutor {
             let result = await runtime.send(
                 invocation.intentID,
                 input: invocation.input,
-                as: AppIntentRuntime.cliPrincipal,
+                as: caller,
                 scope: invocation.scope,
                 target: invocation.target,
                 idempotencyKey: invocation.idempotencyKey,
@@ -85,6 +108,37 @@ enum CLICommandExecutor {
 }
 
 extension CLICommandExecutor {
+    /// Who is on the other end of this connection (`AC-FR-037`).
+    ///
+    /// Tenon has two users and, until this function, one identity: every call an agent made
+    /// arrived wearing the human's `cli:local-user`, which left
+    /// `IntentDispatcher.effectiveConfirmation`'s agent hardening testing a condition the
+    /// tree never constructed.
+    ///
+    /// Nothing a caller sends is read here. The chain is entirely made of host observations
+    /// — the kernel's `LOCAL_PEERPID` for the connection, `proc_bsdinfo.pbi_ppid` for the
+    /// walk outward, and the host's own read of which process each pane is running — and
+    /// every link that fails to prove a pane answers with the CLI principal. A process that
+    /// merely *claims* to be an agent gets exactly what it had before.
+    static func callerPrincipal(
+        origin: CLIRequestOrigin,
+        runtime: AppIntentRuntime,
+        agentPanes: () async -> [AgentPaneCandidate],
+        ancestry: (Int32) -> [Int32]
+    ) async -> IntentPrincipal {
+        guard let peer = origin.peerProcessID else {
+            return AppIntentRuntime.cliPrincipal
+        }
+        let candidates = await agentPanes()
+        guard !candidates.isEmpty,
+              let paneID = AgentCallerAdmission.admit(
+                  peerAncestry: ancestry(peer),
+                  candidates: candidates
+              )
+        else { return AppIntentRuntime.cliPrincipal }
+        return await runtime.agentPrincipal(forPane: paneID)
+    }
+
     /// The exact `ping` answer, as a pure value.
     ///
     /// Everything here is a fact about this *process*: which wire it speaks, which pid it

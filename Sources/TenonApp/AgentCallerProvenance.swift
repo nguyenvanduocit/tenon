@@ -50,6 +50,62 @@ enum AgentCallerProvenance {
     /// The caller's ancestry, ready for `AgentCallerAdmission.admit`.
     static func ancestry(ofPeer descriptor: Int32) -> [Int32] {
         guard let peer = peerProcessID(of: descriptor) else { return [] }
-        return AgentCallerAdmission.ancestry(of: peer, parent: parentProcessID(of:))
+        return ancestry(ofProcess: peer)
+    }
+
+    /// The same walk, from a pid the socket already captured.
+    ///
+    /// The peer pid is read once at accept and travels with the request, because the
+    /// descriptor is closed by the time the intent settles — and because a pid read later
+    /// could name a process that replaced the caller.
+    static func ancestry(ofProcess pid: Int32) -> [Int32] {
+        AgentCallerAdmission.ancestry(of: pid, parent: parentProcessID(of:))
+    }
+
+    /// The process group `pid` belongs to, or `pid` itself when the kernel has no answer.
+    ///
+    /// Falling back to the pid rather than to zero keeps a vanished process from colliding
+    /// with a real declared group: `AgentCallerAdmission.candidate` compares this against
+    /// what a hook declared, and a shared sentinel would make unrelated panes agree.
+    static func processGroupID(of pid: UInt64) -> UInt64 {
+        guard let narrowed = Int32(exactly: pid) else { return pid }
+        let group = getpgid(narrowed)
+        return group > 0 ? UInt64(group) : pid
+    }
+}
+
+/// What the host itself can see about which of its panes an agent occupies.
+///
+/// Both halves are host observations and neither is a value a caller supplied: the pane set
+/// comes from the hook binding registry (membership only), and the pid each candidate is
+/// matched on comes from the host's own read of that pane's PTY. The declared process group
+/// is only allowed to *drop* a pane whose declaration disagrees with that read, which is what
+/// keeps a forged hook post unable to hand anyone an identity.
+@MainActor
+enum AgentPaneOccupancyReader {
+    static func candidates(
+        surfaces: SurfacePool,
+        registry: AgentSessionRegistry,
+        processGroupID: (UInt64) -> UInt64 = AgentCallerProvenance.processGroupID(of:)
+    ) async -> [AgentPaneCandidate] {
+        let bound = await registry.boundPanes()
+        guard !bound.isEmpty else { return [] }
+        return bound.compactMap { pane in
+            // `agentTerminalIdentity` is the host's own read and already refuses a surface
+            // that never materialised or whose process exited. The surface token must be the
+            // one the binding was made against, so a pane that was torn down and rebuilt
+            // under the same slot id cannot inherit the old incarnation's agent.
+            guard let identity = surfaces.agentTerminalIdentity(for: pane.paneID),
+                  identity.surfaceToken == pane.surfaceToken
+            else { return nil }
+            return AgentCallerAdmission.candidate(
+                for: AgentPaneOccupancy(
+                    slotID: pane.paneID,
+                    declaredProcessGroupID: pane.processGroupID,
+                    observedForegroundPID: identity.foregroundPID,
+                    observedProcessGroupID: processGroupID(identity.foregroundPID)
+                )
+            )
+        }
     }
 }

@@ -620,7 +620,29 @@ Current EVENT inventory:
   the hook resolves the provider ancestor's process group rather than reporting its own
   short-lived shell group. Same-directory transcript recency is never treated as session
   identity. These facts do not request provider mutation, are not exposed to plugins, and
-  never enter the intent dispatcher;
+  never enter the intent dispatcher.
+
+  **What "never enter the intent dispatcher" permits, decided 2026-08-12 (T-136).** The rule
+  bars the *content* a provider reports — session id, transcript path, tool name, tool input
+  and output, declared process group — from becoming a dispatcher input: an argument, a
+  result, or a grant. It does not bar the host from knowing which of its own panes is
+  occupied. Minting the `.agent` principal (`AC-FR-037`) stays inside the rule, and the two
+  properties that keep it there are structural rather than a promise:
+
+  - **The registry contributes membership, never a value.** `AgentSessionRegistry.boundPanes()`
+    hands the mint a set of pane UUIDs and surface tokens, both host-minted. No `sessionID`,
+    no `transcriptPath`, no `hookEventName`, no activity payload is read on that path.
+  - **The declared process group is a veto, never a source.** The pid the admission rule
+    matches a caller's ancestry against is always the host's own kernel read of its PTY
+    (`SurfacePool.agentTerminalIdentity`), and the hook's declared group is used only to
+    *drop* a candidate whose declaration disagrees with that read. A forged hook can
+    therefore deny a pane an agent identity; it can never confer one, and it can never
+    name a process the host did not independently observe as that pane's foreground.
+
+  Both directions of failure land on the ordinary CLI principal, so the rule can only ever
+  narrow who a caller is. The mint is host code deciding the identity of a host process, not
+  a plugin read and not a provider request, which is why it is inside this boundary rather
+  than against it;
 - `pane.cwd-changed`: a pane's working directory and resolved project root. Published by
   the host after it resolves the root (`ProjectRoot.resolve`), and only when the *root*
   moves — an ordinary `cd` inside one repository updates the pane and notifies nobody, so

@@ -67,24 +67,29 @@ no per-agent scope, and no way to tell two agents apart or tell either from the 
 3. `AC-FR-042` — an agent principal can read a bounded snapshot of its peers: pane, declared status,
    last declared claim. No transcripts.
 
-**Out:** `agent.ask.v1` (T-137, depends on this), any scheduler, queue, task graph or dispatch loop —
+**Out:** `agent.ask.v1` (T-139, depends on this), any scheduler, queue, task graph or dispatch loop —
 Tenon exposes primitives, an AI owns the loop. See the 2026-08-12 decision-log entries.
 
 ## Criteria
 
-- [ ] A call from inside an agent pane arrives with `kind: .agent`, proven by a test that asserts the
-      principal, not by inspection
-- [ ] A caller that self-asserts `agent` without the pane's authenticated identity is refused and stays
+- [x] A call from inside an agent pane arrives with `kind: .agent`, proven by a test that asserts the
+      principal, not by inspection — `AgentPrincipalMintTests.testACallFromInsideAnAgentPaneCarriesTheAgentPrincipal`
+- [x] A caller that self-asserts `agent` without the pane's authenticated identity is refused and stays
       `.cli` — the spoof test at `IntentPolicyTests.swift:707` still passes unchanged
-- [ ] `IntentDispatcher.effectiveConfirmation` is reachable: a test drives an open-class policy intent
+- [x] `IntentDispatcher.effectiveConfirmation` is reachable: a test drives an open-class policy intent
       from a real agent principal and observes `.always`, and it **fails** if the guard is removed
-- [ ] `bypassAllPermissionPrompts` does not silently disarm that guard, or the PRD records why it may
+- [x] `bypassAllPermissionPrompts` does not silently disarm that guard, or the PRD records why it may —
+      **it does disarm it**, recorded in the PRD decision log (2026-08-12) and in the receipt
 - [ ] `PaneActivity` carries a declared `needsHuman` that only an agent can write and that outranks
       `IdleDetector`; inferred state reports itself as inference
 - [ ] A peer snapshot intent returns pane + declared status + last claim, and no transcript content
-- [ ] Contract behaviour asserted in `TenonCoreTests`/`TenonIntentCoreTests` **without a window**
-- [ ] `swift test` green **run while the machine is loaded** (see T-134 — an idle run hides this class)
-- [ ] `docs/prds/agent-control.prd.md` rows moved to `shipped` with a dated receipt
+- [ ] Contract behaviour asserted in `TenonCoreTests`/`TenonIntentCoreTests` **without a window** —
+      partial: the pure admission rule is in `TenonCoreTests/AgentCallerAdmissionTests` (20, no window),
+      and the mint's own tests are headless in `TenonAppStateTests` because minting needs the app's
+      composition root. Reopens with `AC-FR-041`/`AC-FR-042`, whose contracts belong in the core targets.
+- [x] `swift test` green **run while the machine is loaded** — two independent full runs while a peer
+      agent was actively building and editing this tree: `Executed 2051 tests, with 0 failures` both times
+- [x] `docs/prds/agent-control.prd.md` `AC-FR-037` moved to `shipped` with a dated receipt
 
 ## Measurement that changed the design (2026-08-12, session `workflow-T136`)
 
@@ -163,23 +168,70 @@ whether a human had looked at the pane. That is the wrong foundation for a polic
 
 ## Owner / files (agent lock)
 
-**Claimed by session `workflow-T136`** (2026-08-12). Files locked:
+Released 2026-08-12 by session `5d1e7e00` — the mint is wired, green, and mutation-checked;
+nothing is held. Files written this session (all landed green, none left mid-edit):
 
-Released on 2026-08-12 — the session ended without wiring the mint, so nothing is held. Files
-actually written (all landed green; none left mid-edit):
+- `Sources/TenonCore/AgentCallerAdmission.swift` — `AgentPaneOccupancy` + `candidate(for:)`
+- `Sources/TenonApp/AgentCallerProvenance.swift` — `ancestry(ofProcess:)`, `processGroupID(of:)`,
+  `AgentPaneOccupancyReader`
+- `Sources/TenonApp/AgentSessionHooks.swift` — `AgentBoundPane`, `AgentSessionRegistry.boundPanes()`
+- `Sources/TenonApp/CLISocketServer.swift` — `LOCAL_PEERPID` at accept, `onRequest` carries `CLIRequestOrigin`
+- `Sources/TenonApp/CLICommandExecutor.swift` — `CLIRequestOrigin`, `callerPrincipal`, the mint
+- `Sources/TenonApp/AppIntentRuntime.swift` — `agentPrincipal(forPane:)`, `trustedGrants(over:reachesTheNetwork:)`
+- `Sources/TenonApp/TenonApp.swift` — the composition-root wiring (one closure)
+- `Tests/TenonAppStateTests/AgentPrincipalMintTests.swift` (new, 10 tests)
+- `Tests/TenonCoreTests/AgentCallerAdmissionTests.swift` (+6), `Tests/TenonAppStateTests/CLISocketServerTests.swift` (+1)
+- `docs/architecture-interaction-boundaries.md`, `docs/prds/agent-control.{prd.md,feature}`, `Tenon.xcodeproj`
 
-- `Sources/TenonCore/AgentCallerAdmission.swift` (new)
-- `Sources/TenonApp/AgentCallerProvenance.swift` (new)
-- `Tests/TenonCoreTests/AgentCallerAdmissionTests.swift` (new)
-- `Tests/TenonAppStateTests/AgentCallerProvenanceTests.swift` (new)
-- `docs/prds/agent-control.prd.md` (decision log + receipt)
+Untouched and free: `Sources/TenonCore/PaneActivity.swift`, `Sources/TenonCore/CoreIntentCatalog.swift`
+(⚠️ the latter is also in T-133's expected set — check the board before editing).
 
-Untouched, and free for the next session: `AppIntentRuntime.swift`, `CLICommandExecutor.swift`,
-`CLISocketServer.swift`, `TenonApp.swift`, `PaneActivity.swift`, and `CoreIntentCatalog.swift`
-(⚠️ the last is also in T-133's expected set — check the board before editing).
+## Landed 2026-08-12 — the mint is wired
 
-Original expectation: `Sources/TenonApp/AppIntentRuntime.swift`,
-`Sources/TenonApp/CLICommandExecutor.swift`, `Sources/TenonApp/AgentSessionHooks.swift`,
-`Sources/TenonCore/PaneActivity.swift`, `Sources/TenonCore/CoreIntentCatalog.swift`,
-`Sources/TenonIntentCore/IntentDispatcher.swift` (read-mostly), plus tests and the PRD pair.
-⚠️ `CoreIntentCatalog.swift` also appears in T-133's expected set — check the board before editing.
+`AC-FR-037` is `shipped`. `tenon-cli` called from inside an agent's process subtree now
+authorizes as `agent:pane:<uuid>` with `kind: .agent`; every other caller stays
+`cli:local-user`.
+
+**The boundary question was settled before the code**, as required.
+`docs/architecture-interaction-boundaries.md:617-646` now states what "never enter the intent
+dispatcher" permits: the registry contributes **membership only** (pane UUID + surface token,
+both host-minted — no `sessionID`, no `transcriptPath`, no activity payload), and the hook's
+declared process group acts **only as a veto**. The pid identity is matched against is always
+the host's own kernel read of its PTY, so a forged hook post can deny a pane an agent identity
+and can never confer one.
+
+**The chain**: `LOCAL_PEERPID` read on the accept thread before the client sends a byte →
+carried on the request as `CLIRequestOrigin` → `pbi_ppid` walked outward (bound 12) →
+`AgentCallerAdmission.admit` matched nearest-first against candidates built from
+`AgentSessionRegistry.boundPanes()` cross-checked with `SurfacePool.agentTerminalIdentity`.
+
+**The narrowing**: the agent principal's grants are the CLI's with `network: .none` — the
+`network` and `web.view` capabilities are not granted at all, and `shell.open` keeps its
+filesystem scope while losing its network scope. Everything the supervised loop needs
+(`terminal.open/write/wait/scrollback.read`, `filesystem.*`, `workspace.*`, `agent.*`) still
+resolves, so the mint does not break the CLI it replaces.
+
+### Three limits, stated rather than hidden
+
+1. **Identity arrives late.** `AgentSessionRegistry.record` returns early without a
+   session-bearing hook (`AgentSessionHooks.swift:110-112`), so an agent's calls before its
+   first tool call mint `.cli`. Accepted: the window closes at the first tool call, every
+   earlier signal available today is either UI-dependent or unauthenticated, and the failure
+   direction is the status quo.
+2. **`bypassAllPermissionPrompts` still disarms the forced re-ask.** The guard is now
+   *reachable* and recorded in telemetry; it is *not yet a barrier* on a default install,
+   because `PluginUIPrompt.swift:225-231` answers `.always` with `.allowOnce` before a prompt
+   is drawn. Fixing that means defaulting the switch off or making it exclude agent-audience
+   open contracts — neither is in this task's scope, and both are now recorded in the PRD.
+3. **A plugin may declare `[.cli]` without `.agent`.** An agent-minted caller is then denied
+   `audienceCannotInvoke` where the person succeeds. That is the audience system working, but
+   it is a real difference from the identity it replaces. No shipped plugin does this.
+
+## Still open — `AC-FR-041` and `AC-FR-042` were not started
+
+Both sit behind the mint and the mint now exists, so they are unblocked:
+
+- `AC-FR-041` — `PaneActivity` (`Sources/TenonCore/PaneActivity.swift:19-25`) gains a declared
+  `needsHuman` only an agent principal can write, outranking `IdleDetector`; inferred state
+  reports itself as inference.
+- `AC-FR-042` — a bounded peer snapshot: pane, declared status, last claim. No transcript.

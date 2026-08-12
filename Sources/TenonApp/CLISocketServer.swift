@@ -37,7 +37,11 @@ final class CLISocketServer: @unchecked Sendable {
 
     /// Assigned by `TenonApp` once `pool` exists. Invoked on the MAIN thread for each valid request;
     /// the handler must call the provided closure exactly once with the result.
-    var onRequest: ((CLIAction, @escaping (CLIResult) -> Void) -> Void)?
+    ///
+    /// The origin travels with the action because who is calling is decided from the
+    /// connection, never from the request: the CLI envelope has no slot for a credential, and
+    /// adding one would make identity something a caller can type.
+    var onRequest: ((CLIAction, CLIRequestOrigin, @escaping (CLIResult) -> Void) -> Void)?
 
     let role: Role
 
@@ -452,7 +456,7 @@ final class CLISocketServer: @unchecked Sendable {
 
     private func startAcceptThread() {
         let descriptor = listenFD
-        let handler: @Sendable (Int32) -> Void = { [weak self] client in
+        let handler: @Sendable (Int32, CLIRequestOrigin) -> Void = { [weak self] client, origin in
             guard let self else {
                 close(client)
                 return
@@ -476,6 +480,7 @@ final class CLISocketServer: @unchecked Sendable {
             }
             let permit = ConnectionPermit(
                 descriptor: client,
+                origin: origin,
                 slots: self.connectionSlots,
                 registry: self.liveConnections
             )
@@ -503,7 +508,7 @@ final class CLISocketServer: @unchecked Sendable {
 
     private static func acceptLoop(
         descriptor: Int32,
-        handle: @escaping @Sendable (Int32) -> Void
+        handle: @escaping @Sendable (Int32, CLIRequestOrigin) -> Void
     ) {
         while true {
             let client = accept(descriptor, nil, nil)
@@ -511,13 +516,20 @@ final class CLISocketServer: @unchecked Sendable {
                 if errno == EINTR { continue }
                 break
             }
+            // Read here, on the accept thread, before the client has sent a byte: the pid
+            // that identifies a caller must be the one the kernel attached to this
+            // connection, not one read later when the process on the other end may already
+            // have been replaced.
+            let origin = CLIRequestOrigin(
+                peerProcessID: AgentCallerProvenance.peerProcessID(of: client)
+            )
             Self.setCloseOnExec(client)
             var noSigPipe: Int32 = 1
             setsockopt(client, SOL_SOCKET, SO_NOSIGPIPE, &noSigPipe, socklen_t(MemoryLayout<Int32>.size))
             var timeout = timeval(tv_sec: 5, tv_usec: 0)
             setsockopt(client, SOL_SOCKET, SO_RCVTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
             setsockopt(client, SOL_SOCKET, SO_SNDTIMEO, &timeout, socklen_t(MemoryLayout<timeval>.size))
-            handle(client)
+            handle(client, origin)
         }
     }
 
@@ -560,7 +572,7 @@ final class CLISocketServer: @unchecked Sendable {
                         ))
                         return
                     }
-                    handler(action) { result in
+                    handler(action, permit.origin) { result in
                         self.settleOffMain(
                             permit,
                             result.response(id: request.id)
@@ -662,14 +674,23 @@ final class CLISocketServer: @unchecked Sendable {
 /// kernel may already have reissued.
 private final class ConnectionPermit: @unchecked Sendable {
     let descriptor: Int32
+    /// Captured at accept and carried for the life of the request, because the descriptor is
+    /// closed before the intent settles and a pid asked for later could name a replacement.
+    let origin: CLIRequestOrigin
 
     private let slots: DispatchSemaphore
     private weak var registry: LiveConnections?
     private let lock = NSLock()
     private var isSettled = false
 
-    init(descriptor: Int32, slots: DispatchSemaphore, registry: LiveConnections) {
+    init(
+        descriptor: Int32,
+        origin: CLIRequestOrigin,
+        slots: DispatchSemaphore,
+        registry: LiveConnections
+    ) {
         self.descriptor = descriptor
+        self.origin = origin
         self.slots = slots
         self.registry = registry
     }

@@ -58,6 +58,13 @@ struct AgentHookEvent: Equatable, Sendable {
     }
 }
 
+/// One pane an agent occupies, carrying only what the `.agent` principal mint may see.
+struct AgentBoundPane: Equatable, Sendable {
+    let paneID: UUID
+    let surfaceToken: UUID
+    let processGroupID: UInt64?
+}
+
 struct AgentSessionBinding: Equatable, Sendable {
     let provider: AgentProvider
     let sessionID: String
@@ -123,6 +130,30 @@ actor AgentSessionRegistry {
 
     func binding(paneID: UUID, surfaceToken: UUID) -> AgentSessionBinding? {
         bindings[Key(paneID: paneID, surfaceToken: surfaceToken)]
+    }
+
+    /// Which panes an agent has bound, and nothing about what it said.
+    ///
+    /// This is the whole read the `.agent` principal mint takes from the hook channel
+    /// (`AC-FR-037`). Deliberately three fields, all of which the host either minted itself
+    /// or has an independent way to check: the pane, the surface incarnation, and the
+    /// process group the hook declared. No `sessionID`, no `transcriptURL`, no
+    /// `hookEventName` — a caller's identity must not be a function of what a provider wrote
+    /// about its own session, which is what
+    /// `docs/architecture-interaction-boundaries.md:617-645` settles.
+    ///
+    /// Occupancy here lags the agent by design: `record` refuses an event without a
+    /// session-bearing payload, so an agent that has started and not yet run a tool is
+    /// absent and its earliest calls stay `.cli`. The window closes at the first tool call,
+    /// and it fails toward the human's principal rather than away from it.
+    func boundPanes() -> [AgentBoundPane] {
+        bindings.map { key, binding in
+            AgentBoundPane(
+                paneID: key.paneID,
+                surfaceToken: key.surfaceToken,
+                processGroupID: binding.processGroupID
+            )
+        }
     }
 
     func retainOnly(_ paneIDs: Set<UUID>) {

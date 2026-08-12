@@ -34,11 +34,43 @@ final class AppIntentRuntime {
         sessionRevision: 1
     )
 
+    /// Tenon's second user, named by the pane it is running in.
+    ///
+    /// Per pane rather than one process-wide identity, because the product problem is
+    /// telling two agents apart and telling either from the person. `PolicyEngine` keys
+    /// grants by the whole principal, so each of these has to be registered — see
+    /// `agentPrincipal(forPane:)`, which does that once per pane and bounds how many it
+    /// keeps.
+    ///
+    /// It is never constructed from anything a caller said. `IntentPrincipal.audience` is a
+    /// computed consequence of `kind` with no writable field behind it, so the only way to
+    /// hold this identity is for the host to have handed it to you.
+    static func agentPrincipal(forPane paneID: UUID) -> IntentPrincipal {
+        IntentPrincipal(
+            id: "agent:pane:\(paneID.uuidString)",
+            kind: .agent,
+            sessionRevision: 1
+        )
+    }
+
+    /// How many agent panes keep a registered grant set before the oldest is retired.
+    ///
+    /// Panes come and go for the life of the process, and every mint writes into the policy
+    /// engine, so something has to bound it (invariant 10). Eviction costs an evicted pane
+    /// one re-registration on its next call, which is idempotent.
+    static let agentPrincipalCapacity = 64
+
     let kernel: IntentKernelComponents
 
     private let catalog: CoreIntentCatalog
     private let bindings: [IntentProviderBinding]
     private let workspaceStore: WorkspaceStore
+    /// The narrowed grant set every agent pane receives, computed once from the compiled
+    /// catalog alongside the CLI's. Empty until then, which is the one case
+    /// `agentPrincipal(forPane:)` refuses to mint in.
+    private var agentGrants: Set<CapabilityGrant> = []
+    /// Agent panes whose grants are registered, oldest first.
+    private var registeredAgentPanes: [UUID] = []
     private var isStarted = false
     private var startTask: Task<Void, any Error>?
     private var startTaskID: UUID?
@@ -195,6 +227,37 @@ final class AppIntentRuntime {
     }
 
     // MARK: - Dispatch surface  @domain: intent-bus
+
+    /// The principal for one agent pane, with its narrowed grants registered.
+    ///
+    /// Registration is idempotent — `PolicyEngine.replaceGrants` returns without advancing a
+    /// revision when the set is unchanged — so the ordinary path costs one actor hop and
+    /// changes nothing.
+    ///
+    /// Before the catalog is compiled there is no narrowed set to register, and minting then
+    /// would produce a principal authorized for nothing at all. That window answers with the
+    /// CLI principal: it is the identity every agent call already carries today, so the
+    /// failure is the status quo rather than a wider authority than the mint grants.
+    func agentPrincipal(forPane paneID: UUID) async -> IntentPrincipal {
+        guard !agentGrants.isEmpty else { return Self.cliPrincipal }
+        let principal = Self.agentPrincipal(forPane: paneID)
+        guard (try? await kernel.policy.replaceGrants(agentGrants, for: principal)) != nil
+        else {
+            // The grants did not land, so the principal holds none. Handing it back anyway
+            // fails the call closed; handing back the CLI principal would answer a policy
+            // error by widening authority.
+            return principal
+        }
+        registeredAgentPanes.removeAll { $0 == paneID }
+        registeredAgentPanes.append(paneID)
+        while registeredAgentPanes.count > Self.agentPrincipalCapacity {
+            let evicted = registeredAgentPanes.removeFirst()
+            try? await kernel.policy.removePrincipal(
+                Self.agentPrincipal(forPane: evicted)
+            )
+        }
+        return principal
+    }
 
     func discover(
         as caller: IntentPrincipal,
@@ -372,27 +435,55 @@ private extension AppIntentRuntime {
         }
     }
 
-    func configureTrustedPrincipals(
-        _ compiled: CompiledCoreIntentCatalog
-    ) async throws {
+    /// The grants one trusted local principal holds, over the whole compiled catalog.
+    ///
+    /// `reachesTheNetwork` is the axis the agent principal is narrowed on, and it is the
+    /// only difference between the two sets — which is what makes "strictly narrower"
+    /// something a test can check rather than something a comment claims.
+    ///
+    /// Why the network and not something else. The narrowing had to leave the supervised
+    /// loop whole — `terminal.open/write/wait/scrollback.read`, `filesystem.*`,
+    /// `workspace.*` and `agent.*` are how one agent supervises another, and `AC-FR-024`
+    /// forbids silently changing what `tenon.agents.run` can do. The network is where an
+    /// agent loses real authority and loses nothing it needs: its own process already has
+    /// network access, so fetching through Tenon only borrows the human's identity for the
+    /// request, and `url.open.v1` against a remote address stops being a way to drive the
+    /// operator's browser. Pane scope was the other candidate and it fails: narrowing
+    /// `panes` to the agent's own pane would break `terminal.open.v1`, whose whole job is
+    /// to create a pane that is not the caller's.
+    /// Capabilities whose entire subject is a remote address. A caller with no network
+    /// reach does not hold a `.none`-scoped version of these — it does not hold them,
+    /// because a grant that can authorize nothing is dead weight that reads as authority.
+    static let networkOnlyCapabilities: Set<String> = ["network", "web.view"]
+
+    static func trustedGrants(
+        over compiled: CompiledCoreIntentCatalog,
+        reachesTheNetwork: Bool
+    ) -> Set<CapabilityGrant> {
         let capabilities = Set(
             compiled.definitions.flatMap {
                 $0.dispatchRule.capabilityBindings.map(\.capability)
             }
         )
-        let grants = Set(capabilities.map { capability in
+        return Set(capabilities.compactMap { capability in
+            guard reachesTheNetwork
+                || !Self.networkOnlyCapabilities.contains(capability.rawValue)
+            else { return nil }
             let filesystem: FilesystemGrantScope = [
                 "filesystem.read",
                 "filesystem.write",
                 "shell.open",
             ].contains(capability.rawValue) ? .all : .none
-            let network: NetworkGrantScope = [
-                "network",
-                "web.view",
-                // `shell.open` covers addresses as well as paths, so its grant has to
-                // carry a network scope or `url.open.v1` resolves to no authorized host.
-                "shell.open",
-            ].contains(capability.rawValue) ? .all : .none
+            // `shell.open` covers addresses as well as paths, so its grant has to carry a
+            // network scope or `url.open.v1` resolves to no authorized host. It is the one
+            // capability the narrowing splits rather than removes: an agent keeps opening
+            // files and loses driving the operator's browser to a remote address.
+            let network: NetworkGrantScope =
+                reachesTheNetwork && [
+                    "network",
+                    "web.view",
+                    "shell.open",
+                ].contains(capability.rawValue) ? .all : .none
             return CapabilityGrant(
                 capability: capability,
                 scope: CapabilityGrantScope(
@@ -403,6 +494,13 @@ private extension AppIntentRuntime {
                 )
             )
         })
+    }
+
+    func configureTrustedPrincipals(
+        _ compiled: CompiledCoreIntentCatalog
+    ) async throws {
+        let grants = Self.trustedGrants(over: compiled, reachesTheNetwork: true)
+        agentGrants = Self.trustedGrants(over: compiled, reachesTheNetwork: false)
 
         try await kernel.policy.replaceGrants(
             grants,

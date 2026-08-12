@@ -402,7 +402,7 @@ final class CLISocketServerTests: XCTestCase {
         let pending = PendingCompletions()
         let admitted = expectation(description: "every permit is taken")
         admitted.expectedFulfillmentCount = cap
-        server.onRequest = { _, complete in
+        server.onRequest = { _, _, complete in
             pending.store(complete)
             admitted.fulfill()
         }
@@ -446,13 +446,48 @@ final class CLISocketServerTests: XCTestCase {
         // And the channel is usable again, which is what makes the cap backpressure rather
         // than a one-way ratchet.
         let after = expectation(description: "a request is admitted again")
-        server.onRequest = { _, complete in
+        server.onRequest = { _, _, complete in
             complete(.ok(.object([:])))
             after.fulfill()
         }
         let reopened = try connectAndSend(to: path, id: "after")
         wait(for: [after], timeout: 10)
         close(reopened)
+    }
+
+    /// The identity material for `AC-FR-037`, proven at the wire rather than in a unit.
+    ///
+    /// `LOCAL_PEERPID` is read on the accept thread before the client has sent a byte, so
+    /// the pid the mint reasons from is the one the kernel attached to this connection —
+    /// not something the request said, and not a later reading that could name a process
+    /// which replaced the caller. The test client connects from this process, so the pid
+    /// the handler receives has exactly one correct value.
+    func testTheHandlerReceivesTheKernelsPeerProcessIDForTheConnection() throws {
+        let path = try makePath()
+        let server = CLISocketServer(
+            overridingPath: path,
+            admissionGraceForTesting: 0.05,
+            requestLifetimeForTesting: 30
+        )
+        XCTAssertEqual(server.socketPath, path, "precondition: the server must hold the socket")
+
+        let observed = PendingOrigins()
+        let admitted = expectation(description: "the request reaches the handler")
+        server.onRequest = { _, origin, complete in
+            observed.store(origin)
+            complete(.ok(.object([:])))
+            admitted.fulfill()
+        }
+
+        let client = try connectAndSend(to: path, id: "peer")
+        wait(for: [admitted], timeout: 10)
+        close(client)
+
+        XCTAssertEqual(
+            observed.value?.peerProcessID,
+            ProcessInfo.processInfo.processIdentifier,
+            "the connection did not carry the kernel's answer for its peer"
+        )
     }
 
     /// A handler that never answers must not retire a permit for the life of the process.
@@ -467,7 +502,7 @@ final class CLISocketServerTests: XCTestCase {
 
         let abandoned = PendingCompletions()
         let admitted = expectation(description: "the request reaches the handler")
-        server.onRequest = { _, complete in
+        server.onRequest = { _, _, complete in
             abandoned.store(complete)
             admitted.fulfill()
         }
@@ -633,9 +668,27 @@ final class CLISocketServerTests: XCTestCase {
     }
 }
 
+/// Carries a value out of a `@Sendable` handler that runs on the socket's own queue.
+private final class PendingOrigins: @unchecked Sendable {
+    private let lock = NSLock()
+    private var stored: CLIRequestOrigin?
+
+    var value: CLIRequestOrigin? {
+        lock.lock()
+        defer { lock.unlock() }
+        return stored
+    }
+
+    func store(_ origin: CLIRequestOrigin) {
+        lock.lock()
+        stored = origin
+        lock.unlock()
+    }
+}
+
 /// Holds the completions a test handler was given, so a request can be left deliberately
 /// unanswered — the state the permit has to survive.
-private final class PendingCompletions: @unchecked Sendable {
+final class PendingCompletions: @unchecked Sendable {
     private let lock = NSLock()
     private var completions: [(CLIResult) -> Void] = []
 

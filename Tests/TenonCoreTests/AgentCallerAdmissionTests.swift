@@ -176,4 +176,89 @@ final class AgentCallerAdmissionTests: XCTestCase {
             paneB
         )
     }
+
+    // MARK: - Occupancy: turning what the host sees into a candidate
+
+    private func occupancy(
+        declared: UInt64?,
+        foreground: UInt64?,
+        group: UInt64?
+    ) -> AgentPaneOccupancy {
+        AgentPaneOccupancy(
+            slotID: paneA,
+            declaredProcessGroupID: declared,
+            observedForegroundPID: foreground,
+            observedProcessGroupID: group
+        )
+    }
+
+    /// The measured shape: `claude` leads its own process group, so the hook's declared
+    /// group and the host's reading of its PTY name the same number.
+    func testAnAgreedProcessGroupYieldsTheHostsOwnForegroundPID() {
+        XCTAssertEqual(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: 18_432, foreground: 18_432, group: 18_432)
+            ),
+            AgentPaneCandidate(slotID: paneA, agentPID: 18_432)
+        )
+    }
+
+    /// The agent need not lead the group it runs in. What identity is matched on is the
+    /// host's own foreground read either way, never the declared group.
+    func testTheCandidatePIDIsTheObservedForegroundNotTheDeclaredGroup() {
+        XCTAssertEqual(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: 900, foreground: 950, group: 900)
+            ),
+            AgentPaneCandidate(slotID: paneA, agentPID: 950)
+        )
+    }
+
+    /// The guard that carries ordinary use: the agent exited, its binding outlived it, and
+    /// the human got their shell prompt back. The host now reads a different group than the
+    /// hook declared, so the pane identifies nobody and the caller stays `.cli`.
+    func testADeadAgentsBindingCannotIdentifyThePanesNewForegroundProcess() {
+        XCTAssertNil(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: 18_432, foreground: 40_100, group: 40_100)
+            )
+        )
+    }
+
+    /// A binding with no declared group was written by no hook of ours — the ingress
+    /// refuses a non-positive group before an event exists — so there is nothing to
+    /// cross-check and it is refused rather than trusted.
+    func testAnUndeclaredProcessGroupIdentifiesNothing() {
+        XCTAssertNil(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: nil, foreground: 18_432, group: 18_432)
+            )
+        )
+    }
+
+    /// A pane whose surface never materialised, or whose process is gone, has no foreground
+    /// process for a caller to descend from.
+    func testAPaneWithNoObservedForegroundIdentifiesNothing() {
+        XCTAssertNil(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: 18_432, foreground: nil, group: nil)
+            )
+        )
+        XCTAssertNil(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: 1, foreground: 1, group: 1)
+            )
+        )
+    }
+
+    /// Ancestry is `Int32` because `proc_bsdinfo` answers in it. A foreground pid that does
+    /// not survive the conversion is refused rather than truncated into another process.
+    func testAForegroundPIDThatNoInt32CanHoldIsRefused() {
+        let tooLarge = UInt64(Int32.max) + 1
+        XCTAssertNil(
+            AgentCallerAdmission.candidate(
+                for: occupancy(declared: tooLarge, foreground: tooLarge, group: tooLarge)
+            )
+        )
+    }
 }

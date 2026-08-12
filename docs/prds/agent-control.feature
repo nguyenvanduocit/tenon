@@ -402,3 +402,40 @@ Feature: Control and coordinate live coding agents through one bounded semantic 
         | the task board                    |
         | the agent session list            |
         | the built-in launcher             |
+
+  Rule: An agent is a caller in its own right, named by the pane it runs in
+
+    @req-ac-fr-037 @mint
+    Scenario: A call from inside an agent's pane carries the agent's own identity
+      Given a pane whose agent has bound itself through its provider's lifecycle hook
+      And that agent is still the pane's foreground process
+      When a process inside that agent's own subtree calls Tenon's control socket
+      Then the call is authorized as an agent principal named after that pane
+      And two agents in two panes are two different principals
+
+    @req-ac-fr-037 @no-self-assertion
+    Scenario Outline: Nothing a caller can say makes it an agent
+      Given a pane whose agent has bound itself through its provider's lifecycle hook
+      When a caller that <origin> calls Tenon's control socket
+      Then the call is authorized as the ordinary local CLI user
+
+      Examples:
+        | origin                                                          |
+        | is not inside any agent's process subtree                       |
+        | the kernel will not name a process for                          |
+        | is inside a pane the host sees no agent occupying               |
+        | descends from an agent that has since exited its pane           |
+
+    @req-ac-fr-037 @narrower
+    Scenario: The agent's identity carries less authority than the person's
+      Given a pane running an agent that has been minted a principal
+      Then everything that principal can invoke, the person can invoke too
+      And it cannot fetch a remote address through Tenon
+      And it can still open a pane, write to it, wait on it and read its scrollback
+
+    @req-ac-fr-037 @confirmation
+    Scenario: An open-class permission is re-asked when an agent is the caller
+      Given a contract whose payload decides what it does and whose confirmation is by policy
+      When a minted agent principal invokes it
+      Then the confirmation required is always, not the caller's standing consent
+      And the same contract invoked by the person keeps their standing consent

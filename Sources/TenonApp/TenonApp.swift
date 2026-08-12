@@ -699,12 +699,27 @@ final class AppComposition {
             }
         }
 
-        prepared.cliServer.onRequest = { action, respond in
+        let agentSessionRegistry = prepared.agentSessionRegistry
+        prepared.cliServer.onRequest = {
+            [weak terminalSurfaces] action, origin, respond in
             Task { @MainActor in
                 respond(
                     await CLICommandExecutor.execute(
                         action,
-                        runtime: intentRuntime
+                        runtime: intentRuntime,
+                        origin: origin,
+                        // Read per request rather than cached: which pane is running an
+                        // agent changes without asking anyone, and an identity decided from
+                        // a stale reading is an identity decided from a pane that has
+                        // already moved on. No surfaces means no pane can be proven, which
+                        // is the ordinary CLI principal.
+                        agentPanes: {
+                            guard let terminalSurfaces else { return [] }
+                            return await AgentPaneOccupancyReader.candidates(
+                                surfaces: terminalSurfaces,
+                                registry: agentSessionRegistry
+                            )
+                        }
                     )
                 )
             }

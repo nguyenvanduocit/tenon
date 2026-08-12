@@ -18,6 +18,41 @@ public struct AgentPaneCandidate: Equatable, Sendable {
     }
 }
 
+/// One pane an agent's provider hook has bound, as the host sees it from both sides.
+///
+/// Two independent observations of the same pane, which is the whole point of the type:
+///
+/// - **declared** — the process group the hook reported for the provider ancestor it walked
+///   to (`X-Tenon-Process-Group`). It is written by the client, and `AgentSessionRegistry`
+///   stores it without running `AgentHookAdmission.admits` — that check lives only on the
+///   live-ingestion path. So it is a claim, and it is treated as one.
+/// - **observed** — the pane's foreground process and that process's group, read by the host
+///   from its own PTY (`SurfacePool.agentTerminalIdentity`, `getpgid`).
+///
+/// `candidate(for:)` matches identity against the **observed** pid only, and lets the
+/// declared group do exactly one job: veto a pane whose declaration disagrees. That keeps a
+/// forged hook post unable to confer an identity — it can only take one away — and it is why
+/// reading this registry does not put a provider-reported value into the dispatcher
+/// (`docs/architecture-interaction-boundaries.md:617-645`).
+public struct AgentPaneOccupancy: Equatable, Sendable {
+    public let slotID: UUID
+    public let declaredProcessGroupID: UInt64?
+    public let observedForegroundPID: UInt64?
+    public let observedProcessGroupID: UInt64?
+
+    public init(
+        slotID: UUID,
+        declaredProcessGroupID: UInt64?,
+        observedForegroundPID: UInt64?,
+        observedProcessGroupID: UInt64?
+    ) {
+        self.slotID = slotID
+        self.declaredProcessGroupID = declaredProcessGroupID
+        self.observedForegroundPID = observedForegroundPID
+        self.observedProcessGroupID = observedProcessGroupID
+    }
+}
+
 /// Which pane a caller is *proven* to be inside, from the kernel's answer rather than the
 /// caller's claim.
 ///
@@ -58,6 +93,33 @@ public enum AgentCallerAdmission {
     /// recognise put the agent within a few generations of its tool subprocess. Measured
     /// 2026-08-12, `claude` is the *immediate* parent of the shell it runs tool commands in.
     public static let maximumAncestryDepth = 12
+
+    /// The pane an occupancy can identify, or nothing.
+    ///
+    /// Every refusal here is a pane that keeps the ordinary CLI principal, so read the guards
+    /// as the four ways an agent identity is *not* established:
+    ///
+    /// - **no observed foreground** — the surface never materialised, or its process exited.
+    ///   There is nothing for a caller to descend from.
+    /// - **an undeclared group** — a binding that never carried one is a binding no hook of
+    ///   ours wrote (the ingress refuses `processGroupID <= 0` before an event is built), so
+    ///   it has nothing to cross-check and is refused rather than trusted.
+    /// - **a disagreement** — the hook declared one process group and the host reads another.
+    ///   This is the guard that matters in ordinary use: a binding outlives the agent that
+    ///   made it until its pane closes, so without this check a human typing at the shell
+    ///   prompt they got back would descend from *that* pane's foreground process and mint an
+    ///   agent identity out of a dead agent's binding.
+    /// - **a pid no `Int32` can hold** — ancestry is `Int32` because that is what
+    ///   `proc_bsdinfo` answers in; a value that does not survive the conversion is refused
+    ///   rather than truncated into some other process's identity.
+    public static func candidate(for occupancy: AgentPaneOccupancy) -> AgentPaneCandidate? {
+        guard let observed = occupancy.observedForegroundPID, observed > 1 else { return nil }
+        guard let declared = occupancy.declaredProcessGroupID,
+              declared == occupancy.observedProcessGroupID
+        else { return nil }
+        guard let pid = Int32(exactly: observed) else { return nil }
+        return AgentPaneCandidate(slotID: occupancy.slotID, agentPID: pid)
+    }
 
     /// The caller's own pid first, then each parent outward, as far as the bound allows.
     ///
