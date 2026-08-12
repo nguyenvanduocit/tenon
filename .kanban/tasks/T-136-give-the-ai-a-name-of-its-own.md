@@ -128,8 +128,36 @@ strictly narrower than `cliPrincipal`'s (skipping this makes every agent call fa
 (`Sources/TenonApp/AgentLensSession.swift:857-886`) is populated lazily by `model(for:)` when
 a pane's Agent Lens is opened, so minting from it would make a caller's *identity* depend on
 whether a human had looked at the pane. That is the wrong foundation for a policy input.
-Either `SurfacePool`'s foreground pid gets classified independently of Agent Lens, or agent
-occupancy becomes host-owned state Agent Lens reads rather than owns.
+
+### A candidate answer, found 2026-08-12 — the hook registry already is that state
+
+`AgentSessionHooks`'s binding registry is host-owned occupancy and nobody proposed it:
+
+- `record(_:)` (`Sources/TenonApp/AgentSessionHooks.swift:109`) is driven by **the agent's own
+  hook POST**, not by anything a human does.
+- Its key is `Key(paneID:surfaceToken:)` (`:113`) — exactly the authenticated pair the mint needs,
+  and the surface token is per-pane-materialization, exported only into that PTY.
+- `binding(paneID:surfaceToken:)` (`:124`) answers "is an agent bound to this pane" directly.
+- `retainOnly(_:)` (`:128`) bounds the lifetime to live panes.
+- The file already classifies it, at `:26`: "the registry below is **host-private DIRECT state**".
+
+**Two things to settle before using it, and neither is a detail.**
+
+1. **Occupancy lags the agent.** `record` returns early unless the event carries a non-empty
+   `sessionID` and a resolvable transcript path (`:110-112`). An agent that has started but not yet
+   emitted a session-bearing hook is not in the registry, so its first calls would mint `.cli`. Is
+   an identity that arrives late acceptable, or does occupancy need a second, earlier signal?
+2. **The boundary doc may forbid exactly this.** `docs/architecture-interaction-boundaries.md:617-623`
+   classifies these as "host-private agent lifecycle facts reported by Codex and Claude provider
+   hooks" and says they "are not exposed to plugins, and **never enter the intent dispatcher**" — and
+   a principal is an input to the dispatcher. Minting is host code rather than a plugin read, so this
+   is plausibly inside the rule rather than against it; but it is close enough that the answer belongs
+   in the boundary document and the PRD decision log **before** the code, not after.
+
+   Corroboration for the mechanism, from the same passage: `:620` records that the hook already
+   "resolves the provider ancestor's process group rather than reporting its own identity". Process
+   ancestry is therefore not a new idea being smuggled in for the mint — it is the identity rule this
+   boundary already uses, which is a point in favour of `AgentCallerAdmission` reading the way it does.
 
 `AC-FR-041` and `AC-FR-042` were not started; both sit behind the mint.
 
