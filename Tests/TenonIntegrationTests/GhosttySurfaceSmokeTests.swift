@@ -123,9 +123,16 @@ final class GhosttySurfaceSmokeTests: XCTestCase {
 
         XCTAssertFalse(surface.nativeView.performKeyEquivalent(with: controlD))
         surface.nativeView.keyDown(with: controlD)
-        XCTAssertTrue(waitUntil(timeout: 8) {
-            exitReported
-        }, "the close callback SurfacePool relies on never fired")
+        let reported = waitUntil(timeout: 8) { exitReported }
+        // `processExited` is the C-level fact; `exitReported` is the callback SurfacePool depends
+        // on. Printing both separates "the child never exited" from "it exited and the close
+        // callback never reached the host" — and reading it is safe now precisely because the
+        // callback did not fire, so nothing has torn the surface down underneath the query.
+        XCTAssertTrue(
+            reported,
+            "the close callback SurfacePool relies on never fired; "
+                + "ghostty_surface_process_exited=\(surface.processExited)"
+        )
     }
 
     @MainActor
