@@ -1130,7 +1130,7 @@ private extension PluginRuntimeConcurrencyTests {
         uses: [IntentID] = [],
         provides: [IntentID] = [],
         callbackCapacity: Int? = nil,
-        processRun: @escaping @Sendable (Process) throws -> Void = {
+        processRun: @escaping @Sendable (PluginStreamProcess) throws -> Void = {
             try $0.run()
         },
         watcherStart: @escaping @Sendable (PathWatcher) -> Bool = {

@@ -93,6 +93,10 @@ enum AgentTimelineProgress: Equatable, Sendable {
     case launching
     /// The CLI opened its session and is working on the digest.
     case connected
+    /// The request is with the API and no part of the reply has come back. Nothing is being read
+    /// here and the wait has no stated length, which is the one state a person is likely to watch
+    /// for minutes.
+    case waiting
     /// The reply is arriving.
     case writing(characters: Int)
     /// The API pushed back and the CLI is waiting out its own backoff before trying again.
@@ -102,6 +106,7 @@ enum AgentTimelineProgress: Equatable, Sendable {
         switch self {
         case .launching: "Starting the agent CLI"
         case .connected: "Reading the session"
+        case .waiting: "Waiting for the model to start"
         case .writing(let characters): "Writing the reading — \(characters) characters"
         case .retrying(let attempt): "The API is busy — retrying (attempt \(attempt))"
         }
@@ -313,6 +318,50 @@ final class AgentRunActivity: @unchecked Sendable {
         lock.withLock { last = Date() }
     }
 
+    /// The whole watchdog rule, as one question asked of what the run has said about itself.
+    ///
+    /// A method here rather than a closure inside `run(…)` because this is the rule the feature
+    /// turns on, and a rule that lives in a `DispatchSource` handler can only be asserted by a
+    /// child process that goes quiet on demand — which is exactly the seam T-111 recorded as
+    /// missing. `silenceBudget` is nil for a provider whose quiet says nothing about it, and the
+    /// ceiling outranks every account, so an explained silence can still not hold a pipe forever.
+    func expiry(
+        silenceBudget: Int?,
+        ceilingSeconds: Int
+    ) -> AgentCLITimelineSynthesizer.ProcessStopReason? {
+        if elapsed >= Double(ceilingSeconds) { return .ceiling }
+        guard let silenceBudget, !silenceIsExplained, silence >= Double(silenceBudget) else {
+            return nil
+        }
+        return .silence
+    }
+
+    /// Records that the request is with the API and no part of the reply has come back.
+    ///
+    /// Excused without a deadline, because nothing on the wire states one and the host declines to
+    /// invent it. That is the same answer `silenceSeconds(for: .codex)` already gives to the same
+    /// question: where the CLI publishes no heartbeat, silence is not evidence, and the absolute
+    /// ceiling is the only honest bound. Measured 2026-08-12 against CLI 2.1.228, this stretch is
+    /// the only one in a healthy run with no frame in it at all.
+    func awaitsReply() {
+        lock.withLock {
+            explainedUntil = .distantFuture
+            last = Date()
+        }
+    }
+
+    /// Records that the reply started arriving, which is where the CLI's own heartbeat begins.
+    ///
+    /// It revokes the excuse rather than merely noting the time: from here the run emits a frame
+    /// every ~1.4 s, so unexplained quiet is evidence again and the silence deadline is the tight,
+    /// measured bound it was written to be.
+    func replyStarted() {
+        lock.withLock {
+            explainedUntil = nil
+            last = Date()
+        }
+    }
+
     /// Records that the run named its own reason for going quiet, and how long it said that
     /// reason would last.
     ///
@@ -342,6 +391,11 @@ enum AgentCLIStreamReading: Equatable, Sendable {
     case ignored
     /// The CLI announced its session, so the run is past process startup.
     case connected
+    /// The CLI handed the request to the API. Everything from here until the reply starts is quiet
+    /// the CLI has no heartbeat for, and no frame on the wire says how long it will last.
+    case requesting
+    /// The model began answering. The CLI heartbeats from here, so quiet means something again.
+    case replying
     /// A piece of the reply arrived.
     case wrote(String)
     /// The CLI hit a retryable API error and announced that it is backing off before the next
@@ -353,7 +407,8 @@ enum AgentCLIStreamReading: Equatable, Sendable {
 
     static func == (lhs: Self, rhs: Self) -> Bool {
         switch (lhs, rhs) {
-        case (.ignored, .ignored), (.connected, .connected):
+        case (.ignored, .ignored), (.connected, .connected), (.requesting, .requesting),
+             (.replying, .replying):
             true
         case let (.wrote(left), .wrote(right)):
             left == right
@@ -436,9 +491,21 @@ enum AgentCLIStreamReader {
                 delay: milliseconds.map { $0 / 1000 }
             )
 
+        case "system" where record["subtype"] as? String == "status":
+            // Recorded from the installed 2.1.228: `{"type":"system","subtype":"status",
+            // "status":"requesting",…}`, emitted the moment the request leaves for the API. Only
+            // this status accounts for quiet — a future one means something else, and an excuse
+            // for arbitrary silence is not a thing to hand out on a name we have not read.
+            guard record["status"] as? String == "requesting" else { return .ignored }
+            return .requesting
+
         case "stream_event":
-            guard let event = record["event"] as? [String: Any],
-                  event["type"] as? String == "content_block_delta",
+            guard let event = record["event"] as? [String: Any] else { return .ignored }
+            // The first frame of the reply, and the point the CLI starts heartbeating: from here
+            // it emits `system/thinking_tokens` roughly every 1.4 s even while the model is only
+            // thinking, so the run stops being unobservable.
+            if event["type"] as? String == "message_start" { return .replying }
+            guard event["type"] as? String == "content_block_delta",
                   let delta = event["delta"] as? [String: Any],
                   delta["type"] as? String == "text_delta",
                   let text = delta["text"] as? String
@@ -473,11 +540,17 @@ enum AgentCLIStreamReader {
 /// instructions and directory context, making the reading depend on where the pane happens to
 /// be. One turn, no interactive input, output bounded and the process killed at the deadline.
 struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
-    /// How long a run may say nothing at all before the host stops waiting on it.
+    /// How long a run whose reply is arriving may say nothing before the host stops waiting on it.
     ///
     /// Silence rather than duration, because the stream makes liveness observable: a reading
     /// that is still writing is working, however long it takes, and one that has gone quiet is
     /// the only kind worth killing.
+    ///
+    /// It bounds the streaming phase only, and it is generous for it: measured 2026-08-12 against
+    /// CLI 2.1.228, a 97 KB reading emitted 192 frames over 126.9 s with a largest gap of **2.62 s**,
+    /// because the CLI heartbeats through even a purely thinking stretch. The quiet *before* the
+    /// reply starts has no such frame in it and is accounted for instead — see
+    /// `AgentRunActivity.awaitsReply()`.
     static let silenceSeconds = 45
     /// The backstop for a run that keeps talking and never finishes.
     static let ceilingSeconds = 600
@@ -640,13 +713,11 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         let watchdog = DispatchSource.makeTimerSource(queue: .global())
         watchdog.schedule(deadline: .now() + .seconds(1), repeating: .seconds(1))
         watchdog.setEventHandler {
-            if activity.elapsed >= Double(ceilingSeconds) {
-                handle.expire(.ceiling)
-            } else if let silence,
-                      !activity.silenceIsExplained,
-                      activity.silence >= Double(silence)
-            {
-                handle.expire(.silence)
+            if let reason = activity.expiry(
+                silenceBudget: silence,
+                ceilingSeconds: ceilingSeconds
+            ) {
+                handle.expire(reason)
             }
         }
         watchdog.resume()
@@ -667,8 +738,13 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
                     pending.removeFirst(length + 1)
                     guard !line.isEmpty else { continue }
                     let event = AgentCLIStreamReader.read(line: line, provider: provider)
-                    if case .retrying(_, let delay) = event {
-                        activity.explain(forSeconds: delay)
+                    // Which phase the run is in decides whether its quiet means anything, so the
+                    // deadline is told before the pane is.
+                    switch event {
+                    case .requesting: activity.awaitsReply()
+                    case .replying: activity.replyStarted()
+                    case .retrying(_, let delay): activity.explain(forSeconds: delay)
+                    case .ignored, .connected, .wrote, .finished: break
                     }
                     if let update = reading.consume(event) {
                         progress(update)
@@ -744,6 +820,14 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
                 case .ignored:
                     return nil
                 case .connected:
+                    return .connected
+                case .requesting:
+                    return .waiting
+                case .replying:
+                    // The model has started, so "waiting for it to start" has stopped being true —
+                    // but a character count is not true yet either, because it may think for a
+                    // long time before writing a word. Measured 2026-08-12: 11752 thinking tokens
+                    // and 126 s before the first one.
                     return .connected
                 case .wrote(let text):
                     characters += text.count

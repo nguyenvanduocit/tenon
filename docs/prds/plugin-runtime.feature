@@ -473,12 +473,33 @@ Feature: Run declared plugins with bounded authority and generation-owned lifeti
       And the Tenon host process and other plugin principals remain isolated
       And only then may the product describe the plugin as sandboxed
 
-    @req-prt-fr-042 @pending @process-tree
+    @req-prt-fr-047 @resource-ownership
+    Scenario: A resource declared to belong to a view instance dies with it
+      Given a plugin starts a repeating timer declaring the open instance as its owner
+      And the plugin registers no close handler of its own
+      When that view instance closes because its pane left the workspace catalog
+      Then the host retires the timer without the plugin's co-operation
+      And a second instance's resources keep running
+
+    @req-prt-fr-047 @resource-ownership
+    Scenario: A resource that declares no owner keeps the lifetime it always had
+      Given a plugin starts a repeating timer without declaring an owner
+      When a view instance of that plugin closes
+      Then the timer keeps running until its generation retires
+
+    @req-prt-fr-042 @process-tree
     Scenario: Cancelling a streaming command terminates all descendants
       Given a process stream launches a command that forks descendants
       When the stream is cancelled, overflows, or its generation retires
       Then the owned POSIX process group receives termination
       And no leader or descendant survives after the bounded escalation period
+
+    @req-prt-fr-042 @process-tree
+    Scenario: A command that leaves the group is out of reach and said to be
+      Given a streamed command calls setsid or daemonizes into launchd
+      When the stream is cancelled
+      Then the escaped process survives, because no unprivileged macOS app can follow it
+      And the plugin author guide states that limit rather than implying containment
 
     @req-prt-fr-043 @req-prt-nfr-001 @superseded
     Scenario: Removed finite helper APIs cannot return through compatibility work

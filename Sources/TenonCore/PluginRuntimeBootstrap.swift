@@ -309,19 +309,29 @@ enum PluginRuntimeBootstrap {
         }
       });
 
+      // T-140: which view instance a resource belongs to, when the plugin says so. Anything
+      // else — absent, empty, not a string — means the resource belongs to the plugin
+      // generation, which is what every resource meant before this field existed.
+      const ownerOf = (options) => {
+        const source = options && typeof options === "object" ? options : {};
+        return typeof source.ownedBy === "string" && source.ownedBy.length > 0
+          ? source.ownedBy
+          : null;
+      };
+
       const timers = Object.freeze({
-        after(milliseconds, handler) {
-          return scheduleTimer(milliseconds, false, handler, "tenon.timers.after");
+        after(milliseconds, handler, options = {}) {
+          return scheduleTimer(milliseconds, false, handler, options, "tenon.timers.after");
         },
-        every(milliseconds, handler) {
-          return scheduleTimer(milliseconds, true, handler, "tenon.timers.every");
+        every(milliseconds, handler, options = {}) {
+          return scheduleTimer(milliseconds, true, handler, options, "tenon.timers.every");
         },
         cancel(handle) {
           timerHandlers.delete(handle);
           post("timer.cancel", { handle });
         }
       });
-      const scheduleTimer = (milliseconds, repeats, handler, api) => {
+      const scheduleTimer = (milliseconds, repeats, handler, options, api) => {
         requireFunction(handler, api);
         if (typeof milliseconds !== "number"
             || !Number.isFinite(milliseconds)
@@ -333,7 +343,7 @@ enum PluginRuntimeBootstrap {
         }
         const handle = nextTimerHandle++;
         timerHandlers.set(handle, { handler, repeats });
-        post("timer.start", { handle, milliseconds, repeats });
+        post("timer.start", { handle, milliseconds, repeats, ownedBy: ownerOf(options) });
         return handle;
       };
 
@@ -363,7 +373,8 @@ enum PluginRuntimeBootstrap {
             executable,
             arguments: argumentsValue,
             cwd: typeof source.cwd === "string" ? source.cwd : null,
-            environment
+            environment,
+            ownedBy: ownerOf(source)
           });
           return Object.freeze({
             handle,
@@ -388,7 +399,8 @@ enum PluginRuntimeBootstrap {
           post("watch.start", {
             handle,
             path,
-            recursive: options && options.recursive === true
+            recursive: options && options.recursive === true,
+            ownedBy: ownerOf(options)
           });
           return Object.freeze({
             handle,

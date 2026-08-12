@@ -21,7 +21,9 @@ final class PaneActivityTests: XCTestCase {
         finishes: Int = 0
     ) -> PaneActivity.Observation {
         PaneActivity.Observation(
-            text: text,
+            // These tests say what is on screen, which is what makes them readable; the machine
+            // only ever compares samples, so the fingerprint of that text is the same fact.
+            screen: text.hashValue,
             processExited: exited,
             commandFinishedCount: finishes
         )

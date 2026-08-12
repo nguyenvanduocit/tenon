@@ -258,6 +258,20 @@ Feature: Supervise agent sessions through bounded checkable evidence
       And the quiet that follows the announcement does not expire the run
       But a run that never speaks again is still stopped at the ceiling
 
+    @req-al-fr-049 @req-al-fr-038 @timeline
+    Scenario: The wait before the model answers is not read as a hang
+      Given a reading has handed its request to the API and the reply has not started
+      When the agent CLI publishes no frame at all for longer than the silence bound
+      Then the run is not stopped for silence, because nothing it emits could have said otherwise
+      And the pane says it is waiting for the model rather than claiming to be reading
+      But a run that never answers at all is still stopped at the ceiling
+
+    @req-al-fr-049 @req-al-fr-038 @timeline
+    Scenario: Once the reply is arriving the deadline is in charge again
+      Given a reading has received the first frame of its reply
+      When it then goes quiet for the silence bound with nothing accounting for it
+      Then the run is stopped and reports the silence
+
     @req-al-fr-040 @req-al-fr-030 @timeline
     Scenario: A reading keeps the options it was started with
       Given the reader, model, span and lens have been chosen on the invitation

@@ -293,6 +293,7 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-FR-020` | The sidebar footer **MUST** contain exactly Help, Feedback, and Settings in one 34-point row of 28-point controls; Help/Feedback destinations **MUST** remain unchanged, and version/build **MUST** move to Settings About instead of the primary sidebar hierarchy. | must | shipped | `@req-ws-fr-020` |
 | `WS-FR-021` | Sidebar visibility and width **MUST** initialize from and write through app preferences as their single owner; catalog restoration **MUST NOT** overwrite them. | must | shipped | `@req-ws-fr-021` |
 | `WS-FR-022` | The bundled permission-free Workspace Status plugin **MAY** consume `workspace.changed` structural facts and show tab/slot counts, but **MUST NOT** receive pane contents through that event. | should | shipped | `@req-ws-fr-022` |
+| `WS-FR-025` | Folders dropped on the sidebar **MUST** each reach the same outcome as Add Workspace — a workspace opened at that folder under its derived name and recorded in recent history — except that a folder an open workspace is already rooted at **MUST** be selected rather than opened a second time; the drop **MUST** preserve the order the folders arrived in, leave the last one active, collapse repeats of one canonical folder within a single drop, and offer the sidebar as a target for `public.folder` alone, so a dropped file neither highlights the sidebar nor opens its parent folder. | must | shipped | `@req-ws-fr-025` |
 
 ### Non-functional requirements
 
@@ -318,6 +319,7 @@ XCTest and implementation names remain in the delivery matrix.
 |---|---|---|
 | WS-FR-001…003, WS-NFR-006 | one shell and valid catalog | scene/source fitness, core construction tests, native window tests |
 | WS-FR-004…009, WS-NFR-002, 005 | workspace/sidebar/tab navigation | pure catalog/store tests, hosted shell, XCUITest |
+| WS-FR-025 | opening a workspace by dropping its folder | pure drop-plan and store tests in `TenonCoreTests` |
 | WS-FR-010…014, WS-NFR-001, 003, 008, 009 | persistence and relaunch | DTO/store fault tests and composition-root relaunch |
 | WS-FR-015…017, WS-NFR-005, 006 | workspace identity | core identity, hosted form, snapshots, accessibility projections |
 | WS-FR-018…019, WS-NFR-004 | scoped recent content | two-workspace store and hosted launcher tests |
@@ -414,6 +416,7 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | WS-FR-018…019 | shipped | `RecentStore`, event-derived attribution, explicit `workspaceID` threading | `RecentStoreTests`, `WorkspaceRecentLauncherTests` | SwiftUI invalidation timing is structurally covered, not separately instrumented |
 | WS-FR-020 | shipped | `SidebarFooter`, `AppVersion`, Settings About | `SidebarFooterTests`, sidebar snapshots | Settings About placement lacks a window screenshot |
 | WS-FR-022, WS-NFR-004, 007 | shipped | `plugins/workspace-status`, workspace event projection | `ShippedPluginsTests`, interaction/direct inventory fitness | payload privacy remains source-contract tested, not telemetry monitored |
+| WS-FR-025 | shipped | [`WorkspaceFolderDrop.swift`](../../Sources/TenonCore/WorkspaceFolderDrop.swift), `WorkspaceStore.openDroppedFolders`, `WorkspaceFolderDropZone` in `WorkspaceSidebarView` | `WorkspaceFolderDropTests` (9 assertions, three mutations killed) | the highlight and the pointer's refusal over a file are AppKit's answer to the declared `public.folder` type, human-observed rather than photographed — no offscreen route mounts a drag |
 | WS-FR-023…024 | shipped | `WorkspaceTint`, `WorkspaceMark`, identity form Automatic swatch | `WorkspaceTintTests`, `WorkspaceIdentityFormTests`, sidebar snapshots at both bounds | a pure path→colour rule cannot keep a whole sidebar distinct: eight workspaces collide about once, and the popover is the remedy |
 
 ### Phases
@@ -469,6 +472,8 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | 2026-08-09 | Only explicit `WindowDragArea` moves the window. | interactive titlebar/tab gestures retain pointer ownership | T-034's older implicit background-drag account |
 | 2026-08-10 | Every row draws its workspace's colour, selected or not. | recognition serves the workspace one is not in yet, so a colour shown only on selection is shown only once it is no longer needed; selection is carried by fill and text as it is in every native sidebar, and holding unselected marks back costs contrast they cannot spare (2.89:1 at 72% opacity) | "unselected workspace tints stay visually quiet" |
 | 2026-08-10 | An unchosen accent means automatic — a colour derived from the workspace's folder — rather than the app accent. | differentiation that must be assigned by hand, and then remembered as a mapping, is still something to remember; a derived default makes an uncustomised catalog already distinct, and the five named accents remain for anyone settling a colour deliberately | nil accent inherits the Settings accent |
+| 2026-08-12 | A file dropped on the sidebar is refused, never read as the folder containing it. | the sidebar accepts `public.folder` alone, so AppKit shows a refusal before any Tenon code runs. Opening a dropped file's parent would be right for a file inside a project and wrong for one on the Desktop, and the two are indistinguishable at the moment of the drop; refusing keeps "what a workspace is rooted at" a thing the operator states rather than a thing Tenon infers | T-138's alternative of deriving the parent folder |
+| 2026-08-12 | Several folders in one drop all open, in arrival order, with the last one active. | it is what a run of `addWorkspace` calls already does, so a drop of one folder and a drop of five agree about where the operator lands; silently taking the first and discarding the rest would throw away something the operator handed over | opening only the first dropped folder |
 | 2026-08-10 | The derived palette is ten hues spaced by eye, not twelve spaced evenly. | an even wheel puts three hues in the greens where discrimination is weakest; the snapshot showed them reading as one colour while every count- and contrast-based test passed. ΔE 25.1 against 16.7, for about a third of a workspace more collisions | evenly spaced twelve-hue wheel |
 
 ## 13. Verification receipts
@@ -492,6 +497,14 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   minimum width, and removal of version from the sidebar.
 - `MainWindowSingletonTests`, interaction/direct-inventory fitness tests, and native window
   XCUITests guard the scene/boundary/titlebar contracts.
+- 2026-08-12, T-138: `WorkspaceFolderDropTests` **9 / 0**, red first at 7 of 9 against a
+  stub that returned no actions. The decision is proved by mutation, one at a time, each
+  restored byte-identically: dropping the directory guard turns **3** red, dropping the
+  same-drop dedupe **1**, and matching an open workspace on raw `URL` equality instead of
+  `RecentWorkspaceStore.folderKey` **1** — the last one is the case a fixture had to be
+  forced into, because `URL(fileURLWithPath:)` asks the filesystem and hands back the same
+  trailing-slash URL the drop carries. The folders are real directories in a temp tree, so
+  the one filesystem question the rule asks is answered by the filesystem.
 - Historical aggregate test counts in task files are receipts for their moment, not a claim
   that the present full suite was rerun for this documentation change.
 
@@ -500,3 +513,4 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | Date | Change | Author |
 |---|---|---|
 | 2026-08-09 | Created canonical shipped-state PRD from current source, eight task records, manifests, and focused tests. | Codex |
+| 2026-08-12 | Added `WS-FR-025`: a folder dropped on the sidebar opens a workspace at it, an already-open folder is selected instead, and a dropped file is refused. | Claude (T-138) |

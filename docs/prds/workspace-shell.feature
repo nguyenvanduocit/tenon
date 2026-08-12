@@ -56,6 +56,35 @@ Feature: Resume work in a stable native workspace shell
       And the new workspace becomes active
       And the folder is recorded in recent-workspace history
 
+    @req-ws-fr-025 @add-workspace @drag-and-drop
+    Scenario: Dropping a folder on the sidebar opens a workspace at it
+      Given no open workspace is rooted at a folder
+      When the operator drops that folder on the sidebar
+      Then a new workspace is created with the derived folder name
+      And the new workspace becomes active
+      And the folder is recorded in recent-workspace history
+
+    @req-ws-fr-025 @add-workspace @drag-and-drop
+    Scenario: Dropping a folder that is already open reveals it instead of duplicating it
+      Given an open workspace is rooted at a folder
+      When the operator drops that folder on the sidebar
+      Then no workspace is added
+      And the workspace already rooted at that folder becomes active
+
+    @req-ws-fr-025 @drag-and-drop
+    Scenario: Dropping several folders at once opens each of them in order
+      Given three folders no open workspace is rooted at
+      When the operator drops all three on the sidebar together
+      Then a workspace is opened for each of them in the order they were dropped
+      And the last dropped folder's workspace is active
+
+    @req-ws-fr-025 @drag-and-drop
+    Scenario: A dropped file is refused rather than read as its parent folder
+      Given the operator drags a file rather than a folder
+      When the pointer passes over the sidebar
+      Then the sidebar does not offer itself as a drop target
+      And releasing the file leaves the workspace catalog unchanged
+
     @req-ws-fr-005 @selection
     Scenario: Selecting a workspace restores its active tab and pane
       Given two workspaces each remember a different active tab and pane

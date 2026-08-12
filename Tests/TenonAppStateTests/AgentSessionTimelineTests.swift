@@ -508,10 +508,11 @@ final class AgentSessionTimelineTests: XCTestCase {
         )
 
         // Framing the host has no use for costs it nothing to see: most of the stream is this.
+        // `message_start` left this list under T-137 — it is where the CLI's heartbeat begins, so
+        // it decides which phase the deadline is in; `AgentReadingSilenceTests` holds it now.
         for noise in [
             #"{"type":"system","subtype":"status"}"#,
             #"{"type":"rate_limit_event"}"#,
-            #"{"type":"stream_event","event":{"type":"message_start"}}"#,
             #"{"type":"assistant","message":{"content":[{"type":"text","text":"x"}]}}"#,
             "not json at all",
             "",

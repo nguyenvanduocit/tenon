@@ -453,7 +453,11 @@ private extension TerminalIntentProvider {
                     met = observation.processExited
                 case .tuiIdle:
                     met = observation.processExited
-                        || detector.record(observation.text)
+                        // The detector only ever compares samples, so the fingerprint of this
+                        // text is the same fact it had before. This caller still renders the
+                        // screen to get here — one pane, and only while somebody waits, rather
+                        // than every pane forever (T-141 records the remaining cost).
+                        || detector.record(observation.text.hashValue)
                 case .commandFinished:
                     met = observation.commandFinishedCount > baseline
                 }

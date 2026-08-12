@@ -252,10 +252,36 @@ watch.cancel();
 process.cancel();
 ```
 
-Current limitation: streaming execution is backed by Foundation `Process`. Cancellation
-terminates the process leader, but does not yet prove that every descendant has exited.
-Do not use `process.stream` to supervise commands that daemonize or spawn persistent child
-processes; use the finite `process.exec.v1` path where collected output is sufficient.
+A resource declared inside a view instance should say so, and then it is not your job to
+remember it. `ownedBy` takes the `instanceID` the instance handler was given, and the host
+retires that resource when the instance closes — which is what happens to every pane of a
+workspace the operator closes:
+
+```js
+tenon.views.onOpen(VIEW, function (instanceID) {
+  tenon.timers.every(1000, refresh, { ownedBy: instanceID });
+  tenon.fs.watch(root, { recursive: true, ownedBy: instanceID }, refresh);
+  tenon.process.stream("npm", ["run", "dev"], {
+    cwd: root,
+    ownedBy: instanceID,
+    onStdout(chunk) { tenon.log(chunk); }
+  });
+});
+```
+
+The host retires these after your own `onClose` has run, so cancelling by hand still happens
+first and this finds nothing left. What it covers is the pane you did not write an `onClose`
+for — previously a repeating timer that outlived its pane for the life of the app.
+
+Omit `ownedBy` for anything that genuinely belongs to the plugin rather than to one pane: a
+status-bar clock, a watcher feeding the palette. Those keep the lifetime they always had,
+which ends at generation retirement.
+
+A streamed command leads its own POSIX process group, so cancelling it — or overflowing it, or
+retiring the generation — ends the whole job, including children it forked after the launch.
+A command that deliberately leaves that group, by calling `setsid` or daemonizing into
+`launchd`, is beyond anything an unprivileged macOS app can reach; use `process.exec.v1` where
+collected output is sufficient.
 
 `tenon.agents.run(request, sender = tenon.intents)` is a finite JavaScript composition
 helper. Declare `terminal.open.v1`, `terminal.wait.v1`, `terminal.write.v1`, and

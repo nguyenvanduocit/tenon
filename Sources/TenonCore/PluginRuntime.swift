@@ -138,7 +138,7 @@ public actor PluginRuntime {
     }
 
     private struct ProcessResource {
-        let process: Process
+        let process: PluginStreamProcess
         let standardOutput: FileHandle
         let standardError: FileHandle
         var standardOutputEnded = false
@@ -149,6 +149,24 @@ public actor PluginRuntime {
     private struct TimerResource {
         let timer: Timer
         let repeats: Bool
+    }
+
+    /// T-140: which view instance a resource was declared to belong to.
+    ///
+    /// Kept beside the resource tables rather than inside them, because ownership is a fact the
+    /// runtime holds about a resource, not a property of the timer, process, or watcher itself —
+    /// and because one table is the only place `cancelResources(ownedBy:)` has to look.
+    /// A resource with no entry belongs to the plugin generation, which is what every resource
+    /// meant before this field existed.
+    private enum ResourceKind: Hashable {
+        case timer
+        case process
+        case watcher
+    }
+
+    private struct ResourceKey: Hashable {
+        let kind: ResourceKind
+        let handle: Int
     }
 
     private struct ShutdownPreparation {
@@ -187,7 +205,7 @@ public actor PluginRuntime {
         capacity: maximumOwnedHostTasks
     )
     private let stateEmitter: PluginRuntimeStateEmitter
-    private let processRun: @Sendable (Process) throws -> Void
+    private let processRun: @Sendable (PluginStreamProcess) throws -> Void
     private let watcherStart: @Sendable (PathWatcher) -> Bool
 
     private var callbackPump: Task<Void, Never>?
@@ -242,6 +260,7 @@ public actor PluginRuntime {
     private var timers: [Int: TimerResource] = [:]
     private var processes: [Int: ProcessResource] = [:]
     private var watchers: [Int: PathWatcher] = [:]
+    private var resourceOwners: [ResourceKey: String] = [:]
 
     public init(configuration: PluginRuntimeConfiguration) throws {
         try self.init(
@@ -253,7 +272,7 @@ public actor PluginRuntime {
     init(
         configuration: PluginRuntimeConfiguration,
         callbackCapacity: Int,
-        processRun: @escaping @Sendable (Process) throws -> Void = {
+        processRun: @escaping @Sendable (PluginStreamProcess) throws -> Void = {
             try $0.run()
         },
         watcherStart: @escaping @Sendable (PathWatcher) -> Bool = {
@@ -484,6 +503,10 @@ public actor PluginRuntime {
         guard openViewInstances.remove(key) != nil else { return }
         _ = try callJavaScript("__tenonViewClose", arguments: [viewID, instanceID])
         try drainBridgeMessages()
+        // T-140: after the plugin's own `onClose` has run and its bridge messages have been
+        // drained, so a plugin that cancels its resources by hand still does so first and this
+        // finds nothing left. What it catches is the plugin that did not, or could not.
+        cancelResources(ownedBy: instanceID)
         viewBodies[viewID]?[instanceID] = nil
         markStateChanged()
     }
@@ -1034,7 +1057,7 @@ private extension PluginRuntime {
             try startTimer(object)
         case "timer.cancel":
             if let handle = object["handle"]?.intValue {
-                timers.removeValue(forKey: handle)?.timer.invalidate()
+                releaseTimer(handle)
             }
 
         case "process.start":
@@ -1048,7 +1071,7 @@ private extension PluginRuntime {
             startWatcher(object)
         case "watch.cancel":
             if let handle = object["handle"]?.intValue {
-                watchers.removeValue(forKey: handle)?.stop()
+                releaseWatcher(handle)
             }
 
         case "storage.set":
@@ -1357,10 +1380,8 @@ private extension PluginRuntime {
                     "__tenonFireTimer",
                     arguments: [handle]
                 ).toBool()
-                if !stillRegistered {
-                    timers.removeValue(forKey: handle)?.timer.invalidate()
-                } else if timers[handle]?.repeats == false {
-                    timers.removeValue(forKey: handle)?.timer.invalidate()
+                if !stillRegistered || timers[handle]?.repeats == false {
+                    releaseTimer(handle)
                 }
 
             case let .processOutputAvailable(handle):
@@ -1455,6 +1476,53 @@ private extension PluginRuntime {
         }
         RunLoop.current.add(timer, forMode: .common)
         timers[handle] = TimerResource(timer: timer, repeats: repeats)
+        rememberOwner(declaredIn: object, kind: .timer, handle: handle)
+    }
+
+    // MARK: - Resource ownership  @domain: plugin-host
+
+    /// Record the view instance a resource says it belongs to, if it named one.
+    ///
+    /// T-140: absent, empty, or non-string means the resource belongs to the plugin generation.
+    /// That is the pre-existing meaning of every resource, so a plugin written before this field
+    /// keeps its exact behaviour, and the field is never something a plugin must remember.
+    private func rememberOwner(
+        declaredIn object: [String: IntentValue],
+        kind: ResourceKind,
+        handle: Int
+    ) {
+        guard let owner = object["ownedBy"]?.stringValue, !owner.isEmpty else { return }
+        resourceOwners[ResourceKey(kind: kind, handle: handle)] = owner
+    }
+
+    /// The single exit for a timer, so its ownership entry cannot outlive it. Ownership is a
+    /// bounded table like every other runtime structure (invariant 10), and a handle counter that
+    /// only climbs would otherwise leave one entry behind per timer ever scheduled.
+    private func releaseTimer(_ handle: Int) {
+        timers.removeValue(forKey: handle)?.timer.invalidate()
+        resourceOwners.removeValue(forKey: ResourceKey(kind: .timer, handle: handle))
+    }
+
+    private func releaseWatcher(_ handle: Int) {
+        watchers.removeValue(forKey: handle)?.stop()
+        resourceOwners.removeValue(forKey: ResourceKey(kind: .watcher, handle: handle))
+    }
+
+    /// Retire everything a view instance owned. Called when the instance closes — which, for a
+    /// workspace being closed, is every pane it had.
+    ///
+    /// The plugin is not asked to co-operate and is not consulted: an instance that is gone can
+    /// no longer run the `onClose` handler that a careful plugin uses to clean up by hand today,
+    /// and a plugin that never wrote one leaked the resource forever.
+    func cancelResources(ownedBy instanceID: String) {
+        let owned = resourceOwners.filter { $0.value == instanceID }.keys
+        for key in owned {
+            switch key.kind {
+            case .timer: releaseTimer(key.handle)
+            case .watcher: releaseWatcher(key.handle)
+            case .process: cancelProcess(key.handle)
+            }
+        }
     }
 
     func startProcess(_ object: [String: IntentValue]) {
@@ -1494,19 +1562,15 @@ private extension PluginRuntime {
             return
         }
 
-        let process = Process()
-        if executable.hasPrefix("/") {
-            process.executableURL = URL(fileURLWithPath: executable)
-            process.arguments = arguments
-        } else {
-            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-            process.arguments = [executable] + arguments
-        }
+        // `PRT-FR-042`: launched through `PluginStreamProcess`, which leads its own process group,
+        // so cancel/overflow/retirement below end the whole job rather than the command named here.
+        let resolvedExecutable = executable.hasPrefix("/") ? executable : "/usr/bin/env"
+        let resolvedArguments = executable.hasPrefix("/") ? arguments : [executable] + arguments
+        var workingDirectory: String?
         if let cwd = object["cwd"]?.stringValue, !cwd.isEmpty {
-            process.currentDirectoryURL = URL(
-                fileURLWithPath: (cwd as NSString).expandingTildeInPath
-            )
+            workingDirectory = (cwd as NSString).expandingTildeInPath
         }
+        var processEnvironment = ProcessInfo.processInfo.environment
         if let environment = object["environment"]?.objectValue {
             var merged = ProcessInfo.processInfo.environment
             for (key, value) in environment {
@@ -1514,16 +1578,27 @@ private extension PluginRuntime {
                     merged[key] = value
                 }
             }
-            process.environment = merged
+            processEnvironment = merged
         }
 
-        let outputPipe = Pipe()
-        let errorPipe = Pipe()
-        process.standardOutput = outputPipe
-        process.standardError = errorPipe
+        let process: PluginStreamProcess
+        do {
+            process = try PluginStreamProcess(
+                executable: resolvedExecutable,
+                arguments: resolvedArguments,
+                workingDirectory: workingDirectory,
+                environment: processEnvironment
+            )
+        } catch {
+            rejectProcess(
+                handle,
+                reason: "tenon.process.stream could not start \(executable): \(error)"
+            )
+            return
+        }
 
-        let output = outputPipe.fileHandleForReading
-        let standardError = errorPipe.fileHandleForReading
+        let output = process.standardOutput
+        let standardError = process.standardError
         let callback = callbackMailbox
         let outputMailbox = processOutputMailbox
 
@@ -1555,10 +1630,8 @@ private extension PluginRuntime {
                 callback.enqueue(.processOutputAvailable(handle: handle))
             }
         }
-        process.terminationHandler = { process in
-            callback.enqueue(
-                .processTerminated(handle: handle, status: process.terminationStatus)
-            )
+        process.terminationHandler = { status in
+            callback.enqueue(.processTerminated(handle: handle, status: status))
         }
 
         processOutputMailbox.register(handle: handle)
@@ -1567,6 +1640,7 @@ private extension PluginRuntime {
             standardOutput: output,
             standardError: standardError
         )
+        rememberOwner(declaredIn: object, kind: .process, handle: handle)
         do {
             try processRun(process)
         } catch {
@@ -1651,6 +1725,7 @@ private extension PluginRuntime {
         try? resource.standardOutput.close()
         try? resource.standardError.close()
         processOutputMailbox.remove(handle: handle)
+        resourceOwners.removeValue(forKey: ResourceKey(kind: .process, handle: handle))
     }
 
     func startWatcher(_ object: [String: IntentValue]) {
@@ -1691,8 +1766,9 @@ private extension PluginRuntime {
             callback.enqueue(.watchedPaths(handle: handle, paths: paths))
         }
         watchers[handle] = watcher
+        rememberOwner(declaredIn: object, kind: .watcher, handle: handle)
         guard watcherStart(watcher) else {
-            watchers.removeValue(forKey: handle)
+            releaseWatcher(handle)
             rejectWatcher(
                 handle,
                 reason: "tenon.fs.watch rejected: FSEvents stream could not start"

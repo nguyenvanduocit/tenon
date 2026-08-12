@@ -2,6 +2,7 @@
 import AppKit
 import SwiftUI
 import TenonCore
+import UniformTypeIdentifiers
 
 /// The left navigation column: one row per workspace, an "Add Workspace…" context
 /// action, and the picker that seeds a new workspace path.
@@ -19,28 +20,35 @@ struct WorkspaceSidebarView: View {
             // (`RecentWorkspaceStore` is `@Observable`) plus `store.openWorkspaceFolders`,
             // which republishes when a workspace opens or closes and stays silent through
             // tab/slot churn — the menu stays put yet still refreshes when its own list changes.
-            WorkspaceRowList(store: store, pool: pool)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .contentShape(Rectangle())
-                .contextMenu {
-                    Button("Add Workspace…") { chooseWorkspace() }
-                    // Filtered before the cap, so five offers stay five offers no matter how
-                    // many of the remembered workspaces happen to be open.
-                    let offered = store.recentWorkspaces?
-                        .recent(excludingFolders: store.openWorkspaceFolders) ?? []
-                    let recents = Array(offered.prefix(5))
-                    if !recents.isEmpty {
-                        Divider()
-                        // Flat, plain-text items — no titled `Section` and no `Label`
-                        // image. macOS re-measures a SwiftUI menu that carries a section
-                        // header or icon column a beat after it opens, which showed up as
-                        // the menu snapping to a narrower width; a flat list of buttons
-                        // lays out once and stays put.
-                        ForEach(recents) { entry in
-                            Button(entry.name) { openRecent(entry) }
-                        }
+            // The drop target carries its own hover state, in its own view, for the same
+            // reason the rows do: a highlight that lives up here would re-render the view
+            // that owns the context menu.
+            WorkspaceFolderDropZone(store: store) {
+                // Sized inside the drop zone, so a column holding two workspaces still
+                // takes a folder anywhere below them rather than only over the rows.
+                WorkspaceRowList(store: store, pool: pool)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .contentShape(Rectangle())
+            }
+            .contextMenu {
+                Button("Add Workspace…") { chooseWorkspace() }
+                // Filtered before the cap, so five offers stay five offers no matter how
+                // many of the remembered workspaces happen to be open.
+                let offered = store.recentWorkspaces?
+                    .recent(excludingFolders: store.openWorkspaceFolders) ?? []
+                let recents = Array(offered.prefix(5))
+                if !recents.isEmpty {
+                    Divider()
+                    // Flat, plain-text items — no titled `Section` and no `Label`
+                    // image. macOS re-measures a SwiftUI menu that carries a section
+                    // header or icon column a beat after it opens, which showed up as
+                    // the menu snapping to a narrower width; a flat list of buttons
+                    // lays out once and stays put.
+                    ForEach(recents) { entry in
+                        Button(entry.name) { openRecent(entry) }
                     }
                 }
+            }
 
             SidebarFooter()
         }
@@ -72,6 +80,63 @@ struct WorkspaceSidebarView: View {
         panel.begin { response in
             guard response == .OK, let url = panel.url else { return }
             store.addWorkspace(name: WorkspaceName.derived(for: url), path: url)
+        }
+    }
+}
+
+/// T-138 / `WS-FR-025`: the sidebar takes a folder dragged out of Finder and opens a
+/// workspace rooted at it — the outcome "Add Workspace…" reaches through an open panel,
+/// without the panel.
+///
+/// The drop is declared over `public.folder` alone, so the pointer refuses a file before
+/// this code runs and the target never lights up for one: a folder is what a workspace is
+/// rooted at, and guessing at a dropped file's parent would open the Desktop as often as
+/// it opened a project. `WorkspaceFolderDrop` decides the rest — what is already open is
+/// selected, not duplicated — and it decides it as a value, so the rule is asserted in
+/// `TenonCoreTests` while this view stays the part that only reads the pasteboard.
+private struct WorkspaceFolderDropZone<Content: View>: View {
+    var store: WorkspaceStore
+    @ViewBuilder var content: () -> Content
+
+    @State private var isTargeted = false
+
+    var body: some View {
+        content()
+            .onDrop(of: [.folder], isTargeted: $isTargeted, perform: accept)
+            .overlay {
+                if isTargeted {
+                    RoundedRectangle(cornerRadius: 8)
+                        .stroke(TenonTheme.amber, lineWidth: 2)
+                        .padding(4)
+                        .allowsHitTesting(false)
+                }
+            }
+    }
+
+    /// Reading a provider's URL is asynchronous, so the drop is accepted here and applied
+    /// when the URLs arrive. They are read in order, one after another, so several folders
+    /// dropped together open in the order the operator dropped them.
+    private func accept(_ providers: [NSItemProvider]) -> Bool {
+        guard !providers.isEmpty else { return false }
+        Task { @MainActor in
+            var folders: [URL] = []
+            for provider in providers {
+                guard let url = await provider.droppedFileURL() else { continue }
+                folders.append(url)
+            }
+            store.openDroppedFolders(folders)
+        }
+        return true
+    }
+}
+
+extension NSItemProvider {
+    /// The file URL this provider carries, or nil when it carries none.
+    fileprivate func droppedFileURL() async -> URL? {
+        await withCheckedContinuation { continuation in
+            _ = loadObject(ofClass: URL.self) { url, _ in
+                continuation.resume(returning: url)
+            }
         }
     }
 }

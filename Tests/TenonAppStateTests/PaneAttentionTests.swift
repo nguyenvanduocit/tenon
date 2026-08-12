@@ -87,6 +87,37 @@ final class PaneAttentionTests: XCTestCase {
         )
     }
 
+    /// T-141. The poll asks every open pane, five times a second, on the main thread — and the
+    /// only thing it ever does with a screen is compare it to the previous one
+    /// (`IdleDetector.record` is a single `==`). Taking the rendered-text answer for that
+    /// comparison is what incident `0005-87f24878` measured at **83% of the main thread**:
+    /// `AppComposition.startAttentionPolling` → `SurfacePool.pollActivity` →
+    /// `GhosttySurface.renderedText`, which builds one Swift `String` per row character by
+    /// character and runs one ICU regular expression per row — per pane, per poll.
+    func testTheActivityPollNeverRendersAScreenAsText() {
+        let pool = makePool()
+        let slots = (0 ..< 8).map { _ in UUID() }
+        for slot in slots {
+            _ = pool.surface(for: slot, workspacePath: scratch)
+            scripted[slot]?.text = "$ "
+        }
+
+        for turn in 0 ..< 5 {
+            pool.pollActivity(at: tick(turn))
+        }
+
+        let reads = slots.compactMap { scripted[$0]?.renderedTextReads }.reduce(0, +)
+        XCTAssertEqual(
+            reads,
+            0,
+            """
+            the activity poll rendered \(reads) screens to text across 8 panes and 5 turns, to \
+            answer a question that is `==`. At the shipped cadence that is \(reads * 40) \
+            renders a minute per eight panes, on the main thread.
+            """
+        )
+    }
+
     func testANeverMaterialisedPaneReportsNoActivity() {
         let pool = makePool()
         let slot = UUID()
@@ -363,15 +394,15 @@ final class PaneAttentionTests: XCTestCase {
     private func finishedUnseenActivity() -> PaneActivity {
         var activity = PaneActivity(at: t0)
         _ = activity.observe(
-            .init(text: "$ ", processExited: false, commandFinishedCount: 0),
+            .init(screen: "$ ".hashValue, processExited: false, commandFinishedCount: 0),
             at: tick(0)
         )
         _ = activity.observe(
-            .init(text: "$ ", processExited: false, commandFinishedCount: 1),
+            .init(screen: "$ ".hashValue, processExited: false, commandFinishedCount: 1),
             at: tick(1)
         )
         _ = activity.observe(
-            .init(text: "$ ", processExited: false, commandFinishedCount: 1),
+            .init(screen: "$ ".hashValue, processExited: false, commandFinishedCount: 1),
             at: tick(2)
         )
         return activity
@@ -381,7 +412,7 @@ final class PaneAttentionTests: XCTestCase {
         var activity = PaneActivity(at: t0)
         for n in 0 ..< 3 {
             _ = activity.observe(
-                .init(text: "$ ", processExited: false, commandFinishedCount: 0),
+                .init(screen: "$ ".hashValue, processExited: false, commandFinishedCount: 0),
                 at: tick(n)
             )
         }
@@ -453,11 +484,26 @@ final class PaneAttentionTests: XCTestCase {
 private final class ScriptedTerminalSurface: TerminalSurface {
     let backendName = "Scripted"
     var onTitleChange: ((String) -> Void)?
-    var text = ""
+    var text = "" {
+        didSet { revision += 1 }
+    }
+
     var exited = false
     var finishedCount = 0
 
-    var renderedText: String { text }
+    /// How often anyone asked this screen for its characters. The poll must never be the
+    /// caller: rendering text is what put 83% of the main thread inside `renderedText` during
+    /// incident `0005-87f24878` (T-141).
+    private(set) var renderedTextReads = 0
+    private var revision = 0
+
+    var renderedText: String {
+        renderedTextReads += 1
+        return text
+    }
+
+    /// Changes with the screen and never asks for its characters, which is the whole contract.
+    var screenFingerprint: Int { revision }
     var processExited: Bool { exited }
     var commandFinishedCount: Int { finishedCount }
 

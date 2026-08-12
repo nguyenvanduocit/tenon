@@ -1164,6 +1164,32 @@ final class GhosttyNSView: NSView {
         return lines.joined(separator: "\n")
     }
 
+    /// The same screen read, answered as a value instead of as text.
+    ///
+    /// `renderedText` above follows this read with one Swift `String` per row, appended a
+    /// `Character` at a time, plus one ICU regular expression per row to trim trailing blanks.
+    /// The attention poll asks every open pane five times a second on the main thread and does
+    /// nothing with the answer but compare it, so this hashes the codepoints where they already
+    /// are. Incident `0005-87f24878` measured the difference: 83% of a stalled main thread
+    /// inside `renderedText`, reached from `SurfacePool.pollActivity` (T-141).
+    var screenFingerprint: Int {
+        guard let surface else { return 0 }
+        var output = ghostty_cells_s()
+        guard ghostty_surface_read_cells(surface, &output) else { return 0 }
+        defer { ghostty_surface_free_cells(surface, &output) }
+
+        let columns = Int(output.cols)
+        let rows = Int(output.rows)
+        guard columns > 0, rows > 0, let cells = output.cells else { return 0 }
+        var hasher = Hasher()
+        hasher.combine(columns)
+        hasher.combine(rows)
+        for index in 0 ..< (rows * columns) {
+            hasher.combine(cells[index].codepoint)
+        }
+        return hasher.finalize()
+    }
+
     var surfaceSize: GhosttySurfaceSize? {
         guard let surface else { return nil }
         let size = ghostty_surface_size(surface)
@@ -1320,6 +1346,7 @@ final class GhosttySurface: TerminalSurface {
 
     var renderedCells: [GhosttyRenderedCell] { view.renderedCells }
     var renderedText: String { view.renderedText }
+    var screenFingerprint: Int { view.screenFingerprint }
     var scrollbackLines: [String] { view.scrollbackLines }
     var commandFinishedCount: Int { view.commandFinishedCount }
     var surfaceSize: GhosttySurfaceSize? { view.surfaceSize }
@@ -1354,17 +1381,29 @@ final class GhosttySurface: TerminalSurface {
         onGotoSplit = nil
         onFocusGained = nil
 
-        guard !view.processExited,
-              let foreground = view.foregroundPID,
-              foreground > 1,
-              foreground <= UInt64(pid_t.max)
-        else { return }
-        let rootPID = pid_t(foreground)
-        // Detached because the escalation waits 120 ms and nothing in the close path may block
-        // on it: the pane is already gone from the catalog by the time this runs. Bounded by
-        // construction — two `ps` reads and one sleep, no retry loop.
-        Task.detached(priority: .userInitiated) {
-            await TerminalJobTerminator.live.terminate(rootPID: rootPID)
+        let foreground = view.foregroundPID.flatMap { reported -> pid_t? in
+            guard reported > 1, reported <= UInt64(pid_t.max) else { return nil }
+            return pid_t(reported)
+        }
+        // T-140: an exited shell used to end the close right here, which left whatever it had
+        // `nohup`ed or disowned running on a tty nobody would sweep again. The pane still owns
+        // those jobs, and its tty still names them — `ttyName` is fixed for the surface's life,
+        // where `foregroundPID` dies with the shell. A pane that never reported a pty has no
+        // set of processes it can prove it owns, and signalling a bare pid would be guessing.
+        guard let tty = view.ttyName else { return }
+        // Nothing in the close path may block on this: the escalation waits 120 ms, and the pane
+        // is already gone from the catalog by the time it runs. `terminate` is nonisolated async,
+        // so its `ps` reads and its sleep leave the main thread the moment they are awaited —
+        // the task stays on `MainActor` only to own the capture below. Bounded by construction:
+        // two `ps` reads and one sleep, no retry loop.
+        //
+        // Capturing `view` strongly is the load-bearing part, not an oversight. Holding the
+        // surface alive holds the pty master open, and an open master is what stops the kernel
+        // reissuing this tty to another terminal mid-sweep. That is precisely the promise
+        // `paneOwnedTTY` demands, and it stands in for the proof an exited shell cannot give.
+        Task { @MainActor [view] in
+            await TerminalJobTerminator.live.terminate(rootPID: foreground, paneOwnedTTY: tty)
+            withExtendedLifetime(view) {}
         }
     }
 

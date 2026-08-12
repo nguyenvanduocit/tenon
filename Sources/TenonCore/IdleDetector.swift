@@ -7,7 +7,7 @@ import Foundation
 /// the decision and stays headless-testable.
 public struct IdleDetector: Sendable {
     public let stableSamples: Int
-    private var lastSample: String?
+    private var lastSample: Int?
     private var streak: Int = 0
 
     public init(stableSamples: Int = 3) {
@@ -16,7 +16,11 @@ public struct IdleDetector: Sendable {
 
     /// Feed one screen sample. Returns `true` once the screen has been unchanged for
     /// `stableSamples` consecutive readings.
-    public mutating func record(_ sample: String) -> Bool {
+    ///
+    /// A sample is a fingerprint rather than the screen's characters, because the only question
+    /// asked of it is the `==` below — and answering that with rendered text costs one Swift
+    /// `String` per row plus a regular expression per row, five times a second, per pane (T-141).
+    public mutating func record(_ sample: Int) -> Bool {
         if sample == lastSample {
             streak += 1
         } else {

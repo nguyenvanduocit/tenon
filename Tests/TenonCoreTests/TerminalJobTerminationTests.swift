@@ -86,6 +86,61 @@ final class TerminalJobTerminationTests: XCTestCase {
         )
     }
 
+    // MARK: - The pane whose shell died first  @domain: terminal-teardown
+
+    /// T-140/G1: a shell that exits leaves its `nohup`ed and disowned jobs behind, and the pane
+    /// still owns them. `signalTargets` cannot answer here — it requires the root pid on the tty,
+    /// which is precisely what is gone — so the orphan case gets its own decision.
+    func testJobsLeftBehindByAnExitedShellAreStillThePanes() {
+        let table = """
+          5050  5050 ttys004
+          5121  5121 ttys004
+          7001  7001 ttys009
+        """
+
+        XCTAssertEqual(
+            TerminalJobTermination.orphanTargets(
+                onTTY: "ttys004",
+                hostPID: 5939,
+                in: table
+            ),
+            [5050, 5121],
+            "every group left on the pane's tty, with no shell group to order last"
+        )
+    }
+
+    /// The guard `signalTargets` gets from the root pid — proof the tty still belongs to this
+    /// pane — is unavailable to the orphan sweep, so the host check is the one that must hold.
+    /// A developer's own terminal is never swept, dead shell or not.
+    func testTheHostSharingTheTTYRefusesTheOrphanSweepToo() {
+        let table = """
+          5050  5050 ttys004
+          5939  5939 ttys004
+        """
+
+        XCTAssertEqual(
+            TerminalJobTermination.orphanTargets(
+                onTTY: "ttys004",
+                hostPID: 5939,
+                in: table
+            ),
+            []
+        )
+    }
+
+    /// A tty nobody is left on sweeps nobody. Stated because the caller reaches this path
+    /// exactly when it cannot tell "the jobs are gone" from "the jobs are elsewhere".
+    func testAnEmptyTTYLeavesTheOrphanSweepWithNoTargets() {
+        XCTAssertEqual(
+            TerminalJobTermination.orphanTargets(
+                onTTY: "ttys004",
+                hostPID: 5939,
+                in: "  7001  7001 ttys009"
+            ),
+            []
+        )
+    }
+
     func testAProcessWithoutAControllingTerminalHasNoTTYToSweep() {
         XCTAssertNil(
             TerminalJobTermination.controllingTTY(of: 4908, in: "  4908  4908 ??")
@@ -238,6 +293,69 @@ final class TerminalJobTerminationTests: XCTestCase {
 
         XCTAssertEqual(recorder.groupSignals, [])
         XCTAssertEqual(recorder.processSignals, [])
+    }
+
+    /// T-140/G1 at the terminator: the pane's shell is gone from the table entirely, and the
+    /// jobs it left are still swept — because the caller named a tty it is holding open.
+    func testAPaneHoldingItsTTYStillSweepsJobsItsShellLeftBehind() async {
+        let recorder = SignalRecorder()
+        // No 4908 anywhere: the shell exited before the pane closed. Two disowned jobs remain.
+        let table = "  5050  5050 ttys004\n  5121  5121 ttys004"
+        let terminator = TerminalJobTerminator(
+            environment: recorder.environment(tables: [table, table], hostPID: 5939),
+            escalationDelay: .milliseconds(1)
+        )
+
+        await terminator.terminate(rootPID: nil, paneOwnedTTY: "ttys004")
+
+        XCTAssertEqual(
+            recorder.groupSignals,
+            [(5050, SIGHUP), (5121, SIGHUP), (5050, SIGKILL), (5121, SIGKILL)]
+                .map { SignalRecorder.Sent(target: $0.0, signal: $0.1) },
+            "an exited shell does not excuse the pane from the jobs it started"
+        )
+    }
+
+    /// The promise `paneOwnedTTY` carries is about tty reuse, not about permission: a developer's
+    /// own terminal is refused on the orphan path exactly as it is on the rooted one.
+    func testAPaneOwnedTTYShieldsTheHostsOwnTerminalToo() async {
+        let recorder = SignalRecorder()
+        let table = "  5050  5050 ttys004\n  5939  5939 ttys004"
+        let terminator = TerminalJobTerminator(
+            environment: recorder.environment(tables: [table, table], hostPID: 5939),
+            escalationDelay: .milliseconds(1)
+        )
+
+        await terminator.terminate(rootPID: nil, paneOwnedTTY: "ttys004")
+
+        XCTAssertEqual(recorder.groupSignals, [])
+        XCTAssertEqual(recorder.processSignals, [])
+    }
+
+    /// A caller that cannot promise it holds the tty gets no orphan sweep. Same missing root,
+    /// same table as the test above it — only the promise differs, and it decides everything.
+    func testWithoutThatPromiseAMissingRootSweepsNobody() async {
+        let recorder = SignalRecorder()
+        let terminator = TerminalJobTerminator(
+            environment: recorder.environment(
+                tables: ["  4908  4908 ttys004", "  5050  5050 ttys004", "  5050  5050 ttys004"],
+                hostPID: 5939
+            ),
+            escalationDelay: .milliseconds(1)
+        )
+
+        // The root resolves a tty, then vanishes from it before the sweep — the tty-reuse case
+        // the root-pid guard exists for. No `paneOwnedTTY`, so the sweep must not widen.
+        await terminator.terminate(rootPID: 4908)
+
+        XCTAssertEqual(
+            recorder.groupSignals,
+            [
+                SignalRecorder.Sent(target: 4908, signal: SIGHUP),
+                SignalRecorder.Sent(target: 4908, signal: SIGKILL),
+            ],
+            "only the root's own group — 5050 could be a stranger on a reissued tty"
+        )
     }
 
     // MARK: - Against a real process

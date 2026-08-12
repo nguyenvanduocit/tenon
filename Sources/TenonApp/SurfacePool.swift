@@ -214,7 +214,11 @@ final class SurfacePool {
     func pollActivity(at now: Date) {
         var becameUnseen: [UUID] = []
         for slotID in surfaces.keys {
-            guard let observation = terminalObservation(for: slotID) else { continue }
+            // Deliberately not `terminalObservation(for:)`: that answer carries the screen as
+            // text and the pane's size, and this loop runs five times a second over every open
+            // pane on the main thread while using none of it. Incident `0005-87f24878` spent
+            // 83% of a stalled main thread inside `renderedText` reached from exactly here.
+            guard let surface = surfaces[slotID] else { continue }
             let isNewMachine = activityMachines[slotID] == nil
             var machine = activityMachines[slotID] ?? PaneActivity(
                 viewed: viewedSlotIDs.contains(slotID),
@@ -222,9 +226,9 @@ final class SurfacePool {
             )
             let events = machine.observe(
                 PaneActivity.Observation(
-                    text: observation.text,
-                    processExited: observation.processExited,
-                    commandFinishedCount: observation.commandFinishedCount
+                    screen: surface.screenFingerprint,
+                    processExited: surface.processExited,
+                    commandFinishedCount: surface.commandFinishedCount
                 ),
                 at: now
             )

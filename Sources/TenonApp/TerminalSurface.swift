@@ -39,9 +39,23 @@ protocol TerminalSurface: AnyObject {
     /// the stub records instead, so delivery is assertable without a terminal (T-031).
     func sendText(_ text: String)
 
-    /// The current visible screen as plain text — feeds `tenon-cli pane.read` and the
-    /// tui-idle heuristic. PTY-less backends have nothing to show and default to "".
+    /// The current visible screen as plain text — feeds `tenon-cli pane.read` and
+    /// `terminal.wait.v1`, both of which read the characters. PTY-less backends have nothing to
+    /// show and default to "".
+    ///
+    /// This is the expensive answer, and callers that only need "did the screen change?" want
+    /// `screenFingerprint` instead.
     var renderedText: String { get }
+
+    /// A value that changes when the visible screen changes, and costs no string building.
+    ///
+    /// The attention poll runs five times a second over every open pane on the main thread, and
+    /// all it ever does with a screen is compare it to the previous one — `IdleDetector.record`
+    /// is a single `==`. Rendering text for that comparison put 83% of the main thread inside
+    /// `renderedText` during incident `0005-87f24878`: one Swift `String` per row built
+    /// character by character, plus one ICU regular expression per row, per pane, per poll.
+    /// A backend that only has text can hash it; an emulator hashes its cells directly (T-141).
+    var screenFingerprint: Int { get }
 
     /// Every row the pane retains, oldest first — scrollback *and* viewport. Feeds
     /// `terminal.scrollback.read.v1`, which pages over it; the paging rule itself is pure
@@ -98,6 +112,9 @@ extension TerminalSurface {
     func sendText(_ text: String) {}
     func terminate() {}
     var renderedText: String { "" }
+    /// Correct for any backend whose whole screen is its text; an emulator overrides it with
+    /// something that never builds the string.
+    var screenFingerprint: Int { renderedText.hashValue }
     var scrollbackLines: [String] { [] }
     var processExited: Bool { false }
     var commandFinishedCount: Int { 0 }

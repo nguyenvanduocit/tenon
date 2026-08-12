@@ -121,6 +121,30 @@ public enum TerminalJobTermination {
         let groups = Set(onThisTTY.map(\.processGroup))
         return groups.filter { $0 != rootGroup }.sorted() + [rootGroup]
     }
+
+    /// Every process group left on `tty` once the pane's own shell is gone.
+    ///
+    /// T-140: a shell that exits does not take its `nohup`ed or disowned jobs with it, and the
+    /// pane that started them is still the only thing that owns them. `signalTargets` cannot
+    /// decide this case — it proves the tty belongs to this pane by finding the root pid on it,
+    /// and the root pid is exactly what has died.
+    ///
+    /// That proof has to come from somewhere else, and it does: the caller holds the pty master
+    /// open across the sweep, so the kernel cannot have reissued this tty to anybody. Hence no
+    /// root-pid guard here, and hence the host check below is load-bearing on its own — it is
+    /// the only line stopping a `swift run` session from sweeping the developer's own terminal.
+    ///
+    /// No ordering to preserve, unlike `signalTargets`: there is no shell group left whose death
+    /// would collapse the PTY early.
+    public static func orphanTargets(
+        onTTY tty: String,
+        hostPID: pid_t,
+        in table: String
+    ) -> [pid_t] {
+        let onThisTTY = rows(parsing: table).filter { $0.tty == tty }
+        guard !onThisTTY.contains(where: { $0.pid == hostPID }) else { return [] }
+        return Set(onThisTTY.map(\.processGroup)).sorted()
+    }
 }
 
 /// Reads the process table away from `MainActor` for the tab-close confirmation path.
@@ -189,38 +213,81 @@ public struct TerminalJobTerminator: Sendable {
 
     public static let live = TerminalJobTerminator(environment: .live)
 
-    /// Stop the job tree rooted at `rootPID`. Safe to call for a process that already exited —
-    /// every signal path treats a missing target as success, because it is.
-    public func terminate(rootPID: pid_t) async {
-        guard rootPID > 1 else { return }
-        let tty = TerminalJobTermination.controllingTTY(
-            of: rootPID,
-            in: environment.processTable(["-p", String(rootPID), "-o", "pid=,pgid=,tty="])
-        )
-        sweep(signal: SIGHUP, tty: tty, rootPID: rootPID)
+    /// Stop the job tree a pane owns. Safe to call for a process that already exited — every
+    /// signal path treats a missing target as success, because it is.
+    ///
+    /// `rootPID` is the pane's foreground process, and it is optional because a pane outlives it:
+    /// a shell that exits leaves `nohup`ed jobs holding the tty with no root left to name them.
+    ///
+    /// `paneOwnedTTY` is what makes that case sweepable, and it carries an obligation. Passing it
+    /// asserts the caller is holding this tty open — the pty master fd, in the only production
+    /// caller — for the whole call, so the kernel cannot have reissued it to another terminal in
+    /// the meantime. Without that, sweeping a tty whose root is gone could signal a stranger.
+    /// Callers that cannot make the promise pass nil and get the root-derived behaviour, where
+    /// finding the root on the tty is itself the proof.
+    public func terminate(rootPID: pid_t?, paneOwnedTTY: String? = nil) async {
+        let root = rootPID.flatMap { $0 > 1 ? $0 : nil }
+        let scope: SweepScope
+        if let paneOwnedTTY {
+            scope = SweepScope(tty: paneOwnedTTY, rootPID: root, ttyHeldByCaller: true)
+        } else {
+            guard let root else { return }
+            let derived = TerminalJobTermination.controllingTTY(
+                of: root,
+                in: environment.processTable(["-p", String(root), "-o", "pid=,pgid=,tty="])
+            )
+            scope = SweepScope(tty: derived, rootPID: root, ttyHeldByCaller: false)
+        }
+
+        sweep(signal: SIGHUP, in: scope)
         try? await Task.sleep(for: escalationDelay)
-        sweep(signal: SIGKILL, tty: tty, rootPID: rootPID)
+        sweep(signal: SIGKILL, in: scope)
+    }
+
+    /// What the sweep is allowed to reach, and why it is allowed to reach it.
+    private struct SweepScope {
+        let tty: String?
+        let rootPID: pid_t?
+        /// The caller holds this tty open for the duration, so it still belongs to that pane.
+        /// Only then may a sweep proceed without finding the root on it.
+        let ttyHeldByCaller: Bool
     }
 
     /// One signal round. Re-reads the process table so late rounds signal what is live now.
-    private func sweep(signal: Int32, tty: String?, rootPID: pid_t) {
-        guard let tty else { return signalRootOnly(signal, rootPID: rootPID) }
-        let targets = TerminalJobTermination.signalTargets(
-            onTTY: tty,
-            rootPID: rootPID,
-            hostPID: environment.hostPID,
-            in: environment.processTable(["-t", tty, "-o", "pid=,pgid=,tty="])
-        )
-        guard !targets.isEmpty else { return signalRootOnly(signal, rootPID: rootPID) }
-        for group in targets {
-            environment.signalProcessGroup(group, signal)
+    private func sweep(signal: Int32, in scope: SweepScope) {
+        guard let tty = scope.tty else { return signalRootOnly(signal, rootPID: scope.rootPID) }
+        let table = environment.processTable(["-t", tty, "-o", "pid=,pgid=,tty="])
+
+        if let rootPID = scope.rootPID {
+            let targets = TerminalJobTermination.signalTargets(
+                onTTY: tty,
+                rootPID: rootPID,
+                hostPID: environment.hostPID,
+                in: table
+            )
+            if !targets.isEmpty {
+                for group in targets { environment.signalProcessGroup(group, signal) }
+                return
+            }
         }
+
+        // The root is gone or was never known. The tty is still this pane's only because the
+        // caller is holding it; anything else falls through to the floor below.
+        guard scope.ttyHeldByCaller else { return signalRootOnly(signal, rootPID: scope.rootPID) }
+        let orphans = TerminalJobTermination.orphanTargets(
+            onTTY: tty,
+            hostPID: environment.hostPID,
+            in: table
+        )
+        guard !orphans.isEmpty else { return signalRootOnly(signal, rootPID: scope.rootPID) }
+        for group in orphans { environment.signalProcessGroup(group, signal) }
     }
 
     /// What is left when the kernel will not say who else belongs to this pane: signal the
     /// process's own group, then the process itself for a launch that never led one. This is
     /// Kero's whole strategy (`TerminalSession.swift:170-183`) and Tenon's floor.
-    private func signalRootOnly(_ signal: Int32, rootPID: pid_t) {
+    private func signalRootOnly(_ signal: Int32, rootPID: pid_t?) {
+        guard let rootPID else { return }
         environment.signalProcessGroup(rootPID, signal)
         environment.signalProcess(rootPID, signal)
     }

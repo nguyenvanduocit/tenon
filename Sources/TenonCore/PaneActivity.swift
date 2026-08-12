@@ -48,12 +48,15 @@ public struct PaneActivity: Sendable {
     /// cadence `terminal.wait.v1` already uses, which is what makes the
     /// embedded `IdleDetector` streak mean "stable across polls".
     public struct Observation: Equatable, Sendable {
-        public let text: String
+        /// A value that changes when the visible screen changes. The machine compares
+        /// consecutive samples and never reads the screen, so the shell owes it a fingerprint
+        /// rather than rendered characters — see `IdleDetector.record`.
+        public let screen: Int
         public let processExited: Bool
         public let commandFinishedCount: Int
 
-        public init(text: String, processExited: Bool, commandFinishedCount: Int) {
-            self.text = text
+        public init(screen: Int, processExited: Bool, commandFinishedCount: Int) {
+            self.screen = screen
             self.processExited = processExited
             self.commandFinishedCount = commandFinishedCount
         }
@@ -94,7 +97,7 @@ public struct PaneActivity: Sendable {
         // story ended at the exit and its unseen-ness answers only to viewing.
         guard !hasExited else { return [] }
 
-        screenStable = detector.record(observation.text)
+        screenStable = detector.record(observation.screen)
 
         if !baselined {
             // The first observation defines "before": finishes that predate the

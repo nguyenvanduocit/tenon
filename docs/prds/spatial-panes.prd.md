@@ -28,6 +28,14 @@ T-091 records a measured 100% CPU/11 GB non-converging SwiftUI update loop, but 
 trigger has never been reproduced. Current mitigations and bounds are real; claiming the root
 cause fixed would not be.
 
+The trap under that trap, measured 2026-08-12 (T-141): **"the app hangs" is a symptom shared by
+several unrelated defects**, so a fix verified against one stall says nothing about the next.
+One 18-minute run opened eight incidents whose main threads were in four different places — a
+5 Hz attention poll rendering every pane's screen to text (83%, now fixed), a SwiftUI layout
+loop in Agent Lens, `AttributedString`/`memmove` churn, and one thread simply idle in
+`mach_msg2_trap`. Read every incident in a run before naming a cause, and take the main-thread
+block by the name in its header rather than by position.
+
 ### Proposed outcome
 
 Every tab presents a deterministic 12×12 spatial canvas. Pure core transactions decide valid
@@ -69,7 +77,7 @@ the still-open update-loop investigation before more pane or shell work continue
 | Who experiences it? | Operators supervising several concurrent panes, plus plugin authors and public intent callers that address panes. | shipped scope |
 | How will we know it worked? | The displayed preview can commit, stable IDs retain resources, focus settles, attention clears only by viewing, and all input modes reach equivalent actions. | Gherkin and focused evidence |
 | Which constraints cannot move? | pure spatial core, one host header, typed DIRECT native mutations, classified public intents, stable UUID/resource join, native design system | normative docs/current source |
-| What remains unknown? | The production trigger and proven root cause of T-091's non-converging update loop. | open T-091 criteria |
+| What remains unknown? | The production trigger and proven root cause of T-091's non-converging update loop. Also unnamed: the `AttributedString`/`memmove` stalls in incidents `0002`/`0008`, and why 3 of 8 incidents recorded no `sample.txt` at all. | open T-091 criteria; T-141 incident sweep |
 
 ### Assumptions to validate
 
@@ -317,6 +325,7 @@ intrinsic/min/max sizing options back upward.
 | `SP-NFR-010` | maintainability | Spatial math, interaction decisions, AppKit canvas mounting, card hit-testing, representable bridging, header solving, focus routing, and attention projection **MUST** remain separate responsibility owners with current domain tags. | shipped | source/domain fitness; T-095 owned by PRD-015 for cross-cutting audit |
 | `SP-NFR-011` | incident evidence | A sustained main-runloop stall **MUST** record a bounded automatic process sample outside the main thread, once per stall occurrence, without collecting pane contents beyond diagnostic stack/process metadata. | shipped, and the recorded sample is what identified the T-121 root cause | diagnostics tests and T-091/T-121 runbook |
 | `SP-NFR-012` | verification honesty | Tests and docs **MUST** distinguish measured production evidence, deterministic bounds, candidate mitigation, and human-only behavior; no green harness may be represented as a reproduced fix for T-091. | shipped documentation constraint | review gate |
+| `SP-NFR-013` | main-thread cost | The attention poll runs on the main thread at a fixed cadence over every open pane, so it **MUST** obtain each pane's screen as a fingerprint and **MUST NOT** render it to text; a caller that needs the characters asks for them by name. | shipped | `@req-sp-nfr-013` |
 
 ## 8. Acceptance specification
 
@@ -326,7 +335,7 @@ intrinsic/min/max sizing options back upward.
 | SP-FR-008…016, SP-NFR-006, 009 | menu, Copy ID, drag/resize | coordinator, hosted AppKit, and XCUITest |
 | SP-FR-017, SP-NFR-003…004 | focus/resource settlement | production-wiring focus and pool lifecycle tests |
 | SP-FR-018…020, SP-NFR-006…010 | one header and routing | schema/layout/store/projection/plugin-route and hosted canvas tests |
-| SP-FR-021…023, SP-NFR-003…005, 011 | attention and lazy lifetime | pure state, projection/notifier, lifecycle, relaunch tests |
+| SP-FR-021…023, SP-NFR-003…005, 011, 013 | attention and lazy lifetime | pure state, projection/notifier, lifecycle, relaunch tests, and a poll that counts how often it asked a screen for its characters |
 | SP-FR-024, SP-NFR-003, 011…012 | update convergence and incident status | pane hosting/update-bound tests plus T-091 diagnostics/runbook |
 | SP-FR-027 | the canvas answers its own size | pane hosting tests measuring whether the question reaches Auto Layout |
 | SP-FR-025…026, SP-NFR-005, 007…008 | owner intent/accessibility | intent catalog/provider and accessibility tests |
@@ -481,10 +490,39 @@ resource exactly once.
 | 2026-08-09 | T-091 is mitigated/observable, not closed. | no real reproduction or proven root cause exists | any implication that the sizing cleanup fixed the incident |
 | 2026-08-12 | `workspace.tab.close.v1` refuses a workspace's only tab instead of emptying it. | `WorkspaceCatalog.closeTab` has always kept the last tab (`Workspace.swift:613`, pinned by `WorkspaceTests.swift:209`), and it signals that by returning no events. A pass-through adapter would therefore have answered success while removing nothing — the failure mode a scripted caller looping over tabs hits first. `dev.tenon.core.close-refused` is the same code `workspace.pane.close.v1` already declares for a refused removal. | the assumption in T-132 that tab close is a straight pass-through |
 | 2026-08-12 | `workspace.pane.split.v1` still returns nothing, and widening it is NOT deferred on cost — it is a **major mint** this task's file set cannot carry. | Its output is a closed object with no properties. Adding `paneID` is "add any top-level input/output field to a closed object", which `docs/design-intent-bus.md:620-624` answers "same major? no", `FC-NFR-009` states as "closed schemas MUST not widen inside one major", and `IAR-NFR-008` repeats. `filesystem.directory.list.v2` is the standing precedent and its v1 was removed outright. So the correct change is `workspace.pane.split.v2`, and that reaches `plugins/core-commands/{manifest.json,main.js}`, `plugins/file-explorer/{manifest.json,main.js}` — both name `workspace.pane.split.v1` in `uses`, so an unmigrated manifest breaks their split commands — plus `FileExplorerPluginTests`, `CoreCommandsPluginTests`, `design-command-palette.md`, `design-pane-slots.md`, and `architecture-interaction-boundaries.md`. None of those is in T-132's claimed file set. | T-132's criterion (d), which names `workspace.pane.split.v1` and assumes a same-major edit |
+| 2026-08-12 | The attention poll asks a pane for a screen *fingerprint*, and `PaneActivity.Observation` carries `screen: Int` instead of `text: String`. | The machine's only use of a screen is `IdleDetector.record`, which is one `==`. Paying for that with `GhosttySurface.renderedText` — one Swift `String` per row appended a `Character` at a time, plus one ICU regular expression per row to trim trailing blanks — put **83% of a stalled main thread** inside that getter in incident `0005-87f24878`, reached from `AppComposition.startAttentionPolling` → `SurfacePool.pollActivity`. At the shipped 200 ms cadence a headless count is 40 renders per 8 panes per 5 turns, 1600 a minute. `renderedText` stays exactly as it is for `pane.read`, `terminal.wait.v1` and `agents.run`, which read the characters. | the assumption that one observation type can serve both the poll and the readers |
 | 2026-08-11 | The canvas answers the size it is proposed; silence is not neutral, it routes the question to AppKit. | a `sample` of the stalled process put 2395 of 3461 main-thread samples in `_ZStackLayout.sizeThatFits` → `AppKitPlatformViewHost.fittingSize` → `_populateEngineWithConstraintsForViewSubtree`, and the sweep dirtied the `NSTextField`s it measured | the 2026-08-09 reading that the root cause was unproven |
 
 ## 13. Verification receipts
 
+- 2026-08-12, T-141, `SP-NFR-013`: **red first, with the number in the failure message** —
+  `testTheActivityPollNeverRendersAScreenAsText` reported `("40") is not equal to ("0")` across
+  8 panes and 5 poll turns before the change, and 0 after. Scope green: `PaneAttentionTests`
+  **11 / 0**, `PaneActivityTests` **24 / 0**, `IdleDetectorTests` **3 / 0**,
+  `SurfaceLifecycleTests` **11 / 0**, `TerminalIntentProviderTests` **17 / 0**,
+  `PaneUpdateTurnBoundTests` **5 / 0**. Full suite **2070 tests, 1 failure**, outside this task's
+  file set: `DomainTagFitnessTests.testNoTagIsIsolatedFromTheCodeAroundIt` moved 8 → 9 on
+  `PluginStreamProcess.swift`, an untracked new file in T-140's lane, and was left alone.
+  What this receipt does **not** claim: the freeze in incident `0009-642b2192` is a different
+  defect and is untouched here. `PaneUpdateTurnBoundTests` was rewritten in this change to mount
+  the shipping `AgentSessionView` rather than a hand-written imitation of it — the imitation
+  omitted `.textSelection(.enabled)` and the mount-time bottom scroll, which is what
+  `0009`'s stack walks through — and the mounted test **passes**, so the layout-loop hypothesis
+  built from that stack is recorded as unconfirmed rather than as a finding.
+- 2026-08-12, T-141, `SP-NFR-013`, **installed-app receipt**: driven through `tenon-cli` against
+  the 18:08 build. 24 panes built by `workspace.pane.split.v1` — four more than incident
+  `0005-87f24878` held — each running a shell loop printing a timestamp every 50 ms, so every
+  screen changes between consecutive polls. `sample` over 5 s: main thread **3262 samples**,
+  `renderedText` appears **0 times in the whole file**, and the incident's own call chain now
+  reads `startAttentionPolling` (`TenonApp.swift:934`) → `pollActivity` (`SurfacePool.swift:229`)
+  → `screenFingerprint` (`GhosttySurface.swift:1188`) → `Hasher._combine`, at **5 samples =
+  0.15%**. The same chain measured **83.2%** (1905 / 2289) in `0005`. App CPU 17–20% under that
+  load with RSS stable at 82–115 MB; no new health event and no new incident directory was
+  written during the run. Regressions checked on the same panes: `terminal.viewport.read.v1`
+  still returns real characters (37 × 22), and `terminal.wait.v1 --for tui-idle` answers `met`
+  in 0.43 s on a quiet pane. One correction to this session's own record: a first pass at the
+  load used bash `while … done` against the operator's fish shell, so the panes sat idle and an
+  earlier 0.24% figure described no load at all; the numbers above are the re-run.
 - 2026-08-12, T-132, `SP-FR-028`: `PaneProcessAndTabCloseContractTests` 3 / 0 and
   `PaneProcessAndTabCloseIntentTests` 6 / 0, both **red first** — the contract half on
   "workspace.tab.close.v1 is not in the closed core inventory", the provider half on

@@ -506,6 +506,13 @@ Feature: Arrange live panes without losing identity, focus, or attention
       Then AppKit is asked for a fitting size
       And answering it walks the subtree the stack was measuring
 
+    @req-sp-nfr-013 @attention
+    Scenario: The attention poll never renders a pane's screen as text
+      Given several panes are open and the fixed-interval attention poll runs over all of them
+      When the poll takes consecutive samples of every pane
+      Then it obtains each screen as a fingerprint
+      And no pane is asked to render its screen to text
+
     @req-sp-fr-024 @req-sp-nfr-011 @incident
     Scenario: A future sustained main-runloop stall records evidence automatically
       Given the current build detects one sustained main-runloop stall

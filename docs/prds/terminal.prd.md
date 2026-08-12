@@ -342,7 +342,8 @@ the catalog merely to kill resources.
 | targeting/delivery | provider and SurfaceLifecycle tests | none headlessly |
 | input | TerminalKeyHandling tests | audible installed check |
 | read/wait | catalog/provider/ScrollbackPaging/IdleDetector tests | Ghostty scrollback C edge uses smoke/stub evidence |
-| close teardown | pure parser, stub terminate, real PTY process tests | installed original nohup recheck |
+| close teardown | pure parser, stub terminate, real PTY process tests; T-140 2026-08-12 adds the exited-shell case — `TerminalJobTermination.orphanTargets` plus a `paneOwnedTTY` promise, `swift test --filter TerminalJobTerminationTests` 21/0 | installed original nohup recheck |
+| exited-shell teardown | a pane whose shell died no longer ends the close before it sweeps; the root-pid guard that also refused a reissued tty is replaced by the caller holding the pty master open across the escalation, pinned by `testWithoutThatPromiseAMissingRootSweepsNobody` | a live probe against a real pane, rather than a fixture, is still owed |
 | app quit | source audit proves no pool drain | implementation, integration test, live survivor check |
 | process identity (2026-08-11, T-132) | `PaneProcessAndTabCloseContractTests` 3/0 and `PaneProcessAndTabCloseIntentTests` 6/0, both **red first** — the contract half failed on `terminal.process.read.v1 is not in the closed core inventory`, the provider half on `no provider binding for terminal.process.read.v1`. A materialised stub pane answers `/dev/ttys012` and PID 4242; a pane that never materialised answers nulls; a `.changes` pane is refused with `dev.tenon.core.terminal-unavailable`. | no live PTY: `ttyName`/`foregroundPID` come from a stub surface, so what is proved is that the provider reports what `SurfacePool` holds, not that libghostty fills it correctly — that edge is `TERM-FR-006`'s and predates this change |
 
