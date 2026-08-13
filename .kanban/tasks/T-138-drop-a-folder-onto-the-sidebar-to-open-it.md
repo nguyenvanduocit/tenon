@@ -18,8 +18,9 @@ and `RecentWorkspaceStore.folderKey` is the identity two URLs naming one folder 
 
 ## Decisions (product owner, 2026-08-12)
 
-- A dropped **file** is refused, not reinterpreted. The sidebar accepts `public.folder` only,
-  so the pointer shows a refusal over a file instead of the app guessing at a parent folder.
+- A dropped **file** is refused, not reinterpreted. Finder transports both files and folders
+  as `public.file-url`; the AppKit destination filters those URLs by `public.folder` before
+  offering `.copy`, so the app never guesses at a parent folder.
 - **Several folders at once all open**, in the order they were dropped; the last one lands
   active, which is what a run of `addWorkspace` calls already does.
 - A folder that is **already open** selects its existing row rather than adding a duplicate —
@@ -32,7 +33,9 @@ as what this task changed, not as a claim on them.
 
 - `Sources/TenonCore/WorkspaceFolderDrop.swift` (new)
 - `Sources/TenonApp/WorkspaceSidebarView.swift`
+- `Sources/TenonApp/WorkspaceFolderDropAdapter.swift` (native-boundary repair)
 - `Tests/TenonCoreTests/WorkspaceFolderDropTests.swift` (new)
+- `Tests/TenonAppStateTests/WorkspaceFolderDropAdapterTests.swift` (native receipt)
 - `Tenon.xcodeproj/project.pbxproj` (xcodegen regeneration for the two new files)
 - `docs/prds/workspace-shell.prd.md`, `docs/prds/workspace-shell.feature`
 
@@ -42,7 +45,7 @@ as what this task changed, not as a claim on them.
 - [x] A folder already open selects that workspace instead of adding a second one
 - [x] A dropped file changes nothing, and the sidebar never offers itself as its target
 - [x] Several folders dropped together all open, last one active
-- [ ] The drop target is visible while a folder hovers it and gone once it leaves — **UNVERIFIED**: no offscreen route mounts a drag, so the amber ring and the pointer's refusal over a file are AppKit's answer to the declared `public.folder` type and to `isTargeted`, read at source rather than photographed
+- [x] The mounted shipping destination targets on folder entry, refuses a file, and clears on exit/perform; its targeted callback owns the amber overlay state
 - [x] Rules asserted in `TenonCoreTests` without a window; red before green
 - [x] `WS-FR-025` written with a tagged scenario, delivery row, and a dated receipt
 
@@ -62,6 +65,11 @@ as what this task changed, not as a claim on them.
   as load-sensitive by T-124). Both suites re-run in isolation: **31 / 0**.
 - `swift build` clean. Sidebar photographed at both bounds after the drop zone was wrapped
   around the row list — rows and footer unchanged at 232 pt and at `SidebarResize.minWidth`.
+- Repair receipt, 2026-08-13: `WorkspaceFolderDropAdapterTests` **5 / 0** mounts the actual
+  `WorkspaceFolderDropZone`, finds its AppKit destination, and drives Finder's exact
+  `public.file-url` pasteboard transport through entry, exit, refusal, perform, ordering,
+  and `WorkspaceStore` mutation. This replaces the earlier source-only native claim. The
+  settled full suite is **2100 / 0**, and the Xcode test build succeeds.
 
 ## Notes for whoever commits this
 

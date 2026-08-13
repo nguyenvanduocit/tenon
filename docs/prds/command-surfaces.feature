@@ -205,11 +205,12 @@ Feature: Discover commands and arrange tabs without losing context
       And no reorder preview appears
 
     @req-cmd-fr-013 @req-cmd-fr-014 @reorder
-    Scenario: Dragging a tab to another gap commits the previewed order
+    Scenario: A tab changes places while the pointer is still holding it
       Given several measured tabs are visible in one workspace
-      When the operator drags one tab past another tab's midpoint and releases within the strip
-      Then one insertion caret identifies the destination gap
-      And the dragged tab moves to that previewed position
+      When the operator drags one tab past another tab's midpoint
+      Then the dragged tab already occupies that position before the pointer is released
+      And the strip draws no second marker describing where it will land
+      And releasing there leaves the tab in place
       And the application window remains in the same position
 
     @req-cmd-fr-014 @persistence
@@ -234,18 +235,17 @@ Feature: Discover commands and arrange tabs without losing context
       And the tab strip does not become the first responder
 
     @req-cmd-fr-015 @no-op
-    Scenario: Dropping at the current position changes nothing
+    Scenario: Holding the pointer over the tab's own place changes nothing
       Given a tab reorder has started
-      When the operator releases on either boundary representing its current position
+      When the pointer rests on either boundary representing the tab's current position
       Then the tab order remains unchanged
-      And the insertion preview clears
 
     @req-cmd-fr-015 @cancellation
-    Scenario: Pulling the tab away from the strip cancels the move
-      Given a tab reorder has started
+    Scenario: Pulling the tab away from the strip puts the row back
+      Given a tab reorder has already moved the tab
       When the operator releases beyond the strip's admitted vertical band
-      Then the tab order remains unchanged
-      And the insertion preview clears
+      Then the dragged tab returns to the index the drag began at
+      And the rest of the row stands in the order it started in
 
     @req-cmd-fr-015 @invalid
     Scenario Outline: Invalid reorder input is refused

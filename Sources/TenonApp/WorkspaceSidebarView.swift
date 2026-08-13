@@ -2,13 +2,13 @@
 import AppKit
 import SwiftUI
 import TenonCore
-import UniformTypeIdentifiers
 
 /// The left navigation column: one row per workspace, an "Add Workspace…" context
 /// action, and the picker that seeds a new workspace path.
 struct WorkspaceSidebarView: View {
     var store: WorkspaceStore
     var pool: SurfacePool
+    var closeCoordinator: ShellCloseCoordinator
 
     var body: some View {
         VStack(spacing: 0) {
@@ -26,9 +26,13 @@ struct WorkspaceSidebarView: View {
             WorkspaceFolderDropZone(store: store) {
                 // Sized inside the drop zone, so a column holding two workspaces still
                 // takes a folder anywhere below them rather than only over the rows.
-                WorkspaceRowList(store: store, pool: pool)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    .contentShape(Rectangle())
+                WorkspaceRowList(
+                    store: store,
+                    pool: pool,
+                    closeCoordinator: closeCoordinator
+                )
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
             }
             .contextMenu {
                 Button("Add Workspace…") { chooseWorkspace() }
@@ -84,69 +88,13 @@ struct WorkspaceSidebarView: View {
     }
 }
 
-/// T-138 / `WS-FR-025`: the sidebar takes a folder dragged out of Finder and opens a
-/// workspace rooted at it — the outcome "Add Workspace…" reaches through an open panel,
-/// without the panel.
-///
-/// The drop is declared over `public.folder` alone, so the pointer refuses a file before
-/// this code runs and the target never lights up for one: a folder is what a workspace is
-/// rooted at, and guessing at a dropped file's parent would open the Desktop as often as
-/// it opened a project. `WorkspaceFolderDrop` decides the rest — what is already open is
-/// selected, not duplicated — and it decides it as a value, so the rule is asserted in
-/// `TenonCoreTests` while this view stays the part that only reads the pasteboard.
-private struct WorkspaceFolderDropZone<Content: View>: View {
-    var store: WorkspaceStore
-    @ViewBuilder var content: () -> Content
-
-    @State private var isTargeted = false
-
-    var body: some View {
-        content()
-            .onDrop(of: [.folder], isTargeted: $isTargeted, perform: accept)
-            .overlay {
-                if isTargeted {
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(TenonTheme.amber, lineWidth: 2)
-                        .padding(4)
-                        .allowsHitTesting(false)
-                }
-            }
-    }
-
-    /// Reading a provider's URL is asynchronous, so the drop is accepted here and applied
-    /// when the URLs arrive. They are read in order, one after another, so several folders
-    /// dropped together open in the order the operator dropped them.
-    private func accept(_ providers: [NSItemProvider]) -> Bool {
-        guard !providers.isEmpty else { return false }
-        Task { @MainActor in
-            var folders: [URL] = []
-            for provider in providers {
-                guard let url = await provider.droppedFileURL() else { continue }
-                folders.append(url)
-            }
-            store.openDroppedFolders(folders)
-        }
-        return true
-    }
-}
-
-extension NSItemProvider {
-    /// The file URL this provider carries, or nil when it carries none.
-    fileprivate func droppedFileURL() async -> URL? {
-        await withCheckedContinuation { continuation in
-            _ = loadObject(ofClass: URL.self) { url, _ in
-                continuation.resume(returning: url)
-            }
-        }
-    }
-}
-
 /// The scrollable list of workspace rows. Kept separate from the context-menu-bearing
 /// container so this — the view that depends on `store.catalog` — can re-render freely on
 /// tab/slot churn without dragging the open Add-Workspace menu through a re-layout.
 private struct WorkspaceRowList: View {
     var store: WorkspaceStore
     var pool: SurfacePool
+    var closeCoordinator: ShellCloseCoordinator
 
     var body: some View {
         ScrollView {
@@ -165,7 +113,10 @@ private struct WorkspaceRowList: View {
                         ),
                         canRemove: store.catalog.workspaces.count > 1,
                         select: { store.selectWorkspace(workspace.id) },
-                        remove: { store.removeWorkspace(workspace.id) }
+                        removal: WorkspaceRemovalAction(
+                            workspace: workspace,
+                            coordinator: closeCoordinator
+                        )
                     )
                 }
             }
@@ -174,6 +125,22 @@ private struct WorkspaceRowList: View {
         }
         .tenonScrollbarStyle()
         .scrollIndicators(.hidden)
+    }
+}
+
+/// The typed adapter behind the sidebar's destructive menu item. Keeping the task launch in
+/// this value makes the production gesture behaviorally testable without reaching through a
+/// SwiftUI context menu by source-text inspection.
+@MainActor
+struct WorkspaceRemovalAction {
+    let workspace: Workspace
+    let coordinator: ShellCloseCoordinator
+
+    @discardableResult
+    func perform() -> Task<Void, Never> {
+        Task { @MainActor in
+            await coordinator.requestClose(workspace)
+        }
     }
 }
 
@@ -188,7 +155,7 @@ private struct WorkspaceRow: View {
     let unseenCount: Int
     let canRemove: Bool
     let select: () -> Void
-    let remove: () -> Void
+    let removal: WorkspaceRemovalAction
 
     @State private var isHovering = false
     @State private var isCustomising = false
@@ -251,7 +218,7 @@ private struct WorkspaceRow: View {
         )
         .contextMenu {
             Button("Customise Workspace…") { isCustomising = true }
-            Button("Remove Workspace", role: .destructive, action: remove)
+            Button("Remove Workspace", role: .destructive) { removal.perform() }
                 .disabled(!canRemove)
         }
         .popover(isPresented: $isCustomising, arrowEdge: .trailing) {

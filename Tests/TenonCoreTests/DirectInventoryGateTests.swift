@@ -25,10 +25,12 @@ final class DirectInventoryGateTests: XCTestCase {
     /// to force, and removing from it is the direction the law wants.
     private static let pinnedEntries: [String: Int] = [
         "ordinary functions/modules inside one plugin generation": 56,
-        // 1313 → 2129 (T-096): tab reordering; 2129 → 2465: copying stable tab/pane IDs.
+        // 1313 → 2129 (T-096): tab reordering; 2129 → 2465: copying stable tab/pane IDs;
+        // 2465 → 2813: one guarded close coordinator for host tab/workspace gestures,
+        // including foreground-identity revalidation after the process-table read.
         // The clause names the missing mechanism — no contribution or intent places this
         // identity action in host-owned chrome — rather than the difficulty of building one.
-        "SwiftUI workspace, tab, pane, and settings interactions": 2465,
+        "SwiftUI workspace, tab, pane, and settings interactions": 2813,
         "app lifecycle and composition-root wiring": 42,
         "install-channel routing": 946,
         "`WorkspaceStore` and typed workspace use cases": 47,

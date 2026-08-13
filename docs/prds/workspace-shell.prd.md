@@ -293,7 +293,8 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-FR-020` | The sidebar footer **MUST** contain exactly Help, Feedback, and Settings in one 34-point row of 28-point controls; Help/Feedback destinations **MUST** remain unchanged, and version/build **MUST** move to Settings About instead of the primary sidebar hierarchy. | must | shipped | `@req-ws-fr-020` |
 | `WS-FR-021` | Sidebar visibility and width **MUST** initialize from and write through app preferences as their single owner; catalog restoration **MUST NOT** overwrite them. | must | shipped | `@req-ws-fr-021` |
 | `WS-FR-022` | The bundled permission-free Workspace Status plugin **MAY** consume `workspace.changed` structural facts and show tab/slot counts, but **MUST NOT** receive pane contents through that event. | should | shipped | `@req-ws-fr-022` |
-| `WS-FR-025` | Folders dropped on the sidebar **MUST** each reach the same outcome as Add Workspace — a workspace opened at that folder under its derived name and recorded in recent history — except that a folder an open workspace is already rooted at **MUST** be selected rather than opened a second time; the drop **MUST** preserve the order the folders arrived in, leave the last one active, collapse repeats of one canonical folder within a single drop, and offer the sidebar as a target for `public.folder` alone, so a dropped file neither highlights the sidebar nor opens its parent folder. | must | shipped | `@req-ws-fr-025` |
+| `WS-FR-025` | Folders dropped on the sidebar **MUST** each reach the same outcome as Add Workspace — a workspace opened at that folder under its derived name and recorded in recent history — except that a folder an open workspace is already rooted at **MUST** be selected rather than opened a second time; the drop **MUST** preserve the order the folders arrived in, leave the last one active, collapse repeats of one canonical folder within a single drop, accept Finder's `public.file-url` transport only when AppKit resolves it as `public.folder`, and refuse a dropped file without highlighting the sidebar or opening its parent folder. | must | shipped | `@req-ws-fr-025` |
+| `WS-FR-026` | Removing a workspace **MUST** inspect live terminal processes across every pane it owns through the same host close gate as tab close; no live terminal or a complete idle inspection **MUST** remove immediately, while running work, incomplete identity, an unavailable inspection, or a pane/process identity changed during inspection **MUST** present one native destructive confirmation; Cancel **MUST NOT** mutate the catalog and Confirm **MUST** remove the workspace. | must | shipped | `@req-ws-fr-026` |
 
 ### Non-functional requirements
 
@@ -319,7 +320,8 @@ XCTest and implementation names remain in the delivery matrix.
 |---|---|---|
 | WS-FR-001…003, WS-NFR-006 | one shell and valid catalog | scene/source fitness, core construction tests, native window tests |
 | WS-FR-004…009, WS-NFR-002, 005 | workspace/sidebar/tab navigation | pure catalog/store tests, hosted shell, XCUITest |
-| WS-FR-025 | opening a workspace by dropping its folder | pure drop-plan and store tests in `TenonCoreTests` |
+| WS-FR-025 | opening a workspace by dropping its folder | pure planner tests plus mounted AppKit pasteboard/destination tests |
+| WS-FR-026 | process-safe workspace removal | shared coordinator branches, sidebar-adapter fitness, and a hosted native-window alert test |
 | WS-FR-010…014, WS-NFR-001, 003, 008, 009 | persistence and relaunch | DTO/store fault tests and composition-root relaunch |
 | WS-FR-015…017, WS-NFR-005, 006 | workspace identity | core identity, hosted form, snapshots, accessibility projections |
 | WS-FR-018…019, WS-NFR-004 | scoped recent content | two-workspace store and hosted launcher tests |
@@ -416,7 +418,8 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | WS-FR-018…019 | shipped | `RecentStore`, event-derived attribution, explicit `workspaceID` threading | `RecentStoreTests`, `WorkspaceRecentLauncherTests` | SwiftUI invalidation timing is structurally covered, not separately instrumented |
 | WS-FR-020 | shipped | `SidebarFooter`, `AppVersion`, Settings About | `SidebarFooterTests`, sidebar snapshots | Settings About placement lacks a window screenshot |
 | WS-FR-022, WS-NFR-004, 007 | shipped | `plugins/workspace-status`, workspace event projection | `ShippedPluginsTests`, interaction/direct inventory fitness | payload privacy remains source-contract tested, not telemetry monitored |
-| WS-FR-025 | shipped | [`WorkspaceFolderDrop.swift`](../../Sources/TenonCore/WorkspaceFolderDrop.swift), `WorkspaceStore.openDroppedFolders`, `WorkspaceFolderDropZone` in `WorkspaceSidebarView` | `WorkspaceFolderDropTests` (9 assertions, three mutations killed) | the highlight and the pointer's refusal over a file are AppKit's answer to the declared `public.folder` type, human-observed rather than photographed — no offscreen route mounts a drag |
+| WS-FR-025 | shipped | [`WorkspaceFolderDrop.swift`](../../Sources/TenonCore/WorkspaceFolderDrop.swift), `WorkspaceStore.openDroppedFolders`, mounted `WorkspaceFolderDropZone` / AppKit destination | `WorkspaceFolderDropTests` (9 assertions, three mutations killed); `WorkspaceFolderDropAdapterTests` (mounted shipping zone, Finder transport, entry/exit/perform lifecycle) | no automated pointer journey starts in Finder; the native pasteboard and destination callback boundary is hosted directly |
+| WS-FR-026 | shipped | `ShellCloseCoordinator`, `ContentView` native alert, sidebar and title-bar gesture adapters | `WorkspaceCloseConfirmationTests` (shared branches, exact sidebar wiring, hosted `NSWindow` sheet and Cancel button) | real-PTY running process remains covered by inspector/teardown tests; no installed-app context-menu journey was claimed because local Accessibility automation was unavailable while production stayed open |
 | WS-FR-023…024 | shipped | `WorkspaceTint`, `WorkspaceMark`, identity form Automatic swatch | `WorkspaceTintTests`, `WorkspaceIdentityFormTests`, sidebar snapshots at both bounds | a pure path→colour rule cannot keep a whole sidebar distinct: eight workspaces collide about once, and the popover is the remedy |
 
 ### Phases
@@ -505,6 +508,14 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   forced into, because `URL(fileURLWithPath:)` asks the filesystem and hands back the same
   trailing-slash URL the drop carries. The folders are real directories in a temp tree, so
   the one filesystem question the rule asks is answered by the filesystem.
+- 2026-08-13: `WorkspaceFolderDropAdapterTests` mounts the shipping sidebar zone and drives
+  AppKit's `NSDraggingDestination` lifecycle with pasteboard items carrying only
+  `public.file-url`; folder entry/exit, file refusal, mixed ordering, and the mutation into
+  `WorkspaceStore` are covered at the native boundary.
+- 2026-08-13: `WorkspaceCloseConfirmationTests` covers the shared tab/workspace gate's
+  branches, including stale inspection and changed pane/process identities; drives the typed
+  sidebar removal action behaviorally through that coordinator; and mounts the shipping alert modifier in an
+  `NSWindow`, observes the native `Remove Workspace?` sheet and buttons, and presses Cancel.
 - Historical aggregate test counts in task files are receipts for their moment, not a claim
   that the present full suite was rerun for this documentation change.
 
@@ -514,3 +525,4 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 |---|---|---|
 | 2026-08-09 | Created canonical shipped-state PRD from current source, eight task records, manifests, and focused tests. | Codex |
 | 2026-08-12 | Added `WS-FR-025`: a folder dropped on the sidebar opens a workspace at it, an already-open folder is selected instead, and a dropped file is refused. | Claude (T-138) |
+| 2026-08-13 | Corrected `WS-FR-025`'s native transport from `public.folder` to Finder's `public.file-url` plus semantic folder filtering; added mounted AppKit evidence. Added `WS-FR-026` for the shared process-safe tab/workspace close gate and native workspace confirmation. | Codex |

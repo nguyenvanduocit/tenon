@@ -67,18 +67,22 @@ public enum TabReorder {
         return .select(id)
     }
 
-    /// Whether a release at `pointerY` — measured in the strip's own space, where `0` is its
-    /// top edge — still means the strip.
+    /// Whether a pointer at `pointerY` — measured in the strip's own space, where `0` is its
+    /// top edge — still means the strip. Read while the drag is live, so a tab stops travelling
+    /// the moment the pointer is aimed elsewhere, and read again at the release, which is where
+    /// it decides between a landing and putting the row back.
     public static func admitsDrop(pointerY: Double, stripHeight: Double) -> Bool {
         pointerY >= -dropSlack && pointerY <= stripHeight + dropSlack
     }
 
-    /// The gap a drop at `pointerX` means: `0` before the first chip, `chips.count` after
+    /// The gap a pointer at `pointerX` means: `0` before the first chip, `chips.count` after
     /// the last, and otherwise the number of chips whose midpoint the pointer has passed.
     ///
     /// Counting midpoints rather than measuring the space between chips is what makes the
-    /// preview feel continuous: every point on the strip belongs to exactly one gap, so the
-    /// caret never blanks out while the pointer is over a chip — which is most of the strip.
+    /// reorder settle. Every point on the strip belongs to exactly one gap, so a pointer over a
+    /// chip — which is most of the strip — still means something; and a tab moved to the gap it
+    /// names lands *under* the pointer, where it goes on naming the same gap instead of trading
+    /// places with its new neighbour forever.
     public static func insertionIndex(at pointerX: Double, chips: [TabChipExtent]) -> Int {
         chips.count { $0.midX < pointerX }
     }
@@ -97,17 +101,6 @@ public enum TabReorder {
         guard insertion >= 0, insertion <= chips.count else { return nil }
         guard insertion != source, insertion != source + 1 else { return nil }
         return insertion > source ? insertion - 1 : insertion
-    }
-
-    /// Where the strip draws the one insertion caret: the midpoint of the gap, and the strip
-    /// edge itself at either end so the caret never floats in the padding.
-    public static func caretX(forInsertion insertion: Int, chips: [TabChipExtent]) -> Double? {
-        guard insertion >= 0, insertion <= chips.count, let first = chips.first,
-              let last = chips.last
-        else { return nil }
-        if insertion == 0 { return first.minX }
-        if insertion == chips.count { return last.maxX }
-        return (chips[insertion - 1].maxX + chips[insertion].minX) / 2
     }
 
     /// What VoiceOver says after a tab moved. Written here rather than at the call site so

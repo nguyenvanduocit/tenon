@@ -13,6 +13,7 @@ struct ContentView: View {
     var host: PluginHost
     var store: WorkspaceStore
     var pool: SurfacePool
+    var closeCoordinator: ShellCloseCoordinator
     var agentLens: AgentLensPool
     var webPool: PluginWebSurfacePool
     var intentRuntime: AppIntentRuntime
@@ -55,6 +56,7 @@ struct ContentView: View {
                 host: host,
                 store: store,
                 pool: pool,
+                closeCoordinator: closeCoordinator,
                 intentRuntime: intentRuntime,
                 router: router,
                 palette: palette,
@@ -75,7 +77,11 @@ struct ContentView: View {
 
             HStack(spacing: 0) {
                 if sidebarVisible {
-                    WorkspaceSidebarView(store: store, pool: pool)
+                    WorkspaceSidebarView(
+                        store: store,
+                        pool: pool,
+                        closeCoordinator: closeCoordinator
+                    )
                         .frame(width: sidebarWidth)
                 }
 
@@ -122,6 +128,7 @@ struct ContentView: View {
         .foregroundStyle(TenonTheme.text)
         .preferredColorScheme(.dark)
         .background(WindowChrome())
+        .shellCloseConfirmation(closeCoordinator)
         // Draw up into the transparent title-bar region so the tab strip sits on the
         // title bar next to the traffic lights (browser-style), instead of below a
         // wasted strip that shows the desktop through the transparent titlebar.

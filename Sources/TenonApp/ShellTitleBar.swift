@@ -4,13 +4,6 @@ import SwiftUI
 import TenonCore
 import TenonIntentCore
 
-private struct PendingTabClose {
-    let workspaceID: UUID
-    let tabID: UUID
-    let title: String
-    let reason: TerminalJobTermination.Inspection
-}
-
 /// The full-width top row shared with the traffic lights. Its left zone (app identity
 /// + sidebar toggle) sits above the sidebar column; its right zone (the tab strip,
 /// ending in the `+` launcher) sits above the content column.
@@ -50,6 +43,7 @@ struct ShellTitleBar: View {
     var host: PluginHost
     var store: WorkspaceStore
     var pool: SurfacePool
+    var closeCoordinator: ShellCloseCoordinator
     var intentRuntime: AppIntentRuntime
     var router: DragRouter
     var palette: CommandPaletteState
@@ -74,10 +68,6 @@ struct ShellTitleBar: View {
     /// Which tab's right-click launcher popover is open, if any. One value for the whole
     /// strip: opening a second tab's launcher closes the first.
     @State private var contextLauncherTab: UUID?
-    @State private var pendingTabClose: PendingTabClose?
-    /// Only the newest process-table check may close or present for a tab. This keeps rapid
-    /// close clicks from letting an older asynchronous answer act on a later UI state.
-    @State private var tabCloseCheckID: UUID?
 
     /// Dispatch a launcher command as if it had been chosen *on this tab*.
     ///
@@ -139,52 +129,13 @@ struct ShellTitleBar: View {
 
     private func requestClose(_ tab: TenonCore.Tab, title: String) {
         guard let workspaceID = activeWorkspace?.id else { return }
-        tabCloseCheckID = nil
-        let snapshot = pool.terminalProcessSnapshot(for: Set(tab.slots.map(\.id)))
-        let target = PendingTabClose(
-            workspaceID: workspaceID,
-            tabID: tab.id,
-            title: title,
-            reason: .unavailable
-        )
-
-        guard snapshot.liveTerminalCount > 0 else {
-            store.closeTab(tab.id, in: workspaceID)
-            return
-        }
-        guard snapshot.hasCompleteIdentity else {
-            pendingTabClose = target
-            return
-        }
-
-        let checkID = UUID()
-        tabCloseCheckID = checkID
         Task { @MainActor in
-            let inspection = await TerminalJobInspector.live.inspect(
-                foregroundPIDs: snapshot.foregroundPIDs
+            await closeCoordinator.requestClose(
+                tab,
+                workspaceID: workspaceID,
+                title: title
             )
-            guard tabCloseCheckID == checkID else { return }
-            tabCloseCheckID = nil
-            guard tabExists(target.tabID, in: target.workspaceID) else { return }
-
-            switch inspection {
-            case .idle:
-                store.closeTab(target.tabID, in: target.workspaceID)
-            case .running, .unavailable:
-                pendingTabClose = PendingTabClose(
-                    workspaceID: target.workspaceID,
-                    tabID: target.tabID,
-                    title: target.title,
-                    reason: inspection
-                )
-            }
         }
-    }
-
-    private func tabExists(_ tabID: UUID, in workspaceID: UUID) -> Bool {
-        store.catalog.workspaces
-            .first(where: { $0.id == workspaceID })?
-            .tabs.contains(where: { $0.id == tabID }) == true
     }
 
     /// Width the tab chips actually need, so the row can hand everything past them
@@ -207,6 +158,10 @@ struct ShellTitleBar: View {
     /// The live reorder observed by the strip's AppKit event seam. It stays ordinary view
     /// state because the seam, rather than SwiftUI's gesture arena, owns cancellation.
     @State private var tabDrag: TabStripDrag?
+    /// How long a tab takes to change places under the pointer. Short enough that the row has
+    /// settled before the pointer reaches the next chip, long enough that the eye follows which
+    /// chip went where instead of finding a row that has silently rearranged itself.
+    private static let reorderAnimation: Animation = .easeInOut(duration: 0.12)
     /// The chip the pointer is resting on. The strip's surface owns every pointer inside the
     /// strip, so it owns the hover highlight too — a chip cannot notice a pointer that never
     /// reaches it.
@@ -225,18 +180,6 @@ struct ShellTitleBar: View {
                 )
             }
         }
-    }
-
-    /// The gap the live drag would drop into, or nil while no reorder is aimed at the strip.
-    private var dragInsertion: Int? {
-        guard let tabDrag else { return nil }
-        let chips = chipStrip
-        guard chips.count == activeTabs.count else { return nil }
-        guard TabReorder.admitsDrop(
-            pointerY: Double(tabDrag.point.y),
-            stripHeight: Double(stripHeight)
-        ) else { return nil }
-        return TabReorder.insertionIndex(at: Double(tabDrag.point.x), chips: chips)
     }
 
     /// Whether the strip draws close controls at all — the last tab keeps no ✕, because a
@@ -281,61 +224,101 @@ struct ShellTitleBar: View {
         hoveredTab = TabReorder.tab(at: Double(point.x), chips: chipStrip)
     }
 
-    /// Start observing one drag only when its press landed on a fully measured chip.
+    /// Start observing one drag only when its press landed on a fully measured chip. The index
+    /// it started from is taken here and kept, because it is the only thing a release outside
+    /// the strip can put the row back to once the tab has been travelling.
     private func beginReorder(at point: CGPoint) {
         let chips = chipStrip
         guard chips.count == activeTabs.count,
-              let id = TabReorder.tab(at: Double(point.x), chips: chips)
+              let id = TabReorder.tab(at: Double(point.x), chips: chips),
+              let origin = chips.firstIndex(where: { $0.id == id })
         else { return }
-        tabDrag = TabStripDrag(tabID: id, point: point)
+        tabDrag = TabStripDrag(tabID: id, originIndex: origin)
     }
 
+    /// The preview *is* the move: while the pointer is inside the band the strip admits, the
+    /// tab changes places under it, one chip at a time.
+    ///
+    /// Nothing is drawn beside the chips, and that is the point — a marker in a gap is a second
+    /// description of where the tab will land, and two descriptions of one thing can disagree.
+    /// The rules stay exactly the ones a release used to run: the gap the pointer means, and
+    /// the array index that gap becomes. Applying them continuously closes a loop, since each
+    /// move re-lays the chips the next pointer position is measured against — it settles
+    /// because a gap is counted from midpoints, so the moved tab lands under the pointer and
+    /// stops answering.
     private func updateReorder(at point: CGPoint) {
         guard let drag = tabDrag else { return }
-        tabDrag = TabStripDrag(tabID: drag.tabID, point: point)
+        let chips = chipStrip
+        guard chips.count == activeTabs.count,
+              TabReorder.admitsDrop(
+                  pointerY: Double(point.y),
+                  stripHeight: Double(stripHeight)
+              ),
+              let destination = TabReorder.destination(
+                  forTab: drag.tabID,
+                  insertingAt: TabReorder.insertionIndex(at: Double(point.x), chips: chips),
+                  chips: chips
+              )
+        else { return }
+        withAnimation(Self.reorderAnimation) {
+            store.moveTab(drag.tabID, to: destination)
+        }
     }
 
     private func endReorder(at point: CGPoint) {
         guard let drag = tabDrag else { return }
         tabDrag = nil
-        commitReorder(tabID: drag.tabID, release: point)
+        guard TabReorder.admitsDrop(
+            pointerY: Double(point.y),
+            stripHeight: Double(stripHeight)
+        ) else {
+            return restore(drag)
+        }
+        announceLanding(of: drag)
     }
 
-    private func commitReorder(tabID: UUID, release: CGPoint) {
-        let chips = chipStrip
-        guard chips.count == activeTabs.count,
-              TabReorder.admitsDrop(
-                  pointerY: Double(release.y),
-                  stripHeight: Double(stripHeight)
-              ),
-              let destination = TabReorder.destination(
-                  forTab: tabID,
-                  insertingAt: TabReorder.insertionIndex(at: Double(release.x), chips: chips),
-                  chips: chips
-              )
+    /// Puts the row back the way the drag found it, for a release aimed away from the strip.
+    ///
+    /// One move does it. Every other tab kept its relative order while the dragged one
+    /// travelled, so returning that tab to the index it started at restores the sequence
+    /// exactly — there is no snapshot to keep and none to go stale.
+    private func restore(_ drag: TabStripDrag) {
+        withAnimation(Self.reorderAnimation) {
+            store.moveTab(drag.tabID, to: drag.originIndex)
+        }
+    }
+
+    /// Says where the tab landed, once, when the pointer lets go.
+    ///
+    /// A live reorder passes through every place between the two ends, and narrating each one
+    /// would bury the only one that is true under the ones that were not.
+    private func announceLanding(of drag: TabStripDrag) {
+        let tabs = activeTabs
+        guard let index = tabs.firstIndex(where: { $0.id == drag.tabID }),
+              index != drag.originIndex
         else { return }
-        moveTab(tabID, to: destination)
+        TabStripAnnouncer.say(
+            TabReorder.announcement(
+                title: tabTitle(for: tabs[index]),
+                movedTo: index,
+                of: tabs.count
+            )
+        )
     }
 
-    /// The one place a reorder is committed, so the pointer drag and the VoiceOver action
-    /// move a tab and say so in exactly the same words.
+    /// The keyboard and VoiceOver route, which moves a tab and says so in one step: there is no
+    /// pointer travelling to make the landing visible, so the move and its sentence arrive
+    /// together.
     private func moveTab(_ tabID: UUID, to destination: Int) {
         let tabs = activeTabs
         guard let index = tabs.firstIndex(where: { $0.id == tabID }) else { return }
         let title = tabTitle(for: tabs[index])
-        store.moveTab(tabID, to: destination)
+        withAnimation(Self.reorderAnimation) {
+            store.moveTab(tabID, to: destination)
+        }
         TabStripAnnouncer.say(
             TabReorder.announcement(title: title, movedTo: destination, of: tabs.count)
         )
-    }
-
-    /// The one caret, drawn in the gap the drop will actually use.
-    @ViewBuilder
-    private var insertionCaret: some View {
-        if let insertion = dragInsertion,
-           let x = TabReorder.caretX(forInsertion: insertion, chips: chipStrip) {
-            TabInsertionCaret(x: CGFloat(x))
-        }
     }
 
     var body: some View {
@@ -360,35 +343,6 @@ struct ShellTitleBar: View {
                 .frame(maxWidth: .infinity)
         }
         .background(WindowDragArea(color: TenonTheme.chromeNS))
-        .alert(
-            "Close Tab?",
-            isPresented: Binding(
-                get: { pendingTabClose != nil },
-                set: { if !$0 { pendingTabClose = nil } }
-            ),
-            presenting: pendingTabClose
-        ) { pending in
-            Button("Close Tab", role: .destructive) {
-                store.closeTab(pending.tabID, in: pending.workspaceID)
-                pendingTabClose = nil
-            }
-            Button("Cancel", role: .cancel) {
-                pendingTabClose = nil
-            }
-        } message: { pending in
-            switch pending.reason {
-            case .running:
-                Text(
-                    "“\(pending.title)” has running terminal processes. Closing the tab will terminate them."
-                )
-            case .unavailable:
-                Text(
-                    "Tenon couldn’t verify whether “\(pending.title)” has running terminal processes. Closing the tab will terminate any work still running."
-                )
-            case .idle:
-                EmptyView()
-            }
-        }
     }
 
     private var leftZone: some View {
@@ -604,7 +558,6 @@ struct ShellTitleBar: View {
                     }
             }
         )
-        .overlay(alignment: .leading) { insertionCaret }
         .coordinateSpace(name: TabStripSpace.name)
         // In front of the chips, and never conditionally: a point in the title-bar band that
         // resolves to a SwiftUI view is a point where the window server moves the window. The
@@ -710,8 +663,8 @@ struct TabChip: View {
     /// every VoiceOver move counts from (T-096).
     let position: Int
     let tabCount: Int
-    /// T-096: this chip is the one being dragged, so it reads as lifted out of the row
-    /// while the caret shows where releasing would put it.
+    /// T-096: this chip is the one the pointer is holding, so it reads as lifted out of the row
+    /// it is travelling through.
     var isDragging: Bool = false
     /// Move this tab to an index in the strip. The strip owns the mutation and the spoken
     /// announcement; the chip only names the destination.
@@ -794,9 +747,9 @@ struct TabChip: View {
                     .stroke(TenonTheme.amber, lineWidth: 1.5)
             }
         }
-        // The chip stays where the layout put it while it is being dragged — the caret
-        // between chips is the whole preview. Moving it would make its own reported
-        // extent chase the pointer that is measured against it.
+        // Dimmed, and left exactly where the row puts it: the chip travels by changing places
+        // with its neighbours, not by following the pointer. Offsetting it would make the
+        // extent it reports chase the pointer that is measured against that extent.
         .opacity(isDragging ? 0.5 : 1)
         .overlay(RightClickCatcher(action: openLauncher))
         .accessibilityElement(children: .contain)
@@ -1116,9 +1069,10 @@ enum TabStripSpace {
 /// It goes in a `.background` so the chip's button, close control, and right-click catcher
 /// keep every event, and it reads the *laid-out* frame rather than an ideal size — a chip's
 /// close control is an overlay, so what a chip would like to be and what it occupies are
-/// different numbers, and a caret placed with the first lands on top of the ✕ instead of in
-/// the gap beside it. The dragged chip is deliberately never offset, so this reading cannot
-/// chase the pointer that is measured against it.
+/// different numbers, and a reorder measured with the first moves tabs against a row that is
+/// not there. The dragged chip is deliberately never offset, so this reading cannot chase the
+/// pointer that is measured against it — which matters more now that each move re-lays the
+/// chips the next pointer position is read against.
 struct TabChipExtentReporter: View {
     let report: (ClosedRange<CGFloat>) -> Void
 
@@ -1134,27 +1088,15 @@ struct TabChipExtentReporter: View {
     }
 }
 
-/// Where releasing the drag would put the tab: one hairline standing in the gap, drawn from
-/// the strip's leading edge so its x is the same number `TabReorder.caretX` answers with.
-struct TabInsertionCaret: View {
-    let x: CGFloat
-
-    var body: some View {
-        Capsule()
-            .fill(TenonTheme.amber)
-            .frame(width: 2, height: 22)
-            .offset(x: x - 1)
-            .allowsHitTesting(false)
-            .accessibilityHidden(true)
-    }
-}
-
-/// One live reorder: which tab was picked up, and where the pointer is now in the strip's
-/// space. Identity, not index — the strip reorders underneath a VoiceOver move while a
-/// pointer drag is impossible, but naming the tab keeps that true by construction.
+/// One live reorder: which tab was picked up, and the place it was picked up from.
+///
+/// Identity, not index, for the tab — the strip reorders underneath a VoiceOver move while a
+/// pointer drag is impossible, and naming the tab keeps that true by construction. The origin
+/// is an index because that is what putting the row back needs, and it is read only by the
+/// release that refuses.
 private struct TabStripDrag: Equatable {
     let tabID: UUID
-    let point: CGPoint
+    let originIndex: Int
 }
 
 /// Says a completed reorder out loud.

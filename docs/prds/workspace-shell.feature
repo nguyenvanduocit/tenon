@@ -85,6 +85,28 @@ Feature: Resume work in a stable native workspace shell
       Then the sidebar does not offer itself as a drop target
       And releasing the file leaves the workspace catalog unchanged
 
+    @req-ws-fr-026 @workspace-close @running-process
+    Scenario: Removing a workspace with terminal work asks before destroying it
+      Given a workspace owns a pane whose terminal process cannot be proved idle
+      When the operator chooses Remove Workspace from that workspace row
+      Then a native destructive confirmation names that workspace
+      And cancelling leaves the workspace and every pane it owns unchanged
+      And confirming removes the workspace through the typed workspace service
+
+    @req-ws-fr-026 @workspace-close @idle
+    Scenario: Removing an idle workspace needs no confirmation
+      Given every live terminal in a workspace has complete process identity
+      And process inspection classifies every one as an idle shell
+      When the operator chooses Remove Workspace from that workspace row
+      Then the workspace is removed without a confirmation
+
+    @req-ws-fr-026 @workspace-close @race
+    Scenario: A pane or foreground process changed during inspection fails safe
+      Given workspace removal is waiting for process inspection
+      When the workspace pane set or a pane's foreground process changes before inspection returns idle
+      Then the stale idle answer does not remove the workspace
+      And Tenon asks for destructive confirmation instead
+
     @req-ws-fr-005 @selection
     Scenario: Selecting a workspace restores its active tab and pane
       Given two workspaces each remember a different active tab and pane

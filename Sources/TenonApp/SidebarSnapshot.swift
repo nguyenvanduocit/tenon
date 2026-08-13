@@ -38,12 +38,14 @@ enum SidebarSnapshot {
         store.addWorkspace(name: "carlens", path: folder("carlens"))
         store.addWorkspace(name: "invest", path: folder("invest"))
 
+        let pool = SurfacePool(backendName: "Sidebar snapshot") { _, _ in
+            StubTerminalSurface()
+        }
         PaneViewSnapshotWriter.write(
             bare: WorkspaceSidebarView(
                 store: store,
-                pool: SurfacePool(backendName: "Sidebar snapshot") { _, _ in
-                    StubTerminalSurface()
-                }
+                pool: pool,
+                closeCoordinator: ShellCloseCoordinator(store: store, pool: pool)
             )
             .frame(width: size.width, height: size.height),
             size: size,

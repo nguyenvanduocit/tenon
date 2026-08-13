@@ -275,6 +275,68 @@ final class AgentSessionLayoutAlignmentTests: XCTestCase {
         )
     }
 
+    /// T-143: a Chat row must draw inside the box it hands its parent.
+    ///
+    /// A `LazyVStack` puts the next row at the bottom edge the previous row reported. So a row
+    /// whose content is drawn below that edge is not a cosmetic misalignment — it is written over
+    /// its neighbour, which is what the operator photographed on 2026-08-13: whole messages
+    /// stacked on top of each other in a pane whose rows all still claimed the right heights.
+    ///
+    /// The shape that does it is one line of `AgentSpineChrome`. Its rail holds no text and is
+    /// `maxHeight: .infinity`; a view with no text resolves `firstTextBaseline` to its bottom
+    /// edge, and a greedy view's bottom edge is the row height the `HStack` has not finished
+    /// computing. The guide then depends on the alignment that reads it, and SwiftUI settles that
+    /// by sizing against the proposal and placing against the final height.
+    ///
+    /// Measured rather than argued: on the shipped alignment the content lands 33 pt below the
+    /// row's own bounds, and the control — the same fixture reading `.top` — puts it 5 pt inside
+    /// them. A fixture that could not tell those apart would make this test vacuously green.
+    func testAChatRowDrawsInsideTheBoundsItReports() {
+        for width in [320.0, 860.0] {
+            let geometry = RowGeometry()
+
+            layOut(spineRow(recordingInto: geometry), size: CGSize(width: width, height: 600))
+
+            XCTAssertGreaterThan(
+                geometry.content.height,
+                0,
+                "the fixture never placed any content at \(width) pt wide, so it tested nothing"
+            )
+            XCTAssertLessThanOrEqual(
+                geometry.content.maxY,
+                geometry.row.maxY,
+                """
+                At \(width) pt wide the row reported a box ending at \(geometry.row.maxY) and drew \
+                its content down to \(geometry.content.maxY) — \
+                \(String(format: "%.1f", geometry.content.maxY - geometry.row.maxY)) pt of a \
+                message written over whatever the lazy list places next.
+                """
+            )
+        }
+    }
+
+    /// The tick stays on the row's first line of text, which is the thing the rail is *for*.
+    ///
+    /// Without this, the row above passes trivially by pushing the rail down instead of the
+    /// content — the same defect wearing the other sign, and one a reader would notice just as
+    /// fast. One 18 pt tick against a 9.5 pt label is close enough that a whole line of drift is
+    /// the only failure worth naming.
+    func testTheTickSitsOnTheRowsFirstLineOfText() {
+        let geometry = RowGeometry()
+
+        layOut(spineRow(recordingInto: geometry), size: CGSize(width: 860, height: 600))
+
+        XCTAssertEqual(
+            geometry.content.minY,
+            geometry.row.minY,
+            accuracy: 6,
+            """
+            The row's content starts \(geometry.content.minY - geometry.row.minY) pt below the row \
+            itself, so the tick no longer marks the line it points at.
+            """
+        )
+    }
+
     // MARK: - Fixture
 
     private let rowCount = 60
@@ -400,9 +462,41 @@ final class AgentSessionLayoutAlignmentTests: XCTestCase {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
+    /// One shipping Chat row, with a recorder around the row and another around its content, so
+    /// the two boxes are read off the same layout pass in the same coordinate space.
+    ///
+    /// The content is a header line over wrapped prose because that is what a message is, and
+    /// because the defect needs the two to disagree about where the first baseline sits. A
+    /// single-line fixture hides it.
+    private func spineRow(recordingInto geometry: RowGeometry) -> some View {
+        RecordingLayout(geometry: geometry, records: .row) {
+            AgentSpineChrome(
+                evidence: .terminalInference("test fixture"),
+                tint: .cyan,
+                active: false,
+                inspect: {}
+            ) {
+                RecordingLayout(geometry: geometry, records: .content) {
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text("ASSISTANT").font(.system(size: 9.5, weight: .semibold))
+                        Text(String(repeating: "Body prose that wraps across the pane. ", count: 4))
+                            .font(.system(size: 12))
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
+        }
+        .fixedSize(horizontal: false, vertical: true)
+    }
+
     private func layOut(_ view: some View) {
+        layOut(view, size: layoutSize)
+    }
+
+    private func layOut(_ view: some View, size: CGSize) {
         let host = NSHostingView(rootView: AnyView(view))
-        host.frame = NSRect(origin: .zero, size: layoutSize)
+        host.frame = NSRect(origin: .zero, size: size)
         host.layoutSubtreeIfNeeded()
     }
 
@@ -419,6 +513,49 @@ final class AgentSessionLayoutAlignmentTests: XCTestCase {
 
     private func layOutTwice(_ view: some View) {
         layOut(view, passes: 2)
+    }
+}
+
+/// Where a row was placed, and where the content inside it was placed.
+@MainActor
+private final class RowGeometry {
+    var row = CGRect.zero
+    var content = CGRect.zero
+}
+
+/// Reads a box off a real layout pass, without changing the box it reads.
+///
+/// A `GeometryReader` is greedy and would rewrite the very geometry under test; a preference
+/// needs a window to deliver. A single-child `Layout` reports its child's own size upward and
+/// records the bounds it is handed, so the fixture measures the shipping composition rather than
+/// a shape bent to be measurable.
+private struct RecordingLayout: Layout {
+    enum Slot { case row, content }
+
+    let geometry: RowGeometry
+    let records: Slot
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        subviews.first?.sizeThatFits(proposal) ?? .zero
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        MainActor.assumeIsolated {
+            switch records {
+            case .row: geometry.row = bounds
+            case .content: geometry.content = bounds
+            }
+        }
+        subviews.first?.place(at: bounds.origin, anchor: .topLeading, proposal: proposal)
     }
 }
 

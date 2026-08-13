@@ -200,16 +200,20 @@ Current DIRECT inventory:
 - ordinary functions/modules inside one plugin generation;
 - SwiftUI workspace, tab, pane, and settings interactions: the fixed sidebar Help and
   Feedback controls open Tenon's product-owned documentation and issue-entry URLs, while
-  Settings opens the existing app-owned Settings scene. A tab-close gesture snapshots the
-  live terminal identities in that tab, performs one off-main process-table read, and closes
-  immediately only when every terminal is an idle shell; running work or an unavailable
-  inspection presents one native destructive confirmation before the typed workspace close.
-  The newest close check supersedes an older in-flight check, and no check owns a lifetime
-  after its one finite idle/running/unavailable result. These are finite host SwiftUI gestures
-  with no public principal, provider selection, or independent lifetime. Authority is the
-  accepted in-window gesture; failure to prove idleness asks rather than destroys, and the
-  shared inspector serializes its short local reads while the title bar retains only the
-  newest request identity, so a superseded result cannot mutate workspace state. A tab-reorder
+  Settings opens the existing app-owned Settings scene. A tab-close or workspace-removal
+  gesture snapshots the live terminal identities in its exact pane set, performs one off-main
+  process-table read, and closes immediately only when every terminal is an idle shell;
+  running work or an unavailable inspection presents one native destructive confirmation
+  before the typed workspace close. One app-composed `ShellCloseCoordinator` owns both entry
+  gestures. Its newest close check supersedes an older in-flight check, and it requires the
+  target's current pane set and foreground-process snapshot to equal the inspected values
+  before applying an idle answer; a pane added or a command started in an existing pane during
+  inspection fails safe to confirmation instead. No check owns a lifetime after
+  its one finite idle/running/unavailable result. These are finite host SwiftUI gestures with
+  no public principal, provider selection, or independent lifetime. Authority is the accepted
+  in-window gesture; failure to prove idleness asks rather than destroys, and the shared
+  inspector serializes its short local reads while the coordinator retains only the newest
+  request identity, so a superseded result cannot mutate workspace state. A tab-reorder
   gesture (T-096) is one pointer drag inside the strip that started it: the chip travels on no
   pasteboard, so there is no path into another workspace, window, or application to refuse,
   and the operation names only the active workspace, so moving a tab between workspaces is
@@ -226,7 +230,7 @@ Current DIRECT inventory:
   destinations or intercepts host tab chrome, no EVENT exposes host-private terminal process
   occupancy, no CONTRIBUTION or INTENT places a chip or identity action in the host's own tab
   or pane chrome or accepts a pointer gesture inside it, and no plugin-owned INTENT owns the
-  app's Settings scene or a host tab close;
+  app's Settings scene or a host tab/workspace close;
 - app lifecycle and composition-root wiring;
 - install-channel routing: the exact closed set `{production, staging}` is resolved from
   the app bundle identity at the composition root. Each channel is a singleton within

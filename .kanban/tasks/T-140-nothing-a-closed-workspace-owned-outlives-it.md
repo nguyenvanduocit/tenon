@@ -28,8 +28,8 @@ Released, no longer needed: `SurfacePool.swift`, `PluginWebSurfacePool.swift` (s
 correction below — G5 was not a defect).
 
 NOT claimed, deliberately: `Sources/TenonApp/WorkspaceSidebarView.swift` is held by T-138.
-The close-confirmation gate for a workspace row (the sidebar's counterpart to
-`ShellTitleBar.swift:143-181`) is deferred to its own task once that lock clears.
+The close-confirmation gate for a workspace row was deferred while that lock was held. The
+lock later cleared and the independent follow-up shipped as T-142 / `WS-FR-026`.
 
 ## What survives a workspace close today
 
@@ -126,4 +126,5 @@ window rather than let `retainOnly` release it at once.
 
 - App-quit teardown (`TERM-M-006`) — the same machinery, a different entry point. Worth its
   own task, and arguably worse than the workspace-close gap it neighbours.
-- The workspace-row close confirmation, per the lock note above.
+- Workspace-row close confirmation is no longer out of scope; T-142 / `WS-FR-026` shipped it
+  through the shared tab/workspace close coordinator.

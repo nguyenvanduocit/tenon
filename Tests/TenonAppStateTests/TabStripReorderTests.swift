@@ -155,7 +155,7 @@ final class TabStripReorderTests: XCTestCase {
     func testAChipCentreHitTestsToTheStripSurfaceInsideARealTitleBarWindow() throws {
         let ids = titles.indices.map { _ in UUID() }
         let measured = Extents()
-        let bar = row(ids: ids, dragging: -1, caretX: nil, extents: measured)
+        let bar = row(ids: ids, dragging: -1, extents: measured)
             .overlay(
                 TabStripSurface(
                     began: { _ in },
@@ -273,6 +273,7 @@ final class TabStripReorderTests: XCTestCase {
             host: host,
             store: store,
             pool: pool,
+            closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
             intentRuntime: runtime,
             router: DragRouter(),
             palette: CommandPaletteState(
@@ -383,38 +384,151 @@ final class TabStripReorderTests: XCTestCase {
         )
     }
 
-    /// A drag that ends where the caret was standing must move the tab there.
+    /// The strip previews a reorder by performing it (T-144).
     ///
-    /// The caret is drawn from `insertionIndex` alone while the commit runs that index
-    /// through `destination`, which refuses `source` and `source + 1`. Those two rules can
-    /// disagree, and when they do the strip promises a move it will not make — which is
-    /// indistinguishable, to the person holding the mouse, from a drag that is simply broken.
-    func testEveryGapTheCaretCanStandInEitherMovesTheTabOrIsNotDrawn() throws {
+    /// A preview drawn beside the chips is a second description of where the tab will land,
+    /// and two descriptions of one thing can disagree — the caret this replaced was drawn from
+    /// `insertionIndex` while the commit ran that index through `destination`, so the strip
+    /// could stand a marker in a gap that releasing would refuse. Moving the tab itself leaves
+    /// nothing to disagree with: what the strip shows mid-drag *is* the order.
+    ///
+    /// So this asks the question at the only moment that distinguishes the two designs — with
+    /// the button still down.
+    func testTheTabHasAlreadyMovedBeforeTheDragIsReleased() throws {
         let bar = try titleBar()
-        let ids = try XCTUnwrap(bar.store.catalog.activeWorkspace?.tabs.map(\.id))
-        let chips = ids.enumerated().map { index, id in
-            TabChipExtent(id: id, minX: Double(index) * 100, maxX: Double(index) * 100 + 90)
-        }
+        let store = bar.store
+        let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
 
-        for source in ids.indices {
-            for insertion in 0 ... chips.count {
-                let moves = TabReorder.destination(
-                    forTab: ids[source],
-                    insertingAt: insertion,
-                    chips: chips
-                ) != nil
-                let drawn = TabReorder.caretX(forInsertion: insertion, chips: chips) != nil
-                guard drawn, !moves else { continue }
-                XCTAssertTrue(
-                    insertion == source || insertion == source + 1,
-                    """
-                    the caret stands in gap \(insertion) while dragging tab \(source), and \
-                    releasing there moves nothing — a caret may only be a no-op in the two \
-                    gaps that touch the tab being dragged
-                    """
-                )
-            }
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300))
+        defer { window.orderOut(nil) }
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview))
+        )
+
+        let width = surface.bounds.width
+        let start = surface.convert(NSPoint(x: 12, y: surface.bounds.midY), to: nil)
+        let past = surface.convert(NSPoint(x: width * 0.55, y: surface.bounds.midY), to: nil)
+
+        send(.leftMouseDown, at: start, in: window)
+        for step in stride(from: 0.2, through: 1.0, by: 0.2) {
+            send(
+                .leftMouseDragged,
+                at: NSPoint(x: start.x + (past.x - start.x) * step, y: start.y),
+                in: window
+            )
         }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            [ids[1], ids[0], ids[2]],
+            "the tab must be in its new place while the pointer is still holding it"
+        )
+
+        send(.leftMouseUp, at: past, in: window)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            [ids[1], ids[0], ids[2]],
+            "releasing where the tab already is must leave it there"
+        )
+    }
+
+    /// The other direction, which no test in this file had ever driven.
+    ///
+    /// A live reorder re-lays the chips under its own next reading, and the two directions are
+    /// not symmetric in that loop: travelling right, the moved tab lands to the *left* of the
+    /// pointer, travelling left it lands to the right. A rule that settles one way can oscillate
+    /// the other, and every gesture asserted here went rightwards.
+    func testADragBackToTheStartMovesTheTabTheOtherWay() throws {
+        let bar = try titleBar()
+        let store = bar.store
+        let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
+
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300))
+        defer { window.orderOut(nil) }
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview))
+        )
+
+        let width = surface.bounds.width
+        let start = surface.convert(
+            NSPoint(x: width - 12, y: surface.bounds.midY),
+            to: nil
+        )
+        let end = surface.convert(NSPoint(x: 4, y: surface.bounds.midY), to: nil)
+
+        send(.leftMouseDown, at: start, in: window)
+        for step in stride(from: 0.1, through: 1.0, by: 0.1) {
+            send(
+                .leftMouseDragged,
+                at: NSPoint(x: start.x + (end.x - start.x) * step, y: start.y),
+                in: window
+            )
+        }
+        send(.leftMouseUp, at: end, in: window)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            [ids[2], ids[0], ids[1]],
+            "a drag from the last chip to the head of the strip must land the tab first"
+        )
+    }
+
+    /// Pulling the tab out of the strip puts the row back (`CMD-FR-015`).
+    ///
+    /// A live preview is a mutation, so the escape hatch has to undo rather than decline. One
+    /// move does it: every other tab kept its relative order throughout, so returning the
+    /// dragged tab to the index it started at restores the row exactly.
+    func testReleasingBelowTheStripRestoresTheOrderTheDragStartedFrom() throws {
+        let bar = try titleBar()
+        let store = bar.store
+        let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
+
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300))
+        defer { window.orderOut(nil) }
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview))
+        )
+
+        let width = surface.bounds.width
+        let start = surface.convert(NSPoint(x: 12, y: surface.bounds.midY), to: nil)
+        let past = surface.convert(NSPoint(x: width * 0.55, y: surface.bounds.midY), to: nil)
+
+        send(.leftMouseDown, at: start, in: window)
+        for step in stride(from: 0.2, through: 1.0, by: 0.2) {
+            send(
+                .leftMouseDragged,
+                at: NSPoint(x: start.x + (past.x - start.x) * step, y: start.y),
+                in: window
+            )
+        }
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            [ids[1], ids[0], ids[2]],
+            "the drag must have moved the tab before the release can be asked to undo it"
+        )
+
+        // Down into the canvas, past the band a release still counts as a drop in.
+        let away = surface.convert(
+            NSPoint(
+                x: width * 0.55,
+                y: surface.bounds.maxY + TabReorder.dropSlack + 20
+            ),
+            to: nil
+        )
+        send(.leftMouseDragged, at: away, in: window)
+        send(.leftMouseUp, at: away, in: window)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            ids,
+            "a release outside the strip must leave the row as the drag found it"
+        )
     }
 
     /// The assertion every other test in this file was blind to.
@@ -843,7 +957,6 @@ final class TabStripReorderTests: XCTestCase {
     private func row(
         ids: [UUID],
         dragging: Int,
-        caretX: CGFloat?,
         extents: Extents?
     ) -> some View {
         HStack(spacing: TabStripSpace.spacing) {
@@ -854,21 +967,25 @@ final class TabStripReorderTests: XCTestCase {
                     )
             }
         }
-        .overlay(alignment: .leading) {
-            if let caretX { TabInsertionCaret(x: caretX) }
-        }
         .coordinateSpace(name: TabStripSpace.name)
         .padding(.horizontal, 8)
         .frame(width: stripSize.width, height: stripSize.height, alignment: .leading)
         .background(TenonTheme.chrome)
     }
 
-    func testTheCaretLandsInTheGapBesideTheChipNotOnItsCloseControl() throws {
+    /// A chip reports the box it occupies, close control included.
+    ///
+    /// The ✕ is an overlay, so what a chip would like to be and what it takes up are different
+    /// numbers — and a reorder measured with the first would move tabs against geometry the row
+    /// does not have. Read off the shipped chips: consecutive extents sit exactly one strip
+    /// spacing apart, which they cannot do if a control's width were missing from them, and the
+    /// destination those extents answer with is the chip the pointer is over.
+    func testAChipReportsTheBoxItOccupiesIncludingItsCloseControl() throws {
         let ids = titles.indices.map { _ in UUID() }
         let dragging = 1
 
         let measured = Extents()
-        let laidOut = host(row(ids: ids, dragging: dragging, caretX: nil, extents: measured))
+        let laidOut = host(row(ids: ids, dragging: dragging, extents: measured))
         laidOut.layoutSubtreeIfNeeded()
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.3))
         laidOut.layoutSubtreeIfNeeded()
@@ -880,33 +997,32 @@ final class TabStripReorderTests: XCTestCase {
         }
         XCTAssertEqual(chips.count, titles.count, "a chip never reported where it landed")
 
+        for index in 1 ..< chips.count {
+            XCTAssertEqual(
+                chips[index].minX - chips[index - 1].maxX,
+                Double(TabStripSpace.spacing),
+                accuracy: 0.5,
+                """
+                chip \(index - 1) and chip \(index) are \
+                \(chips[index].minX - chips[index - 1].maxX) pt apart in a row whose spacing is \
+                \(TabStripSpace.spacing) — an extent is reporting less than its chip occupies
+                """
+            )
+        }
+
         // Pointer past the third chip's midpoint: gap 3, between "docs" and "kanban".
         let insertion = TabReorder.insertionIndex(at: chips[2].midX + 12, chips: chips)
         XCTAssertEqual(insertion, 3)
-        let caretX = try XCTUnwrap(TabReorder.caretX(forInsertion: insertion, chips: chips))
-        XCTAssertGreaterThanOrEqual(
-            caretX,
-            chips[2].maxX,
-            "the caret is drawn inside the chip before the gap — on its close control"
-        )
-        XCTAssertLessThanOrEqual(
-            caretX,
-            chips[3].minX,
-            "the caret is drawn inside the chip after the gap"
-        )
         XCTAssertEqual(
             TabReorder.destination(forTab: ids[dragging], insertingAt: insertion, chips: chips),
             2,
-            "releasing here must land the dragged tab where the caret is drawn"
+            "a pointer there moves the dragged tab to the place it is pointing at"
         )
 
         guard let path = ProcessInfo.processInfo.environment["TENON_TAB_STRIP_SNAPSHOT"] else {
             return
         }
-        try write(
-            row(ids: ids, dragging: dragging, caretX: CGFloat(caretX), extents: nil),
-            to: path
-        )
+        try write(row(ids: ids, dragging: dragging, extents: nil), to: path)
     }
 
     // MARK: - Offscreen capture

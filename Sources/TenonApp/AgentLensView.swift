@@ -774,7 +774,13 @@ private struct AgentTimelineRow: View {
     }
 }
 
-private struct AgentSpineChrome<Content: View>: View {
+/// Visible to `TenonAppStateTests` so the row's geometry is measured on the chrome every Chat
+/// row actually wears, rather than on a copy of its shape.
+///
+/// T-143: a copy would have agreed with whichever alignment the copy was written with. The rule
+/// under test — that a row draws inside the bounds it reports — is a property of this exact
+/// composition of a greedy rail beside content, so this is the only thing worth mounting.
+struct AgentSpineChrome<Content: View>: View {
     let evidence: AgentEvidence
     let tint: Color
     let active: Bool
@@ -796,7 +802,16 @@ private struct AgentSpineChrome<Content: View>: View {
     }
 
     var body: some View {
-        HStack(alignment: .firstTextBaseline, spacing: 8) {
+        // The rail is aligned by the box, never by a baseline.
+        //
+        // It holds no text, and a view with no text resolves `firstTextBaseline` to its bottom
+        // edge — which, for a view that is `maxHeight: .infinity`, is the row height this stack
+        // has not finished computing. The guide would then depend on the alignment that reads
+        // it, and SwiftUI settles that by sizing against the proposal and placing against the
+        // final height, so the row reports one box and draws in another. A lazy list puts the
+        // next row at the reported edge, so the overflow is written straight over the neighbour
+        // (T-143, `AL-FR-050`).
+        HStack(alignment: .top, spacing: 8) {
             ZStack(alignment: .top) {
                 Canvas { context, size in
                     var path = Path()

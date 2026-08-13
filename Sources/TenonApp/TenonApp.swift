@@ -38,6 +38,7 @@ struct TenonApp: App {
                     host: composition.host,
                     store: composition.store,
                     pool: composition.terminalSurfaces,
+                    closeCoordinator: composition.shellCloseCoordinator,
                     agentLens: composition.agentLens,
                     webPool: composition.webSurfaces,
                     intentRuntime: composition.intentRuntime,
@@ -359,6 +360,7 @@ final class AppComposition {
     let prefs: AppPreferencesStore
     let store: WorkspaceStore
     let terminalSurfaces: SurfacePool
+    let shellCloseCoordinator: ShellCloseCoordinator
     /// T-100: the read-only process resource monitor. Its sampler, coordinator, and bridge are
     /// host-private — no intent, no principal, no `tenon` member — so the whole feature enters
     /// composition as this one typed value.
@@ -623,6 +625,10 @@ final class AppComposition {
         self.prefs = prefs
         self.store = store
         self.terminalSurfaces = terminalSurfaces
+        self.shellCloseCoordinator = ShellCloseCoordinator(
+            store: store,
+            pool: terminalSurfaces
+        )
         // T-100. Built here because the bridge needs both the catalog and the surface pool,
         // and nothing samples until a monitor surface is actually visible.
         let telemetryBridge = ProcessTelemetryBridge(store: store, surfaces: terminalSurfaces)

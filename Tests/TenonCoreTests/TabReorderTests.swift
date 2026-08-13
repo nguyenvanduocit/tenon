@@ -202,42 +202,6 @@ final class TabReorderTests: XCTestCase {
         XCTAssertFalse(TabReorder.admitsDrop(pointerY: 600, stripHeight: 26))
     }
 
-    // MARK: - Where the caret is drawn
-
-    func testTheCaretSitsInTheGapItStandsFor() {
-        let ids = (0 ..< 4).map { _ in UUID() }
-        let chips = strip(ids)
-        XCTAssertEqual(TabReorder.caretX(forInsertion: 0, chips: chips), 0)
-        XCTAssertEqual(TabReorder.caretX(forInsertion: 1, chips: chips), 100)
-        XCTAssertEqual(TabReorder.caretX(forInsertion: 4, chips: chips), 400)
-    }
-
-    func testTheCaretHasNowhereToGoOnAnEmptyOrOutOfRangeStrip() {
-        let ids = (0 ..< 2).map { _ in UUID() }
-        XCTAssertNil(TabReorder.caretX(forInsertion: 0, chips: []))
-        XCTAssertNil(TabReorder.caretX(forInsertion: -1, chips: strip(ids)))
-        XCTAssertNil(TabReorder.caretX(forInsertion: 3, chips: strip(ids)))
-    }
-
-    /// The caret must stand for the gap the drop will actually use, or the preview is a
-    /// promise the commit does not keep. Sweeping the pointer across the strip, every
-    /// caret position sits between the chips the insertion index separates.
-    func testTheCaretAlwaysStandsForTheGapTheDropWillUse() {
-        let ids = (0 ..< 4).map { _ in UUID() }
-        let chips = strip(ids)
-        for x in stride(from: -30.0, through: 430.0, by: 7) {
-            let insertion = TabReorder.insertionIndex(at: x, chips: chips)
-            let caret = try? XCTUnwrap(TabReorder.caretX(forInsertion: insertion, chips: chips))
-            guard let caret else { continue }
-            if insertion > 0 {
-                XCTAssertGreaterThanOrEqual(caret, chips[insertion - 1].midX, "x=\(x)")
-            }
-            if insertion < chips.count {
-                XCTAssertLessThanOrEqual(caret, chips[insertion].midX, "x=\(x)")
-            }
-        }
-    }
-
     // MARK: - What a click on the strip means (T-101)
 
     /// The strip owns its whole primary-button stream, because a press it leaves to the
@@ -292,5 +256,58 @@ final class TabReorderTests: XCTestCase {
         XCTAssertNil(TabReorder.press(at: 260, chips: chips, closeControls: [:]))
         XCTAssertNil(TabReorder.press(at: -3, chips: chips, closeControls: [:]))
         XCTAssertNil(TabReorder.press(at: 40, chips: [], closeControls: [:]))
+    }
+
+    // MARK: - The loop a live reorder closes
+
+    /// A live reorder applies these two rules on every pointer move, against chips that were
+    /// just laid out again — so the rule's own output changes the geometry its next input is
+    /// measured against. That feedback loop is the one thing a preview drawn *beside* the
+    /// chips never had, and it is where a plausible rule fails: swapping on overlap rather
+    /// than on midpoints makes two chips of different widths trade places forever under a
+    /// pointer that has stopped moving.
+    ///
+    /// This sweeps a pointer across deliberately uneven chips, re-laying the row after every
+    /// move exactly as the strip does, and asks for the property that makes the loop settle:
+    /// the tab travels only the way the pointer is travelling, and it ends where the pointer
+    /// ended.
+    func testASweepAcrossUnevenChipsMovesTheTabOnlyTheWayThePointerIsGoing() {
+        let ids = (0 ..< 4).map { _ in UUID() }
+        let widths = [ids[0]: 60.0, ids[1]: 220.0, ids[2]: 90.0, ids[3]: 150.0]
+
+        func laidOut(_ order: [UUID]) -> [TabChipExtent] {
+            var x = 0.0
+            return order.map { id in
+                let extent = TabChipExtent(id: id, minX: x, maxX: x + widths[id]!)
+                x = extent.maxX + 3
+                return extent
+            }
+        }
+
+        var order = ids
+        var reached = 0
+        for pointerX in stride(from: 0.0, through: 600.0, by: 1) {
+            let chips = laidOut(order)
+            guard let destination = TabReorder.destination(
+                forTab: ids[0],
+                insertingAt: TabReorder.insertionIndex(at: pointerX, chips: chips),
+                chips: chips
+            ) else { continue }
+
+            XCTAssertGreaterThan(
+                destination,
+                reached,
+                "a rightward pointer walked the dragged tab back to \(destination) at x=\(pointerX)"
+            )
+            order.remove(at: order.firstIndex(of: ids[0])!)
+            order.insert(ids[0], at: destination)
+            reached = destination
+        }
+
+        XCTAssertEqual(
+            order,
+            [ids[1], ids[2], ids[3], ids[0]],
+            "a sweep to the end of the strip leaves the dragged tab last"
+        )
     }
 }

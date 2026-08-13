@@ -555,3 +555,11 @@ Feature: Supervise agent sessions through bounded checkable evidence
       Then the pane comes back carrying provider, session, transcript, and title
       But when the transcript is gone, its provider is unrecognised, or its stored reference is malformed
       Then the pane comes back empty, keeping its place in the layout
+
+    @req-al-fr-050
+    Scenario: A message is never written over the one below it
+      Given a reading whose rows are stacked by a lazy list at the bottom edge each row reports
+      When a row is drawn at any pane width, from the narrowest the pane opens at to its widest
+      Then everything the row draws stays inside the bounds that row reported
+      And the evidence rail beside it is aligned from the row's box rather than from a text baseline
+      And the tick still marks the row's first line of text
