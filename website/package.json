@@ -1,0 +1,18 @@
+{
+  "name": "tenon-website",
+  "private": true,
+  "type": "module",
+  "description": "Documentation site for Tenon, the human supervision layer for parallel CLI-agent work.",
+  "scripts": {
+    "dev": "vitepress dev",
+    "build": "vitepress build",
+    "preview": "vitepress preview",
+    "gen:intents": "bun scripts/gen-intents.mjs",
+    "gen:cli": "bun scripts/gen-cli.mjs",
+    "gen": "bun scripts/gen-intents.mjs && bun scripts/gen-cli.mjs"
+  },
+  "devDependencies": {
+    "vitepress": "1.6.4",
+    "vue": "^3.5.41"
+  }
+}

@@ -1,0 +1,24 @@
+usage: tenon-cli <command> [args]
+
+  ping
+  focus
+  intent list
+  intent describe <intent-id>
+  intent send <intent-id> [--input <json>] [scope/options]
+
+Convenience aliases (all compile to intent.send):
+  state
+  send [--pane <uuid> | --tab <uuid>] [--enter] <text...>
+  read [--pane <uuid> | --tab <uuid>]
+  wait [--pane <uuid> | --tab <uuid>] --for exit|tui-idle|command-finished [--timeout <ms>]
+  pane-focus --pane <uuid>
+  tab-focus --tab <uuid>
+  rename [--pane <uuid>] [<text...>]
+
+Scope/options:
+  --workspace <uuid> --tab <uuid> --pane <uuid>
+  --provider <provider-id> --idempotency-key <key> --timeout <ms>
+
+When neither --pane nor --tab is present, $TENON_PANE_ID is used when available.
+`rename` with no text clears the pinned title back to the pane's content-derived one.
+Every wire-level domain request is intent.send with explicit input and scope objects.

@@ -1,0 +1,278 @@
+[
+  {
+    "text": "Workspace",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "workspace.content.open.v1",
+        "link": "/reference/intents/workspace-content-open-v1"
+      },
+      {
+        "text": "workspace.identity.set.v1",
+        "link": "/reference/intents/workspace-identity-set-v1"
+      },
+      {
+        "text": "workspace.pane.close.v2",
+        "link": "/reference/intents/workspace-pane-close-v2"
+      },
+      {
+        "text": "workspace.pane.content.set.v1",
+        "link": "/reference/intents/workspace-pane-content-set-v1"
+      },
+      {
+        "text": "workspace.pane.focus-next.v1",
+        "link": "/reference/intents/workspace-pane-focus-next-v1"
+      },
+      {
+        "text": "workspace.pane.focus.v1",
+        "link": "/reference/intents/workspace-pane-focus-v1"
+      },
+      {
+        "text": "workspace.pane.owner.v1",
+        "link": "/reference/intents/workspace-pane-owner-v1"
+      },
+      {
+        "text": "workspace.pane.split.v1",
+        "link": "/reference/intents/workspace-pane-split-v1"
+      },
+      {
+        "text": "workspace.pane.title.set.v1",
+        "link": "/reference/intents/workspace-pane-title-set-v1"
+      },
+      {
+        "text": "workspace.select.v1",
+        "link": "/reference/intents/workspace-select-v1"
+      },
+      {
+        "text": "workspace.state.v1",
+        "link": "/reference/intents/workspace-state-v1"
+      },
+      {
+        "text": "workspace.tab.close.v1",
+        "link": "/reference/intents/workspace-tab-close-v1"
+      },
+      {
+        "text": "workspace.tab.create.v1",
+        "link": "/reference/intents/workspace-tab-create-v1"
+      },
+      {
+        "text": "workspace.tab.focus.v1",
+        "link": "/reference/intents/workspace-tab-focus-v1"
+      },
+      {
+        "text": "workspace.tab.next.v1",
+        "link": "/reference/intents/workspace-tab-next-v1"
+      },
+      {
+        "text": "workspace.tab.previous.v1",
+        "link": "/reference/intents/workspace-tab-previous-v1"
+      }
+    ]
+  },
+  {
+    "text": "Terminal",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "terminal.open.v1",
+        "link": "/reference/intents/terminal-open-v1"
+      },
+      {
+        "text": "terminal.process.read.v1",
+        "link": "/reference/intents/terminal-process-read-v1"
+      },
+      {
+        "text": "terminal.run.v1",
+        "link": "/reference/intents/terminal-run-v1"
+      },
+      {
+        "text": "terminal.scrollback.read.v1",
+        "link": "/reference/intents/terminal-scrollback-read-v1"
+      },
+      {
+        "text": "terminal.viewport.read.v1",
+        "link": "/reference/intents/terminal-viewport-read-v1"
+      },
+      {
+        "text": "terminal.wait.v1",
+        "link": "/reference/intents/terminal-wait-v1"
+      },
+      {
+        "text": "terminal.write.v1",
+        "link": "/reference/intents/terminal-write-v1"
+      }
+    ]
+  },
+  {
+    "text": "Agents",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "agent.ask.v1",
+        "link": "/reference/intents/agent-ask-v1"
+      },
+      {
+        "text": "agent.command.v1",
+        "link": "/reference/intents/agent-command-v1"
+      },
+      {
+        "text": "agent.inventory.v1",
+        "link": "/reference/intents/agent-inventory-v1"
+      }
+    ]
+  },
+  {
+    "text": "Filesystem",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "filesystem.directory.create.v1",
+        "link": "/reference/intents/filesystem-directory-create-v1"
+      },
+      {
+        "text": "filesystem.directory.list.v2",
+        "link": "/reference/intents/filesystem-directory-list-v2"
+      },
+      {
+        "text": "filesystem.file.create.v1",
+        "link": "/reference/intents/filesystem-file-create-v1"
+      },
+      {
+        "text": "filesystem.file.read.v1",
+        "link": "/reference/intents/filesystem-file-read-v1"
+      },
+      {
+        "text": "filesystem.file.write.v1",
+        "link": "/reference/intents/filesystem-file-write-v1"
+      },
+      {
+        "text": "filesystem.path.exists.v1",
+        "link": "/reference/intents/filesystem-path-exists-v1"
+      },
+      {
+        "text": "filesystem.path.move.v1",
+        "link": "/reference/intents/filesystem-path-move-v1"
+      },
+      {
+        "text": "filesystem.path.trash.v1",
+        "link": "/reference/intents/filesystem-path-trash-v1"
+      }
+    ]
+  },
+  {
+    "text": "Files",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "file.open.v1",
+        "link": "/reference/intents/file-open-v1"
+      },
+      {
+        "text": "file.reveal.v1",
+        "link": "/reference/intents/file-reveal-v1"
+      }
+    ]
+  },
+  {
+    "text": "Process",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "process.exec.v1",
+        "link": "/reference/intents/process-exec-v1"
+      }
+    ]
+  },
+  {
+    "text": "Browser",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "browser.surface.back.v1",
+        "link": "/reference/intents/browser-surface-back-v1"
+      },
+      {
+        "text": "browser.surface.forward.v1",
+        "link": "/reference/intents/browser-surface-forward-v1"
+      },
+      {
+        "text": "browser.surface.load.v1",
+        "link": "/reference/intents/browser-surface-load-v1"
+      },
+      {
+        "text": "browser.surface.reload.v1",
+        "link": "/reference/intents/browser-surface-reload-v1"
+      }
+    ]
+  },
+  {
+    "text": "User prompts",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "ui.confirm.v1",
+        "link": "/reference/intents/ui-confirm-v1"
+      },
+      {
+        "text": "ui.pick.v1",
+        "link": "/reference/intents/ui-pick-v1"
+      },
+      {
+        "text": "ui.prompt.v1",
+        "link": "/reference/intents/ui-prompt-v1"
+      },
+      {
+        "text": "ui.toast.v1",
+        "link": "/reference/intents/ui-toast-v1"
+      }
+    ]
+  },
+  {
+    "text": "Opening",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "url.open.v1",
+        "link": "/reference/intents/url-open-v1"
+      }
+    ]
+  },
+  {
+    "text": "Clipboard",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "clipboard.write.v1",
+        "link": "/reference/intents/clipboard-write-v1"
+      }
+    ]
+  },
+  {
+    "text": "Secrets",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "secrets.delete.v1",
+        "link": "/reference/intents/secrets-delete-v1"
+      },
+      {
+        "text": "secrets.get.v1",
+        "link": "/reference/intents/secrets-get-v1"
+      },
+      {
+        "text": "secrets.set.v1",
+        "link": "/reference/intents/secrets-set-v1"
+      }
+    ]
+  },
+  {
+    "text": "Network",
+    "collapsed": true,
+    "items": [
+      {
+        "text": "network.fetch.v1",
+        "link": "/reference/intents/network-fetch-v1"
+      }
+    ]
+  }
+]

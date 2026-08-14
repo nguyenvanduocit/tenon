@@ -1,0 +1,17 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The app mark, adapted for a page that can be light or dark.
+
+  The app's own asset paints the mortise slot in near-black, which vanishes on a
+  dark background. Here the slot is cut out with a mask instead, so whatever the
+  page is behind it shows through and the joint reads on either theme.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32" fill="none">
+  <mask id="mortise">
+    <rect x="0" y="0" width="32" height="32" fill="black"/>
+    <rect x="3" y="5" width="26" height="10" rx="3" fill="white"/>
+    <rect x="12" y="10" width="8" height="7" rx="2" fill="black"/>
+  </mask>
+  <rect x="0" y="0" width="32" height="32" fill="#94A3B8" mask="url(#mortise)"/>
+  <rect x="13" y="11" width="6" height="17" rx="2" fill="#E6A33A"/>
+</svg>

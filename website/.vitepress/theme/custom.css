@@ -1,0 +1,64 @@
+/*
+ * Tenon's amber is #E6A33A — the peg in the mark. It carries about 2.2:1 against
+ * white, which is fine behind a button and unreadable as link text, so light mode
+ * darkens it to ~5:1 for anything a reader has to read and keeps the real amber
+ * for solid fills. Dark mode can use the brand colour directly.
+ */
+:root {
+  --vp-c-brand-1: #8a5d0b;
+  --vp-c-brand-2: #a06e10;
+  --vp-c-brand-3: #e6a33a;
+  --vp-c-brand-soft: rgba(230, 163, 58, 0.14);
+
+  --vp-button-brand-bg: #e6a33a;
+  --vp-button-brand-hover-bg: #d2921f;
+  --vp-button-brand-active-bg: #b87d14;
+  --vp-button-brand-text: #1a1206;
+  --vp-button-brand-border: transparent;
+
+  --vp-home-hero-name-color: transparent;
+  --vp-home-hero-name-background: linear-gradient(120deg, #b87d14 20%, #e6a33a);
+  --vp-home-hero-image-filter: blur(52px);
+  --vp-home-hero-image-background-image: linear-gradient(
+    -45deg,
+    rgba(230, 163, 58, 0.5),
+    rgba(148, 163, 184, 0.4)
+  );
+}
+
+.dark {
+  --vp-c-brand-1: #e6a33a;
+  --vp-c-brand-2: #f0b45a;
+  --vp-c-brand-3: #c4841f;
+  --vp-c-brand-soft: rgba(230, 163, 58, 0.16);
+
+  --vp-home-hero-name-background: linear-gradient(120deg, #e6a33a 20%, #f5c97a);
+}
+
+/* Intent names, permission strings and shell commands are the nouns of this
+   documentation. They appear inside prose constantly, so inline code gets a
+   slightly tighter size than the default rather than shouting. */
+.vp-doc :not(pre) > code {
+  font-size: 0.86em;
+  letter-spacing: -0.01em;
+}
+
+/* The generated intent pages open with a two-column "At a glance" table whose
+   header row is empty by design — the left column is the label. Hide the empty
+   header so it reads as a definition list instead of a headerless table. */
+.vp-doc table thead th:empty {
+  padding: 0;
+  height: 0;
+  border: none;
+}
+
+/* Reference rows mix a short label against a long constraint sentence, so cells
+   read better aligned to their first line than centred against the tallest one.
+
+   Deliberately NOT touching `display` here: VitePress gives `.vp-doc table`
+   `display: block; overflow-x: auto`, which is what lets a four-column schema
+   table scroll inside its own box at 390 pt instead of widening the page. */
+.vp-doc td,
+.vp-doc th {
+  vertical-align: top;
+}

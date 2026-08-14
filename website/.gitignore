@@ -1,0 +1,7 @@
+node_modules/
+.vitepress/dist/
+.vitepress/cache/
+
+# bun.lock is deliberately NOT ignored: Cloudflare Pages installs from a plain
+# clone, and an unpinned install is a build that can differ from the one that
+# was reviewed.

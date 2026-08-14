@@ -41,6 +41,10 @@ metrics are documented in
   design contract for component hierarchy, regions, and interactions.
 - [`docs/README.md`](docs/README.md) — canonical documentation map, precedence,
   implementation status, guides, and research history.
+- [`website/`](website/) — the public documentation site: install and use
+  guides, plugin authoring, concepts, and a generated reference for the CLI and
+  all 51 canonical intents. `docs/` stays the engineering record; the site is
+  written for someone learning Tenon rather than changing it.
 
 ## Install
 
