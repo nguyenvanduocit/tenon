@@ -8,6 +8,9 @@
 - **priority**: high
 - **effort**: M
 - **PRDs**: `TENON-PRD-010` (plugin runtime), `TENON-PRD-011` (interaction boundaries)
+- **DONE 2026-08-14. Operator-directed; a concurrent session committed the shared tree as
+  `a6c5f80` mid-verification, which included this task's files at their final content —
+  this session itself committed nothing.**
 
 ## Decision
 
@@ -25,23 +28,25 @@ T-155 named; this slice does not touch them.
 
 ## Criteria
 
-- [ ] `BundledPluginProgram` carries optional per-view callbacks; existing programs compile
+- [x] `BundledPluginProgram` carries optional per-view callbacks; existing programs compile
       unchanged and declare none.
-- [ ] `invokeViewSelect`/`invokeViewSubmit` answer handler presence synchronously and run
+- [x] `invokeViewSelect`/`invokeViewSubmit` answer handler presence synchronously and run
       the handler through the same bounded mailbox as events, in enqueue order.
-- [ ] `openViewInstance`/`closeViewInstance` track instances (idempotent, instanced-only),
+- [x] `openViewInstance`/`closeViewInstance` track instances (idempotent, instanced-only),
       publish them in the snapshot, prune the closed instance's published view body, and
       deliver `open`/`close` to the program.
-- [ ] A throwing view callback fails the plugin generation, not the host.
-- [ ] T-156's migration guard stays green: shipped compiled plugins still publish no views
+- [x] A throwing view callback fails the plugin generation, not the host.
+- [x] T-156's migration guard stays green: shipped compiled plugins still publish no views
       and report select/submit unhandled.
-- [ ] Focused tests + full `swift test` pass; `xcodegen generate` is deterministic.
+- [x] Focused tests + full `swift test` pass; `xcodegen generate` is deterministic.
 
-## Owner / files (agent lock)
-
-Session: claude `4844889b` 2026-08-14 (operator-directed, uncommitted shared tree)
-
-- `Sources/TenonBundledPlugins/BundledPluginRuntime.swift`
-- `Sources/TenonBundledPlugins/BundledPluginProgram.swift` (new)
-- `Tests/TenonCoreTests/BundledPluginViewRoutingTests.swift` (new)
-- `Tenon.xcodeproj/project.pbxproj` (regenerated via `xcodegen generate` only)
+Verification 2026-08-14: red first at the routing assertions (6 tests, 12 assertion
+failures — `handled` false, recorders empty, `openViewInstances` empty), then green;
+focused sweep (`BundledPluginViewRoutingTests` + `BundledPluginRuntimeTests` +
+`BundledPluginMigrationGuardTests` + `DomainTagFitnessTests`) **22/0**; full suite
+**2257/0**; `xcodegen generate` run twice, second run produced no diff. Follow-ups still
+open before a view-publishing port: dynamic palette providers, view-owned
+timer/watch/process resources, and swapping T-156's views-empty guard for routing coverage
+of the first real port. The `plugin-runtime.prd.md` delivery note for `PRT-FR-048`
+("native view interaction ports remain follow-up work") can now name this seam — left to
+the PRD owner, since this task was scoped to `Sources/TenonBundledPlugins` + tests.
