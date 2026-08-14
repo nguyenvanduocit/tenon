@@ -35,19 +35,17 @@
       isolation (T-160's then-in-flight move test; `CLISocketServerTests` peer-pid under
       concurrent-build load, the T-134 flaky-wait shape).
 
-## Coordination
+## Coordination — how this landed across two commits
 `SpatialCanvasNSView.swift`, `SpatialCanvasInteractionTests.swift`, and the spatial-panes
-PRD pair are also claimed by T-160 (session `d43ed512`). Regions are disjoint (T-160: drag
-routing ~752-870 + SP-FR-014; T-161: `slotContextMenu` ~554-624 + SP-FR-029). Coordination
-message sent to that session 2026-08-14 15:4x; commits announced on the same channel.
+PRD pair were simultaneously claimed by T-160 (session `d43ed512`); regions were disjoint
+and coordinated by message before the first edit. The work therefore landed as two commits
+on one shared tree: `ef17f41` (this session — composer fork spelling, offer continuation,
+lens accessor, their tests, this task file) and `ed7c850` (T-160's commit, which by recorded
+agreement carries this task's finished hunks in the four shared files, credited in its
+message: "Includes T-161's finished pane-menu session-continuation hunks (SP-FR-029,
+session 1ddd16bc)"). Verified in `ed7c850`'s diff: 32 fork/SP-FR-029 hunk matches across
+the four files. T-160's session re-ran `SpatialCanvasInteractionTests` on the final tree
+before committing: 74 / 0 including the five continuation tests, and their full suite ran
+**2273 / 0** with this task's edits present.
 
-## Owner / files (agent lock) — session `1ddd16bc`
-- Sources/TenonApp/AgentLaunchCommand.swift
-- Sources/TenonApp/AgentSessionResume.swift
-- Sources/TenonApp/AgentLensSession.swift
-- Sources/TenonApp/Canvas/SpatialCanvasNSView.swift (shared with T-160 — menu region only)
-- Tests/TenonAppStateTests/AgentLaunchCommandTests.swift
-- Tests/TenonAppStateTests/AgentSessionResumeTests.swift
-- Tests/TenonAppStateTests/SpatialCanvasInteractionTests.swift (shared with T-160 — menu tests only)
-- docs/prds/spatial-panes.prd.md (shared with T-160 — SP-FR-029/SP-FR-008 only)
-- docs/prds/spatial-panes.feature (shared with T-160 — SP-FR-029 scenarios only)
+## Owner / files — ALL LOCKS RELEASED (done 2026-08-14 16:1x)
