@@ -260,6 +260,7 @@ final class AgentLensViewModel {
     let slotID: UUID
 
     private(set) var snapshot = AgentLensSnapshot.empty
+    private(set) var readModel = AgentLensReadModel.empty
     private(set) var timelineItems: [AgentTimelineItem] = []
     private(set) var declaredQuestion: AgentQuestionRecord?
     private(set) var resolution: AgentLensResolution?
@@ -488,7 +489,7 @@ final class AgentLensViewModel {
         inspection = AgentLensInspection(fact: item)
         showsInspector = inspection != nil
         account = .chat
-        pendingChatFocus = factID
+        pendingChatFocus = readModel.conversationAnchor(forFactID: factID)
     }
 
     /// Reads this session into milestones. Explicit, never automatic: a reading costs the
@@ -718,9 +719,9 @@ final class AgentLensViewModel {
         }
     }
 
-    /// Says that input never reached the agent. The diagnostic carries a warning into the
-    /// pane's chrome header and the text stays in the composer; whether that is worth switching
-    /// to the raw terminal is the reader's call.
+    /// Says that input never reached the agent. The diagnostic stays in the Session evidence
+    /// and the text stays in the composer; whether that is worth switching to the raw terminal
+    /// is the reader's call.
     private func reportInputFailure(_ error: any Error) async {
         guard let coordinator else { return }
         let diagnostic = AgentLensDiagnostic(
@@ -746,7 +747,9 @@ final class AgentLensViewModel {
     func receive(_ next: AgentLensSnapshot) {
         optionSubmissionGate.reconcile(pendingRequestID: next.pendingInteraction?.id)
         guard snapshot != next else { return }
-        timelineItems = next.sessionTimelineItems
+        let nextReadModel = next.readModel
+        readModel = nextReadModel
+        timelineItems = nextReadModel.conversation
         snapshot = next
         DiagnosticsRuntimeSignals.shared.noteAgentLensSnapshot(
             paneOrdinal: diagnosticsPaneOrdinal,

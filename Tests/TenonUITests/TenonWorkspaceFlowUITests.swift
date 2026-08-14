@@ -23,6 +23,8 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
         static let launcher = "tenon.launcher"
         static let launcherSearch = "tenon.launcher.search"
         static let launcherCopyTabID = "tenon.launcher.copyTabID"
+        static let launcherArrangePanes = "tenon.launcher.arrangePanes"
+        static let launcherArrangement = "tenon.launcher.arrangement."
         static let launcherRow = "tenon.launcher.row."  // + one command ID, per launcher entry
         static let canvas = "tenon.canvas"    // the active tab's spatial canvas
         static let slot = "tenon.slot"        // one per slot rendered on the canvas
@@ -162,6 +164,42 @@ final class TenonWorkspaceFlowUITests: XCTestCase {
         app.typeKey("w", modifierFlags: .command)
 
         XCTAssertTrue(waitFor { self.slotCount == 1 }, "⌘W did not close the split slot")
+    }
+
+    /// A tab with uneven splits exposes the fixed host arrangement utility. Hovering it
+    /// opens the cascading presets and choosing Grid commits a new whole-tab geometry.
+    func testArrangePanesHoverMenuBalancesAnUnevenSplit() {
+        XCTAssertTrue(canvas.waitForExistence(timeout: 15))
+        app.typeKey("d", modifierFlags: .command)
+        app.typeKey("d", modifierFlags: .command)
+        XCTAssertTrue(waitFor { self.slotCount == 3 }, "need three panes for an uneven split")
+        let geometryBefore = slotElements.allElementsBoundByIndex.map(\.identifier)
+
+        let tab = app.descendants(matching: .any)
+            .matching(identifier: A11y.tab)
+            .firstMatch
+        XCTAssertTrue(tab.waitForExistence(timeout: 5), "tab chip missing")
+        tab.rightClick()
+
+        let arrangements = app.descendants(matching: .any)
+            .matching(identifier: A11y.launcherArrangePanes)
+            .firstMatch
+        XCTAssertTrue(
+            arrangements.waitForExistence(timeout: 5),
+            "launcher did not expose arrangements for a multi-pane tab"
+        )
+        arrangements.hover()
+
+        let grid = app.descendants(matching: .any)
+            .matching(identifier: A11y.launcherArrangement + "tiled")
+            .firstMatch
+        XCTAssertTrue(grid.waitForExistence(timeout: 5), "hover did not open the arrangement submenu")
+        grid.click()
+
+        XCTAssertTrue(
+            waitFor { self.slotElements.allElementsBoundByIndex.map(\.identifier) != geometryBefore },
+            "choosing Grid did not replace the uneven pane geometry"
+        )
     }
 
     // MARK: - Drag (the interaction the whole exercise is really about)

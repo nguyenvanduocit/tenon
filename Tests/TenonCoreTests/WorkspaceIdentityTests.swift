@@ -5,6 +5,10 @@ import XCTest
 /// workspace itself. Every rule here is pure — no window, no shell, no filesystem.
 final class WorkspaceIdentityTests: XCTestCase {
     private let projectPath = URL(fileURLWithPath: "/tmp/tenon-project", isDirectory: true)
+    private let onePixelPNG = Data(base64Encoded: """
+        iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8A
+        AQUBAScY42YAAAAASUVORK5CYII=
+        """.filter { !$0.isWhitespace })!
 
     // MARK: - The two naming rules
 
@@ -187,6 +191,44 @@ final class WorkspaceIdentityTests: XCTestCase {
         XCTAssertEqual(catalog.setWorkspaceAppearance(catalog.activeWorkspaceID, .default), [])
     }
 
+    func testNameMarkAndTintChangeAtomicallyAsOneIdentityFact() throws {
+        var catalog = WorkspaceCatalog(path: projectPath)
+        catalog.newTab(content: .changes)
+        let id = catalog.activeWorkspaceID
+        let before = try XCTUnwrap(catalog.activeWorkspace)
+
+        let events = catalog.setWorkspaceIdentity(
+            id,
+            name: "Payments",
+            appearance: WorkspaceAppearance(symbol: .server, accent: .teal)
+        )
+
+        let after = try XCTUnwrap(catalog.activeWorkspace)
+        XCTAssertEqual(events, [.workspaceIdentityChanged(id)])
+        XCTAssertEqual(after.name, "Payments")
+        XCTAssertEqual(after.appearance, WorkspaceAppearance(symbol: .server, accent: .teal))
+        XCTAssertEqual(after.id, before.id)
+        XCTAssertEqual(after.path, before.path)
+        XCTAssertEqual(after.tabs, before.tabs)
+        XCTAssertEqual(after.activeTabID, before.activeTabID)
+    }
+
+    func testCustomIconAcceptsOnlyBoundedNormalizedPNGBytes() throws {
+        let icon = try XCTUnwrap(WorkspaceCustomIcon(pngData: onePixelPNG))
+
+        XCTAssertEqual(icon.pngData, onePixelPNG)
+        XCTAssertNil(WorkspaceCustomIcon(pngData: Data("not a png".utf8)))
+        XCTAssertNil(
+            WorkspaceCustomIcon(
+                pngData: Data(repeating: 0, count: WorkspaceCustomIcon.maximumPNGBytes + 1)
+            )
+        )
+        XCTAssertEqual(
+            WorkspaceAppearance(symbol: .folder, customIcon: icon).iconLabel,
+            "Custom icon"
+        )
+    }
+
     /// Clearing the tint returns the workspace to the app accent rather than painting it
     /// with a colour that happens to match today's preference.
     func testClearingTheTintKeepsTheMarkAndFollowsTheAppAccentAgain() throws {
@@ -259,7 +301,7 @@ final class WorkspaceIdentityTests: XCTestCase {
         XCTAssertEqual(store.catalog.activeWorkspace?.appearance, .default)
     }
 
-    /// A rename is not a move: the sidebar's Add-Workspace menu filters remembered folders
+    /// A rename is not a move: the sidebar's contextual library filters remembered folders
     /// against the open ones, and that set must not churn because a name changed.
     func testRenamingDoesNotRepublishTheOpenWorkspaceFolders() {
         let store = WorkspaceStore(catalog: WorkspaceCatalog(path: projectPath))
@@ -275,8 +317,12 @@ final class WorkspaceIdentityTests: XCTestCase {
     func testTheChosenIdentitySurvivesCaptureAndRestore() throws {
         var catalog = WorkspaceCatalog(path: projectPath)
         let id = catalog.activeWorkspaceID
+        let icon = try XCTUnwrap(WorkspaceCustomIcon(pngData: onePixelPNG))
         catalog.renameWorkspace(id, to: "Payments")
-        catalog.setWorkspaceAppearance(id, WorkspaceAppearance(symbol: .metrics, accent: .purple))
+        catalog.setWorkspaceAppearance(
+            id,
+            WorkspaceAppearance(symbol: .metrics, accent: .purple, customIcon: icon)
+        )
 
         let restored = try XCTUnwrap(
             WorkspaceCatalogSnapshot.restore(
@@ -292,6 +338,32 @@ final class WorkspaceIdentityTests: XCTestCase {
         XCTAssertEqual(workspace.name, "Payments")
         XCTAssertEqual(workspace.appearance.symbol, .metrics)
         XCTAssertEqual(workspace.appearance.accent, .purple)
+        XCTAssertEqual(workspace.appearance.customIcon, icon)
+    }
+
+    func testACorruptPersistedCustomIconDropsOnlyTheBitmap() throws {
+        var catalog = WorkspaceCatalog(path: projectPath)
+        catalog.setWorkspaceAppearance(
+            catalog.activeWorkspaceID,
+            WorkspaceAppearance(symbol: .server, accent: .teal)
+        )
+        var document = WorkspaceCatalogSnapshot.document(capturing: catalog)
+        document.workspaces[0].appearance?.customIconID = UUID()
+        document.workspaces[0].appearance?.customIconPNG = Data("not a png".utf8)
+
+        let restored = try XCTUnwrap(
+            WorkspaceCatalogSnapshot.restore(
+                document,
+                isDirectory: { _ in true },
+                isFileReadable: { _ in true },
+                isKnownPluginView: { _, _ in true }
+            )
+        )
+
+        let appearance = try XCTUnwrap(restored.catalog.activeWorkspace).appearance
+        XCTAssertEqual(appearance.symbol, .server)
+        XCTAssertEqual(appearance.accent, .teal)
+        XCTAssertNil(appearance.customIcon)
     }
 
     /// The migration: a document written before this task carries no appearance at all. It
@@ -414,6 +486,8 @@ final class WorkspaceIdentityTests: XCTestCase {
         XCTAssertEqual(Set(labels).count, labels.count)
         XCTAssertTrue(labels.allSatisfy { !$0.isEmpty })
         XCTAssertTrue(symbols.allSatisfy { !$0.isEmpty })
+        XCTAssertEqual(WorkspaceSymbol.allCases.count, 24)
+        XCTAssertEqual(AccentColor.allCases.count, 12)
         XCTAssertEqual(WorkspaceSymbol.default, .folder)
     }
 }

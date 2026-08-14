@@ -284,11 +284,132 @@ final class TerminalProcessProjectionTests: XCTestCase {
         XCTAssertEqual(model.sortDirection, .descending, "a number column starts largest first")
     }
 
+    /// Reading the presentation rows is a hot SwiftUI path. The recursive sort belongs to a
+    /// snapshot or sort-choice transition, not to every body access (and not twice in one
+    /// body pass for the empty check plus the visible outline).
+    @MainActor
+    func testRowsAreProjectedOncePerInputTransitionRatherThanOncePerRead() async {
+        var projectionCount = 0
+        let fixture = await makeModel { nodes, key, direction in
+            projectionCount += 1
+            return TelemetrySort.apply(nodes, key: key, direction: direction)
+        }
+
+        XCTAssertEqual(projectionCount, 1, "publishing the fixture projects its rows once")
+        _ = fixture.rows
+        _ = fixture.rows
+        XCTAssertEqual(projectionCount, 1, "SwiftUI reads reuse the completed projection")
+
+        fixture.toggleSort(.cpu)
+        XCTAssertEqual(projectionCount, 2, "changing the sort projects exactly once")
+        _ = fixture.rows
+        XCTAssertEqual(projectionCount, 2)
+    }
+
+    /// SwiftUI cancels a view's `.task` when the popover disappears. The task itself must own
+    /// both halves of telemetry demand so a close cannot race ahead of an awaiting open and
+    /// leave the hidden monitor polling forever.
+    @MainActor
+    func testCancellingThePresentationTaskReleasesSamplingDemand() async {
+        var projectionCount = 0
+        let (model, coordinator) = await makePresentationModel { nodes, key, direction in
+            projectionCount += 1
+            return TelemetrySort.apply(nodes, key: key, direction: direction)
+        }
+        let presentation = Task { await model.presented() }
+
+        for _ in 0 ..< 1_000 {
+            if model.activePresentationCount == 1,
+               model.hasPresentationObserver,
+               await coordinator.isVisible,
+               projectionCount > 0
+            { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(model.activePresentationCount, 1)
+        XCTAssertTrue(model.hasPresentationObserver)
+        var isVisible = await coordinator.isVisible
+        XCTAssertTrue(isVisible, "the visible presentation starts demand")
+
+        presentation.cancel()
+        await presentation.value
+
+        XCTAssertEqual(model.activePresentationCount, 0)
+        XCTAssertFalse(model.hasPresentationObserver)
+        isVisible = await coordinator.isVisible
+        XCTAssertFalse(isVisible, "the same task pairs its demand on cancellation")
+
+        let projectionsAtClose = projectionCount
+        await coordinator.refreshNow()
+        for _ in 0 ..< 100 { await Task.yield() }
+        XCTAssertEqual(
+            projectionCount,
+            projectionsAtClose,
+            "a publication after close cannot reach a removed observer"
+        )
+    }
+
+    /// More than one presentation counts demand independently but shares the one model
+    /// observer. Cancelling either one cannot tear down the survivor's telemetry lifetime.
+    @MainActor
+    func testOverlappingPresentationsRemainBalancedWhenCancelledOutOfOrder() async {
+        let (model, coordinator) = await makePresentationModel()
+        let first = Task { await model.presented() }
+        let second = Task { await model.presented() }
+
+        for _ in 0 ..< 1_000 {
+            if model.activePresentationCount == 2, await coordinator.isVisible { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(model.activePresentationCount, 2)
+        XCTAssertTrue(model.hasPresentationObserver)
+
+        first.cancel()
+        await first.value
+        XCTAssertEqual(model.activePresentationCount, 1)
+        var isVisible = await coordinator.isVisible
+        XCTAssertTrue(isVisible, "the surviving presentation keeps sampling alive")
+        XCTAssertTrue(model.hasPresentationObserver, "the observer remains until the final close")
+
+        second.cancel()
+        await second.value
+        XCTAssertEqual(model.activePresentationCount, 0)
+        isVisible = await coordinator.isVisible
+        XCTAssertFalse(isVisible)
+        XCTAssertFalse(model.hasPresentationObserver)
+    }
+
+    /// The cached-row assertion also covers the production observer path. A coordinator
+    /// publication projects exactly once; reading the result does not project again.
+    @MainActor
+    func testCoordinatorPublicationProjectsRowsExactlyOnce() async {
+        var projectionCount = 0
+        let (model, _) = await makePresentationModel { nodes, key, direction in
+            projectionCount += 1
+            return TelemetrySort.apply(nodes, key: key, direction: direction)
+        }
+        let presentation = Task { await model.presented() }
+
+        for _ in 0 ..< 1_000 {
+            if projectionCount > 0 { break }
+            await Task.yield()
+        }
+        XCTAssertEqual(projectionCount, 1, "the coordinator publication projects once")
+        _ = model.rows
+        _ = model.rows
+        XCTAssertEqual(projectionCount, 1, "published rows remain cached across reads")
+
+        presentation.cancel()
+        await presentation.value
+    }
+
     // MARK: - Helpers
 
     /// A model holding one published snapshot, with no machine behind it.
     @MainActor
-    private func makeModel() async -> ResourceMonitorModel {
+    private func makeModel(
+        rowProjector: ResourceMonitorModel.RowProjector? = nil
+    ) async -> ResourceMonitorModel {
         let pane = PaneProvenance(
             slotID: UUID(), tabID: UUID(), workspaceID: UUID(),
             ttyDevice: 7, foregroundPID: nil
@@ -322,15 +443,49 @@ final class TerminalProcessProjectionTests: XCTestCase {
             provenance: { .none }
         )
         let store = WorkspaceStore(catalog: WorkspaceCatalog(name: "t", path: URL(fileURLWithPath: "/tmp")))
-        let model = ResourceMonitorModel(
-            coordinator: coordinator,
-            bridge: ProcessTelemetryBridge(store: store, surfaces: SurfacePool(
-                backendName: "Stub",
-                makeSurfaceWithIdentity: { _, _, _ in StubTerminalSurface() }
-            ))
-        )
+        let bridge = ProcessTelemetryBridge(store: store, surfaces: SurfacePool(
+            backendName: "Stub",
+            makeSurfaceWithIdentity: { _, _, _ in StubTerminalSurface() }
+        ))
+        let model = if let rowProjector {
+            ResourceMonitorModel(
+                coordinator: coordinator,
+                bridge: bridge,
+                rowProjector: rowProjector
+            )
+        } else {
+            ResourceMonitorModel(coordinator: coordinator, bridge: bridge)
+        }
         model.applyForTesting(snapshot)
         return model
+    }
+
+    @MainActor
+    private func makePresentationModel(
+        rowProjector: ResourceMonitorModel.RowProjector? = nil
+    ) async -> (ResourceMonitorModel, ProcessTelemetryCoordinator) {
+        let coordinator = ProcessTelemetryCoordinator(
+            sampler: StaticSampler(snapshotProcesses: []),
+            clock: SystemTelemetryClock(),
+            ticker: TaskSleepTicker(),
+            physicalMemory: 16 << 30,
+            provenance: { .none }
+        )
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(name: "t", path: URL(fileURLWithPath: "/tmp")))
+        let bridge = ProcessTelemetryBridge(store: store, surfaces: SurfacePool(
+            backendName: "Stub",
+            makeSurfaceWithIdentity: { _, _, _ in StubTerminalSurface() }
+        ))
+        let model = if let rowProjector {
+            ResourceMonitorModel(
+                coordinator: coordinator,
+                bridge: bridge,
+                rowProjector: rowProjector
+            )
+        } else {
+            ResourceMonitorModel(coordinator: coordinator, bridge: bridge)
+        }
+        return (model, coordinator)
     }
 
     private func firstPane(in nodes: [TelemetryNode]) -> TelemetryNode? {

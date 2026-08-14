@@ -7,8 +7,8 @@
 | Owner | Tenon workspace-model and native-shell domains |
 | Reviewers | product, native UI, accessibility, persistence, plugin runtime, test |
 | Created | 2026-08-09 |
-| Last reviewed | 2026-08-09 |
-| Related work | T-001, T-003, T-027, T-032, T-034, T-097, T-098, T-099 |
+| Last reviewed | 2026-08-14 |
+| Related work | T-001, T-003, T-027, T-032, T-034, T-097, T-098, T-099, T-154 |
 | Related PRDs | [`command-surfaces.prd.md`](command-surfaces.prd.md), `spatial-panes.prd.md`, `settings.prd.md`, `plugin-ui.prd.md`, `terminal.prd.md` |
 | Acceptance specification | [`workspace-shell.feature`](workspace-shell.feature) |
 
@@ -36,7 +36,8 @@ tabs, each tab owns its active pane, and every identity remains stable across se
 customization, ordering, persistence, and restoration. The sidebar provides direct
 workspace navigation, a filtered recent-workspace menu, compact host utilities, and a
 closed customization vocabulary. Relaunch reconstructs every valid part of the saved tree
-without constructing heavyweight pane resources until they are viewed.
+without constructing heavyweight pane resources until they are viewed. Workspace rows can be
+reordered directly in the sidebar without changing selection or any resource identity.
 
 ### Why now
 
@@ -165,6 +166,7 @@ restart to preserve the map of work even when live processes themselves cannot s
 - Compact Help, Feedback, Settings footer and About version placement.
 - Workspace structural facts consumed by the bundled permission-free Workspace Status
   example.
+- Pane display-name override from its header menu, including cancellable Companion naming.
 
 ### Non-goals
 
@@ -192,12 +194,15 @@ restart to preserve the map of work even when live processes themselves cannot s
 ### Entry points
 
 - App launch opens or focuses the one workspace window with stable scene ID `main`.
-- The sidebar row selects a workspace; its secondary menu offers Customize and Remove.
+- The sidebar row selects a workspace, drags vertically to reorder it, and exposes matching
+  Move up/down accessibility actions; its secondary menu offers Customize and Remove.
 - Secondary-clicking the sidebar body offers Add Workspace and up to five eligible recents.
 - The titlebar toggle shows or hides the sidebar; its width is pointer-resizable.
 - The tab strip selects a tab; command/launcher and reorder details are specified in
   PRD-002.
 - The footer exposes Help, Feedback, and Settings as three compact icon controls.
+- A pane-header secondary click offers Rename and AI Rename; both keep the pane's UUID and
+  content in place.
 
 ### Primary navigation flow
 
@@ -284,10 +289,12 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-FR-013` | A bare launch **MUST** restore the catalog as saved; an explicit launch directory **MUST** select its canonical-folder match or add it without replacing restored work; absent restore **MUST** seed from the explicit directory or home fallback. | must | shipped | `@req-ws-fr-013` |
 | `WS-FR-014` | Restore **MUST NOT** promise PTY or scrollback continuity and **MUST NOT** eagerly construct unseen pane resources; a restored terminal starts a fresh shell on demand using a valid saved cwd placeholder or workspace root fallback. | must | shipped | `@req-ws-fr-014` |
 | `WS-FR-015` | Workspace naming **MUST** trim and collapse whitespace, cap at 60 characters, treat empty input as the derived folder name, permit duplicate display names, and leave UUID/root/tree/plugin scope unchanged. | must | shipped | `@req-ws-fr-015` |
-| `WS-FR-016` | Workspace appearance **MUST** use the closed twelve-mark vocabulary and existing semantic accent vocabulary; Reset **MUST** restore the derived name, folder mark, and the automatic colour without recreating the workspace. | must | shipped | `@req-ws-fr-016` |
+| `WS-FR-016` | Workspace appearance **MUST** use the closed twelve-mark vocabulary and existing semantic accent vocabulary; Reset **MUST** restore the derived name, folder mark, and the automatic colour without recreating the workspace. | must | superseded by `WS-FR-032` 2026-08-14 | `@req-ws-fr-016` |
 | `WS-FR-023` | A workspace with no chosen accent **MUST** be drawn in a colour derived from its canonical folder by a rule that is stable across launches, equal for every spelling of one folder, and beaten by an explicitly chosen accent; the derived palette **MUST** hold every entry to 3:1 against the sidebar chrome and keep its colours perceptually apart. | must | shipped | `@req-ws-fr-023` |
 | `WS-FR-024` | Every workspace row **MUST** draw its own colour whether or not it is the selected row, and selection **MUST** remain legible from the row's fill, text weight, and spoken state rather than from the mark's colour. | must | shipped | `@req-ws-fr-024` |
 | `WS-FR-017` | A real identity change **MUST** persist compatibly, update every existing host representation through shared formatting, and publish exactly one `workspace.identity-changed` fact; a no-op **MUST** publish nothing. | must | shipped | `@req-ws-fr-017` |
+| `WS-FR-032` | Workspace appearance **MUST** offer the closed 24-mark and 12-semantic-accent vocabularies plus one imported image. Import **MUST** decode and normalize off MainActor to a PNG no larger than 64×64 pixels and 128 KiB, embed that result in catalog and recent-workspace persistence rather than retain a source path, degrade malformed saved image bytes to the selected system mark without losing the workspace, and let Reset clear the imported image with the name and accent. | must | shipped | `@req-ws-fr-032` |
+| `WS-FR-033` | `workspace.identity.set.v1` **MUST** expose one finite name/accent/icon patch to `{plugin, cli, agent}` through the normal dispatcher. It **MUST** require an exact workspace UUID in invocation scope, never fall back to selection, route to the same typed identity mutation as the native form, normalize custom image bytes by the same rule, and return the final complete identity after publishing at most one `workspace.identity-changed` fact. | must | shipped | `@req-ws-fr-033` |
 | `WS-FR-018` | Recently opened content **MUST** be recorded against the workspace ID named by the mutation's own events, read only by an explicitly supplied workspace ID, deduplicate/order independently, cap each bucket at six and the store at 32 workspaces, and clear one bucket without changing another. | must | shipped | `@req-ws-fr-018` |
 | `WS-FR-019` | On launch, a stale recent-content bucket **MAY** be adopted only by an unclaimed live workspace with the same canonical root; legacy app-global rows **MUST** be discarded rather than guessed into a workspace. | must | shipped | `@req-ws-fr-019` |
 | `WS-FR-020` | The sidebar footer **MUST** contain exactly Help, Feedback, and Settings in one 34-point row of 28-point controls; Help/Feedback destinations **MUST** remain unchanged, and version/build **MUST** move to Settings About instead of the primary sidebar hierarchy. | must | shipped | `@req-ws-fr-020` |
@@ -295,6 +302,11 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-FR-022` | The bundled permission-free Workspace Status plugin **MAY** consume `workspace.changed` structural facts and show tab/slot counts, but **MUST NOT** receive pane contents through that event. | should | shipped | `@req-ws-fr-022` |
 | `WS-FR-025` | Folders dropped on the sidebar **MUST** each reach the same outcome as Add Workspace — a workspace opened at that folder under its derived name and recorded in recent history — except that a folder an open workspace is already rooted at **MUST** be selected rather than opened a second time; the drop **MUST** preserve the order the folders arrived in, leave the last one active, collapse repeats of one canonical folder within a single drop, accept Finder's `public.file-url` transport only when AppKit resolves it as `public.folder`, and refuse a dropped file without highlighting the sidebar or opening its parent folder. | must | shipped | `@req-ws-fr-025` |
 | `WS-FR-026` | Removing a workspace **MUST** inspect live terminal processes across every pane it owns through the same host close gate as tab close; no live terminal or a complete idle inspection **MUST** remove immediately, while running work, incomplete identity, an unavailable inspection, or a pane/process identity changed during inspection **MUST** present one native destructive confirmation; Cancel **MUST NOT** mutate the catalog and Confirm **MUST** remove the workspace. | must | shipped | `@req-ws-fr-026` |
+| `WS-FR-027` | A terminal pane whose agent session is resolved exactly — the provider's own hook named that session for this surface and the process group it declared still owns the terminal's foreground — **MUST** be captured with that session beside its terminal record, and **MUST** be restored as the recorded-session reading with its resume offer; a reading below exact confidence, without a session id, or without a transcript **MUST NOT** be captured; a captured session whose transcript is unreadable at restore **MUST** degrade that pane to a terminal with its saved working directory rather than to an empty pane. | must | shipped | `@req-ws-fr-027` |
+| `WS-FR-028` | A pane-header secondary click and the pane's VoiceOver actions **MUST** offer Rename and AI Rename. Manual Rename **MUST** be typed on the pane's own title — no surface presented over the shell — where Return commits, Escape restores, and clicking away commits; it **MUST** normalize and cap the label at 60 characters, persist it separately from a terminal's dynamic title, prefer it in pane/tab/process-monitor chrome, and treat an empty value as return to the automatic content title without changing pane UUID, owner, content, geometry, or surface. | must | shipped | `@req-ws-fr-028` |
+| `WS-FR-029` | AI Rename **MUST** snapshot the app's Companion profile, run its selected installed agent as one bounded turn, and accept only a title from the provider's machine-readable JSON channel and the shared title schema; Claude + Haiku remains the compatible default. The user **MUST** be able to cancel, and removing the pane through close-pane, close-tab, workspace removal, or shutdown **MUST** cancel its Swift task and terminate the CLI process; switching tabs **MUST NOT** cancel it. | must | shipped | `@req-ws-fr-029` |
+| `WS-FR-030` | A rename **MUST** be reported by the pane being renamed and **MUST NOT** present any surface over the shell: a running generation **MUST** read as `Naming…` on that pane's title while the pane stays usable, a validated title **MUST** return the title to normal presentation, and a failure **MUST** read as `Rename failed` with the provider's message as its tooltip and **MUST** clear itself after a bounded linger without an operator gesture. Rename state **MUST** be per pane, so concurrent generations on different panes cannot displace one another, and the pane's own name **MUST** remain what the rename actions start from while a state is being reported in its place. | must | shipped | `@req-ws-fr-030` |
+| `WS-FR-031` | A primary drag of at least six points beginning on a sidebar workspace row **MUST** reorder that workspace live by row midpoint, use no pasteboard payload, restore the original order when released outside the admitted horizontal band, and preserve active workspace/tab/pane selection, roots, content, and surface identity. Each row **MUST** expose Move workspace up/down only where that move exists, speak its position and completion, persist the resulting catalog order, and publish `workspace.moved` only for a real move. | must | shipped | `@req-ws-fr-031` |
 
 ### Non-functional requirements
 
@@ -310,6 +322,7 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-NFR-008` | compatibility | Unknown JSON fields **MUST** be ignored, missing appearance **MUST** restore as default, unknown mark/tint **MUST** degrade independently, and a newer top-level schema **MUST** be declined without restore-time rewrite. | shipped | persistence/identity migration tests |
 | `WS-NFR-009` | ownership | Each semantic **MUST** have one state owner: catalog for workspace/tab/pane values, app preferences for sidebar layout, recent-workspace store for closed-folder history, recent-content store for per-workspace view history, and resource pools for live surfaces only. | shipped | architecture/source audit |
 | `WS-NFR-010` | visual verification | Titlebar, sidebar at minimum/default width, identity form, and footer **MUST** receive native hosted or installed-app visual verification; headless logic tests alone are insufficient evidence for pixels and pointer feel. | partial | snapshots exist; installed-app focus/light-appearance gaps remain documented |
+| `WS-NFR-011` | AI rename bounds | Pane-title synthesis **MUST** stay off `MainActor`, accept at most a 12 KiB content excerpt, retain at most 64 KiB stdout and 8 KiB stderr, stop after 60 seconds, and expose no pane content in its workspace event. | shipped | generator/coordinator tests and interaction inventory |
 
 ## 8. Acceptance specification
 
@@ -320,10 +333,13 @@ XCTest and implementation names remain in the delivery matrix.
 |---|---|---|
 | WS-FR-001…003, WS-NFR-006 | one shell and valid catalog | scene/source fitness, core construction tests, native window tests |
 | WS-FR-004…009, WS-NFR-002, 005 | workspace/sidebar/tab navigation | pure catalog/store tests, hosted shell, XCUITest |
+| WS-FR-031, WS-NFR-005, 007 | workspace sidebar reorder | pure reorder/catalog/store/persistence tests plus installed-app pointer verification |
 | WS-FR-025 | opening a workspace by dropping its folder | pure planner tests plus mounted AppKit pasteboard/destination tests |
 | WS-FR-026 | process-safe workspace removal | shared coordinator branches, sidebar-adapter fitness, and a hosted native-window alert test |
 | WS-FR-010…014, WS-NFR-001, 003, 008, 009 | persistence and relaunch | DTO/store fault tests and composition-root relaunch |
-| WS-FR-015…017, WS-NFR-005, 006 | workspace identity | core identity, hosted form, snapshots, accessibility projections |
+| WS-FR-027 | an agent pane comes back reading its own session | pure capture-eligibility tests plus the catalog document's record/restore rules |
+| WS-FR-028…029, WS-NFR-011 | manual and AI pane naming | core mutation/persistence, Companion Claude/Codex JSON parsing, coordinator cancellation, and native menu tests |
+| WS-FR-015…017, WS-FR-032…033, WS-NFR-005, 006 | workspace identity | core identity, hosted form/import, intent contract/provider, snapshots, accessibility projections |
 | WS-FR-018…019, WS-NFR-004 | scoped recent content | two-workspace store and hosted launcher tests |
 | WS-FR-020…022, WS-NFR-004…007, 010 | footer and event projection | footer tests/snapshot, shipped-plugin and fitness tests |
 
@@ -334,15 +350,20 @@ XCTest and implementation names remain in the delivery matrix.
 | Interaction | Classification | Reason |
 |---|---|---|
 | SwiftUI sidebar/titlebar → `WorkspaceStore` | DIRECT | same semantic owner inside host; no adapter boundary |
+| native workspace identity form → `WorkspaceStore` | DIRECT | built-in SwiftUI reaches the typed same-owner identity mutation |
+| CLI/plugin/agent workspace identity patch | INTENT | finite unicast request/reply across a public principal boundary |
 | catalog mutation → plugin notification | EVENT | immutable facts that already happened |
 | catalog/recent/app-preference persistence | DIRECT resource ownership | internal typed stores own their file lifecycle; not public finite command APIs |
+| pane Rename → `WorkspaceStore.renameSlot` | DIRECT | focused host chrome and one typed semantic owner |
+| pane AI Rename process | host-private RESOURCE/TASK, then DIRECT | bounded independently-running process owned by the pane; validated result enters the same typed mutation |
+| pane label changed → observers | EVENT | `workspace.slot-identity-changed` is an ID-only fact that already happened |
 | bundled Workspace Status registration | CONTRIBUTION plus EVENT consumption | plugin declares host-visible status and reacts to a fact |
 | CLI/plugin workspace operations | out of scope here | PRD-007/010/011 own their public intent adapters and inventories |
 
-The workspace meaning exists once in the typed domain. Public adapters may call the same
-services but may not duplicate the mutation semantics. Workspace customization, recent
-menus, tab selection, and sidebar controls remain local/DIRECT and do not justify a new core
-intent.
+The workspace meaning exists once in the typed domain. Public adapters call the same
+services and may not duplicate mutation semantics. The native customization form, recent
+menus, tab selection, and sidebar controls remain local/DIRECT; the separately authorized
+CLI/plugin/agent customization route is the finite `workspace.identity.set.v1` INTENT.
 
 ### Native design-system constraints
 
@@ -375,7 +396,7 @@ one AppComposition / one Window
 └── WorkspaceCatalog (value truth)
     ├── Workspace UUID + path + presentation
     │   └── ordered Tab UUIDs + activeTabID
-    │       └── spatial Slot UUIDs + activeSlotID + content
+    │       └── spatial Slot UUIDs + activeSlotID + content + optional custom title
     ├── WorkspaceCatalogStore (versioned, coalesced, durable snapshots)
     ├── RecentWorkspaceStore (closed-folder navigation history)
     ├── RecentStore (workspace-ID-scoped content history)
@@ -395,11 +416,14 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   rehydrated into the recent launcher.
 - Free-tier workspace events expose counts and structure, not terminal/file contents.
 - Workspace customization grants no filesystem, terminal, network, or plugin authority.
+- AI Rename sends a bounded pane-content brief only after the explicit AI Rename gesture;
+  the resulting workspace event contains IDs only, never the brief or generated title.
 
 ### Compatibility
 
 - Schema version 1 is the current catalog format.
-- Optional appearance is backward-compatible; default appearance is omitted from writes.
+- Optional appearance and optional pane custom title are backward-compatible; missing values
+  restore their automatic presentation.
 - Unsupported content degrades per pane, whereas an unsupported top-level semantic version
   declines the document.
 - Old app-global recent-view rows have no defensible owner and are deliberately discarded.
@@ -413,13 +437,16 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | WS-FR-001…003, WS-FR-005…009 | shipped | [`TenonApp.swift`](../../Sources/TenonApp/TenonApp.swift), [`Workspace.swift`](../../Sources/TenonCore/Workspace.swift), shell views | `MainWindowSingletonTests`, `WorkspaceTests`, workspace tab-order and native flow tests | full installed-app accessibility journey remains manual |
 | WS-FR-002, WS-FR-021, WS-NFR-005…006, 010 | shipped/partial visual | `ContentView`, `ShellTitleBar`, `WindowChrome`, preferences, theme | app-preference tests, sidebar/titlebar snapshots, real-window drag tests | fixed dark theme has no light variant; focus ring not captured |
 | WS-FR-004, 006…007 | shipped | `WorkspaceStore`, `RecentWorkspaceStore`, `WorkspaceSidebarView` | `RecentWorkspaceStoreTests`, `WorkspaceTests` | menu labels/settlement primarily source and human observed |
+| WS-FR-031, WS-NFR-005, 007 | shipped | [`WorkspaceReorder.swift`](../../Sources/TenonCore/WorkspaceReorder.swift), `WorkspaceCatalog.moveWorkspace`, `WorkspaceStore.moveWorkspace`, and the sidebar row gesture/accessibility actions | `WorkspaceReorderTests`, `WorkspaceOrderTests`, persistence round trip, direct/event/domain fitness | SwiftUI's pointer gesture cannot be driven reliably by the headless host; installed-app drag feel remains manual |
 | WS-FR-010…014, WS-NFR-001, 003, 008…009 | shipped | `WorkspaceCatalogSnapshot`, `WorkspaceCatalogStore`, startup/stop composition | `WorkspaceCatalogPersistenceTests`, `WorkspaceCatalogRelaunchTests`, restored-pane tests | no product telemetry for field restore failures |
-| WS-FR-015…017 | shipped | `WorkspaceIdentity`, catalog mutations/schema, native identity form | `WorkspaceIdentityTests`, `WorkspaceIdentityFormTests`, sidebar/form snapshots | popover under high catalog churn not measured live |
+| WS-FR-015…017, WS-FR-032…033 | shipped | `WorkspaceIdentity`, catalog mutations/schema, native identity form/import, core intent catalog/provider | `WorkspaceIdentityTests`, `WorkspaceIdentityFormTests`, `WorkspaceIntentProviderTests`, catalog fitness | file-picker and popover behavior remain an installed-app check; popover under high catalog churn not measured live |
 | WS-FR-018…019 | shipped | `RecentStore`, event-derived attribution, explicit `workspaceID` threading | `RecentStoreTests`, `WorkspaceRecentLauncherTests` | SwiftUI invalidation timing is structurally covered, not separately instrumented |
 | WS-FR-020 | shipped | `SidebarFooter`, `AppVersion`, Settings About | `SidebarFooterTests`, sidebar snapshots | Settings About placement lacks a window screenshot |
 | WS-FR-022, WS-NFR-004, 007 | shipped | `plugins/workspace-status`, workspace event projection | `ShippedPluginsTests`, interaction/direct inventory fitness | payload privacy remains source-contract tested, not telemetry monitored |
 | WS-FR-025 | shipped | [`WorkspaceFolderDrop.swift`](../../Sources/TenonCore/WorkspaceFolderDrop.swift), `WorkspaceStore.openDroppedFolders`, mounted `WorkspaceFolderDropZone` / AppKit destination | `WorkspaceFolderDropTests` (9 assertions, three mutations killed); `WorkspaceFolderDropAdapterTests` (mounted shipping zone, Finder transport, entry/exit/perform lifecycle) | no automated pointer journey starts in Finder; the native pasteboard and destination callback boundary is hosted directly |
 | WS-FR-026 | shipped | `ShellCloseCoordinator`, `ContentView` native alert, sidebar and title-bar gesture adapters | `WorkspaceCloseConfirmationTests` (shared branches, exact sidebar wiring, hosted `NSWindow` sheet and Cancel button) | real-PTY running process remains covered by inspector/teardown tests; no installed-app context-menu journey was claimed because local Accessibility automation was unavailable while production stayed open |
+| WS-FR-027 | shipped | [`AgentPaneSessionCapture.swift`](../../Sources/TenonApp/AgentPaneSessionCapture.swift), `WorkspaceCatalogSnapshot.document`/`restore`, and both catalog save sites in `AppComposition` | `AgentPaneSessionCaptureTests` (9 assertions; the `.exact` guard killed a mutation that admitted `.inferred`), `WorkspaceCatalogPersistenceTests` (capture shape, restore, and both degraded forms, red before the change) | eligibility is asserted against the resolver's verdict, not against a real agent: no automated relaunch drives a live PTY through quit and back |
+| WS-FR-028…029, WS-NFR-011 | shipped | `PaneTitle`, catalog mutation/schema, `PaneRenameCoordinator`, `CompanionPaneTitleGenerator`, pane menu and modal overlay | `PaneTitleTests`, `PaneRenameTests`, `SpatialCanvasInteractionTests`, direct/event/resource inventory gates, 900×600 offscreen capture of the shipping modal | installed-app pointer feel and live provider-account runs remain manual; process arguments, structured-channel parsing, and cancellation are automated |
 | WS-FR-023…024 | shipped | `WorkspaceTint`, `WorkspaceMark`, identity form Automatic swatch | `WorkspaceTintTests`, `WorkspaceIdentityFormTests`, sidebar snapshots at both bounds | a pure path→colour rule cannot keep a whole sidebar distinct: eight workspaces collide about once, and the popover is the remedy |
 
 ### Phases
@@ -450,6 +477,7 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | workspace name is mistaken for identity | medium | high | UUID-only APIs and duplicate-name tests |
 | per-workspace recents silently become global again | medium | high | no unscoped accessor; two-workspace mutation tests |
 | eager restore causes process/memory spikes | medium | high | pure restore plus slot-keyed lazy pools |
+| an AI title run outlives the pane it describes | medium | high | catalog-liveness cancellation plus process termination and stale presentation token |
 | singleton window becomes limiting | medium | medium | treat multi-window as a new resource-ownership PRD, not a scene declaration tweak |
 
 ## 12. Open questions and decisions
@@ -475,21 +503,72 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | 2026-08-09 | Only explicit `WindowDragArea` moves the window. | interactive titlebar/tab gestures retain pointer ownership | T-034's older implicit background-drag account |
 | 2026-08-10 | Every row draws its workspace's colour, selected or not. | recognition serves the workspace one is not in yet, so a colour shown only on selection is shown only once it is no longer needed; selection is carried by fill and text as it is in every native sidebar, and holding unselected marks back costs contrast they cannot spare (2.89:1 at 72% opacity) | "unselected workspace tints stay visually quiet" |
 | 2026-08-10 | An unchosen accent means automatic — a colour derived from the workspace's folder — rather than the app accent. | differentiation that must be assigned by hand, and then remembered as a mapping, is still something to remember; a derived default makes an uncustomised catalog already distinct, and the five named accents remain for anyone settling a colour deliberately | nil accent inherits the Settings accent |
+| 2026-08-14 | The deliberate accent vocabulary expands from five to twelve semantic choices; Automatic still uses the ten-hue derived palette. | the operator asked for materially more deliberate choices, while changing the derived palette would disturb the colour every untouched workspace already remembers. Two balanced rows fit the compact 320-point form without a scroller and keep selection redundant in shape. | the five named accent limit in `WS-FR-016`; altering the derived palette |
+| 2026-08-14 | An uploaded workspace icon is copied as a bounded normalized PNG into identity persistence, never retained as a file path. | upload means the result must survive moving or deleting the source. Decoding, pixel bounds, and thumbnailing happen before bytes enter the catalog; invalid restored bytes cost only the bitmap and fall back to the selected closed symbol. | source-path references or arbitrary image bytes in workspace state |
+| 2026-08-14 | Native identity editing stays DIRECT; `workspace.identity.set.v1` is the one public adapter for CLI/plugin/agent customization. | built-in SwiftUI and external principals have different boundaries but one semantic owner. Exact workspace scope prevents a background caller from recolouring whichever project the operator selected most recently. | selection fallback or a second CLI-specific identity service |
 | 2026-08-12 | A file dropped on the sidebar is refused, never read as the folder containing it. | the sidebar accepts `public.folder` alone, so AppKit shows a refusal before any Tenon code runs. Opening a dropped file's parent would be right for a file inside a project and wrong for one on the Desktop, and the two are indistinguishable at the moment of the drop; refusing keeps "what a workspace is rooted at" a thing the operator states rather than a thing Tenon infers | T-138's alternative of deriving the parent folder |
 | 2026-08-12 | Several folders in one drop all open, in arrival order, with the last one active. | it is what a run of `addWorkspace` calls already does, so a drop of one folder and a drop of five agree about where the operator lands; silently taking the first and discarding the rest would throw away something the operator handed over | opening only the first dropped folder |
+| 2026-08-14 | Workspace rows use the same live midpoint reorder model as header tabs, rotated vertically, and never enter the pasteboard. | the row itself is the only truthful preview of its destination; stable UUID identity makes active selection and every owned tab/pane travel with it, while a local gesture cannot accidentally become a Finder/plugin drop route | commit only on release, a pasteboard drag, or a second workspace-order state owner in the view |
+| 2026-08-13 | A terminal pane running an agent is captured with that session and comes back reading it, and eligibility is the lens's own `.exact` verdict rather than a second rule. | the pane→session binding lives in memory and dies with the process, so the pane that was doing the work is precisely the pane that comes back with no route to its transcript, its summary, or its resume. Reusing the resolver the live pane already consulted means a restart can never claim more about a pane than the pane was showing — a cwd-and-mtime guess that survives a quit is indistinguishable from a fact, so `.inferred` is refused. A pane whose agent has exited and handed the shell back fails the process-group half of that verdict and stays a terminal, which is what the person was looking at when they quit | "a pane holding a terminal restores as a bare terminal" |
+| 2026-08-13 | The captured session travels beside the `terminal` record instead of replacing its type. | the pane's fallback is then real rather than blank: a transcript deleted between quit and launch leaves the terminal it always was, in its own saved directory, and a build that has never heard of the field reads the type it already knows. The `agentSession` content kind keeps its own stricter answer — a pane opened as a reading has nothing to be but empty when the reading is gone | recording an agent pane as the `agentSession` content type |
+| 2026-08-13 | A pane custom title is optional presentation on the pane UUID, and AI Rename is a pane-owned host-private task whose validated JSON enters the same rename mutation. | dynamic content titles remain available by clearing the override; one identity and one mutation path survive manual/AI naming, while catalog liveness supplies one teardown authority for every way the pane can die | storing names in surface pools or adding a public rename intent |
+| 2026-08-14 | A rename reports on the pane's own title; the rename modal was deleted rather than kept for the manual branch. | the modal dimmed the whole shell and trapped focus to say one word about one pane, which is the opposite of what a supervision surface is for — the operator renaming a pane is usually watching the work in it. Pane state belongs beside the pane's attention dot and header contributions, and putting it there also removes the single-presentation bottleneck: two panes can name themselves at once because each phase is keyed by its own pane | keeping the modal for the text field, or a second window-level surface for AI progress |
+| 2026-08-14 | A failed generation says so on the title for a bounded linger and then withdraws itself; retry is the menu item that started it. | with no dialog there is nothing to dismiss, so a failure that waited for a gesture would sit on a pane's header indefinitely and read as the pane's name. The linger is long enough to be read and short enough that the pane returns to saying what it IS; the provider's sentence rides the tooltip because a 34-point strip is not where a CLI error is read | a persistent failure state with an inline Try Again control on the strip |
+| 2026-08-14 | The generating state is a static glyph and a word, not an animated spinner. | an animated glyph writes `stringValue` on an `NSTextField` ten times a second, and every write invalidates its intrinsic size and re-solves the header strip on the main thread. That is the exact churn T-091 and T-141 were opened for in this tree, and `Naming…` already says the pane is working | an `NSProgressIndicator` or a braille-frame timer in the header |
 | 2026-08-10 | The derived palette is ten hues spaced by eye, not twelve spaced evenly. | an even wheel puts three hues in the greens where discrimination is weakest; the snapshot showed them reading as one colour while every count- and contrast-based test passed. ΔE 25.1 against 16.7, for about a third of a workspace more collisions | evenly spaced twelve-hue wheel |
 
 ## 13. Verification receipts
 
 - `WorkspaceTests` pins catalog invariants, workspace/tab selection, last-item guards, event
   ordering, and active pane per tab.
+- 2026-08-14, `WS-FR-031`: `WorkspaceReorderTests` pins midpoint insertion, destination
+  translation, horizontal cancellation, and spoken position. `WorkspaceOrderTests` pins
+  real/no-op store publication, active workspace/tab/pane preservation, and persistence of
+  the chosen order. The shipping SwiftUI gesture remains an installed-app pointer check.
 - `WorkspaceCatalogPersistenceTests` covers schema round-trip, launch precedence, bounded
   durable writes, coalescing, flush, and the fail-soft matrix.
 - `WorkspaceCatalogRelaunchTests` exercises the real composition root across stop/relaunch.
+- 2026-08-13, T-145: `AgentPaneSessionCaptureTests` pins which live pane may become a saved
+  session — `.exact` only, a session id, a transcript the value type accepts — and the walk
+  that skips shells and exited surfaces; `WorkspaceCatalogPersistenceTests` pins the record
+  shape, the restored reading, and the two degraded forms. Both assertions on the new behaviour
+  were red before the change; the confidence guard killed a mutation admitting `.inferred`.
+  What no test reaches: a real agent running through a quit and a relaunch, which is a live-PTY
+  journey the suite cannot drive.
 - `RecentWorkspaceStoreTests`, `RecentStoreTests`, and `WorkspaceRecentLauncherTests` cover
   canonical paths, filtering order, isolation, adoption, clearing, and hosted launcher scope.
 - `WorkspaceIdentityTests` and `WorkspaceIdentityFormTests` cover name/appearance invariants,
   migration, hosted geometry, symbols, and spoken projections.
+- 2026-08-14, T-154 (`WS-FR-032`, `WS-FR-033`): the identity suites pin the expanded
+  24-mark/12-accent vocabularies, one-event atomic mutation, catalog/recent persistence, and
+  fail-soft corrupt custom data. The shipping form and image importer are mounted headlessly;
+  the inspected 320-point offscreen render shows the complete balanced grids, upload control,
+  and no clipping. `WorkspaceIntentProviderTests` pins exact UUID scope, shared normalization,
+  and complete output. Final full suite: **2233 / 0**. No installed file-picker gesture or
+  live socket round trip was driven.
+- 2026-08-13: `PaneTitleTests` covers normalization, identity preservation, movement, and old/new
+  catalog round trips. `PaneRenameTests` pins the default Haiku/JSON/no-tools Claude invocation,
+  Codex JSONL agent-message parsing, rejection of non-event output, untrusted bounded prompt
+  framing, pane-removal cancellation, closed-stdin safety, and process-group termination even
+  when a parent and grandchild ignore `SIGTERM`;
+  `SpatialCanvasInteractionTests` pins the native header-menu vocabulary and shared VoiceOver
+  route. Live provider account requests and installed-app pointer feel remain manual
+  verification.
+- 2026-08-14, T-146 (`WS-FR-030`, restated `WS-FR-028`): the rename modal is deleted; renaming
+  is reported and typed on the pane's own title. `PaneRenameTests` pins the words each phase
+  puts there, per-pane ownership across a teardown, the self-clearing failure, and the inline
+  commit/clear/cancel path; `SpatialCanvasInteractionTests` drives the shipping card — menu →
+  editable title → reconfigure → Return — and pins that the open field is not pane-drag
+  surface. `PaneRenameArchitectureFitnessTests` pins the absence of any presented rename
+  surface and the stage's phase read. Full suite **2203 / 0**; **6 / 6 mutations caught**, one
+  per run with `cmp`-verified restores: generating losing its title, a failure that never
+  withdraws, a teardown cancelling every pane, a reconfigure overwriting a half-typed name, the
+  field treated as drag surface, and the stage dropping its invalidating read. The offscreen
+  render is what settled the glyph: `TENON_PANE_RENAME_SNAPSHOT=/tmp/pane-rename.png swift run
+  tenon` photographs all three states at once, and the first form's `⟳` was an unreadable smudge
+  at the glyph column's 9 points while `Naming…` beside it was legible — so a generating pane
+  keeps its content glyph and carries the state in amber. What no test reaches: a real keyboard
+  in a real window (`makeFirstResponder`, the caret, click-away commit against a live PTY).
 - 2026-08-10, T-112: `WorkspaceTintTests` pins the derived colours against relaunch, folder
   spelling, palette coverage, WCAG 3:1 on the sidebar chrome, and a CIELAB floor between any
   two palette entries; `WorkspaceIdentityFormTests` carries the end-to-end path→mark colour
@@ -525,4 +604,7 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 |---|---|---|
 | 2026-08-09 | Created canonical shipped-state PRD from current source, eight task records, manifests, and focused tests. | Codex |
 | 2026-08-12 | Added `WS-FR-025`: a folder dropped on the sidebar opens a workspace at it, an already-open folder is selected instead, and a dropped file is refused. | Claude (T-138) |
+| 2026-08-13 | Added `WS-FR-027`: a pane running an agent is captured with its session and comes back reading it, degrading to its terminal when the transcript is gone. | Claude (T-145) |
 | 2026-08-13 | Corrected `WS-FR-025`'s native transport from `public.folder` to Finder's `public.file-url` plus semantic folder filtering; added mounted AppKit evidence. Added `WS-FR-026` for the shared process-safe tab/workspace close gate and native workspace confirmation. | Codex |
+| 2026-08-13 | Added `WS-FR-028…029`: persistent manual pane names and cancellable Companion JSON naming owned by pane lifetime; Claude + Haiku is the compatible default and Codex JSONL is also supported. | Codex |
+| 2026-08-14 | Added `WS-FR-031`: workspace rows reorder directly in the sidebar with matching VoiceOver actions, persistence, and `workspace.moved` facts. | Codex |

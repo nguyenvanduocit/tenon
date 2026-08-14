@@ -55,28 +55,6 @@ enum PaletteIntentInvoker {
         )
     }
 
-    /// Invoke a ranked command by its ID against the focused pane. `nil` means the intent
-    /// went away between ranking and clicking (a plugin unloaded mid-session).
-    static func send(
-        commandID: String,
-        host: PluginHost,
-        runtime: AppIntentRuntime
-    ) async -> IntentResult? {
-        guard let presentation = host.intentPresentations.first(
-            where: { $0.intentID.rawValue == commandID }
-        ) else {
-            return nil
-        }
-        return await send(
-            target: KeyBindingTarget(
-                pluginID: presentation.pluginID,
-                intentID: presentation.intentID
-            ),
-            host: host,
-            runtime: runtime
-        )
-    }
-
     /// Invoke a dynamic palette result (or one of its ⌘K actions) by its declared
     /// intent designation. The same production dispatcher path as a static row — the
     /// palette principal, the publishing plugin as provider, a freshly minted gesture —
@@ -103,27 +81,24 @@ enum PaletteIntentInvoker {
         )
     }
 
-    /// Invoke a ranked command against a caller-named scope instead of the focused pane.
-    ///
-    /// The palette's convenience overload inherits the selected workspace, tab, and
-    /// pane. An anchored launcher has stronger placement meaning: the title-bar `+` names its
-    /// freshly created tab, while a tab right-click names that tab even when it is not
-    /// selected. This is the entry point
-    /// `AppIntentRuntime.send(_:input:as:scope:…)` documents: authority visible at the
-    /// call site rather than inherited from mutable UI state.
+    /// Sends a command prepared at the accepted click boundary against the focused pane.
+    /// Mapping the visible row once, before entering an async task, keeps a plugin lifecycle
+    /// publication from turning an already accepted choice into a false unavailable result.
     static func send(
-        commandID: String,
-        scope: InvocationScope,
-        host: PluginHost,
+        _ invocation: PaletteIntentInvocation,
         runtime: AppIntentRuntime
-    ) async -> IntentResult? {
-        guard let invocation = prepare(commandID: commandID, host: host) else { return nil }
-        return await send(invocation, scope: scope, runtime: runtime)
+    ) async -> IntentResult {
+        return await runtime.send(
+            invocation.target.intentID,
+            as: AppIntentRuntime.userPrincipal,
+            target: invocation.providerID,
+            userGestureID: invocation.userGestureID
+        )
     }
 
-    /// Sends a command that was prepared at the click boundary. Placement helpers use
-    /// the same host-minted gesture both to reserve a destination and to dispatch the
-    /// intent, so another invocation sharing the pane cannot claim that reservation.
+    /// Sends that same prepared invocation against a caller-named scope. Placement helpers
+    /// carry the click's gesture into their reservation and this dispatch, so another action
+    /// cannot claim the destination while the provider is running.
     static func send(
         _ invocation: PaletteIntentInvocation,
         scope: InvocationScope,
@@ -157,11 +132,6 @@ enum PaletteIntentInvoker {
         ) else {
             return nil
         }
-        return await runtime.send(
-            invocation.target.intentID,
-            as: AppIntentRuntime.userPrincipal,
-            target: invocation.providerID,
-            userGestureID: invocation.userGestureID
-        )
+        return await send(invocation, runtime: runtime)
     }
 }

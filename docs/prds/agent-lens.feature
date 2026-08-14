@@ -20,6 +20,28 @@ Feature: Supervise agent sessions through bounded checkable evidence
         | has no transcripts | a native empty state appears |
         | has a selected session | the terminal receives claude --resume with that exact ID |
 
+    @req-al-fr-053 @history-plugin
+    Scenario: A marked session outlives the recent window
+      Given the history plugin shows the newest 10 sessions of a project
+      And the operator marked a session that is now the 26th newest
+      When the pane scans that project again
+      Then the marked session appears in a Favourites group above the recent ones
+      And its mark control names its state in words rather than by glyph alone
+
+    @req-al-fr-053 @history-plugin
+    Scenario Outline: A mark is the person's, kept in plugin storage
+      Given the history plugin has a session in view
+      When <event>
+      Then <result>
+
+      Examples:
+        | event | result |
+        | the operator marks the session | the record is written to plugin-private storage and the row regroups |
+        | the operator unmarks it | the record is removed and the row rejoins the recent group |
+        | the same session was marked in another project | this project's pane shows it unmarked |
+        | the host refuses the write | the committed marks stay visible and the pane reports the refusal |
+        | the record is already at its bound | the oldest mark gives way rather than refusing the new one |
+
   Rule: Lens presentation never replaces the living terminal
 
     @req-al-fr-002 @req-al-fr-032 @surface
@@ -46,7 +68,9 @@ Feature: Supervise agent sessions through bounded checkable evidence
     Scenario: Modes use the pane's one native header
       Given Lens capability is visible
       When pane chrome renders
-      Then the provider/status and Session, Terminal, Split choice share the existing header
+      Then provider, status, and diagnostics do not add a second leading identity cluster
+      And the Session, Terminal, Split choice uses the existing header's trailing controls
+      And one compact Session line keeps provider, live status, and current action visible
       And Terminal remains keyboard-accessible as the exact escape hatch
 
     @req-al-fr-005 @narrative
@@ -62,6 +86,24 @@ Feature: Supervise agent sessions through bounded checkable evidence
       When the summary and narrative render
       Then the pending judgment is prominent
       And related execution can group while every source fact remains inspectable
+
+    @req-al-fr-051 @work-log
+    Scenario: Completed work stays reachable without turning Chat into an event log
+      Given one turn contains completed tools, a plan update, a change set, and active work
+      When Chat projects the session
+      Then adjacent execution facts fold into one compact work row
+      And settled work starts collapsed while active work exposes its latest step
+      When the person expands the row
+      Then every original fact ID and evidence return path remains inspectable
+      And Timeline synthesis still reads the raw facts rather than the fold
+
+    @req-al-fr-052 @read-model
+    Scenario: Lifecycle correlation and typed projections are renderer-independent
+      Given Codex reports turn-scoped items, requests, plan, diff, and token usage
+      When provider frames reduce into a snapshot
+      Then the provider turn ID remains authoritative on those facts
+      And a source without a turn ID receives an explicitly namespaced derived correlation
+      And one platform-neutral read model exposes Conversation, Work, Plans, Changes, Agents, Interactions, and Context
 
   Rule: Prose is readable, bounded, and linked only to real evidence
 

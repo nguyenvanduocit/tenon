@@ -19,13 +19,14 @@ let package = Package(
     platforms: [.macOS(.v14)],
     // Two executables, and nothing else on offer.
     //
-    // Tenon's extension surface is the JavaScript plugin boundary — declared intents,
-    // contributions, events — not its Swift modules. Publishing `TenonCore` and
-    // `TenonIntentCore` as libraries invited a dependency this project has never promised to
-    // keep working, and the same file already says the app is never a versioned SwiftPM
-    // dependency. The modules stay internal; `package` access is how a target inside this
-    // package reaches another (see `PluginHost`), and a Swift SDK would need its own SemVer,
-    // documented symbols and a compatibility baseline before it existed as a product.
+    // Tenon's extension surface is the manifest-backed plugin boundary — declared intents,
+    // contributions, events — not its implementation language or Swift modules. Publishing
+    // `TenonCore`, `TenonIntentCore`, or the compiled bundled-plugin target as libraries would
+    // invite a dependency this project has never promised to keep working, and the same file
+    // already says the app is never a versioned SwiftPM dependency. The modules stay internal;
+    // `package` access is how a target inside this package reaches another (see `PluginHost`),
+    // and a Swift SDK would need its own SemVer, documented symbols and a compatibility
+    // baseline before it existed as a product.
     products: [
         .executable(name: "tenon", targets: ["TenonApp"]),
         // Thin Foundation-only client that drives the running app over its control socket.
@@ -74,6 +75,14 @@ let package = Package(
             swiftSettings: warningsAsErrors
         ),
 
+        // Manifest-backed plugins whose implementation ships as Swift in this exact build.
+        // This is an internal backend, not a public native SDK or a second authority model.
+        .target(
+            name: "TenonBundledPlugins",
+            dependencies: ["TenonIntentCore", "TenonCore"],
+            swiftSettings: warningsAsErrors
+        ),
+
         // Thin C shim over the prebuilt GhosttyKit.xcframework (the Muxy pattern).
         // ghostty.h is synced from the xcframework by scripts/internal/setup-ghostty.sh;
         // the placeholder .c exists only so SwiftPM has something to compile.
@@ -85,6 +94,7 @@ let package = Package(
             dependencies: [
                 "TenonIntentCore",
                 "TenonCore",
+                "TenonBundledPlugins",
                 "GhosttyKit",
                 .product(name: "STTextView", package: "STTextView"),
                 .product(name: "STTextView-Plugin-Neon", package: "STTextView-Plugin-Neon"),
@@ -143,7 +153,7 @@ let package = Package(
         ),
         .testTarget(
             name: "TenonCoreTests",
-            dependencies: ["TenonIntentCore", "TenonCore"],
+            dependencies: ["TenonIntentCore", "TenonCore", "TenonBundledPlugins"],
             swiftSettings: warningsAsErrors
         ),
         .testTarget(

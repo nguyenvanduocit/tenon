@@ -42,6 +42,10 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertEqual(prefs.accent, .amber)
         XCTAssertTrue(prefs.automationSchedulesEnabled)
         XCTAssertTrue(prefs.pausedAutomationSchedules.isEmpty)
+        XCTAssertEqual(prefs.companion.agent, .claude)
+        XCTAssertEqual(prefs.companion.model, "haiku")
+        XCTAssertTrue(prefs.companion.customPrompt.isEmpty)
+        XCTAssertTrue(prefs.companion.workingDirectory.isEmpty)
     }
 
     func testPreferencesSurviveACodableRoundTrip() throws {
@@ -60,6 +64,12 @@ final class AppPreferencesTests: XCTestCase {
                 scheduleID: "morning"
             ),
         ]
+        prefs.companion = CompanionProfile(
+            agent: .codex,
+            model: "gpt-5.4",
+            customPrompt: "Answer in Vietnamese",
+            workingDirectory: "/tmp/tenon"
+        )
 
         let data = try JSONEncoder().encode(prefs)
         let decoded = try JSONDecoder().decode(AppPreferences.self, from: data)
@@ -86,6 +96,83 @@ final class AppPreferencesTests: XCTestCase {
         XCTAssertTrue(
             decoded.pausedAutomationSchedules.isEmpty,
             "older preference documents start with no per-schedule pauses"
+        )
+        XCTAssertEqual(
+            decoded.companion,
+            CompanionProfile(),
+            "older preference documents gain the current Companion defaults"
+        )
+    }
+
+    func testAnUnknownCompanionAgentCostsOnlyTheCompanionField() throws {
+        let json = Data(
+            #"{"newTabContent":"files","accent":"purple","companion":{"agent":"future-agent","model":"future-model","customPrompt":"keep","workingDirectory":"/tmp"}}"#
+                .utf8
+        )
+
+        let decoded = try JSONDecoder().decode(AppPreferences.self, from: json)
+
+        XCTAssertEqual(decoded.newTabContent, .files)
+        XCTAssertEqual(decoded.accent, .purple)
+        XCTAssertEqual(decoded.companion.agent, .claude)
+        XCTAssertEqual(
+            decoded.companion.model,
+            "haiku",
+            "falling back to Claude must also restore a Claude-compatible model"
+        )
+        XCTAssertEqual(decoded.companion.customPrompt, "keep")
+        XCTAssertEqual(decoded.companion.workingDirectory, "/tmp")
+    }
+
+    func testSwitchingCompanionAgentRestoresThatProvidersDefaultModel() {
+        var profile = CompanionProfile()
+
+        profile.agent = .codex
+        XCTAssertEqual(
+            profile.model,
+            "",
+            "Codex should use its configured default instead of inheriting Claude's Haiku"
+        )
+
+        profile.model = "gpt-5.4"
+        profile.agent = .claude
+        XCTAssertEqual(profile.model, "haiku")
+    }
+
+    func testBuggyPersistedCodexHaikuPairMigratesToProviderDefault() throws {
+        let profile = try JSONDecoder().decode(
+            CompanionProfile.self,
+            from: Data(#"{"agent":"codex","model":"haiku"}"#.utf8)
+        )
+
+        XCTAssertEqual(profile.agent, .codex)
+        XCTAssertTrue(profile.model.isEmpty)
+        XCTAssertNil(profile.modelArgument)
+    }
+
+    func testCompanionProfileBoundsPersistedFreeText() throws {
+        var profile = CompanionProfile()
+        profile.model = String(repeating: "m", count: CompanionProfile.maximumModelBytes * 2)
+        profile.customPrompt = String(
+            repeating: "instruction ",
+            count: CompanionProfile.maximumPromptBytes
+        )
+        profile.workingDirectory = "/" + String(
+            repeating: "folder/",
+            count: CompanionProfile.maximumWorkingDirectoryBytes
+        )
+
+        XCTAssertLessThanOrEqual(
+            profile.model.utf8.count,
+            CompanionProfile.maximumModelBytes
+        )
+        XCTAssertLessThanOrEqual(
+            profile.customPrompt.utf8.count,
+            CompanionProfile.maximumPromptBytes
+        )
+        XCTAssertLessThanOrEqual(
+            profile.workingDirectory.utf8.count,
+            CompanionProfile.maximumWorkingDirectoryBytes
         )
     }
 

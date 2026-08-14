@@ -3,11 +3,10 @@ import Foundation
 
 /// Which agent CLI recorded a session.
 ///
-/// Deliberately not `AgentCLI`: that type lives in `TenonApp` because it answers a launching
-/// question — which binary to exec, with which flags. This one answers a workspace-content
-/// question, which is what a pane is holding and what has to survive a restart, and the
-/// workspace value tree may not reach into the shell. The two are bridged by one mapping at
-/// the app boundary rather than by either module importing the other's concern.
+/// Deliberately not `AgentCLI`: that type answers which provider the host can invoke now;
+/// this one is durable session provenance held by the workspace value tree. A recorded
+/// provider may remain meaningful after its executable support changes, so the two closed
+/// vocabularies stay explicit and are bridged by one mapping at the app boundary.
 public enum AgentSessionProvider: String, Sendable, Equatable, Hashable, CaseIterable, Codable {
     case codex
     case claude

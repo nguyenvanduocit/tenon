@@ -236,6 +236,7 @@ terminate. Current app quit does not call this removal path and remains pending.
 - `TERM-FR-024` — App quit MUST explicitly terminate every materialized terminal through the same surface seam before process exit; this is currently not delivered.
 - `TERM-FR-025` — Relaunch MUST create a fresh shell only; it MUST NOT claim restoration of PTY, job tree, or scrollback.
 - `TERM-FR-026` — `terminal.process.read.v1` MUST return `{paneID, ttyName, foregroundPID}` for the terminal in scope, answering null for both facts when the pane holds no live surface rather than failing, and MUST carry no resource-telemetry field.
+- `TERM-FR-027` — Every terminal surface Tenon creates MUST export the same Tenon identity into its PTY, whether an agent ever runs in it or not: `TENON_PANE_ID`, `TENON_TAB_ID`, `TENON_WORKSPACE_ID`, and `TENON_SOCKET_PATH`. A value the host cannot resolve MUST be absent rather than empty. `TENON_TAB_ID` and `TENON_WORKSPACE_ID` are a spawn-time snapshot that a pane move invalidates; `workspace.pane.owner.v1` remains the live answer and MUST stay so.
 
 ### Non-functional requirements
 

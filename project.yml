@@ -76,6 +76,24 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         SKIP_INSTALL: YES
 
+  TenonBundledPlugins:
+    type: framework.static
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: Sources/TenonBundledPlugins
+        excludes:
+          - "**/.omc"
+          - "**/.omc/**"
+    dependencies:
+      - target: TenonIntentCore
+      - target: TenonCore
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.bundled-plugins
+        GENERATE_INFOPLIST_FILE: YES
+        SKIP_INSTALL: YES
+
   # There is deliberately no `tenon-cli` target here, and adding one would break the
   # feature it looks like it would help. `Settings ▸ CLI ▸ Install` copies the bundled
   # binary out to ~/.local/bin, so it has to run with nothing but the OS around it. An
@@ -107,6 +125,7 @@ targets:
     dependencies:
       - target: TenonIntentCore
       - target: TenonCore
+      - target: TenonBundledPlugins
       - package: STTextView
         product: STTextView
       - package: STTextViewPluginNeon
@@ -168,6 +187,7 @@ targets:
     dependencies:
       - target: TenonIntentCore
       - target: TenonCore
+      - target: TenonBundledPlugins
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: dev.tenon.core-tests

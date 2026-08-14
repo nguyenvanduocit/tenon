@@ -1,5 +1,6 @@
 // @domain: agent-lens
 import Foundation
+import TenonCore
 
 /// How much of the session one reading is allowed to see.
 ///

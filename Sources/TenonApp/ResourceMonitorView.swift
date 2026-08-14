@@ -42,8 +42,7 @@ struct ResourceMonitorButton: View {
         .accessibilityValue(Text(accessibilityValue))
         .popover(isPresented: $isPresented, arrowEdge: .bottom) {
             ResourceMonitorPopover(model: model)
-                .task { await model.opened() }
-                .onDisappear { Task { await model.closed() } }
+                .task { await model.presented() }
         }
     }
 
@@ -214,12 +213,13 @@ struct ResourceMonitorPopover: View {
 
     @ViewBuilder
     private var content: some View {
-        if model.rows.isEmpty {
+        let rows = model.rows
+        if rows.isEmpty {
             emptyState
         } else {
             ScrollView {
                 LazyVStack(spacing: 0) {
-                    ForEach(visibleRows, id: \.node.id) { row in
+                    ForEach(visibleRows(in: rows), id: \.node.id) { row in
                         ResourceMonitorRow(
                             node: row.node,
                             depth: row.depth,
@@ -290,7 +290,7 @@ struct ResourceMonitorPopover: View {
 
     /// Flatten only what is open. A collapsed workspace costs one row, not one per process
     /// underneath it.
-    private var visibleRows: [(node: TelemetryNode, depth: Int)] {
+    private func visibleRows(in sortedRows: [TelemetryNode]) -> [(node: TelemetryNode, depth: Int)] {
         var rows: [(TelemetryNode, Int)] = []
         func walk(_ nodes: [TelemetryNode], _ depth: Int) {
             for node in nodes {
@@ -298,7 +298,7 @@ struct ResourceMonitorPopover: View {
                 if model.expanded.contains(node.id) { walk(node.children, depth + 1) }
             }
         }
-        walk(model.rows, 0)
+        walk(sortedRows, 0)
         return rows
     }
 }

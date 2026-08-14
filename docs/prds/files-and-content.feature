@@ -149,11 +149,18 @@ Feature: Work with project files and changes without losing workspace context
         | the same plugin view and an empty pane | that plugin view | the existing plugin pane |
 
     @req-fc-fr-014 @split
-    Scenario: No qualifying pane causes one horizontal split
-      Given the tab has only a terminal and unrelated plugin pane
+    Scenario: No qualifying pane on a full canvas causes one horizontal split
+      Given the tab has only a terminal and unrelated plugin pane filling the canvas
       When a file smart-opens
       Then one new file pane splits from the active pane
       And existing content survives
+
+    @req-fc-fr-014 @free-canvas
+    Scenario: Free canvas takes the new pane before any pane is narrowed
+      Given the tab has one terminal across half the canvas and half the canvas empty
+      When a file smart-opens
+      Then the new file pane occupies the empty half
+      And the terminal keeps the width it had
 
     @req-fc-fr-011 @open-side
     Scenario: Open to the Side bypasses reuse intentionally

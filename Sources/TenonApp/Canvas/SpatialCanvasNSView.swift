@@ -17,6 +17,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     private var intentRuntime: AppIntentRuntime?
     private var palette: CommandPaletteState?
     private var paneHeaderStore: PaneHeaderStore?
+    private var paneRenamer: PaneRenameCoordinator?
     /// The live contribution list, kept because a header click on a plugin pane has to find
     /// the section it came from — the pane's own instance, and its `instanceID` — at the
     /// moment of the click rather than at the moment the card was built.
@@ -166,6 +167,11 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         paneAttention: [UUID: PaneActivity],
         paneHeaders: [UUID: PaneHeader],
         paneHeaderStore: PaneHeaderStore,
+        /// What each pane is doing to its own name, read off the coordinator by the stage.
+        /// A VALUE for the same reason `paneHeaders` is one: the read that invalidates this
+        /// canvas has to happen in a SwiftUI body, and `configure` is not one.
+        paneRenames: [UUID: PaneRenamePhase] = [:],
+        paneRenamer: PaneRenameCoordinator? = nil,
         router: DragRouter,
         automation: AutomationScheduler,
         automationSchedulesEnabled: Bool,
@@ -207,6 +213,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         self.palette = palette
         self.agentSuggestions = agentSuggestions
         self.paneHeaderStore = paneHeaderStore
+        self.paneRenamer = paneRenamer
         self.pluginViewSections = pluginViewSections
         self.router = router
         self.tabID = tab.id
@@ -270,6 +277,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
                     pluginViewSections: pluginViewSections
                 ),
                 headerStore: paneHeaderStore,
+                renamePhase: paneRenames[slot.id],
                 isActive: slot.id == activeSlotID,
                 showsFocusRing: tab.slots.count > 1,
                 store: store,
@@ -373,12 +381,8 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
                     terminalPool: pool
                 )
             },
-            send: { commandID in
-                guard let invocation = PaletteIntentInvoker.prepare(
-                    commandID: commandID,
-                    host: host
-                ) else { return .unavailable }
-                return await EmptyGridLauncherPlacement.invoke(
+            send: { invocation in
+                await EmptyGridLauncherPlacement.invoke(
                     in: store,
                     targetRect: targetRect,
                     userGestureID: invocation.userGestureID
@@ -450,6 +454,18 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         }
         card.onCopyID = { [weak self] id in
             self?.copyWorkspaceIdentifier(id)
+        }
+        card.onRename = { [weak self] id in
+            self?.beginManualRename(for: id)
+        }
+        card.onAIRename = { [weak self] id in
+            self?.beginAIRename(for: id)
+        }
+        card.onRenameCommit = { [weak self] id, text in
+            self?.paneRenamer?.commitManual(slotID: id, to: text)
+        }
+        card.onRenameCancel = { [weak self] id in
+            self?.paneRenamer?.cancel(slotID: id)
         }
         card.onCycleExtent = { [weak self] id, direction in
             self?.store?.cycleSlotExtent(id, direction: direction)
@@ -575,6 +591,15 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
 
         menu.addItem(.separator())
 
+        menu.addItem(SlotMenuItem(title: Shell.text("Rename…"), isEnabled: true) { [weak self] in
+            self?.beginManualRename(for: slotID)
+        })
+        menu.addItem(SlotMenuItem(title: Shell.text("AI Rename…"), isEnabled: true) { [weak self] in
+            self?.beginAIRename(for: slotID)
+        })
+
+        menu.addItem(.separator())
+
         menu.addItem(SlotMenuItem(title: "Copy Pane ID", isEnabled: true) { [weak self] in
             self?.copyWorkspaceIdentifier(slotID)
         })
@@ -586,6 +611,16 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         })
 
         return menu
+    }
+
+    private func beginManualRename(for slotID: UUID) {
+        guard let title = cards[slotID]?.presentedTitle else { return }
+        paneRenamer?.beginManual(slotID: slotID, currentTitle: title)
+    }
+
+    private func beginAIRename(for slotID: UUID) {
+        guard let title = cards[slotID]?.presentedTitle else { return }
+        paneRenamer?.beginAI(slotID: slotID, currentTitle: title)
     }
 
     /// The border's contextual menu: the drag that border performs, offered as three

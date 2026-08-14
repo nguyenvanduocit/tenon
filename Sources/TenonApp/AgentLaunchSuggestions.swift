@@ -1,20 +1,10 @@
-// @domain: agent-control
+// @domain: agent-control, companion
 import Foundation
 import TenonCore
 
-enum AgentCLI: String, CaseIterable, Hashable, Sendable {
-    case codex
-    case claude
-
-    var label: String {
-        switch self {
-        case .codex: "Codex"
-        case .claude: "Claude Code"
-        }
-    }
-
-    var executableName: String { rawValue }
-}
+/// Source-compatible app-module spelling while the canonical provider vocabulary now lives
+/// beside persisted Companion settings in `TenonCore`.
+typealias AgentCLI = TenonCore.AgentCLI
 
 /// One ephemeral, machine-local launcher choice. The executable path and the small
 /// allowlisted argument list live in memory only; raw shell history is never retained.
@@ -87,55 +77,37 @@ struct AgentLaunchSuggestion: Identifiable, Equatable, Sendable {
     }
 }
 
-/// Detects host-supported coding agents without starting a shell. Reading is deliberately
-/// bounded and performed from a detached utility task so app launch and SwiftUI stay free
-/// of filesystem work.
-struct AgentLaunchDetector: Sendable {
-    static let maximumHistoryBytesPerFile = 512 * 1_024
+/// Finds only executable paths. Companion uses this narrower read because it never needs
+/// interactive launch habits and therefore never needs to inspect shell history.
+struct AgentExecutableLocator: Sendable {
     static let maximumNVMVersions = 20
 
     let environment: [String: String]
     let homeDirectory: URL
     let executableDirectories: [URL]?
-    let historyFileURLs: [URL]?
 
     init(
         environment: [String: String] = ProcessInfo.processInfo.environment,
         homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-        executableDirectories: [URL]? = nil,
-        historyFileURLs: [URL]? = nil
+        executableDirectories: [URL]? = nil
     ) {
         self.environment = environment
         self.homeDirectory = homeDirectory
         self.executableDirectories = executableDirectories
-        self.historyFileURLs = historyFileURLs
     }
 
-    static func scanLive() async -> [AgentLaunchSuggestion] {
-        let detector = AgentLaunchDetector()
+    static func scanLive() async -> [AgentCLI: URL] {
+        let locator = AgentExecutableLocator()
         return await Task.detached(priority: .utility) {
-            detector.scan()
+            locator.scan()
         }.value
     }
 
-    func scan() -> [AgentLaunchSuggestion] {
+    func scan() -> [AgentCLI: URL] {
         let fileManager = FileManager.default
-        let history = resolvedHistoryFiles()
-            .compactMap { Self.readTail(of: $0) }
-            .joined(separator: "\n")
-
-        return AgentCLI.allCases.compactMap { agent in
-            guard let executableURL = executableURL(for: agent, fileManager: fileManager)
-            else { return nil }
-            return AgentLaunchSuggestion(
-                agent: agent,
-                executableURL: executableURL,
-                arguments: AgentLaunchHistory.preferredArguments(
-                    for: agent,
-                    in: history
-                )
-            )
-        }
+        return Dictionary(uniqueKeysWithValues: AgentCLI.allCases.compactMap { agent in
+            executableURL(for: agent, fileManager: fileManager).map { (agent, $0) }
+        })
     }
 
     private func executableURL(
@@ -200,6 +172,69 @@ struct AgentLaunchDetector: Sendable {
         }
 
         return Self.unique(directories)
+    }
+
+    private static func unique(_ urls: [URL]) -> [URL] {
+        var paths: Set<String> = []
+        return urls.compactMap { url in
+            let standardized = url.standardizedFileURL
+            return paths.insert(standardized.path).inserted ? standardized : nil
+        }
+    }
+}
+
+/// Detects host-supported coding agents without starting a shell. Reading is deliberately
+/// bounded and performed from a detached utility task so app launch and SwiftUI stay free
+/// of filesystem work.
+struct AgentLaunchDetector: Sendable {
+    static let maximumHistoryBytesPerFile = 512 * 1_024
+
+    let environment: [String: String]
+    let homeDirectory: URL
+    let executableDirectories: [URL]?
+    let historyFileURLs: [URL]?
+
+    init(
+        environment: [String: String] = ProcessInfo.processInfo.environment,
+        homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+        executableDirectories: [URL]? = nil,
+        historyFileURLs: [URL]? = nil
+    ) {
+        self.environment = environment
+        self.homeDirectory = homeDirectory
+        self.executableDirectories = executableDirectories
+        self.historyFileURLs = historyFileURLs
+    }
+
+    static func scanLive() async -> [AgentLaunchSuggestion] {
+        let detector = AgentLaunchDetector()
+        return await Task.detached(priority: .utility) {
+            detector.scan()
+        }.value
+    }
+
+    func scan() -> [AgentLaunchSuggestion] {
+        let history = resolvedHistoryFiles()
+            .compactMap { Self.readTail(of: $0) }
+            .joined(separator: "\n")
+        let executables = AgentExecutableLocator(
+            environment: environment,
+            homeDirectory: homeDirectory,
+            executableDirectories: executableDirectories
+        ).scan()
+
+        return AgentCLI.allCases.compactMap { agent in
+            guard let executableURL = executables[agent]
+            else { return nil }
+            return AgentLaunchSuggestion(
+                agent: agent,
+                executableURL: executableURL,
+                arguments: AgentLaunchHistory.preferredArguments(
+                    for: agent,
+                    in: history
+                )
+            )
+        }
     }
 
     private func resolvedHistoryFiles() -> [URL] {

@@ -2,12 +2,13 @@
   "id": "dev.tenon.core-commands",
   "name": "core-commands",
   "version": "0.1.0",
+  "runtime": "bundled-swift",
   "permissions": ["workspace.control"],
   "intents": {
     "uses": [
       "workspace.tab.create.v1",
       "workspace.pane.split.v1",
-      "workspace.pane.close.v1",
+      "workspace.pane.close.v2",
       "workspace.tab.next.v1",
       "workspace.tab.previous.v1",
       "workspace.pane.focus-next.v1",
@@ -53,7 +54,7 @@
         "palette": { "category": "Split", "icon": "rectangle.split.1x2", "keywords": ["pane", "horizontal", "divide"], "key": "cmd+shift+d", "launcher": true }
       },
       {
-        "name": "dev.tenon.core-commands.pane.close.v1",
+        "name": "dev.tenon.core-commands.pane.close.v2",
         "title": "Close Pane",
         "audiences": ["plugin", "user"],
         "effects": { "kind": "destructive", "idempotency": "none", "confirmation": "policy", "external": false },

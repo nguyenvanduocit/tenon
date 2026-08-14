@@ -1,4 +1,4 @@
-// @domain: plugin-contributions
+// @domain: plugin-contributions, pane-chrome
 import AppKit
 import Observation
 import SwiftUI
@@ -166,6 +166,9 @@ enum SlotPresentation {
         pluginViewSections: [PluginViewSection],
         webSurfaceTitles: [WebSurfaceKey: String]
     ) -> String {
+        if let customTitle = slot.customTitle {
+            return customTitle
+        }
         switch slot.content {
         case .terminal:
             return pool.titles[slot.id] ?? "Ghostty — shell"

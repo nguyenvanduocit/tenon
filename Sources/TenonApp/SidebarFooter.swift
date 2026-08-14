@@ -97,21 +97,37 @@ enum SidebarFooterLayout {
 struct SidebarFooter: View {
     @Environment(\.openSettings) private var openSettings
     @Environment(\.openURL) private var openURL
+    var isCollapsed = false
 
     var body: some View {
-        HStack(spacing: SidebarFooterLayout.spacing) {
-            ForEach(SidebarFooterAction.allCases) { action in
-                SidebarFooterButton(action: action) { run(action) }
+        Group {
+            if isCollapsed {
+                VStack(spacing: SidebarFooterLayout.spacing) {
+                    actionButtons
+                }
+                .padding(.vertical, SidebarFooterLayout.horizontalInset)
+                .frame(maxWidth: .infinity)
+            } else {
+                HStack(spacing: SidebarFooterLayout.spacing) {
+                    actionButtons
+                    Spacer(minLength: 0)
+                }
+                .padding(.horizontal, SidebarFooterLayout.horizontalInset)
+                .frame(height: SidebarFooterLayout.height)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            Spacer(minLength: 0)
         }
-        .padding(.horizontal, SidebarFooterLayout.horizontalInset)
-        .frame(height: SidebarFooterLayout.height)
-        .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(alignment: .top) {
             Rectangle()
                 .fill(TenonTheme.line)
                 .frame(height: 1)
+        }
+    }
+
+    @ViewBuilder
+    private var actionButtons: some View {
+        ForEach(SidebarFooterAction.allCases) { action in
+            SidebarFooterButton(action: action) { run(action) }
         }
     }
 

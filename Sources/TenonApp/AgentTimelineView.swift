@@ -1,5 +1,6 @@
 // @domain: agent-lens
 import SwiftUI
+import TenonCore
 
 /// The Timeline account: a synthesized reading of the same session Chat shows verbatim.
 ///

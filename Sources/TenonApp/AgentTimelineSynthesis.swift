@@ -1,5 +1,6 @@
 // @domain: agent-lens
 import Foundation
+import TenonCore
 
 // MARK: - The instruction  @domain: agent-lens
 

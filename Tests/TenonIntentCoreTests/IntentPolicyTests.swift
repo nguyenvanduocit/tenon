@@ -599,7 +599,7 @@ final class IntentPolicyTests: XCTestCase {
         let caller = pluginPrincipal("plugin:dev.tenon.git:installation")
         let otherCaller = pluginPrincipal("plugin:dev.tenon.files:installation")
         let intent = try IntentID("terminal.write.v1")
-        let otherIntent = try IntentID("workspace.pane.close.v1")
+        let otherIntent = try IntentID("workspace.pane.close.v2")
         try await engine.setExposure(pluginExposure, for: intent)
         try await engine.replaceDeclaredUses([intent], for: caller)
         try await engine.grantStandingConsent(contract: intent, caller: caller)

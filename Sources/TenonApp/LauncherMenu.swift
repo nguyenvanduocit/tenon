@@ -25,11 +25,16 @@ struct LauncherMenu: View {
     /// projection. It never enters ranking/search because copying an address is not an
     /// open command and has no public intent principal.
     var copyTabID: (() -> Void)? = nil
+    /// Whole-tab geometry is another fixed host utility, not a plugin command pretending
+    /// to have won fuzzy ranking. The anchor supplies only presets valid for its exact tab.
+    var paneArrangements: [PaneArrangementPreset] = []
+    var arrangePanes: ((PaneArrangementPreset) -> Void)? = nil
     /// How a chosen row is dispatched. `nil` inherits the focused pane through the shared
-    /// invoker. Anchors with stronger placement meaning inject a send: the title-bar `+`
-    /// creates a tab, a tab chip names the tab that was clicked, and an empty-grid
-    /// launcher scopes the command to its exact reserved rectangle.
-    var send: ((String) async -> LauncherOutcome)? = nil
+    /// invoker. Anchors with stronger placement meaning receive the invocation already
+    /// bound at the accepted click: the title-bar `+` creates a tab, a tab chip names the
+    /// tab that was clicked, and an empty-grid launcher scopes the command to its exact
+    /// reserved rectangle. No anchor maps the visible row back to a provider a second time.
+    var send: ((PaletteIntentInvocation) async -> LauncherOutcome)? = nil
     var purpose: LauncherPurpose = .open
     let dismiss: () -> Void
 
@@ -106,8 +111,17 @@ struct LauncherMenu: View {
                     .padding(.vertical, 5)
             }
             results(agents: agents, order: order, selected: selected, ceiling: listCeiling)
-            if let copyTabID {
+            if utilityRowCount > 0 {
                 Rectangle().fill(TenonTheme.line).frame(height: 1)
+            }
+            if let arrangePanes, !paneArrangements.isEmpty {
+                PaneArrangementMenu(
+                    presets: paneArrangements,
+                    arrange: arrangePanes,
+                    dismissLauncher: dismiss
+                )
+            }
+            if let copyTabID {
                 // Same chrome as every row above it, so the pointer gets the same answer
                 // here as it does anywhere else in the popover. `isSelected` is fixed
                 // `false` because this utility never joins the ranked order ↓/↑ walks,
@@ -175,9 +189,8 @@ struct LauncherMenu: View {
         // Search field + its rule + the list's own vertical padding, plus the popover's
         // arrow and a margin so the last row never sits flush against the screen edge.
         // The footer is one compact chrome row plus the 1-pt rule above it.
-        let utilityHeight: CGFloat = copyTabID == nil
-            ? 0
-            : LauncherListHeight.row + LauncherListHeight.separatorRule
+        let utilityHeight = CGFloat(utilityRowCount) * LauncherListHeight.row
+            + (utilityRowCount == 0 ? 0 : LauncherListHeight.separatorRule)
         let chrome: CGFloat = 32 + 1 + 10 + 28 + utilityHeight
         guard let window = NSApp.mainWindow ?? NSApp.keyWindow,
               let screen = window.screen ?? NSScreen.main
@@ -186,6 +199,11 @@ struct LauncherMenu: View {
         }
         let anchor = window.frame.maxY - TenonTheme.titleBarHeight
         return max(140, anchor - screen.visibleFrame.minY - chrome)
+    }
+
+    private var utilityRowCount: Int {
+        (arrangePanes == nil || paneArrangements.isEmpty ? 0 : 1)
+            + (copyTabID == nil ? 0 : 1)
     }
 
     @ViewBuilder
@@ -325,15 +343,22 @@ struct LauncherMenu: View {
         guard !isRunning else { return }
         isRunning = true
         errorMessage = nil
+        guard let invocation = PaletteIntentInvoker.prepare(
+            commandID: match.command.id,
+            host: host
+        ) else {
+            isRunning = false
+            errorMessage = LauncherOutcome.unavailable.errorMessage
+            return
+        }
         Task { @MainActor in
             let outcome: LauncherOutcome
             if let send {
-                outcome = await send(match.command.id)
+                outcome = await send(invocation)
             } else {
                 outcome = LauncherOutcome(
                     await PaletteIntentInvoker.send(
-                        commandID: match.command.id,
-                        host: host,
+                        invocation,
                         runtime: intentRuntime
                     )
                 )

@@ -73,6 +73,20 @@ final class SidebarFooterTests: XCTestCase {
         XCTAssertLessThanOrEqual(needed, SidebarResize.defaultWidth)
     }
 
+    /// The collapsed rail keeps these utilities as one vertical icon stack. Its one button
+    /// must fit between the same insets used by the workspace marks above it.
+    func testACompactFooterButtonFitsInsideTheCollapsedRail() {
+        XCTAssertGreaterThanOrEqual(
+            SidebarResize.collapsedWidth
+                - WorkspaceSidebarLayout.collapsedHorizontalInset * 2,
+            SidebarFooterLayout.controlSide
+        )
+        XCTAssertGreaterThanOrEqual(
+            WorkspaceSidebarLayout.collapsedRowWidth,
+            SidebarFooterLayout.controlSide
+        )
+    }
+
     /// The width rule has to actually count the controls, otherwise it answers `true` for a
     /// footer that has outgrown the sidebar.
     func testTheWidthRuleGrowsWithTheNumberOfControls() {

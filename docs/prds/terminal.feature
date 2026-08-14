@@ -387,3 +387,15 @@ Feature: Operate native terminal panes with bounded automation and owned process
       Then those rules pass without a window
       And AppKit responder and hosted surface seams have focused tests
       And a real process fixture proves SIGHUP-resistant work receives escalation
+
+  @req-term-fr-027 @terminal
+  Scenario: Every terminal knows where it is, agent or not
+    Given a person opens an ordinary terminal pane
+    Then its shell carries TENON_PANE_ID, TENON_TAB_ID, TENON_WORKSPACE_ID and TENON_SOCKET_PATH
+    And a pane an agent was launched into carries exactly the same set
+
+  @req-term-fr-027 @terminal
+  Scenario: An identity the host cannot resolve is absent rather than empty
+    Given a pane whose owner the catalog cannot answer for
+    Then TENON_TAB_ID and TENON_WORKSPACE_ID are unset
+    And TENON_PANE_ID is still exported

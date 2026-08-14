@@ -81,18 +81,9 @@ actor AgentLensDiscovery {
             paneID: identity.slotID,
             surfaceToken: identity.surfaceToken
         ), binding.provider == provider,
-           binding.processGroupID == nil ||
-               binding.processGroupID == processGroupID(for: identity.foregroundPID),
-           let transcript = declared(binding.transcriptURL, under: roots)
+           let bound = boundResolution(binding, for: identity, under: roots)
         {
-            return AgentLensResolution(
-                provider: provider,
-                sessionID: binding.sessionID,
-                foregroundPID: identity.foregroundPID,
-                transcriptURL: transcript,
-                confidence: .exact,
-                detail: "Transcript was reported by the root \(provider.displayName) session for this terminal"
-            )
+            return bound
         }
 
         if provider != .codex,
@@ -118,6 +109,53 @@ actor AgentLensDiscovery {
             transcriptURL: nil,
             confidence: .processOnly,
             detail: processOnlyDetail(for: provider)
+        )
+    }
+
+    /// The session the provider's own hook bound to this exact surface, and nothing else.
+    ///
+    /// Separate entry point from `resolve` for one reason, and it is a cost: the catalog save
+    /// asks this of every terminal pane on every workspace mutation (T-145), while `resolve`
+    /// opens with `provider(for:)` — a `proc_pidpath` plus a blocking `/bin/ps` fork whenever
+    /// its per-surface verdict is cold, which a pane in an unmounted tab always is. Skipping
+    /// the derivation costs nothing here: the hook that reported the session declared the
+    /// provider along with it, and the process-group check below is what actually proves the
+    /// agent still owns the terminal.
+    ///
+    /// It is the same branch `resolve` returns first, through the same function, so the two
+    /// can never drift into disagreeing about which session a pane is running.
+    func boundSession(for identity: AgentTerminalIdentity) async -> AgentLensResolution? {
+        guard let binding = await sessionRegistry.binding(
+            paneID: identity.slotID,
+            surfaceToken: identity.surfaceToken
+        ) else { return nil }
+        return boundResolution(
+            binding,
+            for: identity,
+            under: transcriptRoots(for: binding.provider, cwd: identity.cwd)
+        )
+    }
+
+    /// A hook's binding read as a reading, or nil when it no longer describes this terminal:
+    /// the process group the hook declared has stopped owning the foreground, or the path it
+    /// named does not resolve under the provider's roots.
+    private func boundResolution(
+        _ binding: AgentSessionBinding,
+        for identity: AgentTerminalIdentity,
+        under roots: [URL]
+    ) -> AgentLensResolution? {
+        guard binding.processGroupID == nil ||
+                binding.processGroupID == processGroupID(for: identity.foregroundPID),
+              let transcript = declared(binding.transcriptURL, under: roots)
+        else { return nil }
+        return AgentLensResolution(
+            provider: binding.provider,
+            sessionID: binding.sessionID,
+            foregroundPID: identity.foregroundPID,
+            transcriptURL: transcript,
+            confidence: .exact,
+            detail: "Transcript was reported by the root "
+                + "\(binding.provider.displayName) session for this terminal"
         )
     }
 

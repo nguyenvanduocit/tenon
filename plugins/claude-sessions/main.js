@@ -51,6 +51,10 @@ function makePane(instanceID) {
     // agent's command line itself; it asks for one.
     agents: [],
     notice: LOADING,
+    // A refused favourite write, said out loud on the pane that asked for it. It is not the
+    // pane's `notice`, because that one only speaks when the list is empty and this has to be
+    // legible over a full list.
+    favouriteError: null,
     // Guards against a slow scan clobbering a newer one (settings can change twice in a row).
     generation: 0
   };
@@ -61,6 +65,127 @@ function paneList() {
   var list = [];
   for (var i = 0; i < ids.length; i++) list.push(panes[ids[i]]);
   return list;
+}
+
+// --- favourites -------------------------------------------------------------
+
+// A person marks the sessions worth coming back to. The mark's whole value is that it
+// OUTLIVES the recent window: the pane shows the newest `limit` sessions, and a session
+// becomes worth remembering long after it has fallen out of that slice. So a favourite is
+// carried past the cutoff by the scan rather than merely sorted to the top of it.
+//
+// The record lives in this plugin's own storage — a closed scoped facility, so favourites
+// need no permission, no intent, and no host state. One record holds every project; a pane
+// shows only the marks made in the project that owns it.
+var FAVOURITES_KEY = "favourites";
+
+// Bounded (invariant 10). Only a person grows this list, but "only by hand" is not a bound:
+// nothing above stops a script, and an unbounded value would grow one storage write without
+// limit. At the ceiling the OLDEST mark gives way, so the mark just made is never refused.
+var MAX_FAVOURITES = 200;
+
+// How many ids one by-id lookup may name. A single SQL statement is the thing being bounded
+// here, not the record: the rest of a very large favourites list is simply not fetched, and
+// says so in the log rather than silently truncating the pane.
+var MAX_FAVOURITE_LOOKUP = 100;
+
+// The committed record, read once per generation and kept in step with storage. Every pane
+// reads this one copy, because a mark belongs to the person and not to a pane.
+var favourites = readFavourites();
+
+function readFavourites() {
+  var stored = tenon.storage.get(FAVOURITES_KEY);
+  if (!Array.isArray(stored)) return [];
+  var records = [];
+  for (var i = 0; i < stored.length && records.length < MAX_FAVOURITES; i++) {
+    var record = stored[i];
+    if (!record || typeof record.key !== "string" || !record.key) continue;
+    if (typeof record.project !== "string" || !record.project) continue;
+    records.push({
+      key: record.key,
+      project: record.project,
+      at: parseInt(record.at, 10) || 0
+    });
+  }
+  return records;
+}
+
+function favouriteKey(provider, sessionID) {
+  return provider + ":" + sessionID;
+}
+
+function indexOfFavourite(project, key) {
+  for (var i = 0; i < favourites.length; i++) {
+    if (favourites[i].key === key && favourites[i].project === project) return i;
+  }
+  return -1;
+}
+
+function isFavourite(project, provider, sessionID) {
+  return indexOfFavourite(project, favouriteKey(provider, sessionID)) >= 0;
+}
+
+// The session ids marked in one project for one provider. This is what the scan needs: a
+// Claude id keeps its transcript out of the recent slice, a Codex id is fetched by id.
+function favouriteIDs(project, provider) {
+  var prefix = provider + ":";
+  var ids = [];
+  for (var i = 0; i < favourites.length; i++) {
+    var record = favourites[i];
+    if (record.project !== project) continue;
+    if (record.key.indexOf(prefix) !== 0) continue;
+    ids.push(record.key.slice(prefix.length));
+  }
+  return ids;
+}
+
+// Marking is optimistic and then honest: the pane redraws immediately, and a storage write
+// the host refuses puts the committed record back — `tenon.storage.get` reads a cache that
+// only a committed write publishes, so it is the truth to fall back to.
+async function toggleFavourite(st, provider, sessionID) {
+  if (!st.project) return;
+  var key = favouriteKey(provider, sessionID);
+  var at = indexOfFavourite(st.project, key);
+  var next = favourites.slice();
+  if (at >= 0) {
+    next.splice(at, 1);
+  } else {
+    next.push({
+      key: key,
+      project: st.project,
+      at: Math.floor(Date.now() / 1000)
+    });
+    // The mark just made is the one entry the bound may not take, whatever the stored
+    // timestamps say — a clock that moved backwards must not eat the person's click.
+    while (next.length > MAX_FAVOURITES) {
+      next.splice(oldestFavourite(next, next.length - 1), 1);
+    }
+  }
+  favourites = next;
+  st.favouriteError = null;
+  renderAll();
+
+  try {
+    await tenon.storage.set(FAVOURITES_KEY, next);
+  } catch (error) {
+    favourites = readFavourites();
+    if (panes[st.id] === st) {
+      st.favouriteError = "Could not save that favourite: "
+        + ((error && error.code) || "the write was refused");
+    }
+    renderAll();
+    return;
+  }
+  renderAll();
+}
+
+function oldestFavourite(records, keep) {
+  var oldest = keep === 0 ? 1 : 0;
+  for (var i = 0; i < records.length; i++) {
+    if (i === keep) continue;
+    if (records[i].at < records[oldest].at) oldest = i;
+  }
+  return oldest;
 }
 
 // --- resolving what to scan ------------------------------------------------
@@ -137,6 +262,9 @@ async function scan(st, call = tenon.intents) {
   }
   st.notice = SCANNING;
   st.scanError = null;
+  // A rescan is a fresh look at the same question, so last scan's refused write stops
+  // speaking rather than following the pane around forever.
+  st.favouriteError = null;
   render(st);
 
   await loadAgents(st, gen, call);
@@ -148,9 +276,17 @@ async function scan(st, call = tenon.intents) {
   var codex = await scanCodex(st, gen, limit, call);
   if (gen !== st.generation || panes[st.id] !== st) return;
 
-  st.sessions = claude.concat(codex);
-  st.sessions.sort(function (a, b) { return b.mtime - a.mtime; });
-  st.sessions = st.sessions.slice(0, limit);
+  var found = claude.concat(codex);
+  found.sort(function (a, b) { return b.mtime - a.mtime; });
+  // The cutoff applies to unmarked sessions only, and marked ones lead. Both halves stay
+  // bounded: `limit` for one, `MAX_FAVOURITES` for the other.
+  var marked = [];
+  var rest = [];
+  for (var i = 0; i < found.length; i++) {
+    if (isFavourite(st.project, found[i].provider, found[i].id)) marked.push(found[i]);
+    else rest.push(found[i]);
+  }
+  st.sessions = marked.concat(rest.slice(0, limit));
   // A listing that failed must not read as "this project has no sessions".
   st.notice = st.scanError;
   render(st);
@@ -298,9 +434,19 @@ async function scanClaude(st, gen, limit, call = tenon.intents) {
   var found = await listClaudeTranscripts(st, gen, call);
   if (!found || gen !== st.generation || panes[st.id] !== st) return [];
   found.sort(function (a, b) { return b.mtime - a.mtime; });
-  found = found.slice(0, limit);
+  found = recentAndMarked(st, found, limit);
   if (found.length) await enrichClaude(st, gen, found, call);
   return found;
+}
+
+// The listing already walked the whole directory, so keeping a marked transcript past the
+// cutoff costs nothing but the awk pass that names it.
+function recentAndMarked(st, sessions, limit) {
+  var kept = sessions.slice(0, limit);
+  for (var i = limit; i < sessions.length; i++) {
+    if (isFavourite(st.project, sessions[i].provider, sessions[i].id)) kept.push(sessions[i]);
+  }
+  return kept;
 }
 
 // Bounds on one listing (invariant 10). `~/.claude/projects/<slug>` grows without limit
@@ -441,7 +587,47 @@ function sqlString(value) {
   return "'" + String(value || "").replace(/\u0000/g, "").split("'").join("''") + "'";
 }
 
+// The recent window, then the marked threads that window missed. Codex bounds its own
+// answer with a LIMIT rather than handing over a list to slice, so honouring a mark past
+// the cutoff means asking a second time — by id, for exactly the ids still missing.
 async function scanCodex(st, gen, limit, call = tenon.intents) {
+  var sessions = await fetchCodex(st, gen, "", limit, call);
+  if (gen !== st.generation || panes[st.id] !== st) return [];
+  var missing = missingCodexFavourites(st, sessions);
+  if (!missing.length) return sessions;
+  var marked = await fetchCodex(st, gen, codexIDFilter(missing), missing.length, call);
+  if (gen !== st.generation || panes[st.id] !== st) return [];
+  return sessions.concat(marked);
+}
+
+function missingCodexFavourites(st, sessions) {
+  var seen = {};
+  for (var i = 0; i < sessions.length; i++) seen[sessions[i].id] = true;
+  var marked = favouriteIDs(st.project, "codex");
+  var missing = [];
+  for (var j = 0; j < marked.length; j++) {
+    if (!seen[marked[j]]) missing.push(marked[j]);
+  }
+  // One statement is what MAX_FAVOURITE_LOOKUP bounds. Past it the remaining marks are left
+  // out of this scan and said out loud, rather than silently thinning the pane.
+  if (missing.length > MAX_FAVOURITE_LOOKUP) {
+    tenon.log(
+      "agent-sessions: " + (missing.length - MAX_FAVOURITE_LOOKUP)
+        + " favourited Codex sessions past the " + MAX_FAVOURITE_LOOKUP
+        + " this scan looks up"
+    );
+    missing = missing.slice(0, MAX_FAVOURITE_LOOKUP);
+  }
+  return missing;
+}
+
+function codexIDFilter(ids) {
+  var quoted = [];
+  for (var i = 0; i < ids.length; i++) quoted.push(sqlString(ids[i]));
+  return " AND id IN (" + quoted.join(", ") + ")";
+}
+
+async function fetchCodex(st, gen, filter, limit, call = tenon.intents) {
   var query =
     "SELECT id, "
       + "CASE WHEN recency_at > 0 THEN recency_at ELSE updated_at END AS mtime, "
@@ -449,7 +635,7 @@ async function scanCodex(st, gen, limit, call = tenon.intents) {
       + "NULLIF(trim(first_user_message), ''), NULLIF(trim(preview), ''), ''), 1, 160) AS title, "
       + "tokens_used AS tokens, substr(COALESCE(git_branch, ''), 1, 80) AS branch "
       + "FROM threads WHERE archived = 0 AND source = 'cli' AND cwd = "
-      + sqlString(st.project)
+      + sqlString(st.project) + filter
       + " ORDER BY mtime DESC, id DESC LIMIT " + limit;
   var result = await runCodexQuery(st, query, call);
   if (gen !== st.generation || panes[st.id] !== st) return [];
@@ -459,7 +645,7 @@ async function scanCodex(st, gen, limit, call = tenon.intents) {
       "SELECT id, updated_at AS mtime, substr(COALESCE(title, ''), 1, 160) AS title, "
         + "tokens_used AS tokens, substr(COALESCE(git_branch, ''), 1, 80) AS branch "
         + "FROM threads WHERE archived = 0 AND source = 'cli' AND cwd = "
-        + sqlString(st.project)
+        + sqlString(st.project) + filter
         + " ORDER BY updated_at DESC, id DESC LIMIT " + limit;
     result = await runCodexQuery(st, fallback, call);
   }
@@ -576,6 +762,13 @@ function sessionRow(st, session) {
     });
   }
 
+  // The mark sits on the title line, not among the verbs: it says something about the
+  // session rather than doing something with it, and the verb row already carries three.
+  // Measured at 420 pt: a fourth verb broke every label in the row onto two lines
+  // ("Detai/ls", "Resum/e"), while the title line absorbs it by wrapping the title one line
+  // further. Its state is in words as well as in a glyph, because this label is also what
+  // VoiceOver reads.
+  var marked = isFavourite(st.project, session.provider, session.id);
   return {
     type: "vstack",
     spacing: 4,
@@ -585,6 +778,12 @@ function sessionRow(st, session) {
         children: [
           { type: "text", value: sessionTitle(session), weight: "semibold" },
           { type: "spacer" },
+          {
+            type: "button",
+            label: marked ? "★ Unfavourite" : "☆ Favourite",
+            action: "fav:" + session.provider + ":" + session.id,
+            style: "plain"
+          },
           { type: "text", value: ago(session.mtime), style: "caption", color: "muted" },
         ],
       },
@@ -657,18 +856,48 @@ function headerNode(st) {
   return { leading: leading, trailing: trailing };
 }
 
+// One card holding a list, hairlines between rows — a list, not a stack of boxes. A heading
+// appears only when there are two groups to tell apart, so a pane with nothing marked reads
+// exactly as it did before anyone had a favourite.
+function listCard(st, sessions, heading) {
+  var rows = [];
+  if (heading) {
+    rows.push({ type: "text", value: heading, style: "caption", weight: "medium", color: "muted" });
+  }
+  for (var i = 0; i < sessions.length; i++) {
+    if (i > 0 || heading) rows.push({ type: "divider" });
+    rows.push(sessionRow(st, sessions[i]));
+  }
+  return { type: "card", children: rows };
+}
+
 function render(st) {
   if (panes[st.id] !== st) return;
   var children = [];
 
-  if (st.sessions.length) {
-    // One card holding the whole list, hairlines between rows — a list, not a stack of boxes.
-    var rows = [];
-    for (var i = 0; i < st.sessions.length; i++) {
-      if (i > 0) rows.push({ type: "divider" });
-      rows.push(sessionRow(st, st.sessions[i]));
+  // A refused write is reported over the list, because the list is what it disagrees with.
+  if (st.favouriteError) {
+    children.push({
+      type: "card",
+      children: [{ type: "text", value: st.favouriteError, color: "red" }]
+    });
+  }
+
+  var marked = [];
+  var rest = [];
+  for (var s = 0; s < st.sessions.length; s++) {
+    if (isFavourite(st.project, st.sessions[s].provider, st.sessions[s].id)) {
+      marked.push(st.sessions[s]);
+    } else {
+      rest.push(st.sessions[s]);
     }
-    children.push({ type: "card", children: rows });
+  }
+
+  if (marked.length) {
+    children.push(listCard(st, marked, "Favourites"));
+    if (rest.length) children.push(listCard(st, rest, "Recent"));
+  } else if (rest.length) {
+    children.push(listCard(st, rest, null));
   } else if (!isScanning(st)) {
     // Only a settled pane has news. Mid-scan the strip's spinner is the whole answer, so an
     // empty pane no longer claims there is nothing here before it has looked.
@@ -688,6 +917,13 @@ function render(st) {
     header: headerNode(st),
     body: { type: "vstack", spacing: 10, children: children }
   }, st.id);
+}
+
+// A mark belongs to the person, not to the pane that made it, so every open pane showing
+// that project redraws with it.
+function renderAll() {
+  var list = paneList();
+  for (var i = 0; i < list.length; i++) render(list[i]);
 }
 
 // --- wiring ----------------------------------------------------------------
@@ -720,6 +956,10 @@ tenon.views.onSelect(VIEW, async function (action, value, instanceID) {
     await launch(st, { agent: chosen.slice("start:".length) });
   } else if (chosen.indexOf("details:") === 0) {
     await openRecorded(st, chosen.slice("details:".length));
+  } else if (chosen.indexOf("fav:") === 0) {
+    var mark = chosen.slice("fav:".length);
+    var at = mark.indexOf(":");
+    if (at > 0) await toggleFavourite(st, mark.slice(0, at), mark.slice(at + 1));
   } else if (chosen.indexOf("open:") === 0) {
     var rest = chosen.slice("open:".length);
     var separator = rest.indexOf(":");

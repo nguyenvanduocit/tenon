@@ -417,6 +417,7 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
     case undeclaredEventPublication(String)
     case missingIntentHandlers([IntentID])
     case duplicateIntentHandler(IntentID)
+    case bundledSwiftImplementationUnavailable(PluginID)
     case runtimeStopped
     case providerHandlerUnavailable(IntentID)
     case providerHandlerFailed(String)
@@ -441,6 +442,8 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
             "missing handlers: \(intentIDs.map(\.rawValue).sorted().joined(separator: ", "))"
         case let .duplicateIntentHandler(intentID):
             "duplicate handler for \(intentID.rawValue)"
+        case let .bundledSwiftImplementationUnavailable(pluginID):
+            "no bundled Swift implementation was compiled for \(pluginID.rawValue)"
         case .runtimeStopped:
             "plugin runtime is stopped"
         case let .providerHandlerUnavailable(intentID):

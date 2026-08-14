@@ -268,6 +268,8 @@ extension WorkspaceEvent {
              .workspaceSelected(let workspace),
              .workspaceIdentityChanged(let workspace):
             return workspace
+        case .workspaceMoved(let workspace, _, _):
+            return workspace
         case .tabOpened(_, let workspace),
              .tabClosed(_, let workspace),
              .tabSelected(_, let workspace):
@@ -286,6 +288,8 @@ extension WorkspaceEvent {
         case .slotsResized(_, _, _, let workspace):
             return workspace
         case .slotContentChanged(_, _, _, let workspace):
+            return workspace
+        case .slotIdentityChanged(_, _, let workspace):
             return workspace
         case .slotMovedToTab(_, _, _, let workspace):
             return workspace

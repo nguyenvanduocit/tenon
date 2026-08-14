@@ -77,12 +77,15 @@ struct ShellTitleBar: View {
     /// Placement itself stays host policy inside `workspace.content.open.v1` — this only
     /// says which tab is being talked about. The result flows back to the launcher, which
     /// settles it exactly as the `+` popover does.
-    private func send(_ commandID: String, onTab tabID: UUID) async -> IntentResult? {
+    private func send(
+        _ invocation: PaletteIntentInvocation,
+        onTab tabID: UUID
+    ) async -> LauncherOutcome {
         guard let paneID = TabContextPlacement.scopedPane(
             in: store.catalog,
             tabID: tabID
         ) else {
-            return nil
+            return .targetUnavailable
         }
         let workspaceID = TabContextPlacement.owningWorkspace(
             in: store.catalog,
@@ -95,27 +98,24 @@ struct ShellTitleBar: View {
         ) {
             store.selectTab(tabID)
         }
-        return await PaletteIntentInvoker.send(
-            commandID: commandID,
+        return LauncherOutcome(await PaletteIntentInvoker.send(
+            invocation,
             scope: InvocationScope(
                 workspaceID: workspaceID,
                 tabID: tabID,
                 paneID: paneID
             ),
-            host: host,
             runtime: intentRuntime
-        )
+        ))
     }
 
     /// Dispatch a title-bar `+` choice inside a fresh tab. The temporary tab provides
     /// ordinary pane scope to plugin openers; commands whose own meaning is "new tab"
     /// replace that placeholder instead of leaving two tabs behind.
-    private func sendInNewTab(_ commandID: String) async -> IntentResult? {
-        guard let invocation = PaletteIntentInvoker.prepare(
-            commandID: commandID,
-            host: host
-        ) else { return nil }
-        return await NewTabLauncherPlacement.invoke(
+    private func sendInNewTab(
+        _ invocation: PaletteIntentInvocation
+    ) async -> LauncherOutcome {
+        LauncherOutcome(await NewTabLauncherPlacement.invoke(
             in: store,
             userGestureID: invocation.userGestureID
         ) { scope in
@@ -124,7 +124,7 @@ struct ShellTitleBar: View {
                 scope: scope,
                 runtime: intentRuntime
             )
-        }
+        })
     }
 
     private func requestClose(_ tab: TenonCore.Tab, title: String) {
@@ -297,7 +297,7 @@ struct ShellTitleBar: View {
         guard let index = tabs.firstIndex(where: { $0.id == drag.tabID }),
               index != drag.originIndex
         else { return }
-        TabStripAnnouncer.say(
+        ReorderAnnouncer.say(
             TabReorder.announcement(
                 title: tabTitle(for: tabs[index]),
                 movedTo: index,
@@ -316,7 +316,7 @@ struct ShellTitleBar: View {
         withAnimation(Self.reorderAnimation) {
             store.moveTab(tabID, to: destination)
         }
-        TabStripAnnouncer.say(
+        ReorderAnnouncer.say(
             TabReorder.announcement(title: title, movedTo: destination, of: tabs.count)
         )
     }
@@ -329,10 +329,10 @@ struct ShellTitleBar: View {
                     alignment: .leading
                 )
 
-            // With the sidebar open, the shell's full-height resize edge draws this
+            // With the sidebar expanded, the shell's full-height resize edge draws this
             // seam (and makes it draggable), so the title bar must not stack a second
-            // static rule at the same x. With the sidebar closed there is no edge
-            // below, so the identity/tabs separator lives here.
+            // static rule at the same x. With the icon rail there is no draggable edge
+            // in the title bar, so the identity/tabs separator lives here.
             if !sidebarVisible {
                 Rectangle()
                     .fill(TenonTheme.line)
@@ -397,7 +397,7 @@ struct ShellTitleBar: View {
 
             ShellIconButton(
                 symbol: sidebarVisible ? "sidebar.left" : "sidebar.leading",
-                help: "Toggle sidebar",
+                help: sidebarVisible ? "Collapse sidebar" : "Expand sidebar",
                 action: onToggleSidebar
             )
             .accessibilityIdentifier("tenon.toggleSidebar")
@@ -422,8 +422,15 @@ struct ShellTitleBar: View {
                 )
             },
             copyTabID: { WorkspaceIdentifierClipboard.copy(tab.id) },
-            send: { commandID in
-                LauncherOutcome(await send(commandID, onTab: tab.id))
+            paneArrangements: arrangements(for: tab),
+            arrangePanes: { preset in
+                if store.catalog.activeTab?.id != tab.id {
+                    store.selectTab(tab.id)
+                }
+                store.arrangeActiveTab(preset)
+            },
+            send: { invocation in
+                await send(invocation, onTab: tab.id)
             },
             dismiss: { contextLauncherTab = nil }
         )
@@ -602,8 +609,12 @@ struct ShellTitleBar: View {
                         terminalPool: pool
                     )
                 },
-                send: { commandID in
-                    LauncherOutcome(await sendInNewTab(commandID))
+                paneArrangements: activeWorkspace?.activeTab.map {
+                    arrangements(for: $0)
+                } ?? [],
+                arrangePanes: { preset in store.arrangeActiveTab(preset) },
+                send: { invocation in
+                    await sendInNewTab(invocation)
                 },
                 dismiss: { launcherPresented = false }
             )
@@ -614,6 +625,13 @@ struct ShellTitleBar: View {
 
     private var activeWorkspace: Workspace? {
         store.catalog.activeWorkspace
+    }
+
+    private func arrangements(for tab: TenonCore.Tab) -> [PaneArrangementPreset] {
+        PaneArrangement.availablePresets(
+            for: tab.spatialSlots,
+            mainSlotID: tab.activeSlotID
+        )
     }
 
     private var totalUnseen: Int {
@@ -633,6 +651,9 @@ struct ShellTitleBar: View {
     /// reorder invisible — drag one unnamed tab past another and the chips swap while the
     /// labels swap back, so the strip reads exactly as it did before the drag (T-105).
     private func tabTitle(for tab: TenonCore.Tab) -> String {
+        if let customTitle = tab.activeSlot?.customTitle {
+            return customTitle
+        }
         let terminalTitle = pool.title(for: tab)
         if terminalTitle != "Terminal" {
             return terminalTitle
@@ -1105,7 +1126,7 @@ private struct TabStripDrag: Equatable {
 /// on: the move produces no focus change and no new element. Without this, the drag and the
 /// custom action are both silent, and the person who most needs the confirmation is the one
 /// who cannot see it.
-private enum TabStripAnnouncer {
+enum ReorderAnnouncer {
     @MainActor
     static func say(_ message: String) {
         guard let window = NSApp.keyWindow ?? NSApp.mainWindow else { return }

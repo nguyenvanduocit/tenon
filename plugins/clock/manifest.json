@@ -2,6 +2,7 @@
   "id": "dev.tenon.clock",
   "name": "clock",
   "version": "0.1.0",
+  "runtime": "bundled-swift",
   "permissions": [],
   "intents": {
     "uses": [],

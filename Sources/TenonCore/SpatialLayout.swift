@@ -349,7 +349,8 @@ public enum SpatialLayout {
 
     public static func close(
         _ slots: [SpatialSlot],
-        slotID: UUID
+        slotID: UUID,
+        maximumAbsorbedWidth: Int? = nil
     ) -> CloseLayoutTransaction? {
         guard isValid(slots),
               let deleted = slots.first(where: { $0.id == slotID })
@@ -400,20 +401,28 @@ public enum SpatialLayout {
 
             guard intervalsTile(intervals, from: rangeStart, to: rangeEnd) else { continue }
 
-            let absorbedSlotIDs = neighbors.map(\.id)
-            let absorbed = Set(absorbedSlotIDs)
+            let absorptionCandidates = Set(neighbors.map(\.id))
             let proposal = remaining.map { slot -> SpatialSlot in
-                guard absorbed.contains(slot.id) else { return slot }
+                guard absorptionCandidates.contains(slot.id) else { return slot }
                 var expanded = slot
 
                 switch direction {
                 case .left:
-                    expanded.rect.width += deleted.rect.width
+                    expanded.rect.width = absorbedWidth(
+                        existing: expanded.rect.width,
+                        released: deleted.rect.width,
+                        maximum: maximumAbsorbedWidth
+                    )
                 case .top:
                     expanded.rect.height += deleted.rect.height
                 case .right:
-                    expanded.rect.x = deleted.rect.x
-                    expanded.rect.width += deleted.rect.width
+                    let width = absorbedWidth(
+                        existing: expanded.rect.width,
+                        released: deleted.rect.width,
+                        maximum: maximumAbsorbedWidth
+                    )
+                    expanded.rect.x = expanded.rect.right - width
+                    expanded.rect.width = width
                 case .bottom:
                     expanded.rect.y = deleted.rect.y
                     expanded.rect.height += deleted.rect.height
@@ -421,6 +430,13 @@ public enum SpatialLayout {
 
                 return expanded
             }
+            let originalRects = Dictionary(
+                uniqueKeysWithValues: remaining.map { ($0.id, $0.rect) }
+            )
+            let absorbedSlotIDs = proposal.compactMap { slot in
+                originalRects[slot.id] == slot.rect ? nil : slot.id
+            }
+            guard !absorbedSlotIDs.isEmpty else { continue }
 
             if isValid(proposal) {
                 return CloseLayoutTransaction(
@@ -436,6 +452,18 @@ public enum SpatialLayout {
             absorbedSlotIDs: [],
             direction: nil
         )
+    }
+
+    /// Automatic close reflow may grow a neighbor up to the live configured maximum. A
+    /// pane already past that maximum keeps its committed width, and an unset maximum keeps
+    /// the historical full-absorption behavior. Any declined columns remain empty canvas.
+    private static func absorbedWidth(
+        existing: Int,
+        released: Int,
+        maximum: Int?
+    ) -> Int {
+        guard let maximum else { return existing + released }
+        return min(existing + released, max(existing, maximum))
     }
 
     public static func resize(

@@ -2,6 +2,7 @@
 import AppKit
 import Observation
 import SwiftUI
+import TenonBundledPlugins
 import TenonCore
 import TenonIntentCore
 
@@ -22,6 +23,8 @@ struct TenonApp: App {
         PluginViewSnapshot.renderIfRequested()
         AgentTimelineSnapshot.renderIfRequested()
         SidebarSnapshot.renderIfRequested()
+        PaneRenameSnapshot.renderIfRequested()
+        CompanionSettingsSnapshot.renderIfRequested()
     }
 
     var body: some Scene {
@@ -39,6 +42,7 @@ struct TenonApp: App {
                     store: composition.store,
                     pool: composition.terminalSurfaces,
                     closeCoordinator: composition.shellCloseCoordinator,
+                    paneRenamer: composition.paneRenamer,
                     agentLens: composition.agentLens,
                     webPool: composition.webSurfaces,
                     intentRuntime: composition.intentRuntime,
@@ -361,6 +365,7 @@ final class AppComposition {
     let store: WorkspaceStore
     let terminalSurfaces: SurfacePool
     let shellCloseCoordinator: ShellCloseCoordinator
+    let paneRenamer: PaneRenameCoordinator
     /// T-100: the read-only process resource monitor. Its sampler, coordinator, and bridge are
     /// host-private — no intent, no principal, no `tenon` member — so the whole feature enters
     /// composition as this one typed value.
@@ -368,6 +373,10 @@ final class AppComposition {
     /// Held so shutdown can cancel sampling demand and wait for quiescence.
     @ObservationIgnored let telemetryCoordinator: ProcessTelemetryCoordinator
     let agentLens: AgentLensPool
+    /// Held beside the pool because the catalog save asks it exactly what a live pane asks:
+    /// which session is running in this terminal right now (T-145). One resolver, so what a
+    /// restart claims about a pane can never disagree with what the pane was showing.
+    @ObservationIgnored let agentLensDiscovery: AgentLensDiscovery
     let agentSessionRegistry: AgentSessionRegistry
     let agentHookServer: AgentHookServer
     let codexHookInstallResult: AgentHookInstallResult
@@ -497,18 +506,21 @@ final class AppComposition {
                 if useStub {
                     return StubTerminalSurface()
                 }
-                var environment = [
-                    "CODEX_HOME": prepared.codexHomePath,
-                    "TENON_SOCKET_PATH": socketPath,
-                    "TENON_AGENT_HOOK_SCRIPT": prepared.agentHookScriptURL.path,
-                    "TENON_PANE_ID": slotID.uuidString,
-                    "TENON_AGENT_SURFACE_TOKEN": surfaceToken.uuidString,
-                ]
-                if let port = prepared.agentHookServer.port {
-                    environment["TENON_AGENT_HOOK_PORT"] = String(port)
-                    environment["TENON_AGENT_HOOK_TOKEN"] =
-                        prepared.agentHookServer.bearerToken
-                }
+                // The owner is read here, at the composition root, so `SurfacePool` stays
+                // ignorant of the workspace model — it only ever sees slot IDs.
+                let environment = TerminalPaneEnvironment.variables(
+                    paneID: slotID,
+                    surfaceToken: surfaceToken,
+                    owner: TerminalPaneEnvironment.Owner(
+                        catalog: store.catalog,
+                        paneID: slotID
+                    ),
+                    socketPath: socketPath,
+                    codexHomePath: prepared.codexHomePath,
+                    agentHookScriptPath: prepared.agentHookScriptURL.path,
+                    agentHookPort: prepared.agentHookServer.port,
+                    agentHookToken: prepared.agentHookServer.bearerToken
+                )
                 return GhosttySurface(
                     workingDirectory: workspacePath,
                     environment: environment
@@ -526,20 +538,21 @@ final class AppComposition {
         }
         let webSurfaces = PluginWebSurfacePool()
         let agentQuestions = AgentAskStore()
-        let agentLens = AgentLensPool(
-            discovery: AgentLensDiscovery(
-                sessionRegistry: prepared.agentSessionRegistry,
-                codexSessionsRoot: prepared.codexHomeURL
-                    .appendingPathComponent("sessions", isDirectory: true),
-                codexHookDegradation: Self.agentHookDegradation(
-                    server: prepared.agentHookServer,
-                    installResult: prepared.codexHookInstallResult
-                ),
-                claudeHookDegradation: Self.agentHookDegradation(
-                    server: prepared.agentHookServer,
-                    installResult: prepared.claudeHookInstallResult
-                )
+        let agentLensDiscovery = AgentLensDiscovery(
+            sessionRegistry: prepared.agentSessionRegistry,
+            codexSessionsRoot: prepared.codexHomeURL
+                .appendingPathComponent("sessions", isDirectory: true),
+            codexHookDegradation: Self.agentHookDegradation(
+                server: prepared.agentHookServer,
+                installResult: prepared.codexHookInstallResult
             ),
+            claudeHookDegradation: Self.agentHookDegradation(
+                server: prepared.agentHookServer,
+                installResult: prepared.claudeHookInstallResult
+            )
+        )
+        let agentLens = AgentLensPool(
+            discovery: agentLensDiscovery,
             questions: agentQuestions
         )
         let intentRuntime = try AppIntentRuntime(
@@ -613,7 +626,8 @@ final class AppComposition {
                     tabID: store.catalog.activeTab?.id,
                     paneID: store.catalog.activeSlotID
                 )
-            }
+            },
+            runtimeFactory: BundledPluginRuntime.factory
         )
 
         let attentionNotifier = PaneAttentionNotifier(
@@ -629,6 +643,14 @@ final class AppComposition {
             store: store,
             pool: terminalSurfaces
         )
+        let paneRenamer = PaneRenameCoordinator(
+            store: store,
+            pool: terminalSurfaces,
+            generator: LiveCompanionPaneTitleGenerator {
+                prefs.preferences.companion
+            }
+        )
+        self.paneRenamer = paneRenamer
         // T-100. Built here because the bridge needs both the catalog and the surface pool,
         // and nothing samples until a monitor surface is actually visible.
         let telemetryBridge = ProcessTelemetryBridge(store: store, surfaces: terminalSurfaces)
@@ -647,6 +669,7 @@ final class AppComposition {
         self.resourceMonitor = monitor
         self.telemetryCoordinator = telemetryCoordinator
         self.agentLens = agentLens
+        self.agentLensDiscovery = agentLensDiscovery
         self.agentSessionRegistry = prepared.agentSessionRegistry
         self.agentHookServer = prepared.agentHookServer
         self.codexHookInstallResult = prepared.codexHookInstallResult
@@ -670,10 +693,12 @@ final class AppComposition {
             store: store,
             terminalSurfaces: terminalSurfaces,
             agentLens: agentLens,
+            agentLensDiscovery: agentLensDiscovery,
             agentSessionRegistry: prepared.agentSessionRegistry,
             webSurfaces: webSurfaces,
             catalogStore: catalogStore,
-            automation: automationScheduler
+            automation: automationScheduler,
+            paneRenamer: paneRenamer
         )
         Self.wireDefaultContent(store: store, prefs: prefs)
 
@@ -793,6 +818,10 @@ final class AppComposition {
         await automationTicking?.value
         attentionPollTask = nil
         automationTickTask = nil
+        await telemetryCoordinator.shutDown()
+        // Shutdown keeps no pane, so it keeps no rename: the same teardown authority the
+        // catalog uses when a single pane goes away, pointed at all of them.
+        paneRenamer.retainOnly([])
         for observer in appActivationObservers {
             NotificationCenter.default.removeObserver(observer)
         }
@@ -802,10 +831,10 @@ final class AppComposition {
         // window that would outlive the process. Restore itself never rewrites the file;
         // only live state does, here and via the coalesced saves during the session.
         await catalogStore.noteChange(
-            WorkspaceCatalogSnapshot.document(
-                capturing: store.catalog,
-                titles: terminalSurfaces.titles,
-                cwds: terminalSurfaces.directories.mapValues(\.cwd)
+            await Self.catalogDocument(
+                store: store,
+                terminalSurfaces: terminalSurfaces,
+                discovery: agentLensDiscovery
             )
         )
         await catalogStore.flush()
@@ -1070,7 +1099,8 @@ private extension AppComposition {
             for workspace in store.catalog.workspaces {
                 store.recentWorkspaces?.record(
                     name: workspace.name,
-                    path: workspace.path
+                    path: workspace.path,
+                    appearance: workspace.appearance
                 )
             }
             isStarted = true
@@ -1089,15 +1119,38 @@ private extension AppComposition {
         }
     }
 
+    /// The document the catalog store persists: the live tree, the placeholders a restored
+    /// pane draws before it builds a surface, and — for the panes an agent is running in right
+    /// now — the session each one is running (T-145, `WS-FR-027`).
+    static func catalogDocument(
+        store: WorkspaceStore,
+        terminalSurfaces: SurfacePool,
+        discovery: AgentLensDiscovery
+    ) async -> WorkspaceCatalogSnapshot.Document {
+        let catalog = store.catalog
+        return WorkspaceCatalogSnapshot.document(
+            capturing: catalog,
+            titles: terminalSurfaces.titles,
+            cwds: terminalSurfaces.directories.mapValues(\.cwd),
+            agentSessions: await AgentPaneSessionCapture.sessions(
+                terminalSlotIDs: AgentPaneSessionCapture.terminalSlotIDs(in: catalog),
+                identity: { terminalSurfaces.agentTerminalIdentity(for: $0) },
+                resolve: { await discovery.boundSession(for: $0) }
+            )
+        )
+    }
+
     static func wire(
         host: PluginHost,
         store: WorkspaceStore,
         terminalSurfaces: SurfacePool,
         agentLens: AgentLensPool,
+        agentLensDiscovery: AgentLensDiscovery,
         agentSessionRegistry: AgentSessionRegistry,
         webSurfaces: PluginWebSurfacePool,
         catalogStore: WorkspaceCatalogStore,
-        automation: AutomationScheduler
+        automation: AutomationScheduler,
+        paneRenamer: PaneRenameCoordinator
     ) {
         host.onPluginLifecycleChanged = {
             [weak host, weak store, weak webSurfaces] plugins in
@@ -1109,11 +1162,19 @@ private extension AppComposition {
         }
 
         store.onEvents = {
-            [weak host, weak store, weak terminalSurfaces, weak agentLens, weak webSurfaces]
+            [
+                weak host,
+                weak store,
+                weak terminalSurfaces,
+                weak agentLens,
+                weak webSurfaces,
+                weak paneRenamer,
+            ]
                 events,
                 snapshot in
             terminalSurfaces?.retainOnly(Set(snapshot.allSlotIDs))
             agentLens?.retainOnly(Set(snapshot.allSlotIDs))
+            paneRenamer?.retainOnly(Set(snapshot.allSlotIDs))
             Task { await agentSessionRegistry.retainOnly(Set(snapshot.allSlotIDs)) }
             // T-029: catalog changes (workspace/tab selection, pane moves) change
             // which panes are displayed, so the viewed projection recomputes here.
@@ -1157,10 +1218,10 @@ private extension AppComposition {
             // tree, never push an older one over the quit-path save.
             Task { @MainActor [weak store, weak terminalSurfaces] in
                 guard let store, let terminalSurfaces else { return }
-                await catalogStore.noteChange(WorkspaceCatalogSnapshot.document(
-                    capturing: store.catalog,
-                    titles: terminalSurfaces.titles,
-                    cwds: terminalSurfaces.directories.mapValues(\.cwd)
+                await catalogStore.noteChange(await Self.catalogDocument(
+                    store: store,
+                    terminalSurfaces: terminalSurfaces,
+                    discovery: agentLensDiscovery
                 ))
             }
         }

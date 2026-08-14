@@ -23,14 +23,14 @@ public final class WorkspaceStore {
     @ObservationIgnored public var newSplitContentProvider: () -> SlotContent = { .terminal }
     @ObservationIgnored public var newWorkspaceContentProvider: () -> SlotContent = { .terminal }
 
-    /// How wide a pane may be when it is created. The shell wires this to the user's
-    /// `AppPreferences`; the bare store, and every test that never sets it, creates panes
-    /// bounded only by the space the layout offers.
+    /// How wide automatic layout may make a pane. The shell wires this to the user's
+    /// `AppPreferences`; the bare store, and every test that never sets it, leaves creation
+    /// and close-time absorption bounded only by the space the layout offers.
     @ObservationIgnored public var newPaneSizingProvider: () -> NewPaneSizing = { .unlimited }
 
-    /// The live creation policy, read fresh at each use so a preference change reaches the
-    /// next pane and no earlier one. AppKit surfaces that compute a pane rect themselves —
-    /// the empty-canvas launcher — read it here and apply it DIRECT.
+    /// The live automatic-layout policy, read fresh for pane creation and close absorption.
+    /// AppKit surfaces that compute a pane rect themselves — the empty-canvas launcher —
+    /// read it here and apply it DIRECT.
     public var newPaneSizing: NewPaneSizing { newPaneSizingProvider() }
 
     /// Opened views are recorded here, against the workspace the mutation's own events name,
@@ -38,12 +38,12 @@ public final class WorkspaceStore {
     /// that owns it. Nil in headless tests that don't exercise it.
     public let recent: RecentStore?
 
-    /// Opened workspaces are recorded here so the sidebar's Add-Workspace menu can
+    /// Opened workspaces are recorded here so the sidebar's contextual library can
     /// offer them again after they're closed. Nil in headless tests that skip it.
     public let recentWorkspaces: RecentWorkspaceStore?
 
     /// The folders the open workspaces are rooted at, republished only when a workspace
-    /// opens or closes. The sidebar's Add-Workspace menu filters its recent list against
+    /// opens or closes. The sidebar's contextual library filters its recent list against
     /// this instead of reading `catalog`, so tab/slot churn can't re-layout an open menu
     /// (see `WorkspaceSidebarView`).
     public private(set) var openWorkspaceFolders: Set<String>
@@ -59,17 +59,26 @@ public final class WorkspaceStore {
         self.openWorkspaceFolders = WorkspaceStore.folders(in: catalog)
     }
 
-    public func addWorkspace(name: String, path: URL, content: SlotContent? = nil) {
-        if apply({
+    public func addWorkspace(
+        name: String,
+        path: URL,
+        content: SlotContent? = nil,
+        appearance: WorkspaceAppearance = .default
+    ) {
+        guard apply({
             $0.addWorkspace(
                 name: name,
                 path: path,
                 content: content ?? newWorkspaceContentProvider(),
                 sizing: newPaneSizing
             )
-        }) {
-            recentWorkspaces?.record(name: name, path: path)
+        }) else { return }
+
+        let workspaceID = catalog.activeWorkspaceID
+        if !appearance.isDefault {
+            apply { $0.setWorkspaceAppearance(workspaceID, appearance) }
         }
+        recordRecentWorkspace(workspaceID)
     }
 
     public func removeWorkspace(_ id: UUID) {
@@ -80,20 +89,40 @@ public final class WorkspaceStore {
         apply { $0.selectWorkspace(id) }
     }
 
+    /// Puts a workspace at another index without changing which workspace, tab, or pane is
+    /// active. The sidebar and accessibility routes both enter through this typed mutation.
+    public func moveWorkspace(_ id: UUID, to index: Int) {
+        apply { $0.moveWorkspace(id, to: index) }
+    }
+
     /// Name a workspace. Clearing the name asks for Tenon's derived default back.
     public func renameWorkspace(_ id: UUID, to typed: String) {
-        apply { $0.renameWorkspace(id, to: typed) }
+        setWorkspaceIdentity(id, name: typed)
     }
 
     /// Mark and tint a workspace.
     public func setWorkspaceAppearance(_ id: UUID, to appearance: WorkspaceAppearance) {
-        apply { $0.setWorkspaceAppearance(id, appearance) }
+        setWorkspaceIdentity(id, appearance: appearance)
+    }
+
+    /// One atomic presentation patch shared by the built-in editor and public intent
+    /// adapter. Nil leaves that half unchanged; an empty present name restores its default.
+    public func setWorkspaceIdentity(
+        _ id: UUID,
+        name: String? = nil,
+        appearance: WorkspaceAppearance? = nil
+    ) {
+        guard apply({
+            $0.setWorkspaceIdentity(id, name: name, appearance: appearance)
+        }) else { return }
+        updateRecentWorkspaceIdentity(id)
     }
 
     /// Give a workspace Tenon's default name, mark, and tint back, leaving the workspace
     /// itself — its id, root, tabs, and panes — exactly where it is.
     public func resetWorkspaceIdentity(_ id: UUID) {
-        apply { $0.resetWorkspaceIdentity(id) }
+        guard apply({ $0.resetWorkspaceIdentity(id) }) else { return }
+        updateRecentWorkspaceIdentity(id)
     }
 
     public func newTab(content: SlotContent? = nil) {
@@ -185,7 +214,7 @@ public final class WorkspaceStore {
     }
 
     public func closeSlot(_ id: UUID) {
-        apply { $0.closeSlot(id) }
+        apply { $0.closeSlot(id, sizing: newPaneSizing) }
     }
 
     public func closeActiveSlot() {
@@ -209,23 +238,27 @@ public final class WorkspaceStore {
         recordRecent(content, from: applyEvents { $0.setSlotContent(id, content) })
     }
 
-    /// Opens `content` in the active tab, adding its first pane when the tab is empty,
-    /// reusing the pane that already shows this kind of surface, and otherwise splitting
-    /// the active pane to make one. Placement is host policy: this never opens a tab.
+    /// Pin a pane label, or clear it back to the title derived from its content.
+    public func renameSlot(_ id: UUID, to typed: String) {
+        apply { $0.renameSlot(id, to: typed) }
+    }
+
+    /// Opens `content` in the active tab, reusing the pane that already shows this kind of
+    /// surface and otherwise adding one. Placement is host policy: this never opens a tab.
     /// `SlotContent.yieldsPane(to:)` decides which existing panes qualify.
+    ///
+    /// The pane it adds goes through `addSlot`, which is the one placement policy every
+    /// creation path shares: free canvas next to the active pane when the layout has any,
+    /// a split only when it has none. Opening a file is not a request to halve the pane
+    /// someone is looking at while half the canvas stands empty — and on a pane too narrow
+    /// to split, that is also the difference between the file opening and nothing happening
+    /// at all.
     public func openContent(_ content: SlotContent) {
-        // An empty tab has no active pane for SpatialLayout to split. Its first pane is
-        // still the same placement operation; keeping the rule here makes DIRECT callers
-        // and the workspace.content.open.v1 adapter behave identically.
-        if catalog.activeTab?.slots.isEmpty == true {
-            addSlot(content: content)
-            return
-        }
         if let existing = reusableSlotID(for: content) {
             setSlotContent(existing, content)
             focusSlot(existing)
         } else {
-            splitActiveSlot(.horizontal, content: content)
+            addSlot(content: content)
         }
     }
 
@@ -340,6 +373,27 @@ public final class WorkspaceStore {
         recent.record(content, for: workspaceID, root: workspace.path)
     }
 
+    /// Opening changes recency; editing presentation does not. These two helpers keep that
+    /// distinction at the typed store edge instead of asking SwiftUI call sites to remember
+    /// which persistence operation a workspace mutation deserves.
+    private func recordRecentWorkspace(_ id: UUID) {
+        guard let workspace = catalog.workspaces.first(where: { $0.id == id }) else { return }
+        recentWorkspaces?.record(
+            name: workspace.name,
+            path: workspace.path,
+            appearance: workspace.appearance
+        )
+    }
+
+    private func updateRecentWorkspaceIdentity(_ id: UUID) {
+        guard let workspace = catalog.workspaces.first(where: { $0.id == id }) else { return }
+        recentWorkspaces?.updateIdentity(
+            name: workspace.name,
+            path: workspace.path,
+            appearance: workspace.appearance
+        )
+    }
+
     private static func folders(in catalog: WorkspaceCatalog) -> Set<String> {
         Set(catalog.workspaces.map { RecentWorkspaceStore.folderKey($0.path) })
     }
@@ -414,6 +468,16 @@ public extension PluginHost {
                 "workspace.identity-changed",
                 .object([
                     "workspaceId": .string(workspace.uuidString),
+                ])
+            )
+
+        case let .workspaceMoved(workspace, from, to):
+            return (
+                "workspace.moved",
+                .object([
+                    "workspaceId": .string(workspace.uuidString),
+                    "fromIndex": .integer(Int64(from)),
+                    "toIndex": .integer(Int64(to)),
                 ])
             )
 
@@ -553,6 +617,16 @@ public extension PluginHost {
                 .object([
                     "slotId": .string(slot.uuidString),
                     "content": .string(content.busValue),
+                    "tabId": .string(tab.uuidString),
+                    "workspaceId": .string(workspace.uuidString),
+                ])
+            )
+
+        case let .slotIdentityChanged(slot, tab, workspace):
+            return (
+                "workspace.slot-identity-changed",
+                .object([
+                    "slotId": .string(slot.uuidString),
                     "tabId": .string(tab.uuidString),
                     "workspaceId": .string(workspace.uuidString),
                 ])

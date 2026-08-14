@@ -39,6 +39,10 @@ struct SpatialCanvasView: NSViewRepresentable {
     /// The same store, for the command route back down. Held apart from the dictionary
     /// because routing a click is not something a re-render should depend on.
     let paneHeaderStore: PaneHeaderStore
+    /// What each pane is doing to its own name. Read off the coordinator in
+    /// `WorkspaceStageView.body` for the same invalidation reason `paneHeaders` is.
+    let paneRenames: [UUID: PaneRenamePhase]
+    let paneRenamer: PaneRenameCoordinator
     let router: DragRouter
     let automation: AutomationScheduler
     let automationSchedulesEnabled: Bool
@@ -89,6 +93,8 @@ struct SpatialCanvasView: NSViewRepresentable {
             paneAttention: paneAttention,
             paneHeaders: paneHeaders,
             paneHeaderStore: paneHeaderStore,
+            paneRenames: paneRenames,
+            paneRenamer: paneRenamer,
             router: router,
             automation: automation,
             automationSchedulesEnabled: automationSchedulesEnabled,

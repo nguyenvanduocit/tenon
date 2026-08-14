@@ -1,6 +1,6 @@
 # Agent Lens
 
-**Status:** implemented for supported provider evidence; explicit degradation retained · **Reviewed:** 2026-08-06
+**Status:** implemented for supported provider evidence; explicit degradation retained · **Reviewed:** 2026-08-13
 
 ## Decision
 
@@ -29,9 +29,16 @@ Presentation follows these rules:
   and remain collapsed in the inspector unless explicitly requested;
 - repeated reads of one skill and adjacent subagent control operations are grouped into
   one inspectable execution unit without discarding their individual evidence;
+- completed execution is not deleted from Chat: adjacent tool, plan, and change facts fold into
+  one quiet work row, and expanding it returns to every original stable fact ID;
 - pending questions and approvals are elevated into the session summary;
 - evidence details remain one action away, while the primary timeline shows only authority
   and freshness needed for safe scanning;
+- the pane header's leading run stays bare: the shared glyph, attention dot, and title already
+  identify the pane, and provider, status, and diagnostic metadata do not create a second
+  identity cluster in chrome; only Agent Lens controls join the trailing run;
+- one 24-point status line inside Session keeps provider, live status, and current action visible
+  across Chat and Timeline without turning those facts into header badges or controls;
 - Markdown tables render as columns only while their natural width fits the pane; a narrow
   pane reflows each row into labeled fields instead of requiring horizontal scrolling;
 - Terminal is always available as exact re-entry and the escape hatch for degraded state.
@@ -162,6 +169,15 @@ fingerprint where available, capture time, and freshness. Unknown protocol metho
 ignored; malformed, missing, rotated, oversized, and overflowed sources become explicit
 diagnostics. Terminal remains the escape hatch for every degraded state.
 
+Codex app-server turn IDs remain provider identity on messages, tools, plans, changes, and
+requests. A transcript format that exposes no turn ID is correlated to the preceding user
+message with an explicitly namespaced `derived:message:` ID; derived correlation is never
+presented as provider evidence. `turn/plan/updated`, `turn/diff/updated`, and
+`thread/tokenUsage/updated` remain typed state rather than being flattened into prose or generic
+tools. The platform-neutral `AgentLensReadModel` projects Conversation, Work, Plans, Changes,
+Agents, Interactions, and Context so a future mobile renderer does not have to parse terminal
+bytes or reproduce macOS view logic.
+
 ## Two accounts of one session: Chat and Timeline
 
 Chat is the verbatim conversational record. **Timeline is an interpretation layer**: an agent
@@ -169,6 +185,12 @@ reads the session's evidence and writes the few moments where it materially chan
 or state — "reproduced the focus loop", "found the competing focus writers", "verified the
 fix". It is not one row per prompt, tool call, file edit or hook event, and a reading that is
 one row per fact is refused rather than rendered.
+
+Chat is quiet, not lossy. It keeps messages, decisions, and diagnostics in evidence order and
+folds adjacent execution facts from the same turn into a compact work row. Completed work is
+collapsed by default; current work exposes its latest step; explicit expansion shows the typed
+tool, plan, and change entries and their individual evidence return paths. Timeline synthesis
+continues to read the raw fact list, so a UI fold never becomes a second evidence source.
 
 The choice is local host UI state. It changes no attachment, restarts no process, sends
 nothing to the PTY, and is independent of Session/Terminal/Split — a person can read the
@@ -265,6 +287,10 @@ limits, malformed input, stream ordering and overflow, transcript tailing, brack
 framing, PID refusal, same-surface mode switching, surface-token rotation, authoritative
 root binding, stale-session and subagent refusal, path/symlink containment, request bounds,
 and idempotent hook installation that preserves unrelated user hooks.
+`AgentLensReadModelTests` covers provider and derived turn identity, quiet work folding without
+fact loss, typed plan/change/context replacement, subagent task grouping, and raw-fact-to-fold
+anchor return paths. Decoder tests pin Codex plan, diff, token usage, item turn identity, and
+file-read approval method shapes.
 `InteractionBoundaryFitnessTests` asserts that hook ingress remains EVENT, transcript
 tailing remains RESOURCE/STREAM, and Agent Lens stays on typed DIRECT calls without
 opening a public intent dispatch path.

@@ -8,9 +8,10 @@ import TenonCore
 ///
 ///     TENON_SIDEBAR_SNAPSHOT=/tmp/sidebar.png swift run tenon
 ///     TENON_SIDEBAR_SNAPSHOT_SIZE=110x420 TENON_SIDEBAR_SNAPSHOT=/tmp/narrow.png swift run tenon
+///     TENON_SIDEBAR_SNAPSHOT_SIZE=48x420 TENON_SIDEBAR_SNAPSHOT=/tmp/rail.png swift run tenon
 ///
-/// The two sizes worth photographing are the sidebar's own bounds: `SidebarResize.minWidth`
-/// (110), the narrowest it may stay open at, and `SidebarResize.defaultWidth` (232). What is
+/// The three sizes worth photographing are the sidebar's own bounds: the 48 pt collapsed
+/// rail, `SidebarResize.minWidth` (110), and `SidebarResize.defaultWidth` (232). What is
 /// mounted is `WorkspaceSidebarView` over a real `WorkspaceStore` — the same view the shell
 /// mounts, over the same mutations — so the picture is what the sidebar shows.
 enum SidebarSnapshot {
@@ -45,7 +46,8 @@ enum SidebarSnapshot {
             bare: WorkspaceSidebarView(
                 store: store,
                 pool: pool,
-                closeCoordinator: ShellCloseCoordinator(store: store, pool: pool)
+                closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
+                isCollapsed: size.width <= SidebarResize.collapsedWidth
             )
             .frame(width: size.width, height: size.height),
             size: size,

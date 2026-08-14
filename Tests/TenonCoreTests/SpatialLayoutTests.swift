@@ -208,6 +208,25 @@ final class SpatialLayoutTests: XCTestCase {
         ])
     }
 
+    func testCappedCloseSkipsAHorizontalNeighborThatCannotGrow() {
+        let transaction = SpatialLayout.close(
+            [
+                slot(a, 3, 3, 3, 3),
+                slot(b, 0, 3, 3, 3),
+                slot(c, 3, 0, 3, 3),
+            ],
+            slotID: a,
+            maximumAbsorbedWidth: 3
+        )
+
+        XCTAssertEqual(transaction?.direction, .top)
+        XCTAssertEqual(transaction?.absorbedSlotIDs, [c])
+        XCTAssertEqual(transaction?.proposal, [
+            slot(b, 0, 3, 3, 3),
+            slot(c, 3, 0, 3, 6),
+        ])
+    }
+
     func testCloseAbsorptionUsesTopThenRightThenBottomPriority() {
         XCTAssertEqual(SpatialLayout.close([
             slot(a, 3, 3, 3, 3),

@@ -42,13 +42,45 @@ enum WorkspaceIdentityFormMetrics {
             Int((Double(WorkspaceSymbol.allCases.count) / Double(fitted)).rounded(.up))
         )
     }
+
+    /// Twelve named tints plus Automatic stay in two balanced rows instead of widening the
+    /// popover or hiding the later choices in a horizontal scroller.
+    static let tintRows = 2
+
+    static var tintColumns: Int {
+        Int(
+            (Double(AccentColor.allCases.count + 1) / Double(tintRows))
+                .rounded(.up)
+        )
+    }
 }
 
 /// The glyph a workspace is marked with, drawn identically wherever the host represents
 /// that workspace. Kept as one view so the mark, its size, and its tint are decided once.
+// MARK: - Shared workspace mark  @domain: workspace-model
+
 struct WorkspaceMark: View {
-    let workspace: Workspace
-    var size: CGFloat = 15
+    let symbol: WorkspaceSymbol
+    let accent: AccentColor?
+    let customIcon: WorkspaceCustomIcon?
+    let path: URL
+    let size: CGFloat
+
+    init(workspace: Workspace, size: CGFloat = 15) {
+        self.symbol = workspace.appearance.symbol
+        self.accent = workspace.appearance.accent
+        self.customIcon = workspace.appearance.customIcon
+        self.path = workspace.path
+        self.size = size
+    }
+
+    init(recent entry: RecentWorkspaceStore.Entry, size: CGFloat = 15) {
+        self.symbol = entry.appearance.symbol
+        self.accent = entry.appearance.accent
+        self.customIcon = entry.appearance.customIcon
+        self.path = entry.path
+        self.size = size
+    }
 
     /// Which colour a mark is drawn in — every workspace in its own, whether or not it is
     /// the selected one.
@@ -63,11 +95,43 @@ struct WorkspaceMark: View {
         Color(tintHex: WorkspaceTint.hex(for: workspace.appearance.accent, at: workspace.path))
     }
 
+    static func tint(for entry: RecentWorkspaceStore.Entry) -> Color {
+        Color(tintHex: WorkspaceTint.hex(for: entry.appearance.accent, at: entry.path))
+    }
+
     var body: some View {
-        Image(systemName: workspace.appearance.symbol.systemName)
-            .font(.system(size: size, weight: .medium))
-            .foregroundStyle(Self.tint(for: workspace))
+        Group {
+            if let customIcon,
+               let image = WorkspaceCustomIconCache.image(for: customIcon)
+            {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .scaledToFit()
+            } else {
+                Image(systemName: symbol.systemName)
+                    .font(.system(size: size, weight: .medium))
+                    .foregroundStyle(
+                        Color(tintHex: WorkspaceTint.hex(for: accent, at: path))
+                    )
+            }
+        }
+            .frame(width: size, height: size)
             .accessibilityHidden(true)
+    }
+}
+
+@MainActor
+private enum WorkspaceCustomIconCache {
+    private static let images = NSCache<NSUUID, NSImage>()
+
+    static func image(for icon: WorkspaceCustomIcon) -> NSImage? {
+        let key = icon.id as NSUUID
+        if let cached = images.object(forKey: key) { return cached }
+        guard let image = NSImage(data: icon.pngData) else { return nil }
+        images.setObject(image, forKey: key, cost: icon.pngData.count)
+        images.totalCostLimit = 4 * 1_024 * 1_024
+        return image
     }
 }
 
@@ -80,7 +144,7 @@ enum WorkspaceRowAnnouncement {
     static func text(for workspace: Workspace, unseenCount: Int) -> String {
         var parts = [
             workspace.name,
-            workspace.appearance.symbol.label,
+            workspace.appearance.iconLabel,
             "\(workspace.tabs.count) \(workspace.tabs.count == 1 ? "tab" : "tabs")",
         ]
         if unseenCount > 0 {
@@ -96,12 +160,18 @@ enum WorkspaceRowAnnouncement {
 /// that already owns every other workspace mutation — so there is no draft to reconcile and
 /// no second copy of the truth. The name commits on Enter and on dismissal; the store
 /// refuses a no-op, so committing twice costs nothing.
+// MARK: - Identity form  @domain: workspace-model
+
 struct WorkspaceIdentityForm: View {
     let workspace: Workspace
     var store: WorkspaceStore
     let dismiss: () -> Void
 
     @State private var typedName: String
+    @State private var isChoosingCustomIcon = false
+    @State private var isProcessingCustomIcon = false
+    @State private var showsIconImportError = false
+    @State private var iconImportError = ""
     @FocusState private var nameFocused: Bool
 
     init(workspace: Workspace, store: WorkspaceStore, dismiss: @escaping () -> Void) {
@@ -129,6 +199,19 @@ struct WorkspaceIdentityForm: View {
         .background(TenonTheme.chromeRaised)
         .tint(WorkspaceMark.tint(for: workspace))
         .onDisappear(perform: commitName)
+        .fileImporter(
+            isPresented: $isChoosingCustomIcon,
+            allowedContentTypes: [.image],
+            allowsMultipleSelection: false,
+            onCompletion: importCustomIcon
+        )
+        .fileDialogMessage("Choose an image to use as this workspace's icon.")
+        .fileDialogConfirmationLabel("Use Icon")
+        .alert("Couldn't Use Icon", isPresented: $showsIconImportError) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text(iconImportError)
+        }
         .accessibilityIdentifier("tenon.workspaceIdentityForm")
     }
 
@@ -173,46 +256,123 @@ struct WorkspaceIdentityForm: View {
 
     private var marks: some View {
         section("Icon") {
+            VStack(alignment: .leading, spacing: 6) {
+                LazyVGrid(
+                    columns: Array(
+                        repeating: GridItem(
+                            .fixed(WorkspaceIdentityFormMetrics.swatch),
+                            spacing: WorkspaceIdentityFormMetrics.swatchSpacing
+                        ),
+                        count: WorkspaceIdentityFormMetrics.columns
+                    ),
+                    alignment: .leading,
+                    spacing: WorkspaceIdentityFormMetrics.swatchSpacing
+                ) {
+                    ForEach(WorkspaceSymbol.allCases, id: \.self) { symbol in
+                        let isChosen = workspace.appearance.customIcon == nil
+                            && symbol == workspace.appearance.symbol
+                        swatchButton(
+                            isChosen: isChosen,
+                            label: symbol.label,
+                            identifier: "tenon.workspaceMarkOption"
+                        ) {
+                            var appearance = workspace.appearance
+                            appearance.symbol = symbol
+                            appearance.customIcon = nil
+                            store.setWorkspaceAppearance(workspace.id, to: appearance)
+                        } content: {
+                            Image(systemName: symbol.systemName)
+                                .font(.system(size: 12, weight: .medium))
+                                // The accent marks the current selection here as it does
+                                // everywhere else in Tenon; the ring around it says the same
+                                // thing in shape, so the choice survives without colour.
+                                .foregroundStyle(
+                                    isChosen ? TenonTheme.amber : TenonTheme.muted
+                                )
+                        }
+                    }
+                }
+
+                customIconButton
+            }
+        }
+    }
+
+    private var customIconButton: some View {
+        Button {
+            isChoosingCustomIcon = true
+        } label: {
+            HStack(spacing: 8) {
+                if isProcessingCustomIcon {
+                    ProgressView()
+                        .controlSize(.small)
+                        .frame(width: 16, height: 16)
+                } else if workspace.appearance.customIcon != nil {
+                    WorkspaceMark(workspace: workspace, size: 16)
+                } else {
+                    Image(systemName: "photo.badge.plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(TenonTheme.muted)
+                        .frame(width: 16, height: 16)
+                }
+                Text(
+                    workspace.appearance.customIcon == nil
+                        ? "Upload Custom Icon…"
+                        : "Replace Custom Icon…"
+                )
+                .font(TenonTheme.interfaceFont(size: 11))
+                .foregroundStyle(TenonTheme.text)
+            }
+            .padding(.horizontal, 9)
+            .frame(height: WorkspaceIdentityFormMetrics.controlHeight)
+            .background(
+                workspace.appearance.customIcon == nil
+                    ? TenonTheme.panel
+                    : Color.primary.opacity(0.09),
+                in: .rect(cornerRadius: WorkspaceIdentityFormMetrics.controlRadius)
+            )
+            .overlay {
+                RoundedRectangle(
+                    cornerRadius: WorkspaceIdentityFormMetrics.controlRadius,
+                    style: .continuous
+                )
+                .stroke(
+                    workspace.appearance.customIcon == nil
+                        ? TenonTheme.line
+                        : TenonTheme.amber,
+                    lineWidth: 1
+                )
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(isProcessingCustomIcon)
+        .accessibilityLabel(
+            workspace.appearance.customIcon == nil
+                ? "Upload custom workspace icon"
+                : "Replace custom workspace icon"
+        )
+        .accessibilityAddTraits(
+            workspace.appearance.customIcon == nil ? [] : .isSelected
+        )
+        .accessibilityIdentifier("tenon.workspaceCustomIcon")
+    }
+
+    private var tints: some View {
+        section("Colour") {
             LazyVGrid(
                 columns: Array(
                     repeating: GridItem(
                         .fixed(WorkspaceIdentityFormMetrics.swatch),
                         spacing: WorkspaceIdentityFormMetrics.swatchSpacing
                     ),
-                    count: WorkspaceIdentityFormMetrics.columns
+                    count: WorkspaceIdentityFormMetrics.tintColumns
                 ),
                 alignment: .leading,
                 spacing: WorkspaceIdentityFormMetrics.swatchSpacing
             ) {
-                ForEach(WorkspaceSymbol.allCases, id: \.self) { symbol in
-                    let isChosen = symbol == workspace.appearance.symbol
-                    swatchButton(
-                        isChosen: isChosen,
-                        label: symbol.label,
-                        identifier: "tenon.workspaceMarkOption"
-                    ) {
-                        var appearance = workspace.appearance
-                        appearance.symbol = symbol
-                        store.setWorkspaceAppearance(workspace.id, to: appearance)
-                    } content: {
-                        Image(systemName: symbol.systemName)
-                            .font(.system(size: 12, weight: .medium))
-                            // The accent marks the current selection here as it does
-                            // everywhere else in Tenon; the ring around it says the same
-                            // thing in shape, so the choice survives without colour.
-                            .foregroundStyle(isChosen ? TenonTheme.amber : TenonTheme.muted)
-                    }
-                }
-            }
-        }
-    }
-
-    private var tints: some View {
-        section("Colour") {
-            HStack(spacing: WorkspaceIdentityFormMetrics.swatchSpacing) {
-                tintButton(nil, label: "Automatic")
-                ForEach(AccentColor.allCases, id: \.self) { accent in
-                    tintButton(accent, label: accent.label)
+                ForEach([AccentColor?.none] + AccentColor.allCases.map(Optional.some), id: \.self) {
+                    accent in
+                    tintButton(accent, label: accent?.label ?? "Automatic")
                 }
             }
         }
@@ -358,5 +518,37 @@ struct WorkspaceIdentityForm: View {
     private func reset() {
         store.resetWorkspaceIdentity(workspace.id)
         typedName = ""
+    }
+
+    private func importCustomIcon(_ result: Result<[URL], any Error>) {
+        guard case let .success(urls) = result, let url = urls.first else {
+            if case let .failure(error) = result {
+                presentIconImportError(error.localizedDescription)
+            }
+            return
+        }
+
+        isProcessingCustomIcon = true
+        Task {
+            defer { isProcessingCustomIcon = false }
+            do {
+                let icon = try await WorkspaceCustomIconImport.icon(from: url)
+                guard let current = store.catalog.workspaces.first(where: {
+                    $0.id == workspace.id
+                }) else { return }
+                var appearance = current.appearance
+                appearance.customIcon = icon
+                store.setWorkspaceAppearance(workspace.id, to: appearance)
+            } catch is CancellationError {
+                return
+            } catch {
+                presentIconImportError(error.localizedDescription)
+            }
+        }
+    }
+
+    private func presentIconImportError(_ message: String) {
+        iconImportError = message
+        showsIconImportError = true
     }
 }

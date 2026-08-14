@@ -12,10 +12,9 @@ import XCTest
 final class AgentSessionTimelineTests: XCTestCase {
     // MARK: - The evidence a synthesis is allowed to see
 
-    /// Chat hides completed tool runs so the conversation stays readable. A milestone about
-    /// "found the competing writers" stands on exactly those runs, so the digest reads the full
-    /// timeline — and still drops the session's setting (system/developer/skill turns), which is
-    /// context rather than something that happened.
+    /// Chat folds execution so it stays readable. A milestone about "found the competing
+    /// writers" still stands on the original run, so every digest anchor must resolve through
+    /// the fold — while the session's setting remains context rather than something that happened.
     func testTheDigestCarriesExecutionAndDropsTheSessionsSetting() throws {
         let snapshot = Fixture.session()
         let digest = try XCTUnwrap(Fixture.digest(snapshot))
@@ -29,8 +28,11 @@ final class AgentSessionTimelineTests: XCTestCase {
             digest.facts.contains { $0.body.contains("System policy") },
             "instructions are the session's setting, not an event in it"
         )
-        // The receipt that the digest is reading the full timeline rather than Chat's projection.
-        XCTAssertGreaterThan(digest.facts.count, snapshot.sessionTimelineItems.count)
+        let readModel = snapshot.readModel
+        XCTAssertTrue(
+            digest.facts.allSatisfy { readModel.conversationAnchor(forFactID: $0.id) != nil },
+            "every original digest fact has a return path through the quiet Chat projection"
+        )
     }
 
     /// An empty, a short and an unattached session each say what they are. None of them offers a
@@ -896,10 +898,6 @@ private enum Fixture {
     ) -> PaneHeader {
         AgentLensPaneHeader.header(
             isAgentDetected: isAgentDetected,
-            provider: .claude,
-            status: .running,
-            currentAction: "Working",
-            hasDiagnostics: false,
             presentation: presentation,
             showsInspector: false,
             account: account

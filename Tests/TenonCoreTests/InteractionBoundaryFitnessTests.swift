@@ -56,7 +56,7 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "case .unavailable:",
                 "CommandPaletteState(storeURL: paths.commandFrecencyFile)",
                 "prepared.cliServer.clientSocketPath",
-                "\"TENON_AGENT_HOOK_SCRIPT\": prepared.agentHookScriptURL.path",
+                "agentHookScriptPath: prepared.agentHookScriptURL.path",
             ],
             file: "TenonApp.swift"
         )
@@ -359,6 +359,22 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             ],
             file: "PaletteOverlay.swift"
         )
+        let paletteCommandRun = try sourceSlice(
+            palette,
+            from: "private func run(_ match: CommandMatch)",
+            before: "/// Run a dynamic result"
+        )
+        let palettePrepareOffset = try XCTUnwrap(
+            paletteCommandRun.range(of: "PaletteIntentInvoker.prepare(")?.lowerBound
+        )
+        let paletteTaskOffset = try XCTUnwrap(
+            paletteCommandRun.range(of: "Task { @MainActor in")?.lowerBound
+        )
+        XCTAssertLessThan(
+            palettePrepareOffset,
+            paletteTaskOffset,
+            "a palette click must bind its provider before async lifecycle work can invalidate the accepted row"
+        )
         assertContains(
             invoker,
             [
@@ -611,6 +627,8 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "var agentSuggestions: [AgentLaunchSuggestion]",
                 "var launchAgent: ((AgentLaunchSuggestion) -> LauncherOutcome)?",
                 "var copyTabID: (() -> Void)?",
+                "var paneArrangements: [PaneArrangementPreset]",
+                "var arrangePanes: ((PaneArrangementPreset) -> Void)?",
                 // The footer's presentation is the shared chrome every other row in the
                 // popover draws, so its geometry and hover come from one place
                 // (`CMD-NFR-008`); its behaviour is pinned by the chrome test below.
@@ -618,6 +636,31 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
                 "tenon.launcher.copyTabID",
             ],
             file: "LauncherMenu.swift"
+        )
+        let launcherCommandRun = try sourceSlice(
+            launcher,
+            from: "private func run(_ match: CommandMatch)",
+            before: "\n    }\n}"
+        )
+        let prepareOffset = try XCTUnwrap(
+            launcherCommandRun.range(of: "PaletteIntentInvoker.prepare(")?.lowerBound
+        )
+        let taskOffset = try XCTUnwrap(
+            launcherCommandRun.range(of: "Task { @MainActor in")?.lowerBound
+        )
+        XCTAssertLessThan(
+            prepareOffset,
+            taskOffset,
+            "a visible launcher row must bind its exact provider and gesture at the accepted click, before async lifecycle work can invalidate the lookup"
+        )
+        assertContains(
+            launcherCommandRun,
+            [
+                "send(invocation)",
+                "PaletteIntentInvoker.send(",
+                "invocation,",
+            ],
+            file: "LauncherMenu.swift command dispatch"
         )
         let tabChipLauncher = try sourceSlice(
             titleBar,
@@ -639,8 +682,10 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             [
                 "LauncherMenu(",
                 "placement: .tab(tab.id)",
-                "await send(commandID, onTab: tab.id)",
+                "await send(invocation, onTab: tab.id)",
                 "copyTabID: { WorkspaceIdentifierClipboard.copy(tab.id) }",
+                "paneArrangements: arrangements(for: tab)",
+                "store.arrangeActiveTab(preset)",
             ],
             file: "ShellTitleBar.swift tab-chip launcher content"
         )
@@ -745,27 +790,30 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             [
                 "LauncherMenu(",
                 "placement: .newTab",
-                "await sendInNewTab(commandID)",
+                "await sendInNewTab(invocation)",
             ],
             file: "ShellTitleBar.swift plus launcher"
         )
         XCTAssertFalse(
-            plusLauncher.contains("send(commandID, onTab:"),
+            plusLauncher.contains("send(invocation, onTab:"),
             "the plus anchor must never inherit an existing tab"
         )
         let newTabDispatch = try sourceSlice(
             titleBar,
-            from: "private func sendInNewTab(_ commandID: String)",
+            from: "private func sendInNewTab(",
             before: "/// Width the tab chips actually need"
         )
         assertContains(
             newTabDispatch,
             [
-                "PaletteIntentInvoker.prepare(",
                 "userGestureID: invocation.userGestureID",
                 "PaletteIntentInvoker.send(",
             ],
             file: "ShellTitleBar.swift plus dispatch"
+        )
+        XCTAssertFalse(
+            newTabDispatch.contains("PaletteIntentInvoker.prepare("),
+            "an anchor must carry the click-bound invocation instead of resolving the row again"
         )
         assertContains(
             workspaceProvider,
@@ -827,6 +875,127 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             ["public var paneFillersOnly: CommandIndex", "$0.isLauncher && $0.fillsPane"],
             file: "CommandIndex.swift"
         )
+    }
+
+    func testWorkspaceReorderStaysOnOneLocalTypedPath() throws {
+        let rule = try source("TenonCore/WorkspaceReorder.swift")
+        let workspace = try source("TenonCore/Workspace.swift")
+        let store = try source("TenonCore/WorkspaceStore.swift")
+        let sidebar = try source("TenonApp/WorkspaceSidebarView.swift")
+
+        assertContains(
+            rule,
+            [
+                "public enum WorkspaceReorder",
+                "public static func insertionIndex(",
+                "public static func destination(",
+                "public static func spokenPosition(",
+            ],
+            file: "WorkspaceReorder.swift"
+        )
+        assertContains(
+            workspace,
+            [
+                "case workspaceMoved(workspace: UUID, from: Int, to: Int)",
+                "public mutating func moveWorkspace(_ id: UUID, to index: Int)",
+                ".workspaceMoved(workspace: id, from: from, to: index)",
+            ],
+            file: "Workspace.swift"
+        )
+        assertContains(
+            store,
+            [
+                "public func moveWorkspace(_ id: UUID, to index: Int)",
+                "apply { $0.moveWorkspace(id, to: index) }",
+                "case let .workspaceMoved(workspace, from, to)",
+                #""workspace.moved""#,
+            ],
+            file: "WorkspaceStore.swift"
+        )
+        assertContains(
+            sidebar,
+            [
+                ".simultaneousGesture(reorderGesture(for: workspace.id))",
+                "DragGesture(",
+                "WorkspaceSidebarLayout.reorderThreshold",
+                "store.moveWorkspace(workspaceID, to: destination)",
+                "private func restore(_ drag: WorkspaceSidebarDrag)",
+                #"Button("Move workspace up")"#,
+                #"Button("Move workspace down")"#,
+            ],
+            file: "WorkspaceSidebarView.swift"
+        )
+        for (name, implementation) in [
+            ("WorkspaceReorder.swift", rule),
+            ("WorkspaceSidebarView.swift", sidebar),
+        ] {
+            XCTAssertFalse(implementation.contains("NSPasteboard"), "\(name) opened a pasteboard route")
+            XCTAssertFalse(implementation.contains(".draggable("), "\(name) opened a Transferable route")
+            XCTAssertFalse(implementation.contains(".onDrag("), "\(name) opened a pasteboard drag route")
+            XCTAssertFalse(implementation.contains("dispatcher.send("), "\(name) bypassed DIRECT ownership")
+            XCTAssertFalse(implementation.contains("intentRuntime.send("), "\(name) bypassed DIRECT ownership")
+        }
+    }
+
+    func testPaneArrangementStaysOnOneHostNativeDirectPath() throws {
+        let rule = try source("TenonCore/PaneArrangement.swift")
+        let menu = try source("TenonApp/PaneArrangementMenu.swift")
+        let launcher = try source("TenonApp/LauncherMenu.swift")
+        let titleBar = try source("TenonApp/ShellTitleBar.swift")
+
+        assertContains(
+            rule,
+            [
+                "public enum PaneArrangementPreset",
+                "public static func availablePresets(",
+                "public static func transaction(",
+                "func arrangeActiveTab(_ preset: PaneArrangementPreset)",
+                "applyResize(transaction)",
+            ],
+            file: "PaneArrangement.swift"
+        )
+        assertContains(
+            menu,
+            [
+                "struct PaneArrangementMenu: View",
+                "Button {",
+                ".onHover(perform: hoverChanged)",
+                "Task.sleep(for: .milliseconds(220))",
+                "tenon.launcher.arrangePanes",
+            ],
+            file: "PaneArrangementMenu.swift"
+        )
+        assertContains(
+            launcher,
+            [
+                "PaneArrangementMenu(",
+                "presets: paneArrangements",
+                "arrange: arrangePanes",
+            ],
+            file: "LauncherMenu.swift arrangement utility"
+        )
+        assertContains(
+            titleBar,
+            [
+                "paneArrangements: arrangements(for: tab)",
+                "store.selectTab(tab.id)",
+                "store.arrangeActiveTab(preset)",
+                "PaneArrangement.availablePresets(",
+            ],
+            file: "ShellTitleBar.swift arrangement target"
+        )
+
+        for (name, implementation) in [
+            ("PaneArrangement.swift", rule),
+            ("PaneArrangementMenu.swift", menu),
+        ] {
+            for forbidden in ["tenon.intents", "intentRuntime.send(", "dispatcher.send(", "PaletteIntentInvoker"] {
+                XCTAssertFalse(
+                    implementation.contains(forbidden),
+                    "\(name) opened a second public path through \(forbidden)"
+                )
+            }
+        }
     }
 
     /// Three kinds of row share one popover: a ranked command, a dynamic provider result,
@@ -977,9 +1146,8 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             contentsOf: pluginRoot.appendingPathComponent("manifest.json"),
             encoding: .utf8
         )
-        let implementation = try String(
-            contentsOf: pluginRoot.appendingPathComponent("main.js"),
-            encoding: .utf8
+        let implementation = try source(
+            "TenonBundledPlugins/CoreCommandsPlugin.swift"
         )
 
         assertContains(
@@ -1087,7 +1255,10 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
 
         assertContains(
             manifest,
-            [#""id": "dev.tenon.core-commands""#],
+            [
+                #""id": "dev.tenon.core-commands""#,
+                #""runtime": "bundled-swift""#,
+            ],
             file: "core-commands/manifest.json"
         )
         let automationContribution = try sourceSlice(
@@ -1115,16 +1286,25 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
 
         let automationHandler = try sourceSlice(
             implementation,
-            from: #"tenon.intents.handle("dev.tenon.core-commands.automation.open.v1""#,
-            before: #"tenon.intents.handle("dev.tenon.core-commands.tab.next.v1""#
+            from: #"case "dev.tenon.core-commands.automation.open.v1":"#,
+            before: #"case "dev.tenon.core-commands.tab.next.v1":"#
         )
         assertContains(
             automationHandler,
             [
-                #"await call.send("workspace.tab.create.v1""#,
-                #"content: { kind: "automation" }"#,
+                #"return await send("#,
+                #""workspace.tab.create.v1""#,
+                #""kind": .string("automation")"#,
             ],
-            file: "core-commands/main.js Automation handler"
+            file: "CoreCommandsPlugin.swift Automation handler"
+        )
+        assertContains(
+            implementation,
+            [
+                "let result = await context.send(",
+                "IntentProviderSendRequest(",
+            ],
+            file: "CoreCommandsPlugin.swift causal nested-send adapter"
         )
         XCTAssertFalse(
             automationHandler.contains("dev.tenon.core.workspace.tab.create.v1"),
@@ -1150,7 +1330,11 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             // 48 → 49 and 12 → 13 (T-139). The addition is one finite agent question and
             // its bounded wait lane; the `contains("automation")` assertion below is what
             // continues to hold the automation boundary.
-            ("CoreIntentName", coreIntentInventory, 49),
+            // 49 → 50 (T-147): one pane title an agent may set on its own pane, on the
+            // existing workspace lane — no new lane, no new audience.
+            // 50 → 51 (T-154): workspace identity is one finite request/reply on the
+            // existing workspace lane — no new lane, audience, capability, or control op.
+            ("CoreIntentName", coreIntentInventory, 51),
             ("CoreIntentExecutionLane", laneInventory, 13),
             ("IntentAudience", audienceInventory, 5),
         ] {
@@ -1446,9 +1630,9 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
     /// On macOS `.help()` becomes an accessibility HELP — a hint — and never a label. So a
     /// control whose only words are its tooltip reaches VoiceOver named after its SF Symbol
     /// string rather than after the sentence its author wrote. That is not hypothetical: the
-    /// Agent Lens migration lost three names exactly this way — its diagnostics warning, its
-    /// inspector toggle, and `currentActionSummary`, which is the single most time-sensitive
-    /// fact a supervision pane has.
+    /// The Agent Lens migration exposed the same failure shape on its diagnostics warning and
+    /// inspector toggle. Its most time-sensitive fact, `currentActionSummary`, now lives in a
+    /// dedicated spoken Session status line rather than in pane chrome.
     ///
     /// `paneHeaderHelp` is the one place the renderer turns a tooltip into anything, so the
     /// invariant is checkable as a shape: every `help(` in the file sits on a line that also

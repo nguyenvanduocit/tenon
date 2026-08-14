@@ -15,18 +15,30 @@ struct AgentMarkdownText: View {
     /// Which written paths resolve to a file, so citing one is a way back to it.
     var fileLinks: AgentFileLinks = .none
     @State private var blocks: [AgentMarkdownBlock] = []
+    @State private var parsedSource: String?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 7) {
-            ForEach(Array(blocks.enumerated()), id: \.offset) { offset, block in
-                AgentMarkdownBlockView(
-                    block: block,
-                    textStyle: textStyle,
-                    weight: weight,
-                    tint: tint,
-                    caret: caret && offset == blocks.count - 1,
-                    fileLinks: fileLinks
-                )
+            if parsedSource != source || blocks.isEmpty {
+                // The detached parser cannot leave this row with zero height. A lazy timeline
+                // would place the next work row at that zero edge, then draw this prose through
+                // it when parsing completes. Plain text is the truthful first-frame fallback.
+                Text(source + (caret ? " ▍" : ""))
+                    .font(.system(textStyle).weight(weight))
+                    .foregroundStyle(tint)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                ForEach(Array(blocks.enumerated()), id: \.offset) { offset, block in
+                    AgentMarkdownBlockView(
+                        block: block,
+                        textStyle: textStyle,
+                        weight: weight,
+                        tint: tint,
+                        caret: caret && offset == blocks.count - 1,
+                        fileLinks: fileLinks
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -37,6 +49,7 @@ struct AgentMarkdownText: View {
             }.value
             guard !Task.isCancelled, requestedSource == source else { return }
             blocks = parsed
+            parsedSource = requestedSource
         }
     }
 }

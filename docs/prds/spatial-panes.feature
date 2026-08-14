@@ -81,7 +81,7 @@ Feature: Arrange live panes without losing identity, focus, or attention
 
     @req-sp-fr-004 @sizing
     Scenario Outline: A future pane respects the configured maximum and available width
-      Given the default maximum for new panes is <maximum>
+      Given the automatic pane-width maximum is <maximum>
       And the available region is <available> columns wide
       When a new pane is created
       Then its width is <expected> columns
@@ -95,11 +95,25 @@ Feature: Arrange live panes without losing identity, focus, or attention
         | one half | 3 | 3 |
 
     @req-sp-fr-004 @sizing @future-only
-    Scenario: Changing the creation maximum never resizes an existing pane
+    Scenario: Changing the automatic-layout maximum never resizes an existing pane
       Given a pane already exists at its committed width
-      When the operator changes the default maximum for new panes
+      When the operator changes the automatic pane-width maximum
       Then the existing pane remains at its committed width
       And it can still be resized through ordinary pane controls
+
+    @req-sp-fr-004 @req-sp-fr-006 @sizing @close
+    Scenario: Closing a pane respects the automatic-layout maximum
+      Given a neighboring pane is narrower than the configured maximum
+      When another pane beside it closes
+      Then the neighbor grows into the released region only up to the configured maximum
+      And any declined columns remain empty canvas
+
+    @req-sp-fr-004 @req-sp-fr-006 @sizing @close
+    Scenario: Closing a pane never shrinks a neighbor already wider than the maximum
+      Given a neighboring pane is wider than the configured maximum
+      When another pane beside it closes
+      Then the neighbor keeps its committed width
+      And any declined columns remain empty canvas
 
     @req-sp-fr-005 @split @targeting
     Scenario Outline: Split and Stack target the clicked pane rather than the active pane
@@ -119,12 +133,21 @@ Feature: Arrange live panes without losing identity, focus, or attention
       Given a tab has several valid neighboring panes
       When one pane is closed
       Then one valid neighbor absorbs its released region by the deterministic close rule
+      Except horizontal growth stops at the configured maximum and leaves declined width empty
       And unrelated panes keep their identity and content
       And the tab keeps a valid active pane
 
     @req-sp-fr-006 @close @empty-tab
-    Scenario: Closing the final pane leaves an empty tab
-      Given a tab contains exactly one pane
+    Scenario: Closing the final pane closes its tab when another tab survives
+      Given a workspace contains several tabs
+      And one tab contains exactly one pane
+      When that pane is closed
+      Then that tab is removed
+      And a surviving tab becomes active with its remembered active pane
+
+    @req-sp-fr-006 @close @empty-tab @last-tab
+    Scenario: Closing the final pane of the workspace's only tab keeps the required tab
+      Given the workspace's only tab contains exactly one pane
       When that pane is closed
       Then the tab remains present with no panes
       And the tab has no active pane
@@ -598,3 +621,17 @@ Feature: Arrange live panes without losing identity, focus, or attention
       When the evidence is reviewed
       Then measured production data, deterministic tests, candidate mitigation, and human-only checks are labeled separately
       And an unreproduced incident is not reported as fixed
+
+  @req-sp-fr-028 @pane-chrome
+  Scenario: An agent labels the tab the person is looking at
+    Given a pane an agent is working in
+    When it sets its own pane title to "Fixing the token refresh race"
+    Then the pane carries that pinned title
+    When it sets an empty title
+    Then the pane returns to the title its content derives
+
+  @req-sp-fr-028 @pane-chrome
+  Scenario: A rename addresses the pane it names and no other
+    Given a caller sends a pane title with no pane in scope
+    Then it is refused
+    And the focused pane keeps its title

@@ -26,14 +26,22 @@ final class DirectInventoryGateTests: XCTestCase {
     private static let pinnedEntries: [String: Int] = [
         "ordinary functions/modules inside one plugin generation": 56,
         // 1313 → 2129 (T-096): tab reordering; 2129 → 2465: copying stable tab/pane IDs;
-        // 2465 → 2813: one guarded close coordinator for host tab/workspace gestures,
-        // including foreground-identity revalidation after the process-table read.
+        // 2465 → 2813: one guarded close coordinator for host tab/workspace gestures;
+        // 2813 → 3519: manual/AI pane naming through one typed rename mutation and a
+        // separately inventoried pane-owned task; 3519 → 4038: Companion's persisted
+        // provider/model/prompt/folder defaults snapshotted by that same task;
+        // 4041 → 4549: local sidebar workspace reordering through the same typed store.
         // The clause names the missing mechanism — no contribution or intent places this
-        // identity action in host-owned chrome — rather than the difficulty of building one.
-        "SwiftUI workspace, tab, pane, and settings interactions": 2813,
+        // identity action or Companion setting in host-owned chrome — rather than the
+        // difficulty of building one.
+        "SwiftUI workspace, tab, pane, and settings interactions": 4549,
         "app lifecycle and composition-root wiring": 42,
         "install-channel routing": 946,
         "`WorkspaceStore` and typed workspace use cases": 47,
+        // Host-native arrangement is one attended, finite geometry mutation. The required
+        // clause names both absent mechanisms: no CONTRIBUTION owns a cascading utility in
+        // fixed launcher chrome, and no INTENT atomically replaces whole-tab geometry.
+        "whole-tab pane arrangement presets": 1051,
         "terminal and web surface pool retain/reconcile/focus/lifecycle": 63,
         "pane activity/attention state (T-029)": 510,
         "launcher surfaces and tab-context placement (T-039, AIO-8)": 2727,
@@ -161,7 +169,7 @@ final class DirectInventoryGateTests: XCTestCase {
     }
 
     /// The test above iterates real data, and today every entry matches its pin — so its
-    /// `guard` skips all seventeen and it reports green having never evaluated the rule. A
+    /// `guard` skips every pinned entry and reports green having never evaluated the rule. A
     /// check that has never once fired is not evidence that it fires. This exercises the
     /// same two predicates against synthetic entries, so the rule itself is under test
     /// rather than the current contents of the document.

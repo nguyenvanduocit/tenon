@@ -33,7 +33,8 @@ vocabulary, while plugin Git intentionally remains a form with inline repository
 
 Files presents a native declarative tree and performs operations through public intents.
 Ordinary Open uses one host policy: remain in the resolved tab, prefer a matching focused
-pane, then a matching pane, then an empty pane, otherwise split; never create a tab. The
+pane, then a matching pane, then an empty pane, otherwise add a pane where the canvas has
+room and split only when it has none; never create a tab. The
 host selects a renderer, preserves editor state per pane/path, reconciles disk changes
 without losing dirty work, and renders bounded native diffs lazily. Pane cwd and automatic
 project root are distinct facts, so Files/Git re-root only when the project root changes.
@@ -55,7 +56,7 @@ and Gherkin are the context boundary required before more content work continues
 
 | Evidence | Source/date | Confidence | What it establishes |
 |---|---|---|---|
-| placement | [`WorkspaceStore.swift`](../../Sources/TenonCore/WorkspaceStore.swift), [`WorkspaceIntentProvider.swift`](../../Sources/TenonApp/WorkspaceIntentProvider.swift), [`WorkspaceOpenContentTests.swift`](../../Tests/TenonCoreTests/WorkspaceOpenContentTests.swift) | high | exact-tab targeting, reuse priority, split fallback, never-new-tab |
+| placement | [`WorkspaceStore.swift`](../../Sources/TenonCore/WorkspaceStore.swift), [`WorkspaceIntentProvider.swift`](../../Sources/TenonApp/WorkspaceIntentProvider.swift), [`WorkspaceOpenContentTests.swift`](../../Tests/TenonCoreTests/WorkspaceOpenContentTests.swift) | high | exact-tab targeting, reuse priority, free-canvas-then-split creation, never-new-tab |
 | Files plugin | [`manifest.json`](../../plugins/file-explorer/manifest.json), [`main.js`](../../plugins/file-explorer/main.js), [`FileExplorerPluginTests.swift`](../../Tests/TenonCoreTests/FileExplorerPluginTests.swift) | high | ownership, menus, editing, intents, root following |
 | file renderers | [`FilePaneKind.swift`](../../Sources/TenonCore/FilePaneKind.swift), [`FileSlotView.swift`](../../Sources/TenonApp/FileSlotView.swift), [`FilePreviewSlotViews.swift`](../../Sources/TenonApp/FilePreviewSlotViews.swift) | high | image/web/text choice, editor and preview lifecycle |
 | editor state/syntax | [`EditorPaneState.swift`](../../Sources/TenonApp/EditorPaneState.swift), [`SourceEditorView.swift`](../../Sources/TenonApp/SourceEditorView.swift), [`SyntaxHighlighting.swift`](../../Sources/TenonApp/SyntaxHighlighting.swift) | high | state retention, STTextView, tree-sitter |
@@ -252,7 +253,7 @@ publishes only by atomic rename.
 - `FC-FR-011` — Open to the Side MUST explicitly split the scoped pane and set its file.
 - `FC-FR-012` — External open, reveal, clipboard, and terminal cd MUST use registered public intents and policies.
 - `FC-FR-013` — Smart open MUST act only in resolved invocation scope and never add a tab.
-- `FC-FR-014` — Smart open MUST prefer focused matching non-empty, first matching non-empty, focused/first empty, else split; plugin panes match exact plugin/view.
+- `FC-FR-014` — Smart open MUST prefer focused matching non-empty, first matching non-empty, focused/first empty, else add a pane through the shared creation policy — free canvas beside the active pane when the layout has any, a split only when it has none; plugin panes match exact plugin/view.
 - `FC-FR-015` — Pure `FilePaneKind` MUST select image/web/text by case-insensitive final extension and default unknown to text.
 - `FC-FR-016` — Image preview MUST decode off-main, fit the pane, and fail visibly without crashing.
 - `FC-FR-017` — HTML preview MUST disable JS/persistence, restrict local read scope, block remote resources, and refuse navigation.
@@ -395,12 +396,14 @@ materializing surfaces.
 | 2026-08-09 | Files/Changes share rows; Git form does not | T-086 proposal |
 | 2026-08-09 | `Open Docs` and `.docs` are removed rather than deprecated; file panes own document rendering | T-103 user direction |
 | 2026-08-09 | PRD remains partial | prior catalog shipped label |
+| 2026-08-14 | smart open adds its pane through the shared creation policy, so free canvas is taken before any pane is narrowed | `FC-FR-014`'s "else split" wording and the `splitActiveSlot` call it described |
 
 ## 13. Verification receipts
 
 | Area | Receipt | Gap |
 |---|---|---|
 | placement | WorkspaceOpenContent/provider tests | none headlessly |
+| placement on free canvas | 2026-08-14, T-157: three `WorkspaceOpenContentTests` cases red first — a 6-column terminal beside 6 empty columns was cut to 3 and the file placed at x=3 (leaving the empty half untouched), and a 4-column pane with 8 columns free opened no pane at all because `SpatialLayout.split` refuses a pane under `minimumWidth * 2`; green after `openContent` routes through `addSlot`. Scope 14 / 0, full suite 2243 / 0 | not photographed; the geometry is asserted, not seen |
 | Files | real bundled JS tests | none headlessly |
 | editor/previews | kind/I/O/state/change/syntax tests | visual review on design change |
 | diff | pure/model/hosted tests and historical 5,130-line measurement | real human look |
@@ -415,3 +418,4 @@ materializing surfaces.
 |---|---|---|
 | 2026-08-09 | Codex | Created current-source canonical PRD and exposed write-version/manual-pin gaps. |
 | 2026-08-09 | Codex | Added the user-directed Docs-pane removal and fail-soft legacy-state contract. |
+| 2026-08-14 | Claude | Restated `FC-FR-014`'s creation branch as the shared placement policy after an operator hit a half-width pane being quartered while half the canvas stood empty. |

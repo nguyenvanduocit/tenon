@@ -16,8 +16,9 @@
 
 ### Problem
 
-Tenon executes replaceable JavaScript plugins that can contribute UI and request sensitive host
-work. Without one closed runtime contract, each feature can add another helper, command registry,
+Tenon executes replaceable plugins whose implementation is JavaScript or Swift compiled into the
+app. They can contribute UI and request sensitive host work. Without one closed runtime contract,
+each feature can add another helper, command registry,
 permission exception, or lifecycle path. That fragmentation makes plugins difficult to author and
 creates security and reliability defects: a manifest can appear to grant itself trust, a stale
 generation can mutate current state, a resource can outlive its plugin, or one malformed user plugin
@@ -32,7 +33,8 @@ containment that does not exist.
 ### Proposed outcome
 
 Plugin discovery, identity, trust, declaration, policy, activation, replacement, teardown, and
-diagnostics follow one deterministic lifecycle. A closed `tenon` vocabulary maps each semantic
+diagnostics follow one deterministic lifecycle independent of implementation language. A closed
+`tenon` vocabulary maps each semantic
 interaction to INTENT, EVENT, RESOURCE, CONTRIBUTION, DIRECT, or one of exactly three scoped
 facilities. Finite host effects use canonical intents and the same typed services as built-in Swift;
 resource callbacks are bounded and generation-owned; plugin state and consent are installation
@@ -90,7 +92,8 @@ when declarations, capabilities, or lifecycle behavior are wrong. The affected o
 know when code is bundled/trusted versus locally enabled, and expects disabling or uninstalling it
 to end its authority. Host engineers need one semantic implementation and finite shutdown.
 
-- Discover a plugin from a directory or one JavaScript file without different authority rules.
+- Discover a plugin from a directory or one JavaScript file without different authority rules;
+  bundled directories may resolve an exact implementation compiled into the app.
 - Know which API to use from the interaction's meaning rather than a feature-specific convention.
 - Develop with hot reload while the last valid generation remains usable after a bad edit.
 - Enable or disable user code without consent or state leaking across installation identities.
@@ -125,8 +128,9 @@ lines, 256 timers, 32 process streams, 64 watchers, 256 pending callbacks, 512 o
 bridge messages per drain, 256 pending watcher paths, 32 published/observed channels, and 128
 characters per channel. Persistence admits at most 4,096 installations in a 1 MiB document.
 
-In scope: inventories, discovery, manifests, identity, policy, consent, JavaScript boundary,
-built-ins, intents, events, resources, contributions, hot reload, disable/uninstall, persistence,
+In scope: inventories, discovery, manifests, identity, policy, consent, JavaScript and bundled-Swift
+runtime backends, built-ins, intents, events, resources, contributions, hot reload,
+disable/uninstall, persistence,
 logs, diagnostics, low-friction permission UX, and isolation gaps. Non-goals: a plugin marketplace, remote package installation,
 Node/npm module loading at runtime, arbitrary native object access, compatibility for deleted
 finite helpers/command registries/sidebar, or claiming hostile-code safety before OS isolation.
@@ -135,9 +139,11 @@ finite helpers/command registries/sidebar, or claiming hostile-code safety befor
 
 Bundled plugins are discovered from the sealed host-controlled inventory. User-authored plugins are
 discovered from a separate writable inventory and appear disabled until explicitly enabled. A
-directory uses `manifest.json` plus `main.js`; a top-level `.js` plugin carries the same manifest in
-its leading `tenon-manifest` block. Plain scripts are ignored. A claimed but malformed plugin gets a
-diagnostic without stopping valid siblings.
+JavaScript directory uses `manifest.json` plus `main.js`; a top-level `.js` plugin carries the same
+manifest in its leading `tenon-manifest` block. A bundled directory may instead declare
+`"runtime": "bundled-swift"`, which resolves only an exact implementation linked into this app.
+Plain scripts are ignored. A claimed but malformed plugin gets a diagnostic without stopping valid
+siblings.
 
 During reload, the host validates the complete candidate set and stages the candidate runtime and
 providers. Only a fully admitted generation replaces the current one. A syntax error, missing
@@ -171,7 +177,7 @@ VoiceOver, focus, semantic color, and non-color-only status.
 | `PRT-FR-007` | Only host-configured bundled provenance **MAY** auto-enable and seed eligible standing consent; a manifest **MUST NOT** claim or promote its own trust class. | shipped | `@req-prt-fr-007` |
 | `PRT-FR-008` | Trust-class change, legacy unknown provenance, uninstall/reinstall, or ID reuse across provenance **MUST** rotate installation identity; settings, storage, secrets, and consent **MUST NOT** cross that rotation, and downgrade **MUST** disable. | shipped | `@req-prt-fr-008` |
 | `PRT-FR-009` | Installation enablement and monotonically increasing session revision **MUST** persist through an atomic, locked, deterministic, bounded document; a failed commit **MUST NOT** publish in-memory state. | shipped | `@req-prt-fr-009` |
-| `PRT-FR-010` | Each runtime **MUST** own one pinned-thread JavaScriptCore context whose global scope matches the tested allowlist; `console` and the public native bridge **MUST** be absent, while immutable internal lifecycle hooks remain host-owned. | shipped | `@req-prt-fr-010` |
+| `PRT-FR-010` | Each JavaScript runtime **MUST** own one pinned-thread JavaScriptCore context whose global scope matches the tested allowlist; `console` and the public native bridge **MUST** be absent, while immutable internal lifecycle hooks remain host-owned. | shipped | `@req-prt-fr-010` |
 | `PRT-FR-011` | The top-level public namespace **MUST** be exactly `apiVersion`, `agents`, `intents`, `settings`, `storage`, `log`, `path`, `events`, `timers`, `process`, `fs`, `statusBar`, `views`, and `palette`, with method inventory fixed by the boundary law. | shipped | `@req-prt-fr-011` |
 | `PRT-FR-012` | `tenon.apiVersion` **MUST** be immutable reserved runtime metadata and **MUST NOT** grant behavior or authority. | shipped | `@req-prt-fr-012` |
 | `PRT-FR-013` | The exact scoped-facility allowlist **MUST** remain settings, storage, and log; settings **MUST** expose only declared keys, storage **MUST** be installation-private non-secret JSON, and logs **MUST** be generation-attributed. | shipped | `@req-prt-fr-013` |
@@ -208,6 +214,7 @@ VoiceOver, focus, semantic color, and non-color-only status.
 | `PRT-FR-044` | Plugins **MUST NOT** receive native `Process`, `FileHandle`, filesystem watcher, AppKit, pasteboard, Ghostty, WebKit, application-model, or provider-service objects. | shipped | `@req-prt-fr-044` |
 | `PRT-FR-046` | Standing consent **MUST** outlive the process it was given in: a grant **MUST** reach durable storage before the engine remembers it, a write failure **MUST** leave nothing granted, revocation **MUST** rewrite that store, and a launch **MUST** adopt what the previous one kept before any provider is reachable. | shipped | `@req-prt-fr-046` |
 | `PRT-FR-047` | A plugin **MUST** be able to declare that a timer, watcher, or process stream belongs to one view instance, and the host **MUST** retire that resource when the instance closes — whether or not the plugin's own close handler ran. Omitting the declaration **MUST** keep the pre-existing lifetime, which is the plugin generation. | shipped | `@req-prt-fr-047` |
+| `PRT-FR-048` | Runtime language **MUST NOT** change plugin identity, authority, mechanism, enablement, contribution, or retirement semantics. `bundled-swift` **MUST** resolve by exact `PluginID` only from bundled-trust inventory, expose no typed host application service, stage every manifest provider before activation, and fail when the compiled implementation is absent; manifests without `runtime` remain JavaScript. | shipped | `@req-prt-fr-048` |
 | `PRT-FR-045` | Permission UX **MUST** be installation-scoped and low friction: trusted bundled/development provenance auto-grants declared capability policy; explicitly enabled local code is reviewed once at enablement or material manifest expansion; unchanged ordinary operations **MUST NOT** repeatedly prompt, while truly sensitive/irreversible actions **MAY** retain per-operation confirmation. | planned/partial | `@req-prt-fr-045` |
 
 ### Non-functional requirements
@@ -230,8 +237,8 @@ VoiceOver, focus, semantic color, and non-color-only status.
 
 ## 7. Acceptance and architecture
 
-[`plugin-runtime.feature`](plugin-runtime.feature) maps all 58 requirements. Evidence is split
-between pure manifest/policy/persistence tests, hosted runtime and JavaScript boundary tests,
+[`plugin-runtime.feature`](plugin-runtime.feature) maps all 59 requirements. Evidence is split
+between pure manifest/policy/persistence tests, hosted JavaScript/compiled-Swift runtime tests,
 concurrency/backpressure tests, lifecycle integration tests, shipped-plugin fitness tests, and two
 pending containment scenarios.
 
@@ -265,6 +272,7 @@ uses Tenon's design system. Source ownership begins in `plugin-host`, `plugin-se
 | 043…044 and NFR-001…012 | boundary law, capability providers, exact-inventory and shipped-plugin fitness | shipped/continuous; security wording remains partial with FR-041 |
 | 045/NFR-013 | bundled standing consent, installation fingerprints, cross-launch consent (FR-046) and the operator's Permissions switch are the base; consolidated local enable/authority review remains product-policy work | planned/partial; optimize developer velocity without bypassing declared boundaries |
 | 046 | `PolicyEngine` standing-consent writer/restore, `StandingConsentStore`, `StandingConsentPersistenceTests`, `StandingConsentStoreTests` | shipped |
+| 048 | `TenonBundledPlugins`, runtime-kind manifest decoding, bundled-trust admission, shipped/native runtime and lifecycle tests | shipped for intent/event/status plugins; native view interaction ports remain follow-up work |
 
 Rollout for FR-041 must define process host protocol, capability token, parent-death behavior,
 Seatbelt or equivalent profile, crash/restart policy, migration of contributions/resources, and a
@@ -304,6 +312,8 @@ evaluated on every invocation.
 |---|---|---|---|
 | 2026-08-09 | current dirty tree, documentation audit | runtime inventory, source bounds, trust/identity, consent, lifecycle, resource and log tests mapped | no new runtime test execution in this documentation-only pass; FR-041/042 intentionally pending |
 | 2026-08-11 | T-130, shared `main` | `swift test --filter StandingConsentPersistenceTests` 7/0 and `--filter StandingConsentStoreTests` 6/0; mutation-checked by removing the durable write from the contract grant, which fails 5 of the 13 | full-suite red at the time belonged to T-123/T-124/T-126/T-128, none in consent or policy |
+| 2026-08-14 | T-155, shared `main` | `core-commands`, `clock`, and `workspace-status` moved from shipped JavaScript into `TenonBundledPlugins`; compiled-runtime, shipped-plugin, and core-command coverage 15/0; boundary/domain/manifest sweep 55/0; full suite 2240/0; `xcodegen generate` was deterministic and Xcode built and linked the app target | compiled native view callbacks/resources are not part of this first slice |
+| 2026-08-14 | compiled-runtime resource-lifetime pass, shared `main` | `swift test --filter BundledPluginResourceOwnershipTests` 6/0 in 0.24 s, pinning what a `bundled-swift` generation actually owns — its event pump, its mailbox, and its provider bindings: a retired clock generation still answers `handles("automation.fired")` but its mailbox refuses the tick, so the host-owned schedule cannot reach it; a cooperative pump meets the shutdown deadline with no stalled phase and a refused later event stays unconsumed; a handler still running when `shutdown(timeout:)` expires (`stalledPhase == .callbackPump`) returns after stop without advancing revision, status text, or publishing any snapshot; a binding invoked after shutdown throws `runtimeStopped` without entering the program; a binding that outlives the deallocated actor settles as `providerRetired`; view open/close and `emit` throw `runtimeStopped` after stop. `xcodegen generate` (2.45.4) added the file to the test bundle additively | documentation-and-tests pass — runtime source untouched, so the guards themselves were not mutation-checked; the compiled runtime registers no timers, watchers, or process streams and exposes no view-owned (`ownedBy`) seam, so `PRT-FR-047` still reaches only the JavaScript runtime, consistent with the T-155 exclusion above |
 
 | 2026-08-12 | T-140, shared `main` | `PRT-FR-047` shipped: `swift test --filter PluginResourceOwnershipTests` 3/0, covering a plugin with no close handler, an undeclared resource keeping its old lifetime, and one instance closing while another's timer keeps running. Full suite 2069 tests, 3 assertion failures, none in this work: one was my own invented `@domain: plugin-resources` (fixed to `plugin-host`, `DomainTagFitnessTests` 7/0 after), the other two were `testCancellationSettlesOnceAndCountsLateJavaScriptReply`, which passes 26/0 when run alone | `PRT-FR-042` remains `planned` — `process.stream` still launches through Foundation `Process` with no process group of its own, so descendant containment is unchanged by this pass |
 

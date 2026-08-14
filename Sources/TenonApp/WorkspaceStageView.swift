@@ -15,6 +15,7 @@ struct WorkspaceStageView: View {
     let agentSuggestions: [AgentLaunchSuggestion]
     var editorStates: EditorPaneStateStore
     var paneHeaders: PaneHeaderStore
+    var paneRenamer: PaneRenameCoordinator
     var router: DragRouter
     var automation: AutomationScheduler
     let automationSchedulesEnabled: Bool
@@ -30,6 +31,10 @@ struct WorkspaceStageView: View {
         // can invalidate nothing out here. Drop this line and every built-in header
         // silently freezes at its first value while still rendering.
         let paneHeaderValues = paneHeaders.headers
+        // Same contract, one layer over: a pane reports its rename on its own title, and the
+        // canvas below is an `NSView` that observes nothing. This read is what turns
+        // "generating" into a repaint of that pane's header.
+        let paneRenameValues = paneRenamer.phases
 
         if let workspace = store.catalog.activeWorkspace,
            let tab = workspace.activeTab {
@@ -55,6 +60,8 @@ struct WorkspaceStageView: View {
                     paneAttention: pool.paneAttention,
                     paneHeaders: paneHeaderValues,
                     paneHeaderStore: paneHeaders,
+                    paneRenames: paneRenameValues,
+                    paneRenamer: paneRenamer,
                     router: router,
                     automation: automation,
                     automationSchedulesEnabled: automationSchedulesEnabled,

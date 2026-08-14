@@ -226,7 +226,7 @@ Examples:
 
 - New Tab → `workspace.tab.create.v1`;
 - Split Right/Down → `workspace.pane.split.v1`;
-- Close Pane → `workspace.pane.close.v1`;
+- Close Pane → `workspace.pane.close.v2`;
 - Next/Previous Tab → `workspace.tab.next.v1` / `workspace.tab.previous.v1`;
 - Focus Next Pane → `workspace.pane.focus-next.v1`;
 - Switch Workspace → `workspace.select.v1`;

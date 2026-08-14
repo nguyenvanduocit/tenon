@@ -880,9 +880,10 @@ final class PaneHeaderProjectionTests: XCTestCase {
     /// `PaneHeaderHostView.hitTest` returns `nil` over every one of them — the header hands
     /// those points back to the pane's drag surface. That reads like it should take the tooltip
     /// with it, because the tooltip is the ONLY pointer affordance those four kinds have: the
-    /// vocabulary decodes `tooltip` on all of them, `PaneHeaderItemView` hangs
-    /// `.paneHeaderHelp` on all of them, and Agent Lens puts `currentActionSummary` — what the
-    /// agent is doing right now — on a `dot` and a `label`. If the string does not arrive, that
+    /// vocabulary decodes `tooltip` on all of them and `PaneHeaderItemView` hangs
+    /// `.paneHeaderHelp` on all of them. Agent Lens now keeps current action in one spoken
+    /// Session status line instead of putting it in chrome, while plugin-contributed decorative
+    /// items still rely on this tooltip path. If the string does not arrive, that contributor's
     /// sentence is reachable by nobody and the honest fix is to stop offering the field.
     ///
     /// It arrives, and hit-testing is not the mechanism that carries it. SwiftUI does not put

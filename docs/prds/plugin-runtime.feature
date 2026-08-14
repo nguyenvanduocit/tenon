@@ -125,6 +125,30 @@ Feature: Run declared plugins with bounded authority and generation-owned lifeti
         | fails locking or writing | no proposed in-memory identity or revision is returned |
         | exceeds count, size, version, or uniqueness bounds | the document is refused without partial state |
 
+  Rule: Runtime language does not change plugin ownership
+
+    @req-prt-fr-048 @bundled-swift
+    Scenario: A compiled implementation remains a managed plugin
+      Given a bundled manifest names runtime bundled-swift and an exact compiled PluginID
+      When its generation activates, receives events, provides intents, and is disabled
+      Then provider calls still cross the intent boundary under that plugin principal
+      And event and contribution publication still use the plugin lifecycle
+      And disabling it withdraws its providers and contributions like a JavaScript plugin
+
+    @req-prt-fr-048 @bundled-swift @trust
+    Scenario: A user manifest cannot select code linked into the app
+      Given a manifest in the explicit-enablement inventory names runtime bundled-swift
+      When manifest preparation resolves its inventory provenance
+      Then activation fails before a runtime is created
+      And no compiled implementation, authority, or contribution is exposed
+
+    @req-prt-fr-048 @javascript-default
+    Scenario: Existing manifests keep the JavaScript backend
+      Given a valid manifest omits runtime
+      When the shared manifest decoder loads it
+      Then its runtime is javascript
+      And its main.js entrypoint remains required
+
   Rule: JavaScript receives one closed public vocabulary
 
     @req-prt-fr-010 @req-prt-nfr-004 @global-scope

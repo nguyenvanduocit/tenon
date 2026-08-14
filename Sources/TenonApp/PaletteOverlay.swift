@@ -355,23 +355,26 @@ struct PaletteOverlay: View {
     }
 
     /// Map the ranked presentation back to its plugin-owned intent contract, record the
-    /// pick for frecency, and invoke it through the palette principal. An intent unloaded
-    /// mid-session produces a visible unavailable error.
+    /// pick for frecency, and invoke it through the palette principal. A row already stale
+    /// at the accepted click produces a visible unavailable error.
     private func run(_ match: CommandMatch) {
         guard !palette.isRunning else { return }
 
         palette.isRunning = true
         palette.errorMessage = nil
+        guard let invocation = PaletteIntentInvoker.prepare(
+            commandID: match.command.id,
+            host: host
+        ) else {
+            palette.isRunning = false
+            palette.errorMessage = "Intent is no longer available."
+            return
+        }
         Task { @MainActor in
-            guard let result = await PaletteIntentInvoker.send(
-                commandID: match.command.id,
-                host: host,
+            let result = await PaletteIntentInvoker.send(
+                invocation,
                 runtime: intentRuntime
-            ) else {
-                palette.isRunning = false
-                palette.errorMessage = "Intent is no longer available."
-                return
-            }
+            )
             switch result {
             case .success:
                 palette.record(match.command.id)

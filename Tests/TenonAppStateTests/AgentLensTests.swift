@@ -472,6 +472,7 @@ final class AgentLensDecoderTests: XCTestCase {
         ) else { return XCTFail("Subagent operation was not normalized") }
         XCTAssertEqual(subagent.kind, .subagent)
         XCTAssertEqual(subagent.name, "Spawn subagent")
+        XCTAssertEqual(subagent.taskID, AgentTaskID("classification_review"))
 
         let overlappingSubagentCall = try json([
             "type": "response_item",
@@ -655,6 +656,91 @@ final class AgentLensDecoderTests: XCTestCase {
             [],
             "unknown provider methods must not be guessed into product semantics"
         )
+    }
+
+    func testCodexNativePlanDiffContextAndLifecycleStayTypedAndTurnScoped() throws {
+        let decoder = CodexProtocolFrameDecoder()
+        let turnID = "turn-reference-study"
+
+        let planFrame = try json([
+            "method": "turn/plan/updated",
+            "params": [
+                "threadId": "thread-1",
+                "turnId": turnID,
+                "explanation": "Ship the semantic read model",
+                "plan": [
+                    ["step": "Project work", "status": "completed"],
+                    ["step": "Verify the UI", "status": "inProgress"],
+                ],
+            ],
+        ])
+        guard case .planUpdated(let plan) = try XCTUnwrap(
+            decoder.decode(line: planFrame, sequence: 40).first
+        ) else { return XCTFail("turn/plan/updated was not kept as a typed plan") }
+        XCTAssertEqual(plan.turnID, AgentTurnID(turnID))
+        XCTAssertEqual(plan.completedCount, 1)
+        XCTAssertEqual(plan.steps.map(\.state), [.completed, .running])
+
+        let diffFrame = try json([
+            "method": "turn/diff/updated",
+            "params": [
+                "threadId": "thread-1",
+                "turnId": turnID,
+                "diff": "diff --git a/A.swift b/A.swift\n--- a/A.swift\n+++ b/A.swift\n@@ -1 +1 @@\n-old\n+new\n",
+            ],
+        ])
+        guard case .changeSetUpdated(let changeSet) = try XCTUnwrap(
+            decoder.decode(line: diffFrame, sequence: 41).first
+        ) else { return XCTFail("turn/diff/updated was not kept as a typed change set") }
+        XCTAssertEqual(changeSet.turnID, AgentTurnID(turnID))
+        XCTAssertEqual(changeSet.changedPaths, ["A.swift"])
+        XCTAssertTrue(changeSet.unifiedDiff.contains("+new"))
+
+        let usageFrame = try json([
+            "method": "thread/tokenUsage/updated",
+            "params": [
+                "threadId": "thread-1",
+                "turnId": turnID,
+                "tokenUsage": [
+                    "modelContextWindow": 100_000,
+                    "last": tokenUsage(total: 42_000),
+                    "total": tokenUsage(total: 67_000),
+                ],
+            ],
+        ])
+        guard case .contextUsageUpdated(let usage) = try XCTUnwrap(
+            decoder.decode(line: usageFrame, sequence: 42).first
+        ) else { return XCTFail("thread/tokenUsage/updated was not kept as context state") }
+        XCTAssertEqual(usage.turnID, AgentTurnID(turnID))
+        XCTAssertEqual(try XCTUnwrap(usage.usedFraction), 0.42, accuracy: 0.0001)
+
+        let itemFrame = try json([
+            "method": "item/started",
+            "params": [
+                "threadId": "thread-1",
+                "turnId": turnID,
+                "item": [
+                    "type": "commandExecution",
+                    "id": "command-1",
+                    "command": "swift test",
+                    "status": "inProgress",
+                ],
+            ],
+        ])
+        guard case .toolStarted(let tool) = try XCTUnwrap(
+            decoder.decode(line: itemFrame, sequence: 43).first
+        ) else { return XCTFail("item lifecycle was not projected") }
+        XCTAssertEqual(tool.turnID, AgentTurnID(turnID))
+    }
+
+    private func tokenUsage(total: Int) -> [String: Any] {
+        [
+            "inputTokens": total - 2_000,
+            "cachedInputTokens": 1_000,
+            "outputTokens": 1_000,
+            "reasoningOutputTokens": 500,
+            "totalTokens": total,
+        ]
     }
 
     private func json(_ object: Any) throws -> Data {
@@ -983,36 +1069,45 @@ final class AgentLensReducerTests: XCTestCase {
         XCTAssertEqual(snapshot.goalSummary, "Fix the session UI")
 
         let timeline = snapshot.timelineItems
-        XCTAssertEqual(timeline.count, 4)
+        XCTAssertEqual(timeline.count, 6)
         guard case .message(let user) = timeline[0].content,
-              case .tools(let skills) = timeline[1].content,
-              case .message(let assistant) = timeline[2].content,
-              case .tools(let subagents) = timeline[3].content
-        else { return XCTFail("session facts were not projected into chronological groups") }
+              case .tools(let skillOne) = timeline[1].content,
+              case .tools(let skillTwo) = timeline[2].content,
+              case .message(let assistant) = timeline[3].content,
+              case .tools(let spawn) = timeline[4].content,
+              case .tools(let wait) = timeline[5].content
+        else { return XCTFail("session facts did not retain their chronological identities") }
         XCTAssertEqual(user.id, "user")
-        XCTAssertEqual(skills.kind, .skill)
-        XCTAssertEqual(skills.tools.count, 2)
+        XCTAssertEqual(skillOne.kind, .skill)
+        XCTAssertEqual(skillTwo.kind, .skill)
         XCTAssertEqual(assistant.id, "assistant")
-        XCTAssertEqual(subagents.kind, .subagent)
-        XCTAssertEqual(subagents.tools.count, 2)
+        XCTAssertEqual(spawn.kind, .subagent)
+        XCTAssertEqual(wait.kind, .subagent)
 
+        let completedWork = snapshot.sessionTimelineItems.compactMap { item -> AgentWorkLog? in
+            guard case .work(let log) = item.content else { return nil }
+            return log
+        }
+        XCTAssertEqual(completedWork.count, 2)
+        XCTAssertEqual(completedWork[0].entries.count, 2)
+        XCTAssertEqual(completedWork[1].entries.count, 2)
         XCTAssertEqual(
-            snapshot.sessionTimelineItems.compactMap { item -> AgentTimelineToolGroup? in
-                guard case .tools(let group) = item.content else { return nil }
-                return group
+            completedWork.flatMap(\.entries).flatMap { entry -> [String] in
+                guard case .tools(let group) = entry.content else { return [] }
+                return group.tools.map(\.id)
             },
-            [],
-            "completed tools stay out of the Session projection"
+            ["skill-1", "skill-2", "spawn", "wait"],
+            "completed execution stays reachable through compact work folds"
         )
 
         snapshot.tools[2].state = .running
         snapshot.tools[3].state = .running
-        let visibleTools = snapshot.sessionTimelineItems.compactMap { item -> AgentTimelineToolGroup? in
-            guard case .tools(let group) = item.content else { return nil }
-            return group
+        let visibleWork = snapshot.sessionTimelineItems.compactMap { item -> AgentWorkLog? in
+            guard case .work(let log) = item.content else { return nil }
+            return log
         }
-        XCTAssertEqual(visibleTools.count, 1)
-        XCTAssertEqual(visibleTools.first?.tools.map(\.id), ["wait"])
+        XCTAssertEqual(visibleWork.count, 2)
+        XCTAssertEqual(visibleWork.last?.state, .running)
     }
 
     func testToolCompletionPreservesSkillOrSubagentClassificationFromStart() throws {
@@ -1595,8 +1690,8 @@ final class AgentLensInputAndSurfaceTests: XCTestCase {
         })
 
         // The person moves to the Session view and the agent then stops being the foreground
-        // process. A send that cannot reach it says so — the diagnostic reaches the chrome
-        // header — and leaves both the renderer and the unsent text exactly where they were.
+        // process. A send that cannot reach it says so in the Session evidence and leaves both
+        // the renderer and the unsent text exactly where they were.
         model.mode = .session
         surface.foregroundPID = 999_999
         model.draft = "into a changed foreground"
@@ -2564,6 +2659,44 @@ private enum AgentLensE2ETestError: Error {
     case timedOut
 }
 
+final class AgentSessionStatusLineTests: XCTestCase {
+    func testADegradedSessionCompressesItsLiveStateIntoOneSemanticLine() {
+        var snapshot = AgentLensSnapshot.empty
+        snapshot.provider = .codex
+        snapshot.status = .degraded("MCP startup interrupted")
+
+        let line = AgentSessionStatusLine(snapshot: snapshot)
+
+        XCTAssertEqual(line.provider, "Codex")
+        XCTAssertEqual(line.status, "Degraded")
+        XCTAssertEqual(line.currentAction, "MCP startup interrupted")
+        XCTAssertEqual(line.tint, .amber)
+    }
+
+    func testEveryLiveStatusKeepsItsSemanticTintQuietUntilWorkChangesState() {
+        let cases: [(AgentLensStatus, ColorToken)] = [
+            (.detecting, .muted),
+            (.unavailable, .muted),
+            (.ready, .muted),
+            (.running, .amber),
+            (.waitingForUser, .amber),
+            (.completed, .green),
+            (.failed("Build failed"), .red),
+            (.degraded("Hook unavailable"), .amber),
+        ]
+
+        for (status, expectedTint) in cases {
+            var snapshot = AgentLensSnapshot.empty
+            snapshot.status = status
+            XCTAssertEqual(
+                AgentSessionStatusLine(snapshot: snapshot).tint,
+                expectedTint,
+                "unexpected tint for \(status.title)"
+            )
+        }
+    }
+}
+
 /// What the Agent Lens pane contributes to the ONE chrome header its card draws, and the
 /// mapping the picker's three states make onto the two properties the pane actually holds.
 ///
@@ -2577,46 +2710,6 @@ final class AgentLensPaneHeaderTests: XCTestCase {
     // `PaneHeaderItem` is a flat enum with no accessors beyond `id`, so these are the test's
     // own way in. They match on the CASE as well as the payload, so an assertion cannot be
     // satisfied by the right text arriving in the wrong kind of item.
-
-    private func dotTint(_ item: PaneHeaderItem?) -> ColorToken? {
-        guard case let .dot(_, tint, _) = item else { return nil }
-        return tint
-    }
-
-    private func dotTooltip(_ item: PaneHeaderItem?) -> String? {
-        guard case let .dot(_, _, tooltip) = item else { return nil }
-        return tooltip
-    }
-
-    private func labelText(_ item: PaneHeaderItem?) -> String? {
-        guard case let .label(_, text, _, _, _, _) = item else { return nil }
-        return text
-    }
-
-    private func labelWeight(_ item: PaneHeaderItem?) -> FontWeight? {
-        guard case let .label(_, _, weight, _, _, _) = item else { return nil }
-        return weight
-    }
-
-    private func labelColor(_ item: PaneHeaderItem?) -> ColorToken? {
-        guard case let .label(_, _, _, color, _, _) = item else { return nil }
-        return color
-    }
-
-    private func labelTooltip(_ item: PaneHeaderItem?) -> String? {
-        guard case let .label(_, _, _, _, _, tooltip) = item else { return nil }
-        return tooltip
-    }
-
-    private func imageSymbol(_ item: PaneHeaderItem?) -> String? {
-        guard case let .image(_, systemName, _, _) = item else { return nil }
-        return systemName
-    }
-
-    private func imageTint(_ item: PaneHeaderItem?) -> ColorToken? {
-        guard case let .image(_, _, tint, _) = item else { return nil }
-        return tint
-    }
 
     private func segments(_ item: PaneHeaderItem?) -> [PaneHeaderSegment]? {
         guard case let .segmented(_, segments, _, _, _) = item else { return nil }
@@ -2657,19 +2750,11 @@ final class AgentLensPaneHeaderTests: XCTestCase {
 
     private func header(
         isAgentDetected: Bool = true,
-        provider: AgentProvider? = .claude,
-        status: AgentLensStatus = .running,
-        currentAction: String = "Working",
-        hasDiagnostics: Bool = false,
         presentation: AgentLensPresentation = .session,
         showsInspector: Bool = false
     ) -> PaneHeader {
         AgentLensPaneHeader.header(
             isAgentDetected: isAgentDetected,
-            provider: provider,
-            status: status,
-            currentAction: currentAction,
-            hasDiagnostics: hasDiagnostics,
             presentation: presentation,
             showsInspector: showsInspector
         )
@@ -2678,8 +2763,8 @@ final class AgentLensPaneHeaderTests: XCTestCase {
     // MARK: - What the pane says
 
     /// A plain shell pane keeps the bare chrome it has today. Nothing is detected, so there is
-    /// no provider to name, no status to report and no second renderer to switch to — and a
-    /// picker offering a Session view of a session that does not exist is worse than no picker.
+    /// no second renderer to switch to — and a picker offering a Session view of a session that
+    /// does not exist is worse than no picker.
     func testAPaneWithNoDetectedAgentContributesNothingToTheChrome() {
         XCTAssertEqual(header(isAgentDetected: false), .empty)
         // Paired so the assertion above cannot pass by the projection returning `.empty` for
@@ -2687,62 +2772,13 @@ final class AgentLensPaneHeaderTests: XCTestCase {
         XCTAssertNotEqual(header(isAgentDetected: true), .empty)
     }
 
-    func testADetectedAgentNamesItsProviderAndStatusInTheLeadingRun() {
-        let detected = header(
-            provider: .claude,
-            status: .waitingForUser,
-            currentAction: "Approve the write to Package.swift"
+    func testADetectedAgentKeepsTheLeadingRunBare() {
+        let detected = header()
+
+        XCTAssertTrue(
+            detected.leading.isEmpty,
+            "the shared glyph, attention dot, and title already identify the pane; Agent Lens should add controls only"
         )
-
-        XCTAssertEqual(detected.leading.map(\.id), ["state", "provider", "status"])
-        XCTAssertEqual(dotTint(detected.leading.first), .amber)
-        XCTAssertEqual(labelText(detected.leading.dropFirst().first), "Claude")
-        XCTAssertEqual(labelWeight(detected.leading.dropFirst().first), .semibold)
-        XCTAssertEqual(labelText(detected.leading.last), "Needs input")
-        XCTAssertEqual(labelColor(detected.leading.last), .muted)
-        // What the agent is doing right now is the one thing in this strip that is not already
-        // written on it, so it hangs off the two items that are about status.
-        XCTAssertEqual(dotTooltip(detected.leading.first), "Approve the write to Package.swift")
-        XCTAssertEqual(labelTooltip(detected.leading.last), "Approve the write to Package.swift")
-    }
-
-    /// A provider Agent Lens has not identified yet still has a pane, and the pane still has to
-    /// name itself.
-    func testAnUnidentifiedProviderStillNamesThePane() {
-        XCTAssertEqual(labelText(header(provider: nil).leading.dropFirst().first), "Agent")
-        XCTAssertEqual(labelText(header(provider: .codex).leading.dropFirst().first), "Codex")
-    }
-
-    /// The dot resolves its colour through the header's own token space rather than a
-    /// hand-mixed `Color`, so the one strip cannot disagree with itself about what green is.
-    func testTheStatusDotSpeaksTheHeadersOwnColourTokens() {
-        let tints: [(AgentLensStatus, ColorToken)] = [
-            (.completed, .green),
-            (.failed("boom"), .red),
-            (.running, .amber),
-            (.waitingForUser, .amber),
-            (.degraded("partial"), .amber),
-            (.ready, .muted),
-            (.detecting, .muted),
-            (.unavailable, .muted),
-        ]
-        for (status, expected) in tints {
-            XCTAssertEqual(
-                dotTint(header(status: status).leading.first),
-                expected,
-                "\(status.title) should read as \(expected.rawValue)"
-            )
-        }
-    }
-
-    func testTheDiagnosticWarningAppearsOnlyWhileThereAreDiagnostics() {
-        let quiet = header(hasDiagnostics: false)
-        XCTAssertEqual(quiet.leading.map(\.id), ["state", "provider", "status"])
-
-        let noisy = header(hasDiagnostics: true)
-        XCTAssertEqual(noisy.leading.map(\.id), ["state", "provider", "status", "diagnostics"])
-        XCTAssertEqual(imageSymbol(noisy.leading.last), "exclamationmark.triangle.fill")
-        XCTAssertEqual(imageTint(noisy.leading.last), .amber)
     }
 
     // MARK: - What the pane offers

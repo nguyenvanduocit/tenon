@@ -7,6 +7,11 @@ the rule for adding interactions live in
 [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md). When an
 example here disagrees with that normative inventory, the inventory wins.
 
+`runtime: bundled-swift` is reserved for exact implementations compiled into Tenon's own
+sealed app inventory. It is not a native plugin SDK and a user-inventory manifest naming it
+is refused before activation. Authored plugins therefore use the JavaScript shape below;
+omitting `runtime` deliberately defaults to `javascript`.
+
 ## Start a plugin
 
 A plugin is one directory containing `manifest.json` and `main.js`:

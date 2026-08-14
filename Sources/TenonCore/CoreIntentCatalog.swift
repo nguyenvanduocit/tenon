@@ -40,14 +40,16 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case secretsSet = "secrets.set.v1"
     case secretsDelete = "secrets.delete.v1"
     case workspaceState = "workspace.state.v1"
+    case workspaceIdentitySet = "workspace.identity.set.v1"
     case workspacePaneOwner = "workspace.pane.owner.v1"
     case workspaceTabCreate = "workspace.tab.create.v1"
     case workspaceTabFocus = "workspace.tab.focus.v1"
     case workspaceTabClose = "workspace.tab.close.v1"
     case workspacePaneSplit = "workspace.pane.split.v1"
     case workspacePaneFocus = "workspace.pane.focus.v1"
-    case workspacePaneClose = "workspace.pane.close.v1"
+    case workspacePaneClose = "workspace.pane.close.v2"
     case workspacePaneContentSet = "workspace.pane.content.set.v1"
+    case workspacePaneTitleSet = "workspace.pane.title.set.v1"
     case workspaceContentOpen = "workspace.content.open.v1"
     case workspaceTabNext = "workspace.tab.next.v1"
     case workspaceTabPrevious = "workspace.tab.previous.v1"
@@ -120,6 +122,7 @@ public extension CoreIntentName {
              .terminalProcessRead,
              .terminalWait,
              .workspaceState,
+             .workspaceIdentitySet,
              .workspacePaneOwner,
              .workspaceTabCreate,
              .workspaceTabFocus,
@@ -128,6 +131,7 @@ public extension CoreIntentName {
              .workspacePaneFocus,
              .workspacePaneClose,
              .workspacePaneContentSet,
+             .workspacePaneTitleSet,
              .workspaceContentOpen,
              .workspaceTabNext,
              .workspaceTabPrevious,
@@ -220,6 +224,7 @@ public extension CoreIntentName {
             .network
 
         case .workspaceState,
+             .workspaceIdentitySet,
              .workspacePaneOwner,
              .workspaceTabCreate,
              .workspaceTabFocus,
@@ -228,6 +233,7 @@ public extension CoreIntentName {
              .workspacePaneFocus,
              .workspacePaneClose,
              .workspacePaneContentSet,
+             .workspacePaneTitleSet,
              .workspaceContentOpen,
              .workspaceTabNext,
              .workspaceTabPrevious,
@@ -1640,6 +1646,27 @@ private extension CoreIntentCatalog {
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
+                .workspaceIdentitySet,
+                title: "Customise workspace identity",
+                description: """
+                Changes the name, colour, or icon of the workspace identified by invocation \
+                scope. Omitted fields stay unchanged. An empty name restores the folder \
+                name; `automatic` restores the derived colour; a symbol replaces any \
+                uploaded icon. Custom image data is base64 and is decoded, bounded, and \
+                normalized to a small PNG before it enters workspace state.
+                """,
+                input: CoreIntentSchema.workspaceIdentityInput,
+                output: CoreIntentSchema.workspaceIdentityOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.write),
+                errors: ["dev.tenon.core.workspace-not-found"],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(10),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
                 .workspacePaneOwner,
                 title: "Resolve the workspace that owns a pane",
                 description: "Returns the workspace and tab that own the named pane.",
@@ -1762,7 +1789,11 @@ private extension CoreIntentCatalog {
             try CoreIntentRuleData.definition(
                 .workspacePaneClose,
                 title: "Close pane",
-                description: "Closes the pane identified by invocation scope.",
+                description: """
+                Closes the pane identified by invocation scope. If that was a \
+                tab's final pane, the empty tab closes when another tab survives; \
+                a workspace's required final tab remains as an empty placeholder.
+                """,
                 input: emptyInput,
                 output: emptyOutput,
                 audiences: programmatic,
@@ -1801,6 +1832,35 @@ private extension CoreIntentCatalog {
                 bindings: [workspaceControl],
                 admission: .interactive,
                 timeout: .seconds(15),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .workspacePaneTitleSet,
+                title: "Set pane title",
+                description: """
+                Pins a display name to the pane identified by invocation scope, so an \
+                agent working there can say on its own tab what it is working on. An \
+                empty or whitespace-only title clears the pin and returns the pane to \
+                the title its content derives. Titles are collapsed to single spaces \
+                and truncated; a caller never chooses how wide a tab is.
+                """,
+                input: CoreIntentSchema.root(
+                    // The kernel refuses an unbounded payload; `PaneTitle` then bounds what
+                    // a tab chip can show. An over-long title is truncated rather than
+                    // refused, because a 70-character label is a working label.
+                    properties: [
+                        "title": CoreIntentSchema.string(minLength: 0, maxLength: 4096)
+                    ],
+                    required: ["title"]
+                ),
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.write),
+                errors: ["dev.tenon.core.pane-not-found"],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(5),
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
@@ -2452,6 +2512,72 @@ private enum CoreIntentSchema {
         ),
     ])
 
+    static let workspaceIdentityInput = root(
+        properties: [
+            "name": string(maxLength: 4_096),
+            "accent": string(
+                enumValues: ["automatic"] + AccentColor.allCases.map(\.rawValue)
+            ),
+            "icon": oneOf([
+                object(
+                    properties: [
+                        "kind": string(constant: "symbol"),
+                        "name": string(
+                            enumValues: WorkspaceSymbol.allCases.map(\.rawValue)
+                        ),
+                    ],
+                    required: ["kind", "name"]
+                ),
+                object(
+                    properties: [
+                        "kind": string(constant: "custom"),
+                        "data": string(
+                            minLength: 1,
+                            maxLength: WorkspaceCustomIcon
+                                .maximumImportBase64Characters
+                        ),
+                    ],
+                    required: ["kind", "data"]
+                ),
+            ]),
+        ],
+        minProperties: 1
+    )
+
+    static let workspaceIdentityOutput = root(
+        properties: [
+            "workspaceID": uuid,
+            "name": string(minLength: 1, maxLength: WorkspaceName.maximumLength),
+            "accent": string(
+                enumValues: ["automatic"] + AccentColor.allCases.map(\.rawValue)
+            ),
+            "icon": oneOf([
+                object(
+                    properties: [
+                        "kind": string(constant: "symbol"),
+                        "name": string(
+                            enumValues: WorkspaceSymbol.allCases.map(\.rawValue)
+                        ),
+                    ],
+                    required: ["kind", "name"]
+                ),
+                object(
+                    properties: [
+                        "kind": string(constant: "custom"),
+                        "id": uuid,
+                        "data": string(
+                            minLength: 1,
+                            maxLength: WorkspaceCustomIcon
+                                .maximumPNGBase64Characters
+                        ),
+                    ],
+                    required: ["kind", "id", "data"]
+                ),
+            ]),
+        ],
+        required: ["workspaceID", "name", "accent", "icon"]
+    )
+
     static let workspaceStateOutput = root(
         properties: [
             "snapshotID": uuid,
@@ -2561,12 +2687,14 @@ private enum CoreIntentSchema {
     static func root(
         properties: [String: IntentValue] = [:],
         required: [String] = [],
-        definitions: [String: IntentValue] = [:]
+        definitions: [String: IntentValue] = [:],
+        minProperties: Int? = nil
     ) -> IntentValue {
         object(
             properties: properties,
             required: required,
             definitions: definitions,
+            minProperties: minProperties,
             dialect: true
         )
     }
@@ -2580,6 +2708,7 @@ private enum CoreIntentSchema {
             properties: properties,
             required: required,
             definitions: definitions,
+            minProperties: nil,
             dialect: false
         )
     }
@@ -2672,6 +2801,7 @@ private enum CoreIntentSchema {
         properties: [String: IntentValue],
         required: [String],
         definitions: [String: IntentValue],
+        minProperties: Int?,
         dialect: Bool
     ) -> IntentValue {
         var fields: [String: IntentValue] = [
@@ -2687,6 +2817,9 @@ private enum CoreIntentSchema {
         }
         if !definitions.isEmpty {
             fields["$defs"] = .object(definitions)
+        }
+        if let minProperties {
+            fields["minProperties"] = .integer(Int64(minProperties))
         }
         return .object(fields)
     }

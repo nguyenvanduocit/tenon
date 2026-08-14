@@ -27,6 +27,23 @@ final class WorkspaceOpenContentTests: XCTestCase {
         }
     }
 
+    /// A store whose active tab holds exactly the panes given, so a test can state the
+    /// canvas geometry the placement policy has to read.
+    private func store(occupying rects: [GridRect]) -> WorkspaceStore {
+        let slots = rects.map { WorkspaceSlot(rect: $0, content: .terminal) }
+        let tab = Tab(slots: slots, activeSlotID: slots.first?.id)
+        let workspace = Workspace(
+            name: "w",
+            path: URL(fileURLWithPath: "/tmp", isDirectory: true),
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        return WorkspaceStore(catalog: WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        ))
+    }
+
     func testFirstFileOpensAPaneAndTheSecondReusesIt() {
         let store = WorkspaceStore()
         let before = slots(store).count
@@ -185,6 +202,58 @@ final class WorkspaceOpenContentTests: XCTestCase {
         store.openContent(tree)
         XCTAssertEqual(slots(store).count, before, "the same view is focused, not opened twice")
         XCTAssertEqual(store.catalog.activeSlotID, opened.id)
+    }
+
+    // MARK: - Free canvas is taken before any pane is split
+
+    func testAFileTakesFreeCanvasInsteadOfHalvingTheOnlyPane() throws {
+        // Half the canvas is occupied and half is empty — the state a 1/2 creation
+        // maximum leaves behind, and the state a person leaves by dragging a border.
+        let store = store(occupying: [GridRect(x: 0, y: 0, width: 6, height: 12)])
+        let terminal = try XCTUnwrap(slots(store).first)
+
+        store.openContent(.file(path: "a.swift"))
+
+        XCTAssertEqual(
+            store.catalog.slot(id: terminal.id)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12),
+            "the open pane keeps its width: free canvas was available, so nothing was split"
+        )
+        let editor = try XCTUnwrap(slots(store).first { $0.content == .file(path: "a.swift") })
+        XCTAssertEqual(
+            editor.rect,
+            GridRect(x: 6, y: 0, width: 6, height: 12),
+            "the file lands in the empty half"
+        )
+    }
+
+    func testAFileStillSplitsWhenTheCanvasIsFull() throws {
+        let store = store(occupying: [GridRect(x: 0, y: 0, width: 12, height: 12)])
+        let terminal = try XCTUnwrap(slots(store).first)
+
+        store.openContent(.file(path: "a.swift"))
+
+        XCTAssertEqual(
+            store.catalog.slot(id: terminal.id)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12),
+            "with no free canvas the pane is halved, exactly as before"
+        )
+        let editor = try XCTUnwrap(slots(store).first { $0.content == .file(path: "a.swift") })
+        XCTAssertEqual(editor.rect, GridRect(x: 6, y: 0, width: 6, height: 12))
+    }
+
+    func testTheNewPaneObeysTheCreationMaximumWhenItTakesFreeCanvas() throws {
+        let store = store(occupying: [GridRect(x: 0, y: 0, width: 4, height: 12)])
+        store.newPaneSizingProvider = { NewPaneSizing(maximumWidth: .oneThird) }
+
+        store.openContent(.file(path: "a.swift"))
+
+        let editor = try XCTUnwrap(slots(store).first { $0.content == .file(path: "a.swift") })
+        XCTAssertEqual(
+            editor.rect,
+            GridRect(x: 4, y: 0, width: 4, height: 12),
+            "the hole was 8 wide; a 1/3 maximum takes 4 of it and leaves the rest empty"
+        )
     }
 
     func testOpeningAutomationTwiceReusesAndFocusesItsPane() throws {

@@ -668,4 +668,195 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             "the numbers must travel with their tabs across the move and the relaunch"
         )
     }
+
+    // MARK: - An agent pane comes back reading its own session  @domain: workspace-model
+
+    /// T-145 / `WS-FR-027`. A pane that was running an agent when the app quit holds the only
+    /// route back to that transcript: the pane→session binding lives in memory and dies with
+    /// the process. Captured beside the terminal record, it turns the relaunch into the same
+    /// reading the session list's "Details" opens — summary, evidence, and `+ Resume`.
+    private func agentRef(
+        sessionID: String = "9f1c4d10-0000-4000-8000-000000000001",
+        path: String = "/tmp/tenon-catalog-a/session.jsonl",
+        title: String? = "Wire the restore path"
+    ) throws -> AgentSessionRef {
+        try XCTUnwrap(AgentSessionRef(
+            provider: .claude,
+            sessionID: sessionID,
+            transcriptPath: path,
+            title: title
+        ))
+    }
+
+    func testAPaneRunningAnAgentIsCapturedAsATerminalCarryingThatSession() throws {
+        let agentSlot = WorkspaceSlot(
+            rect: GridRect(x: 0, y: 0, width: 6, height: 12),
+            content: .terminal
+        )
+        let shellSlot = WorkspaceSlot(
+            rect: GridRect(x: 6, y: 0, width: 6, height: 12),
+            content: .terminal
+        )
+        let tab = Tab(slots: [agentSlot, shellSlot], activeSlotID: agentSlot.id)
+        let workspace = Workspace(
+            name: "Alpha",
+            path: alphaPath,
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        let catalog = WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        )
+        let ref = try agentRef()
+
+        let document = WorkspaceCatalogSnapshot.document(
+            capturing: catalog,
+            agentSessions: [agentSlot.id: ref]
+        )
+
+        let slots = try XCTUnwrap(document.workspaces.first?.tabs.first?.slots)
+        let agentRecord = try XCTUnwrap(slots.first { $0.id == agentSlot.id }).content
+        XCTAssertEqual(
+            agentRecord.type,
+            "terminal",
+            "the pane WAS a terminal: an older build reading this file must still get a shell"
+        )
+        XCTAssertEqual(agentRecord.agentSession?.sessionID, ref.sessionID)
+        XCTAssertEqual(agentRecord.agentSession?.transcriptPath, ref.transcriptPath)
+        XCTAssertEqual(agentRecord.agentSession?.provider, "claude")
+        XCTAssertEqual(agentRecord.agentSession?.title, ref.title)
+
+        let shellRecord = try XCTUnwrap(slots.first { $0.id == shellSlot.id }).content
+        XCTAssertNil(
+            shellRecord.agentSession,
+            "a pane holding a plain shell has no session to come back to"
+        )
+    }
+
+    func testAnAgentPaneRestoresAsTheRecordedSessionReadingRatherThanABlankShell() throws {
+        let agentSlot = WorkspaceSlot(
+            rect: GridRect(x: 0, y: 0, width: 12, height: 12),
+            content: .terminal
+        )
+        let tab = Tab(slots: [agentSlot], activeSlotID: agentSlot.id)
+        let workspace = Workspace(
+            name: "Alpha",
+            path: alphaPath,
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        let catalog = WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        )
+        let ref = try agentRef()
+
+        let document = WorkspaceCatalogSnapshot.document(
+            capturing: catalog,
+            cwds: [agentSlot.id: alphaPath],
+            agentSessions: [agentSlot.id: ref]
+        )
+        let encoded = try JSONEncoder().encode(document)
+        let decoded = try JSONDecoder().decode(
+            WorkspaceCatalogSnapshot.Document.self,
+            from: encoded
+        )
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            decoded,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(
+            restored.catalog.activeTab?.activeSlot?.content,
+            .agentSession(ref),
+            "the pane comes back reading the session it was running, with resume on it"
+        )
+        XCTAssertEqual(
+            restored.cwds[agentSlot.id],
+            alphaPath,
+            "resuming spawns a shell, so the directory it spawns into has to survive too"
+        )
+    }
+
+    func testAnAgentPaneWhoseTranscriptIsGoneComesBackAsATerminalNotABlankPane() throws {
+        let agentSlot = WorkspaceSlot(
+            rect: GridRect(x: 0, y: 0, width: 12, height: 12),
+            content: .terminal
+        )
+        let tab = Tab(slots: [agentSlot], activeSlotID: agentSlot.id)
+        let workspace = Workspace(
+            name: "Alpha",
+            path: alphaPath,
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        let catalog = WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        )
+
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            WorkspaceCatalogSnapshot.document(
+                capturing: catalog,
+                agentSessions: [agentSlot.id: try agentRef()]
+            ),
+            isDirectory: anyDirectory,
+            isFileReadable: { _ in false },
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(
+            restored.catalog.activeTab?.activeSlot?.content,
+            .terminal,
+            "with no transcript there is nothing to read, and the pane is still a terminal"
+        )
+    }
+
+    func testATerminalRecordWrittenBeforeSessionsWereCapturedStillRestoresAsATerminal() throws {
+        let decoded = try JSONDecoder().decode(
+            WorkspaceCatalogSnapshot.Document.self,
+            from: documentJSON(contentJSON: #"{"type":"terminal"}"#)
+        )
+
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            decoded,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(restored.catalog.activeTab?.activeSlot?.content, .terminal)
+    }
+
+    func testAMalformedCapturedSessionLeavesTheTerminalRatherThanTheWholeCatalog() throws {
+        let decoded = try JSONDecoder().decode(
+            WorkspaceCatalogSnapshot.Document.self,
+            from: documentJSON(contentJSON: """
+            {
+                "type": "terminal",
+                "agentSession": {
+                    "provider": "gemini",
+                    "sessionID": "abc",
+                    "transcriptPath": "/tmp/tenon-catalog-a/session.jsonl"
+                }
+            }
+            """)
+        )
+
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            decoded,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(
+            restored.catalog.activeTab?.activeSlot?.content,
+            .terminal,
+            "a provider this build cannot name degrades the reading, never the pane"
+        )
+    }
 }

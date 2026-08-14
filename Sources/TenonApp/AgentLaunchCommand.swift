@@ -1,5 +1,6 @@
 // @domain: agent-control
 import Foundation
+import TenonCore
 
 /// The session a launch is continuing: which agent recorded it, its identifier, and where
 /// its transcript sits on this machine. The transcript matters only when the agent about to

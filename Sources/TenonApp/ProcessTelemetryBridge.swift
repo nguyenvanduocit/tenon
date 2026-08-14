@@ -65,7 +65,9 @@ final class ProcessTelemetryBridge {
                 tabLabels[tab.id] = "Terminal \(tab.number)"
                 for slot in tab.slots where slot.content == .terminal {
                     let reported = provenance[slot.id]
-                    paneLabels[slot.id] = surfaces.titles[slot.id] ?? "Pane"
+                    paneLabels[slot.id] = slot.customTitle
+                        ?? surfaces.titles[slot.id]
+                        ?? "Pane"
                     panes.append(
                         PaneProvenance(
                             slotID: slot.id,
@@ -113,10 +115,22 @@ final class ProcessTelemetryBridge {
 @Observable
 @MainActor
 final class ResourceMonitorModel {
+    typealias RowProjector = (
+        _ nodes: [TelemetryNode],
+        _ key: TelemetrySortKey,
+        _ direction: TelemetrySortDirection
+    ) -> [TelemetryNode]
+
     private(set) var snapshot: TelemetrySnapshot?
     private(set) var history: [String: [UInt64]] = [:]
-    var sortKey: TelemetrySortKey = .memory
-    var sortDirection: TelemetrySortDirection = .descending
+    /// The completed sibling sort for `snapshot` and the current sort choice.
+    ///
+    /// SwiftUI reads this more than once while composing the empty state and visible outline.
+    /// Keeping the projection here makes those reads O(1); recursively sorting and rebuilding
+    /// every collapsed descendant belongs to an input transition, not to a body evaluation.
+    private(set) var rows: [TelemetryNode] = []
+    private(set) var sortKey: TelemetrySortKey = .memory
+    private(set) var sortDirection: TelemetrySortDirection = .descending
     var expanded: Set<String> = []
     var selection: String?
 
@@ -126,21 +140,29 @@ final class ResourceMonitorModel {
 
     @ObservationIgnored private let coordinator: ProcessTelemetryCoordinator
     @ObservationIgnored private let bridge: ProcessTelemetryBridge
+    @ObservationIgnored private let rowProjector: RowProjector
     @ObservationIgnored private var observerToken: UUID?
+    @ObservationIgnored private var presentationIDs: Set<UUID> = []
     @ObservationIgnored private var skeletonTask: Task<Void, Never>?
     /// Focus and reveal a pane. The one action the monitor performs, and it is navigation:
     /// there is no route from here to terminating anything.
     @ObservationIgnored var revealPane: ((UUID) -> Void)?
 
-    init(coordinator: ProcessTelemetryCoordinator, bridge: ProcessTelemetryBridge) {
+#if DEBUG
+    var activePresentationCount: Int { presentationIDs.count }
+    var hasPresentationObserver: Bool { observerToken != nil }
+#endif
+
+    init(
+        coordinator: ProcessTelemetryCoordinator,
+        bridge: ProcessTelemetryBridge,
+        rowProjector: @escaping RowProjector = {
+            TelemetrySort.apply($0, key: $1, direction: $2)
+        }
+    ) {
         self.coordinator = coordinator
         self.bridge = bridge
-    }
-
-    /// Rows in the order the current sort puts them.
-    var rows: [TelemetryNode] {
-        guard let snapshot else { return [] }
-        return TelemetrySort.apply(snapshot.root, key: sortKey, direction: sortDirection)
+        self.rowProjector = rowProjector
     }
 
     func toggleSort(_ key: TelemetrySortKey) {
@@ -150,29 +172,49 @@ final class ResourceMonitorModel {
             sortKey = key
             sortDirection = key == .name ? .ascending : .descending
         }
+        projectRows()
     }
 
     func toggleExpansion(_ id: String) {
         if expanded.contains(id) { expanded.remove(id) } else { expanded.insert(id) }
     }
 
-    func opened() async {
-        let token = await coordinator.observe { [weak self] snapshot in
-            Task { @MainActor in self?.receive(snapshot) }
-        }
-        observerToken = token
-        if let existing = await coordinator.latest { receive(existing) }
-        startSkeletonTimer()
-        await coordinator.surfaceAppeared()
-    }
+    /// Own one visible popover's complete telemetry lifetime.
+    ///
+    /// SwiftUI cancels the `.task` that calls this when the popover disappears. Keeping open
+    /// and close in that one task makes their order structural: a fire-and-forget disappear
+    /// task can no longer run before an awaiting open and leave hidden sampling demand behind.
+    func presented() async {
+        guard !Task.isCancelled else { return }
 
-    func closed() async {
-        skeletonTask?.cancel()
-        skeletonTask = nil
-        showsSkeleton = false
-        if let observerToken { await coordinator.removeObserver(observerToken) }
-        observerToken = nil
-        await coordinator.surfaceDisappeared()
+        let presentationID = UUID()
+        let isFirstPresentation = presentationIDs.isEmpty
+        presentationIDs.insert(presentationID)
+
+        if isFirstPresentation {
+            let token = await coordinator.observe { [weak self] snapshot in
+                Task { @MainActor in self?.receive(snapshot) }
+            }
+            observerToken = token
+            if let existing = await coordinator.latest { receive(existing) }
+            startSkeletonTimer()
+        }
+
+        var startedDemand = false
+        if !Task.isCancelled {
+            await coordinator.surfaceAppeared()
+            startedDemand = true
+        }
+
+        if !Task.isCancelled {
+            do {
+                try await Task.sleep(nanoseconds: .max)
+            } catch {
+                // Cancellation is the popover's ordinary disappearance path.
+            }
+        }
+
+        await finishPresentation(presentationID, startedDemand: startedDemand)
     }
 
     func retry() async {
@@ -262,11 +304,11 @@ final class ResourceMonitorModel {
     /// Publish a snapshot without a sampler behind it, so navigation, sorting, and expansion
     /// can be asserted over a known tree.
     func applyForTesting(_ snapshot: TelemetrySnapshot) {
-        self.snapshot = snapshot
+        apply(snapshot)
     }
 
     private func receive(_ snapshot: TelemetrySnapshot) {
-        self.snapshot = snapshot
+        apply(snapshot)
         if snapshot.state.isUsable {
             showsSkeleton = false
             skeletonTask?.cancel()
@@ -277,6 +319,33 @@ final class ResourceMonitorModel {
             let series = await coordinator.history.series
             await MainActor.run { self.history = series }
         }
+    }
+
+    private func apply(_ snapshot: TelemetrySnapshot) {
+        self.snapshot = snapshot
+        projectRows()
+    }
+
+    private func projectRows() {
+        rows = snapshot.map {
+            rowProjector($0.root, sortKey, sortDirection)
+        } ?? []
+    }
+
+    private func finishPresentation(_ id: UUID, startedDemand: Bool) async {
+        guard presentationIDs.remove(id) != nil else { return }
+
+        let becameHidden = presentationIDs.isEmpty
+        let tokenToRemove = becameHidden ? observerToken : nil
+        if becameHidden {
+            observerToken = nil
+            skeletonTask?.cancel()
+            skeletonTask = nil
+            showsSkeleton = false
+        }
+
+        if let tokenToRemove { await coordinator.removeObserver(tokenToRemove) }
+        if startedDemand { await coordinator.surfaceDisappeared() }
     }
 
     private func startSkeletonTimer() {

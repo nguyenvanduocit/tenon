@@ -7,7 +7,7 @@ import SwiftUI
 import TenonCore
 import TenonIntentCore
 
-final class SpatialSlotCardView: NSView {
+final class SpatialSlotCardView: NSView, NSTextFieldDelegate {
     let slotID: UUID
     var onClose: ((UUID) -> Void)?
     var onBegin: ((UUID, SpatialCanvasHitRegion, CGPoint) -> Void)?
@@ -18,6 +18,13 @@ final class SpatialSlotCardView: NSView {
     var onRequestMenu: ((UUID) -> NSMenu?)?
     var onRequestResizeMenu: ((UUID, ResizeDirection) -> NSMenu?)?
     var onCopyID: ((UUID) -> Void)?
+    var onRename: ((UUID) -> Void)?
+    var onAIRename: ((UUID) -> Void)?
+    /// The inline rename's two endings. The card owns the text field and nothing else: what
+    /// a committed name means is `PaneRenameCoordinator`'s to say, exactly as `onClose` sends
+    /// pane lifecycle back out rather than deciding it here.
+    var onRenameCommit: ((UUID, String) -> Void)?
+    var onRenameCancel: ((UUID) -> Void)?
     /// A header control's click, already attributed to the item that owns it. The card
     /// stays a dumb view with no store reference — the same split `onRequestMenu` uses.
     var onHeaderAction: ((UUID, PaneHeaderAction) -> Void)?
@@ -52,6 +59,25 @@ final class SpatialSlotCardView: NSView {
     /// pane state and must never appear in this key. The `NSHostingView` itself is reused
     /// across a rebuild, so its identity cannot answer that question and this can.
     private(set) var contentKey = ""
+    /// The pane's own name, always — never what the header is temporarily SAYING. The rename
+    /// menu items pass this back as the starting point, so a pane whose title currently reads
+    /// `Naming…` still offers its real name to the next rename.
+    private(set) var presentedTitle = ""
+    /// What this pane is doing to its name, as handed down by the coordinator.
+    private(set) var renamePhase: PaneRenamePhase?
+    /// What the header is currently SAYING, which during a rename is not the pane's name:
+    /// `Naming…` while a Companion works, `Rename failed` for as long as that lasts.
+    var displayedTitle: String { title.stringValue }
+    /// Whether the pane's name is being typed on the title itself.
+    var isRenamingInline: Bool { title.isEditable }
+    /// The pane's content kind, kept so the glyph the rename borrows can be handed back.
+    private var presentedContent: SlotContent = .empty
+    /// Set while `commitRename`/`cancelRename` are unwinding AppKit's own end-of-editing
+    /// notification, so one Return key does not commit the same name twice.
+    private var isSettlingRename = false
+    /// The colour the rename state claims for the title and glyph, or `nil` while the pane's
+    /// own focus rule owns them.
+    private var renameEmphasisColor: NSColor?
     private var pluginRenderIdentity: PluginRenderIdentity?
     /// Kero keeps a single pane full-bleed and only introduces focus chrome once
     /// multiple panes make the focused owner ambiguous.
@@ -117,6 +143,20 @@ final class SpatialSlotCardView: NSView {
     override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
         [
             NSAccessibilityCustomAction(
+                name: Shell.text("Rename Pane")
+            ) { [weak self] in
+                guard let self else { return false }
+                self.onRename?(self.slotID)
+                return self.onRename != nil
+            },
+            NSAccessibilityCustomAction(
+                name: Shell.text("AI Rename Pane")
+            ) { [weak self] in
+                guard let self else { return false }
+                self.onAIRename?(self.slotID)
+                return self.onAIRename != nil
+            },
+            NSAccessibilityCustomAction(
                 name: Shell.text("Copy Pane ID")
             ) { [weak self] in
                 guard let self else { return false }
@@ -168,10 +208,20 @@ final class SpatialSlotCardView: NSView {
 
         glyph.frame = headerSolution.glyphRect
         stateDot.frame = headerSolution.dotRect ?? .zero
-        title.frame = headerSolution.titleRect
-        // A flexible field owns the gap, or the accessories left too little of it to
-        // read; either way the pane's name is not drawn as a two-character stub.
-        title.isHidden = headerSolution.titleRect == .zero
+        if renamePhase?.isEditing == true {
+            // Typing needs a field, and the solver's answer for a *label* can be `.zero` —
+            // a flexible accessory took the gap, or the strip is too narrow to read a name
+            // in. Editing takes the band between the glyph and the close control outright,
+            // because a rename the operator cannot see is worse than an accessory that is
+            // briefly covered by the thing they explicitly asked for.
+            title.isHidden = false
+            title.frame = editingTitleRect(headerHeight: headerHeight)
+        } else {
+            title.frame = headerSolution.titleRect
+            // A flexible field owns the gap, or the accessories left too little of it to
+            // read; either way the pane's name is not drawn as a two-character stub.
+            title.isHidden = headerSolution.titleRect == .zero
+        }
 
         // The glyph and title use different fonts (monospaced vs interface), so
         // centering each field on its own line-box leaves their baselines apart
@@ -181,7 +231,7 @@ final class SpatialSlotCardView: NSView {
         // title still supplies the band the glyph sits on.
         let titleTop = title.isHidden
             ? ((headerHeight - titleHeight) / 2).rounded()
-            : headerSolution.titleRect.origin.y
+            : title.frame.origin.y
         let baseline = titleTop + title.firstBaselineOffsetFromTop
         glyph.frame.origin.y = (baseline - glyph.firstBaselineOffsetFromTop).rounded()
 
@@ -246,6 +296,12 @@ final class SpatialSlotCardView: NSView {
         if closeButton.frame.contains(local) {
             return closeButton
         }
+        // An open rename field is a control, and the same rule every other header control
+        // gets applies to it: its rect is not pane-drag surface. Without this the click that
+        // places a caret picks the pane up instead.
+        if renamePhase?.isEditing == true, title.frame.contains(local) {
+            return title
+        }
         if let placement = headerSolution.placements.first(where: {
             $0.item.isInteractive && $0.rect.contains(local)
         }) {
@@ -273,6 +329,11 @@ final class SpatialSlotCardView: NSView {
     /// the body yields nothing so the terminal keeps its own.
     override func menu(for event: NSEvent) -> NSMenu? {
         let local = convert(event.locationInWindow, from: nil)
+        // The open rename field keeps AppKit's own editing menu, exactly as a header text
+        // field does — popping Split/Stack/Close over a caret would be the wrong vocabulary.
+        if renamePhase?.isEditing == true, title.frame.contains(local) {
+            return nil
+        }
         // A control with no contextual menu of its own would otherwise let AppKit walk up
         // to the card and pop Split/Stack/Duplicate/Close over a segmented picker. Ceding
         // the point lets a text field keep AppKit's own editing menu, and matches how the
@@ -302,6 +363,9 @@ final class SpatialSlotCardView: NSView {
         // arrive here as a pane pickup, while the pointer was showing a pointing hand.
         // Same rule, same solution, same rects as `hitTest` and `menu(for:)`.
         if headerSolution.interactiveRects.contains(where: { $0.contains(local) }) {
+            return
+        }
+        if renamePhase?.isEditing == true, title.frame.contains(local) {
             return
         }
         let canvasPoint = superview?.convert(event.locationInWindow, from: nil) ?? .zero
@@ -570,6 +634,10 @@ final class SpatialSlotCardView: NSView {
         // passes through the store at all (`PaneHeaderProjection`).
         header newHeader: PaneHeader,
         headerStore: PaneHeaderStore,
+        /// What this pane is doing to its own name, if anything. A VALUE like the header and
+        /// the attention state, and deliberately not part of `contentKey`: a pane being
+        /// renamed must not have its live PTY or web surface torn down and rebuilt.
+        renamePhase: PaneRenamePhase?,
         isActive: Bool,
         showsFocusRing: Bool,
         store: WorkspaceStore?,
@@ -584,10 +652,11 @@ final class SpatialSlotCardView: NSView {
         automationSchedulesEnabled: Bool,
         automationActions: AutomationPaneActions
     ) {
-        glyph.stringValue = SlotPresentation.glyph(for: slot.content)
-        title.stringValue = newTitle
+        presentedContent = slot.content
+        presentedTitle = newTitle
         self.showsFocusRing = showsFocusRing
         setState(isActive: isActive)
+        applyRenameChrome(phase: renamePhase, contentTitle: newTitle)
         // Deliberately ABOVE the cache guard, and deliberately NOT part of `contentKey`.
         // A header is pane state, not content identity: folding it into the key would
         // tear down and rebuild the NSHostingView owning this pane's live Ghostty PTY or
@@ -695,6 +764,149 @@ final class SpatialSlotCardView: NSView {
         needsLayout = true
     }
 
+    // MARK: - Renaming, on the pane's own title  @domain: pane-chrome
+
+    /// The band an inline rename gets: everything between the pane's glyph and its close
+    /// control. Pure geometry over the card's own bounds — the close control's rect is
+    /// recomputed rather than read, because `layout()` places the title before it.
+    func editingTitleRect(headerHeight: CGFloat) -> CGRect {
+        let fieldHeight = min(22, max(headerHeight - 6, 1))
+        let leading = max(headerSolution.glyphRect.maxX + 6, 8)
+        let trailing = max(bounds.width - 27, leading + 1)
+        return CGRect(
+            x: leading,
+            y: ((headerHeight - fieldHeight) / 2).rounded(),
+            width: max(trailing - leading - 4, 1),
+            height: fieldHeight
+        )
+    }
+
+    /// Draw whatever this pane is doing to its name.
+    ///
+    /// Which words appear is `PaneRenameChrome`'s decision — a pure function this method only
+    /// paints — so what the title says in each phase is asserted without a window. What lives
+    /// here is the part no value can carry: an `NSTextField` that becomes editable, takes the
+    /// keyboard, and gives it back.
+    private func applyRenameChrome(phase: PaneRenamePhase?, contentTitle: String) {
+        let wasEditing = renamePhase?.isEditing ?? false
+        renamePhase = phase
+        let chrome = PaneRenameChrome.make(
+            phase: phase,
+            contentTitle: contentTitle,
+            contentGlyph: SlotPresentation.glyph(for: presentedContent)
+        )
+        glyph.stringValue = chrome.glyph
+        title.toolTip = chrome.tooltip
+        renameEmphasisColor = chrome.emphasis.map(Self.emphasisColor)
+        // A field mid-edit owns its own text. Rewriting `stringValue` on every reconfigure —
+        // and the canvas reconfigures on every catalog mutation — would delete what the
+        // operator is typing, one keystroke behind.
+        if !(chrome.isEditable && wasEditing) {
+            title.stringValue = chrome.title
+        }
+        setRenameEditing(chrome.isEditable, seed: chrome.title, wasEditing: wasEditing)
+        applyTitleColor()
+    }
+
+    private func setRenameEditing(_ isEditing: Bool, seed: String, wasEditing: Bool) {
+        guard isEditing != wasEditing else { return }
+        if isEditing {
+            title.isEditable = true
+            title.isSelectable = true
+            title.isBezeled = true
+            title.bezelStyle = .roundedBezel
+            title.drawsBackground = true
+            title.backgroundColor = TenonTheme.panelNS
+            title.focusRingType = .default
+            title.lineBreakMode = .byTruncatingTail
+            title.delegate = self
+            title.stringValue = seed
+            needsLayout = true
+            layoutSubtreeIfNeeded()
+            window?.makeFirstResponder(title)
+            title.currentEditor()?.selectAll(nil)
+        } else {
+            let heldFocus = title.currentEditor() != nil
+            title.isEditable = false
+            title.isSelectable = false
+            title.isBezeled = false
+            title.drawsBackground = false
+            title.focusRingType = .none
+            title.lineBreakMode = .byTruncatingMiddle
+            title.delegate = nil
+            if heldFocus {
+                // Hand the keyboard back to the pane rather than to whatever AppKit picks:
+                // a terminal that lost focus to a rename has to be typeable again after it.
+                window?.makeFirstResponder(contentHost ?? self)
+            }
+            needsLayout = true
+        }
+    }
+
+    private func applyTitleColor() {
+        if let renameEmphasisColor {
+            title.textColor = renameEmphasisColor
+            glyph.textColor = renameEmphasisColor
+        } else {
+            title.textColor = headerIsActive ? TenonTheme.textNS : TenonTheme.mutedNS
+            glyph.textColor = headerIsActive ? TenonTheme.amberNS : TenonTheme.mutedNS
+        }
+    }
+
+    private static func emphasisColor(_ token: ColorToken) -> NSColor {
+        switch token {
+        case .red: return NSColor(hex: 0xED6A5E)
+        case .green: return NSColor(hex: 0x61C28B)
+        case .amber: return TenonTheme.amberNS
+        case .muted, .default: return TenonTheme.mutedNS
+        case .text: return TenonTheme.textNS
+        }
+    }
+
+    /// Put text in the open rename field. The card owns that field, so this is the only door
+    /// for a caller that is not the keyboard — a test, or a future paste-a-name path.
+    func setRenameText(_ text: String) {
+        guard renamePhase?.isEditing == true else { return }
+        title.stringValue = text
+    }
+
+    func commitRename() {
+        guard renamePhase?.isEditing == true, !isSettlingRename else { return }
+        isSettlingRename = true
+        defer { isSettlingRename = false }
+        onRenameCommit?(slotID, title.stringValue)
+    }
+
+    func cancelRename() {
+        guard renamePhase?.isEditing == true, !isSettlingRename else { return }
+        isSettlingRename = true
+        defer { isSettlingRename = false }
+        onRenameCancel?(slotID)
+    }
+
+    func control(
+        _ control: NSControl,
+        textView: NSTextView,
+        doCommandBy selector: Selector
+    ) -> Bool {
+        switch selector {
+        case #selector(NSResponder.insertNewline(_:)):
+            commitRename()
+            return true
+        case #selector(NSResponder.cancelOperation(_:)):
+            cancelRename()
+            return true
+        default:
+            return false
+        }
+    }
+
+    /// Clicking away commits, the way renaming a file in Finder does — the operator typed a
+    /// name, so losing the field is not a reason to throw it away. Escape is the discard.
+    func controlTextDidEndEditing(_ notification: Notification) {
+        commitRename()
+    }
+
     /// T-029: project the pane's attention state onto the header dot — the same one
     /// machine the tab chip, sidebar and title bar read; nothing recomputed here.
     func setAttention(_ state: PaneActivityState?) {
@@ -736,8 +948,12 @@ final class SpatialSlotCardView: NSView {
     }
 
     func setState(isActive: Bool) {
-        glyph.textColor = isActive ? TenonTheme.amberNS : TenonTheme.mutedNS
-        title.textColor = isActive ? TenonTheme.textNS : TenonTheme.mutedNS
+        let wasActive = headerIsActive
+        headerIsActive = isActive
+        // Focus decides the title's and glyph's colour unless the pane is reporting a rename
+        // state on them; `applyTitleColor` owns that precedence in one place, so a reconfigure
+        // during a rename cannot repaint the state away.
+        applyTitleColor()
         // Header accessories dim with their pane for the same reason the glyph and title
         // do: a fully-lit row of controls on an unfocused pane reads as the focused one.
         //
@@ -747,8 +963,7 @@ final class SpatialSlotCardView: NSView {
         // that method exists to avoid. And the glyph and the title recolour themselves
         // above without any layout, so a pane with nothing in its chrome has nothing left
         // whose appearance depends on focus.
-        if headerIsActive != isActive {
-            headerIsActive = isActive
+        if wasActive != isActive {
             if !header.isEmpty {
                 needsLayout = true
             }

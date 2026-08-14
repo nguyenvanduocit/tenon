@@ -71,59 +71,24 @@ enum AgentLensPresentation: String, CaseIterable {
 
 /// What the Agent Lens pane contributes to the ONE chrome header its card draws.
 ///
-/// Pure, and deliberately outside the view: which provider, which status, whether there is
-/// anything wrong and which renderer is showing are all decisions about the pane's own state,
-/// and once the items are chosen the drawing has no decisions left in it. Keeping the decision
-/// here is what lets it be swept headlessly, which is the fitness test `docs/tdd.md` sets for
-/// any rule that would otherwise only be checkable by looking at a window.
+/// Pure, and deliberately outside the view: which renderer is showing is a decision about the
+/// pane's own state, and once the controls are chosen the drawing has no decisions left in it.
+/// The leading run stays bare because the card already owns the pane glyph, attention dot, and
+/// title; provider, status, and diagnostic metadata do not create a second identity cluster in
+/// chrome. Keeping the decision here is what lets it be swept
+/// headlessly, which is the fitness test `docs/tdd.md` sets for any rule that would otherwise
+/// only be checkable by looking at a window.
 enum AgentLensPaneHeader {
     static func header(
         isAgentDetected: Bool,
-        provider: AgentProvider?,
-        status: AgentLensStatus,
-        currentAction: String,
-        hasDiagnostics: Bool,
         presentation: AgentLensPresentation,
         showsInspector: Bool,
         account: AgentLensAccount = .chat
     ) -> PaneHeader {
-        // A terminal pane with no agent in it is a terminal pane. There is no provider to
-        // name, no status to report and no second renderer to offer, so it keeps the bare
-        // chrome every pane starts with — which is also the receipt that a shell pane pays
+        // A terminal pane with no agent in it has no second renderer to offer, so it keeps the
+        // bare chrome every pane starts with — which is also the receipt that a shell pane pays
         // nothing for a feature it is not using.
         guard isAgentDetected else { return .empty }
-
-        var leading: [PaneHeaderItem] = [
-            // What the agent is doing right now is the one thing in this strip that is not
-            // already written on it, so it hangs off the two items that are about status.
-            .dot(id: "state", tint: tint(for: status), tooltip: currentAction),
-            .label(
-                id: "provider",
-                text: provider?.displayName ?? "Agent",
-                weight: .semibold,
-                color: .text,
-                truncation: .tail,
-                tooltip: nil
-            ),
-            .label(
-                id: "status",
-                text: status.title,
-                weight: .regular,
-                color: .muted,
-                truncation: .tail,
-                tooltip: currentAction
-            ),
-        ]
-        if hasDiagnostics {
-            leading.append(
-                .image(
-                    id: "diagnostics",
-                    systemName: "exclamationmark.triangle.fill",
-                    tint: .amber,
-                    tooltip: "Agent Lens has diagnostics"
-                )
-            )
-        }
 
         // The account picker exists only while the Session renderer is on screen. A Terminal-only
         // pane draws no Chat and no Timeline, so offering a choice between them would be a
@@ -144,7 +109,7 @@ enum AgentLensPaneHeader {
         }
 
         return PaneHeader(
-            leading: leading,
+            leading: [],
             trailing: trailing + [
                 .segmented(
                     id: PaneHeaderCommand.agentLensPresentation.rawValue,
@@ -170,23 +135,66 @@ enum AgentLensPaneHeader {
             ]
         )
     }
+}
 
-    /// The status dot's colour, in the header's own token space rather than as a `Color`.
-    ///
-    /// Every other item in the strip resolves its colour through `ViewTokenPalette`, so a pane
-    /// mixing its own greens would be the one thing in the chrome able to disagree with the
-    /// rest of it about what green means.
-    ///
-    /// Running, waiting and degraded all collapse onto amber because they are all "look here"
-    /// rather than "this is over", and amber is the chrome's one attention colour. The label
-    /// beside the dot is what tells them apart.
-    private static func tint(for status: AgentLensStatus) -> ColorToken {
-        switch status {
+/// The one live-state sentence Session keeps above both of its accounts.
+///
+/// This is body content, not a second chrome identity cluster: the shared pane header already
+/// names the pane and owns its controls. Keeping the projection as one value also gives Chat,
+/// Timeline, and VoiceOver the same provider/status/action answer.
+struct AgentSessionStatusLine: Equatable {
+    let provider: String
+    let status: String
+    let currentAction: String
+    let tint: ColorToken
+
+    init(snapshot: AgentLensSnapshot) {
+        provider = snapshot.provider?.displayName ?? "Agent"
+        status = snapshot.status.title
+        currentAction = snapshot.currentActionSummary
+        tint = switch snapshot.status {
+        case .detecting, .unavailable: .muted
+        case .ready: .muted
         case .completed: .green
-        case .failed: .red
         case .running, .waitingForUser, .degraded: .amber
-        case .ready, .detecting, .unavailable: .muted
+        case .failed: .red
         }
+    }
+}
+
+private struct AgentSessionStatusBar: View {
+    let line: AgentSessionStatusLine
+
+    init(snapshot: AgentLensSnapshot) {
+        line = AgentSessionStatusLine(snapshot: snapshot)
+    }
+
+    var body: some View {
+        HStack(spacing: 6) {
+            Text(line.provider)
+                .fontWeight(.medium)
+                .foregroundStyle(TenonTheme.text)
+            Text("·")
+                .foregroundStyle(TenonTheme.muted)
+            Text(line.status)
+                .fontWeight(.semibold)
+                .foregroundStyle(ViewTokenPalette.color(line.tint, style: .caption))
+            Text("— \(line.currentAction)")
+                .foregroundStyle(TenonTheme.muted)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .font(TenonTheme.interfaceFont(size: 10))
+        .frame(maxWidth: .infinity, minHeight: TenonTheme.statusBarHeight, alignment: .leading)
+        .padding(.horizontal, 10)
+        .background(TenonTheme.chrome)
+        .overlay(alignment: .bottom) {
+            Divider().overlay(TenonTheme.line)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(line.provider), \(line.status)")
+        .accessibilityValue(line.currentAction)
+        .accessibilityIdentifier("tenon.agentLens.status")
     }
 }
 
@@ -295,10 +303,6 @@ struct AgentLensSlotView: View {
     private var header: PaneHeader {
         AgentLensPaneHeader.header(
             isAgentDetected: model.isAgentDetected,
-            provider: model.snapshot.provider,
-            status: model.snapshot.status,
-            currentAction: model.snapshot.currentActionSummary,
-            hasDiagnostics: !model.snapshot.diagnostics.isEmpty,
             presentation: AgentLensPresentation(
                 mode: model.mode,
                 showsSplitView: model.showsSplitView
@@ -483,6 +487,16 @@ struct AgentScrollTurnGate {
     }
 }
 
+/// Reveals the transcript's end with the least movement SwiftUI needs.
+///
+/// A fixed `.bottom` anchor also moves content that already fits, aligning a short transcript's
+/// sentinel to the viewport bottom and manufacturing empty space above its first row.
+enum AgentChatScrollPosition {
+    static func revealBottom<ID: Hashable>(_ id: ID, using proxy: ScrollViewProxy) {
+        proxy.scrollTo(id)
+    }
+}
+
 /// Visible to `TenonAppStateTests` so the update-loop bound is measured on this view itself.
 ///
 /// T-141: the bound used to be measured against a hand-written imitation of this view, and the
@@ -504,18 +518,22 @@ struct AgentSessionView: View {
 
     var body: some View {
         AgentSessionLayout {
-            // Two readings of ONE attached session. Switching between them changes no
-            // attachment, sends nothing to the PTY, and leaves the composer where it is: a
-            // person can answer a waiting question without leaving the synthesized reading.
-            switch model.account {
-            case .chat:
-                timeline
-            case .timeline:
-                AgentSessionTimelineView(
-                    model: model,
-                    returnToEvidence: { model.returnToEvidence($0) }
-                )
+            VStack(spacing: 0) {
+                AgentSessionStatusBar(snapshot: model.snapshot)
+                // Two readings of ONE attached session. Switching between them changes no
+                // attachment, sends nothing to the PTY, and leaves the composer where it is: a
+                // person can answer a waiting question without leaving the synthesized reading.
+                switch model.account {
+                case .chat:
+                    timeline
+                case .timeline:
+                    AgentSessionTimelineView(
+                        model: model,
+                        returnToEvidence: { model.returnToEvidence($0) }
+                    )
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             // A recorded session draws no composer at all, rather than a disabled one. There
             // is nothing to type into: the pane holds no PTY, and a greyed-out field would
             // still say "you could answer this here" about a session that ended.
@@ -554,7 +572,7 @@ struct AgentSessionView: View {
                     }
 
                     if model.timelineItems.isEmpty {
-                        AgentLensEmptyProjection(status: model.snapshot.status)
+                        AgentLensEmptyProjection()
                     }
 
                     ForEach(model.timelineItems) { item in
@@ -603,10 +621,10 @@ struct AgentSessionView: View {
                 if unseenUpdates > 0 {
                     Button {
                         if reduceMotion {
-                            proxy.scrollTo(bottomID, anchor: .bottom)
+                            AgentChatScrollPosition.revealBottom(bottomID, using: proxy)
                         } else {
                             withAnimation(.easeOut(duration: 0.16)) {
-                                proxy.scrollTo(bottomID, anchor: .bottom)
+                                AgentChatScrollPosition.revealBottom(bottomID, using: proxy)
                             }
                         }
                         unseenUpdates = 0
@@ -673,7 +691,10 @@ struct AgentSessionView: View {
             DiagnosticsRuntimeSignals.shared.noteAgentLensScrollExecuted(
                 paneOrdinal: model.diagnosticsPaneOrdinal
             )
-            proxy.scrollTo(bottomID, anchor: .bottom)
+            // Minimum movement keeps an underfilled transcript at the top. A `.bottom`
+            // anchor instead aligns this sentinel with the viewport bottom and turns all
+            // unused height into blank space above the first row.
+            AgentChatScrollPosition.revealBottom(bottomID, using: proxy)
         }
     }
 
@@ -750,9 +771,45 @@ private struct AgentTimelineRow: View {
                 fileLinks: fileLinks
             )
         case .tools(let group):
-            AgentSpineToolRow(
-                group: group,
-                occurredAt: item.occurredAt
+            AgentSpineWorkRow(
+                log: AgentWorkLog(
+                    first: AgentWorkEntry(
+                        id: item.id,
+                        occurredAt: item.occurredAt,
+                        turnID: item.turnID,
+                        content: .tools(group)
+                    )
+                ),
+                inspect: { inspect(.work($0)) }
+            )
+        case .plan(let plan):
+            AgentSpineWorkRow(
+                log: AgentWorkLog(
+                    first: AgentWorkEntry(
+                        id: item.id,
+                        occurredAt: item.occurredAt,
+                        turnID: item.turnID,
+                        content: .plan(plan)
+                    )
+                ),
+                inspect: { inspect(.work($0)) }
+            )
+        case .changes(let changeSet):
+            AgentSpineWorkRow(
+                log: AgentWorkLog(
+                    first: AgentWorkEntry(
+                        id: item.id,
+                        occurredAt: item.occurredAt,
+                        turnID: item.turnID,
+                        content: .changes(changeSet)
+                    )
+                ),
+                inspect: { inspect(.work($0)) }
+            )
+        case .work(let log):
+            AgentSpineWorkRow(
+                log: log,
+                inspect: { inspect(.work($0)) }
             )
         case .interaction(let request):
             AgentSpineInteractionRow(
@@ -969,34 +1026,134 @@ private struct AgentSpineMessageRow: View {
 
 }
 
-private struct AgentSpineToolRow: View {
-    let group: AgentTimelineToolGroup
-    let occurredAt: Date
+private struct AgentSpineWorkRow: View {
+    let log: AgentWorkLog
+    let inspect: (AgentWorkEntry) -> Void
+
+    @State private var expanded = false
 
     var body: some View {
-        HStack(spacing: 8) {
+        AgentSpineChrome(
+            evidence: log.evidence,
+            tint: statusTint,
+            active: log.state == .running,
+            inspect: inspectLatest
+        ) {
+            VStack(alignment: .leading, spacing: 7) {
+                Button(action: { expanded.toggle() }) {
+                    HStack(spacing: 7) {
+                        statusSymbol
+                            .frame(width: 16, height: 16)
+                        AgentSpineTag(title: log.title, tint: statusTint)
+                        Text(log.summary.isEmpty ? statusTitle : log.summary)
+                            .font(.caption.weight(.semibold))
+                            .foregroundStyle(TenonTheme.text)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        Text(statusTitle)
+                            .font(.caption2.weight(.medium))
+                            .foregroundStyle(statusTint)
+                        Text(log.occurredAt, style: .time)
+                            .font(TenonTheme.utilityFont(size: 9.5))
+                            .foregroundStyle(TenonTheme.muted)
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.caption2)
+                            .foregroundStyle(TenonTheme.muted)
+                            .accessibilityHidden(true)
+                    }
+                    .contentShape(.rect)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("\(log.title), \(log.summary), \(statusTitle)")
+                .accessibilityValue(expanded ? "Expanded" : "Collapsed")
+                .accessibilityHint(expanded ? "Collapses work details" : "Expands work details")
+
+                ForEach(visibleEntries) { entry in
+                    AgentWorkStepRow(entry: entry, inspect: { inspect(entry) })
+                }
+            }
+        }
+        .accessibilityIdentifier("tenon.agentLens.work.\(log.id)")
+    }
+
+    @ViewBuilder private var statusSymbol: some View {
+        if log.state == .running {
             ProgressView()
                 .controlSize(.small)
                 .tint(TenonTheme.amber)
-                .frame(width: 18, height: 18)
                 .accessibilityHidden(true)
-            AgentSpineTag(title: group.kind.timelineTitle, tint: TenonTheme.amber)
-            Text(group.tools.last?.name ?? group.title)
+        } else {
+            Image(systemName: statusIcon)
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(TenonTheme.text)
-                .lineLimit(1)
-            Spacer(minLength: 6)
-            Text("Running")
-                .font(.caption2.weight(.medium))
-                .foregroundStyle(TenonTheme.amber)
-            Text(occurredAt, style: .time)
-                .font(TenonTheme.utilityFont(size: 9.5))
-                .foregroundStyle(TenonTheme.muted)
+                .foregroundStyle(statusTint)
+                .accessibilityHidden(true)
         }
-        .padding(.vertical, 7)
-        .help("Open Terminal to inspect execution details")
-        .accessibilityElement(children: .combine)
-        .accessibilityLabel("\(group.kind.timelineTitle), \(group.tools.last?.name ?? group.title), running")
+    }
+
+    private var visibleEntries: [AgentWorkEntry] {
+        if expanded { return log.entries }
+        if log.state == .running, let latest = log.entries.last { return [latest] }
+        return []
+    }
+
+    private var statusTitle: String {
+        switch log.state {
+        case .running: "Running"
+        case .succeeded: "Done"
+        case .failed: "Failed"
+        case .declined: "Declined"
+        }
+    }
+
+    private var statusIcon: String {
+        switch log.state {
+        case .running: "circle.dotted"
+        case .succeeded: "checkmark.circle.fill"
+        case .failed: "xmark.circle.fill"
+        case .declined: "minus.circle.fill"
+        }
+    }
+
+    private var statusTint: Color {
+        switch log.state {
+        case .running: TenonTheme.amber
+        case .succeeded: TenonTheme.muted
+        case .failed: .red
+        case .declined: TenonTheme.muted
+        }
+    }
+
+    private func inspectLatest() {
+        guard let entry = log.entries.last else { return }
+        inspect(entry)
+    }
+}
+
+private struct AgentWorkStepRow: View {
+    let entry: AgentWorkEntry
+    let inspect: () -> Void
+
+    var body: some View {
+        Button(action: inspect) {
+            HStack(alignment: .firstTextBaseline, spacing: 7) {
+                Image(systemName: entry.state == .failed ? "xmark" : "checkmark")
+                    .font(TenonTheme.utilityFont(size: 9, weight: .semibold))
+                    .foregroundStyle(entry.state == .failed ? Color.red : TenonTheme.muted)
+                    .frame(width: 12)
+                    .accessibilityHidden(true)
+                AgentSpineTag(title: entry.title)
+                Text(entry.summary.isEmpty ? entry.title : entry.summary)
+                    .font(.caption2)
+                    .foregroundStyle(TenonTheme.muted)
+                    .lineLimit(2)
+                Spacer(minLength: 0)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .contentShape(.rect)
+        }
+        .buttonStyle(.plain)
+        .padding(.leading, 2)
+        .accessibilityLabel("Inspect \(entry.title): \(entry.summary)")
     }
 }
 
@@ -1166,8 +1323,8 @@ private struct AgentSpineDiagnosticRow: View {
         .accessibilityElement(children: .contain)
     }
 
-    /// An error resolves the same red the chrome header's `.red` token resolves, so the rail in
-    /// the timeline and the dot in the strip cannot drift apart about what failure looks like.
+    /// Resolve errors through the shared token palette so timeline evidence uses Tenon's one
+    /// failure colour rather than inventing a feature-local red.
     private var severityTint: Color {
         diagnostic.severity == .error
             ? ViewTokenPalette.color(.red, style: .caption)
@@ -1202,6 +1359,10 @@ private struct AgentLensInspector: View {
                 }
 
                 AgentContextOverview(messages: snapshot.contextMessages)
+
+                if let usage = snapshot.contextUsage {
+                    AgentContextUsageView(usage: usage)
+                }
 
                 if snapshot.contextMessages.isEmpty {
                     ContentUnavailableView(
@@ -1242,6 +1403,41 @@ private struct AgentLensInspector: View {
             }
             AgentEvidenceDetails(evidence: item.evidence)
         }
+    }
+}
+
+private struct AgentContextUsageView: View {
+    let usage: AgentContextUsage
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack {
+                Text("Context usage")
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(summary)
+                    .font(.caption2.monospacedDigit())
+                    .foregroundStyle(TenonTheme.muted)
+            }
+            if let fraction = usage.usedFraction {
+                ProgressView(value: fraction)
+                    .tint(fraction > 0.85 ? Color.orange : TenonTheme.amber)
+                    .accessibilityLabel("Context window used")
+                    .accessibilityValue(fraction.formatted(.percent.precision(.fractionLength(0))))
+            }
+            Text("Last turn · \(usage.last.inputTokens.formatted()) input · \(usage.last.outputTokens.formatted()) output")
+                .font(.caption2)
+                .foregroundStyle(TenonTheme.muted)
+        }
+        .padding(10)
+        .background(TenonTheme.panel, in: .rect(cornerRadius: 8))
+    }
+
+    private var summary: String {
+        guard let fraction = usage.usedFraction else {
+            return "\(usage.last.totalTokens.formatted()) tokens"
+        }
+        return fraction.formatted(.percent.precision(.fractionLength(0)))
     }
 }
 
@@ -1369,11 +1565,9 @@ private struct AgentLensNotice: View {
 }
 
 private struct AgentLensEmptyProjection: View {
-    let status: AgentLensStatus
-
     var body: some View {
         ContentUnavailableView(
-            status.title,
+            "No semantic output yet",
             systemImage: "scope",
             description: Text("Waiting for semantic output. The live terminal remains available at all times.")
         )
@@ -1435,29 +1629,71 @@ struct AgentLensInspection: Identifiable, Equatable {
     /// The inspection for any fact a milestone anchored to.
     ///
     /// This is the anchor's return path, and it is deliberately the one that always exists.
-    /// Scrolling Chat to the anchored row works only for a fact Chat draws, and Chat drops
-    /// completed tool runs on purpose — so a milestone standing on "ran the suite, 1510 passed"
-    /// would otherwise cite evidence with nothing on the other end. The inspector shows the
-    /// source, authority, location, offset and fingerprint for every kind of fact.
+    /// Chat may fold a fact into a quiet work row, but the inspector always opens the original
+    /// plan, change, tool, interaction, diagnostic, or message evidence.
     init?(fact item: AgentTimelineItem) {
         switch item.content {
         case .message(let message): self = .message(message)
         case .interaction(let request): self = .interaction(request)
         case .diagnostic(let diagnostic): self = .diagnostic(diagnostic)
         case .tools(let group):
-            guard let evidence = group.evidence else { return nil }
-            self = Self(
-                id: group.id,
+            self = Self.work(
+                AgentWorkEntry(
+                    id: item.id,
+                    occurredAt: item.occurredAt,
+                    turnID: item.turnID,
+                    content: .tools(group)
+                )
+            )
+        case .plan(let plan):
+            self = Self.work(
+                AgentWorkEntry(
+                    id: item.id,
+                    occurredAt: item.occurredAt,
+                    turnID: item.turnID,
+                    content: .plan(plan)
+                )
+            )
+        case .changes(let changeSet):
+            self = Self.work(
+                AgentWorkEntry(
+                    id: item.id,
+                    occurredAt: item.occurredAt,
+                    turnID: item.turnID,
+                    content: .changes(changeSet)
+                )
+            )
+        case .work(let log):
+            guard let entry = log.entries.last else { return nil }
+            self = Self.work(entry)
+        }
+    }
+
+    static func work(_ entry: AgentWorkEntry) -> Self {
+        switch entry.content {
+        case .tools(let group):
+            return Self(
+                id: entry.id,
                 category: group.kind == .subagent ? "Subagent" : "Tool",
                 title: group.title,
-                detail: group.tools
-                    .map { tool in
-                        [tool.name, tool.summary, tool.detail]
-                            .filter { !$0.isEmpty }
-                            .joined(separator: " — ")
-                    }
-                    .joined(separator: "\n"),
-                evidence: evidence
+                detail: entry.detail,
+                evidence: entry.evidence
+            )
+        case .plan:
+            return Self(
+                id: entry.id,
+                category: "Plan",
+                title: entry.title,
+                detail: entry.detail,
+                evidence: entry.evidence
+            )
+        case .changes:
+            return Self(
+                id: entry.id,
+                category: "Changes",
+                title: entry.title,
+                detail: entry.detail,
+                evidence: entry.evidence
             )
         }
     }
@@ -1482,25 +1718,6 @@ private extension AgentMessageRole {
         case .reasoning: "brain"
         case .system: "gearshape.fill"
         case .developer: "wrench.and.screwdriver.fill"
-        }
-    }
-
-}
-
-@MainActor
-private extension AgentToolKind {
-    var timelineTitle: String {
-        switch self {
-        case .generic: "Tool"
-        case .command: "Command"
-        case .fileChange: "File"
-        case .fileRead: "Read"
-        case .search: "Search"
-        case .webSearch: "Web"
-        case .plan: "Plan"
-        case .skill: "Skill"
-        case .subagent: "Subagent"
-        case .question: "Question"
         }
     }
 

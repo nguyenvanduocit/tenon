@@ -1,4 +1,4 @@
-// @domain: workspace-model
+// @domain: workspace-model, companion
 import Foundation
 import Observation
 import TenonCore

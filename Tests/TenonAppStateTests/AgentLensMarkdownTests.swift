@@ -1,9 +1,61 @@
+import AppKit
 import Foundation
+import Observation
 import SwiftUI
 @testable import TenonApp
 import XCTest
 
 final class AgentLensMarkdownTests: XCTestCase {
+    @MainActor
+    func testMarkdownReportsProseHeightOnItsFirstLayoutPass() {
+        let host = NSHostingView(
+            rootView: AgentMarkdownText(
+                source: """
+                This answer is still being parsed for markdown.
+                Its work row can arrive during the same update.
+                The answer must reserve these lines before that row is placed.
+                """
+            )
+        )
+        host.frame = NSRect(x: 0, y: 0, width: 600, height: 240)
+        host.layoutSubtreeIfNeeded()
+
+        XCTAssertGreaterThan(
+            host.fittingSize.height,
+            40,
+            """
+            AgentMarkdownText reported no prose height before its detached parser returned, so \
+            the lazy timeline could place a Running work row inside the answer's later text.
+            """
+        )
+    }
+
+    @MainActor
+    func testStreamingGrowthReservesSpaceAheadOfTheRunningRow() {
+        let model = MarkdownStreamingFixtureModel(source: "Short answer.")
+        let host = NSHostingView(rootView: MarkdownStreamingFixture(model: model))
+        host.frame = NSRect(x: 0, y: 0, width: 360, height: 500)
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.15))
+        host.layoutSubtreeIfNeeded()
+        let shortHeight = host.fittingSize.height
+
+        model.source = (1 ... 10)
+            .map { "Streaming line \($0) must sit above the running work row." }
+            .joined(separator: "\n")
+        host.rootView = MarkdownStreamingFixture(model: model)
+        host.layoutSubtreeIfNeeded()
+
+        XCTAssertGreaterThan(
+            host.fittingSize.height,
+            shortHeight + 100,
+            """
+            A new streaming source kept the old parsed row height, so the following Running \
+            row could be placed inside the prose until the detached reparse completed.
+            """
+        )
+    }
+
     func testProseSplitsIntoParagraphsOnBlankLines() {
         let blocks = AgentMarkdown.parse(
             """
@@ -247,5 +299,27 @@ final class AgentLensMarkdownTests: XCTestCase {
         XCTAssertEqual(items.count, 3)
         XCTAssertEqual(items.map(\.task), [.unchecked, .unchecked, .unchecked])
         XCTAssertEqual(items.map(\.text), ["SwiftUI", "Plugin development", "Architecture"])
+    }
+}
+
+@MainActor
+@Observable
+private final class MarkdownStreamingFixtureModel {
+    var source: String
+
+    init(source: String) {
+        self.source = source
+    }
+}
+
+private struct MarkdownStreamingFixture: View {
+    let model: MarkdownStreamingFixtureModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            AgentMarkdownText(source: model.source)
+            Text("RUNNING")
+                .frame(height: 20)
+        }
     }
 }

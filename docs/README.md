@@ -32,6 +32,7 @@ one reviewed change.
 |---|---|---|
 | [`plugin-author-guide.md`](plugin-author-guide.md) | authoring against the shipped JavaScript runtime | current |
 | [`plugin-migration-v0.2.md`](plugin-migration-v0.2.md) | migration from deleted helper/command/sidebar APIs | current |
+| [`plugin-migration-bundled-swift.md`](plugin-migration-bundled-swift.md) | porting the five remaining JS view plugins to compiled Swift: runtime gaps, order, guards | current |
 | [`operations.md`](operations.md) | build, test, state, troubleshooting, release verification | current |
 | [`releasing.md`](releasing.md) | signing, notarization, packaging, Homebrew, and what each was measured to require | current |
 | [`tdd.md`](tdd.md) | test-layer placement and runner coverage | current |

@@ -315,6 +315,25 @@ final class WorkspaceCatalogTests: XCTestCase {
         XCTAssertTrue(discarded.contains { if case .slotClosed(slot: reservedID, tab: _, workspace: _) = $0 { return true }; return false })
     }
 
+    func testDiscardOnlyEmptyReservationClosesItsTabWhenAnotherTabSurvives() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath, content: .empty)
+        let reservedTabID = try XCTUnwrap(catalog.activeTab?.id)
+        let reservedSlotID = try XCTUnwrap(catalog.activeSlotID)
+        catalog.newTab()
+        let survivingTabID = try XCTUnwrap(catalog.activeTab?.id)
+
+        let events = catalog.discardEmptySlot(
+            reservedSlotID,
+            restoringFocusTo: nil
+        )
+
+        XCTAssertEqual(catalog.activeWorkspace?.tabs.map(\.id), [survivingTabID])
+        XCTAssertTrue(events.contains(.tabClosed(
+            tab: reservedTabID,
+            workspace: catalog.activeWorkspaceID
+        )))
+    }
+
     func testAddSlotAtExactRectRejectsOverlapAndUndersizedTargets() {
         let originalID = UUID()
         var catalog = makeCatalog(
@@ -486,11 +505,16 @@ final class WorkspaceCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.activeTab, before)
     }
 
-    func testCloseSlotUsesSmartAbsorptionAndLastSlotLeavesEmptyTab() throws {
+    func testCloseSlotUsesSmartAbsorptionAndClosesTabAfterItsLastSlot() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
         let leftID = try XCTUnwrap(catalog.activeSlotID)
         catalog.splitActiveSlot(.horizontal)
         let rightID = try XCTUnwrap(catalog.activeSlotID)
+        catalog.newTab()
+        let survivingTabID = try XCTUnwrap(catalog.activeTab?.id)
+        let survivingSlotID = try XCTUnwrap(catalog.activeSlotID)
+        catalog.selectTab(sourceTabID)
 
         catalog.closeSlot(rightID)
 
@@ -503,12 +527,38 @@ final class WorkspaceCatalogTests: XCTestCase {
         let events = catalog.closeSlot(leftID)
 
         tab = try XCTUnwrap(catalog.activeTab)
-        XCTAssertTrue(tab.slots.isEmpty)
-        XCTAssertNil(tab.activeSlotID)
+        XCTAssertEqual(tab.id, survivingTabID)
+        XCTAssertFalse(catalog.activeWorkspace!.tabs.contains { $0.id == sourceTabID })
         XCTAssertEqual(events, [
             .slotClosed(
                 slot: leftID,
-                tab: tab.id,
+                tab: sourceTabID,
+                workspace: catalog.activeWorkspaceID
+            ),
+            .tabClosed(tab: sourceTabID, workspace: catalog.activeWorkspaceID),
+            .tabSelected(tab: survivingTabID, workspace: catalog.activeWorkspaceID),
+            .slotFocused(
+                slot: survivingSlotID,
+                tab: survivingTabID,
+                workspace: catalog.activeWorkspaceID
+            ),
+        ])
+    }
+
+    func testCloseLastSlotInOnlyTabKeepsTheRequiredTabAsEmpty() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let tabID = try XCTUnwrap(catalog.activeTab?.id)
+        let slotID = try XCTUnwrap(catalog.activeSlotID)
+
+        let events = catalog.closeSlot(slotID)
+
+        XCTAssertEqual(catalog.activeWorkspace?.tabs.map(\.id), [tabID])
+        XCTAssertTrue(try XCTUnwrap(catalog.activeTab).slots.isEmpty)
+        XCTAssertNil(catalog.activeSlotID)
+        XCTAssertEqual(events, [
+            .slotClosed(
+                slot: slotID,
+                tab: tabID,
                 workspace: catalog.activeWorkspaceID
             ),
         ])
@@ -1059,19 +1109,15 @@ final class WorkspaceCatalogTests: XCTestCase {
         ])
     }
 
-    func testMoveSingleSlotToNewTabLeavesSourceTabEmpty() throws {
+    func testMoveSingleSlotToNewTabClosesTheEmptySourceTab() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let slotID = try XCTUnwrap(catalog.activeSlotID)
         let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
 
         let events = catalog.moveSlotToNewTab(slotID)
 
-        XCTAssertEqual(catalog.activeWorkspace?.tabs.count, 2)
-        let sourceTab = try XCTUnwrap(
-            catalog.activeWorkspace?.tabs.first { $0.id == sourceTabID }
-        )
-        XCTAssertTrue(sourceTab.slots.isEmpty)
-        XCTAssertNil(sourceTab.activeSlotID)
+        XCTAssertEqual(catalog.activeWorkspace?.tabs.count, 1)
+        XCTAssertFalse(catalog.activeWorkspace!.tabs.contains { $0.id == sourceTabID })
 
         let newTab = try XCTUnwrap(catalog.activeTab)
         XCTAssertEqual(newTab.slots.map(\.id), [slotID])
@@ -1083,6 +1129,51 @@ final class WorkspaceCatalogTests: XCTestCase {
             slot: slotID,
             fromTab: sourceTabID,
             toTab: newTab.id,
+            workspace: catalog.activeWorkspaceID
+        )))
+        XCTAssertTrue(events.contains(.tabClosed(
+            tab: sourceTabID,
+            workspace: catalog.activeWorkspaceID
+        )))
+    }
+
+    func testMoveOnlySlotIntoExistingTabClosesTheEmptySourceTab() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let movingID = try XCTUnwrap(catalog.activeSlotID)
+        let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
+        catalog.newTab()
+        let targetTabID = try XCTUnwrap(catalog.activeTab?.id)
+        catalog.selectTab(sourceTabID)
+
+        let events = catalog.moveSlot(movingID, toTab: targetTabID)
+
+        XCTAssertEqual(catalog.activeWorkspace?.tabs.map(\.id), [targetTabID])
+        XCTAssertEqual(catalog.activeTab?.activeSlotID, movingID)
+        XCTAssertTrue(events.contains(.tabClosed(
+            tab: sourceTabID,
+            workspace: catalog.activeWorkspaceID
+        )))
+    }
+
+    func testMoveOnlySlotBesidePaneClosesTheEmptySourceTab() throws {
+        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
+        let movingID = try XCTUnwrap(catalog.activeSlotID)
+        let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
+        catalog.newTab()
+        let targetTabID = try XCTUnwrap(catalog.activeTab?.id)
+        let targetSlotID = try XCTUnwrap(catalog.activeSlotID)
+
+        let events = catalog.moveSlot(
+            movingID,
+            toTab: targetTabID,
+            beside: targetSlotID,
+            edge: .left
+        )
+
+        XCTAssertEqual(catalog.activeWorkspace?.tabs.map(\.id), [targetTabID])
+        XCTAssertEqual(catalog.activeTab?.activeSlotID, movingID)
+        XCTAssertTrue(events.contains(.tabClosed(
+            tab: sourceTabID,
             workspace: catalog.activeWorkspaceID
         )))
     }
@@ -1160,32 +1251,51 @@ final class WorkspaceCatalogTests: XCTestCase {
     }
 
     func testMoveSlotIntoEmptyTargetTabFillsTheGrid() throws {
-        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
-        let a = try XCTUnwrap(catalog.activeSlotID)
-        catalog.splitActiveSlot(.horizontal)
-        let b = try XCTUnwrap(catalog.activeSlotID)
-        let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
-        catalog.newTab()
-        let targetTabID = try XCTUnwrap(catalog.activeTab?.id)
-        let targetSlot = try XCTUnwrap(catalog.activeSlotID)
-        catalog.closeSlot(targetSlot)
-        catalog.selectTab(sourceTabID)
-
-        catalog.moveSlot(b, toTab: targetTabID)
-
-        let targetTab = try XCTUnwrap(
-            catalog.activeWorkspace?.tabs.first { $0.id == targetTabID }
+        let a = UUID()
+        let b = UUID()
+        let sourceTab = Tab(
+            slots: [
+                WorkspaceSlot(
+                    id: a,
+                    rect: GridRect(x: 0, y: 0, width: 6, height: 12)
+                ),
+                WorkspaceSlot(
+                    id: b,
+                    rect: GridRect(x: 6, y: 0, width: 6, height: 12)
+                ),
+            ],
+            activeSlotID: b
         )
-        XCTAssertEqual(targetTab.slots.map(\.id), [b])
-        XCTAssertEqual(targetTab.slots.first?.rect, fullGrid)
-        XCTAssertEqual(targetTab.activeSlotID, b)
-        XCTAssertEqual(catalog.activeWorkspace?.activeTabID, targetTabID)
-
-        let sourceTab = try XCTUnwrap(
-            catalog.activeWorkspace?.tabs.first { $0.id == sourceTabID }
+        // An empty non-final tab can only arrive through restored legacy state now that
+        // pane-level mutations collapse one immediately. Keep accepting that state so a
+        // move into it repairs the catalog instead of refusing the destination.
+        let targetTab = Tab(slots: [], activeSlotID: nil, number: 2)
+        let workspace = Workspace(
+            name: "One",
+            path: projectPath,
+            tabs: [sourceTab, targetTab],
+            activeTabID: sourceTab.id
         )
-        XCTAssertEqual(sourceTab.slots.map(\.id), [a])
-        XCTAssertEqual(sourceTab.slots.first?.rect, fullGrid)
+        var catalog = WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        )
+
+        catalog.moveSlot(b, toTab: targetTab.id)
+
+        let repairedTargetTab = try XCTUnwrap(
+            catalog.activeWorkspace?.tabs.first { $0.id == targetTab.id }
+        )
+        XCTAssertEqual(repairedTargetTab.slots.map(\.id), [b])
+        XCTAssertEqual(repairedTargetTab.slots.first?.rect, fullGrid)
+        XCTAssertEqual(repairedTargetTab.activeSlotID, b)
+        XCTAssertEqual(catalog.activeWorkspace?.activeTabID, targetTab.id)
+
+        let repairedSourceTab = try XCTUnwrap(
+            catalog.activeWorkspace?.tabs.first { $0.id == sourceTab.id }
+        )
+        XCTAssertEqual(repairedSourceTab.slots.map(\.id), [a])
+        XCTAssertEqual(repairedSourceTab.slots.first?.rect, fullGrid)
     }
 
     func testMoveSlotBesidePaneInHoverSelectedTabCommitsRequestedEdge() throws {

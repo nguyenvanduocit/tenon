@@ -70,10 +70,19 @@ public enum WorkspaceCatalogSnapshot {
     public struct AppearanceRecord: Equatable, Sendable, Codable {
         public var symbol: String?
         public var accent: String?
+        public var customIconID: UUID?
+        public var customIconPNG: Data?
 
-        public init(symbol: String?, accent: String?) {
+        public init(
+            symbol: String?,
+            accent: String?,
+            customIconID: UUID? = nil,
+            customIconPNG: Data? = nil
+        ) {
             self.symbol = symbol
             self.accent = accent
+            self.customIconID = customIconID
+            self.customIconPNG = customIconPNG
         }
     }
 
@@ -108,6 +117,9 @@ public enum WorkspaceCatalogSnapshot {
         /// pane to its workspace path.
         public var title: String?
         public var cwd: String?
+        /// A user-pinned pane label. Separate from `title`, which is the last dynamic PTY
+        /// title used only for an unmaterialised restore placeholder.
+        public var customTitle: String?
 
         public init(
             id: UUID,
@@ -117,7 +129,8 @@ public enum WorkspaceCatalogSnapshot {
             height: Int,
             content: ContentRecord,
             title: String? = nil,
-            cwd: String? = nil
+            cwd: String? = nil,
+            customTitle: String? = nil
         ) {
             self.id = id
             self.x = x
@@ -127,6 +140,7 @@ public enum WorkspaceCatalogSnapshot {
             self.content = content
             self.title = title
             self.cwd = cwd
+            self.customTitle = customTitle
         }
     }
 
@@ -207,10 +221,17 @@ public enum WorkspaceCatalogSnapshot {
     /// Capture the live catalog and the T-031 placeholder data `SurfacePool` holds (last
     /// title and cwd). Entries for panes outside the catalog (already closed) are not
     /// recorded.
+    ///
+    /// `agentSessions` carries the one fact a terminal pane cannot rebuild for itself
+    /// (T-145): which recorded session was running in it. The pane→session binding lives in
+    /// memory for the life of the process, so a pane that was doing the work at quit is
+    /// exactly the pane that would come back with no route to its own transcript. Its caller
+    /// decides eligibility; this only writes down what it is handed.
     public static func document(
         capturing catalog: WorkspaceCatalog,
         titles: [UUID: String] = [:],
-        cwds: [UUID: URL] = [:]
+        cwds: [UUID: URL] = [:],
+        agentSessions: [UUID: AgentSessionRef] = [:]
     ) -> Document {
         Document(
             workspaces: catalog.workspaces.map { workspace in
@@ -229,9 +250,13 @@ public enum WorkspaceCatalogSnapshot {
                                     y: slot.rect.y,
                                     width: slot.rect.width,
                                     height: slot.rect.height,
-                                    content: record(of: slot.content),
+                                    content: record(
+                                        of: slot.content,
+                                        agentSession: agentSessions[slot.id]
+                                    ),
                                     title: titles[slot.id],
-                                    cwd: cwds[slot.id]?.path
+                                    cwd: cwds[slot.id]?.path,
+                                    customTitle: slot.customTitle
                                 )
                             },
                             activeSlotID: tab.activeSlotID,
@@ -302,7 +327,8 @@ public enum WorkspaceCatalogSnapshot {
                             isDirectory: isDirectory,
                             isFileReadable: isFileReadable,
                             isKnownPluginView: isKnownPluginView
-                        )
+                        ),
+                        customTitle: slotRecord.customTitle
                     ))
                     // T-031 placeholder data. Purely cosmetic (plus the spawn directory),
                     // so it degrades value by value: an empty title is no title, and a
@@ -449,22 +475,72 @@ public enum WorkspaceCatalogSnapshot {
         guard !appearance.isDefault else { return nil }
         return AppearanceRecord(
             symbol: appearance.symbol.rawValue,
-            accent: appearance.accent?.rawValue
+            accent: appearance.accent?.rawValue,
+            customIconID: appearance.customIcon?.id,
+            customIconPNG: appearance.customIcon?.pngData
         )
     }
 
     private static func appearance(of record: AppearanceRecord?) -> WorkspaceAppearance {
         guard let record else { return .default }
+        let customIcon: WorkspaceCustomIcon? = if let id = record.customIconID,
+                                                  let png = record.customIconPNG
+        {
+            WorkspaceCustomIcon(id: id, pngData: png)
+        } else {
+            nil
+        }
         return WorkspaceAppearance(
             symbol: record.symbol.flatMap(WorkspaceSymbol.init(rawValue:)) ?? .default,
-            accent: record.accent.flatMap(AccentColor.init(rawValue:))
+            accent: record.accent.flatMap(AccentColor.init(rawValue:)),
+            customIcon: customIcon
         )
     }
 
-    private static func record(of content: SlotContent) -> ContentRecord {
+    private static func sessionRecord(of ref: AgentSessionRef) -> AgentSessionRecord {
+        AgentSessionRecord(
+            provider: ref.provider.rawValue,
+            sessionID: ref.sessionID,
+            transcriptPath: ref.transcriptPath,
+            title: ref.title
+        )
+    }
+
+    /// The session a record can still be read as, or nil for every reason it cannot be: no
+    /// session written down, a provider this build cannot name, a transcript no longer on
+    /// disk, or a reference the value type refuses. One answer for both content kinds that
+    /// carry a session, so a pane restored from a terminal and a pane restored from the
+    /// session list cannot drift apart on what counts as readable.
+    private static func sessionRef(
+        of record: ContentRecord,
+        isFileReadable: (String) -> Bool
+    ) -> AgentSessionRef? {
+        guard let session = record.agentSession,
+              let provider = AgentSessionProvider(rawValue: session.provider),
+              isFileReadable(session.transcriptPath)
+        else { return nil }
+        return AgentSessionRef(
+            provider: provider,
+            sessionID: session.sessionID,
+            transcriptPath: session.transcriptPath,
+            title: session.title
+        )
+    }
+
+    private static func record(
+        of content: SlotContent,
+        agentSession: AgentSessionRef? = nil
+    ) -> ContentRecord {
         switch content {
         case .terminal:
-            return ContentRecord(type: "terminal")
+            // Recorded as the terminal it is, with the session travelling beside it: the
+            // reading is what this pane comes back AS, and the shell is what it falls back
+            // to when the transcript is gone. A build that has never heard of the field
+            // reads the type it already knows and opens a terminal.
+            return ContentRecord(
+                type: "terminal",
+                agentSession: agentSession.map(sessionRecord(of:))
+            )
         case .changes:
             return ContentRecord(type: "changes")
         case .automation:
@@ -480,12 +556,7 @@ public enum WorkspaceCatalogSnapshot {
                 viewID: viewID
             )
         case .agentSession(let ref):
-            return ContentRecord(type: "agentSession", agentSession: AgentSessionRecord(
-                provider: ref.provider.rawValue,
-                sessionID: ref.sessionID,
-                transcriptPath: ref.transcriptPath,
-                title: ref.title
-            ))
+            return ContentRecord(type: "agentSession", agentSession: sessionRecord(of: ref))
         case .diff(let request):
             switch request.source {
             case let .git(repoPath, path, staged, untracked, origPath):
@@ -515,6 +586,14 @@ public enum WorkspaceCatalogSnapshot {
     ) -> SlotContent {
         switch record.type {
         case "terminal":
+            // A terminal that was running an agent comes back reading that session, which is
+            // the same pane the session list's "Details" opens: the transcript, the evidence,
+            // and the offer to resume. With nothing readable at the path there is no reading
+            // to draw and the pane is still a terminal — this is the one content kind whose
+            // degraded form is not the blank pane, because the pane it degrades to is real.
+            if let ref = sessionRef(of: record, isFileReadable: isFileReadable) {
+                return .agentSession(ref)
+            }
             return .terminal
         case "changes":
             return .changes
@@ -536,16 +615,9 @@ public enum WorkspaceCatalogSnapshot {
             // A transcript that is gone is the whole content: there is no session to read and
             // nothing the pane could honestly draw, so it comes back as the blank pane holding
             // its place in the layout — the same answer a deleted file's pane gives.
-            guard let session = record.agentSession,
-                  let provider = AgentSessionProvider(rawValue: session.provider),
-                  isFileReadable(session.transcriptPath),
-                  let ref = AgentSessionRef(
-                      provider: provider,
-                      sessionID: session.sessionID,
-                      transcriptPath: session.transcriptPath,
-                      title: session.title
-                  )
-            else { return .empty }
+            guard let ref = sessionRef(of: record, isFileReadable: isFileReadable) else {
+                return .empty
+            }
             return .agentSession(ref)
         case "diff":
             guard let diff = record.diff, isDirectory(diff.repoPath) else { return .empty }

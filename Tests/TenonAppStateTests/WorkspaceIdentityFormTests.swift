@@ -63,6 +63,62 @@ final class WorkspaceIdentityFormTests: XCTestCase {
         XCTAssertTrue(AccentColor.allCases.allSatisfy { !$0.label.isEmpty })
     }
 
+    func testTheExpandedTintGridIsBalancedAndFitsThePopover() {
+        let metrics = WorkspaceIdentityFormMetrics.self
+        let count = AccentColor.allCases.count + 1
+        let occupied = CGFloat(metrics.tintColumns) * metrics.swatch
+            + CGFloat(metrics.tintColumns - 1) * metrics.swatchSpacing
+
+        XCTAssertEqual(metrics.tintRows, 2)
+        XCTAssertLessThanOrEqual(occupied, metrics.width - metrics.inset * 2)
+        XCTAssertGreaterThanOrEqual(metrics.tintRows * metrics.tintColumns, count)
+        XCTAssertLessThan(metrics.tintRows * metrics.tintColumns - count, metrics.tintRows)
+    }
+
+    func testCustomIconImportNormalizesToABoundedPNG() async throws {
+        let source = try XCTUnwrap(
+            Data(base64Encoded: """
+                iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8A
+                AQUBAScY42YAAAAASUVORK5CYII=
+                """.filter { !$0.isWhitespace })
+        )
+
+        let icon = try await WorkspaceCustomIconImport.icon(from: source)
+
+        XCTAssertLessThanOrEqual(icon.pngData.count, WorkspaceCustomIcon.maximumPNGBytes)
+        XCTAssertEqual(Array(icon.pngData.prefix(8)), [
+            0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+        ])
+        let decoded = try XCTUnwrap(NSBitmapImageRep(data: icon.pngData))
+        XCTAssertLessThanOrEqual(decoded.pixelsWide, WorkspaceCustomIconImport.renderedPixelSize)
+        XCTAssertLessThanOrEqual(decoded.pixelsHigh, WorkspaceCustomIconImport.renderedPixelSize)
+    }
+
+    func testCustomIconImportRejectsInvalidAndOversizedSources() async {
+        do {
+            _ = try await WorkspaceCustomIconImport.icon(from: Data("not an image".utf8))
+            XCTFail("invalid image bytes must be rejected")
+        } catch let error as WorkspaceCustomIconImportError {
+            XCTAssertEqual(error, .unsupportedImage)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+
+        do {
+            _ = try await WorkspaceCustomIconImport.icon(
+                from: Data(
+                    repeating: 0,
+                    count: WorkspaceCustomIconImport.maximumSourceBytes + 1
+                )
+            )
+            XCTFail("oversized image bytes must be rejected")
+        } catch let error as WorkspaceCustomIconImportError {
+            XCTAssertEqual(error, .sourceTooLarge)
+        } catch {
+            XCTFail("unexpected error: \(error)")
+        }
+    }
+
     /// A workspace nobody has tinted is drawn in the colour its own folder derives, so a
     /// catalog that has never been customised still reads as a set of distinct workspaces.
     func testAnUntintedWorkspaceCarriesTheColourItsFolderDerives() throws {

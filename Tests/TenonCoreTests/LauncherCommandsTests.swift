@@ -102,7 +102,7 @@ final class LauncherCommandsTests: XCTestCase {
         let launchers = try shippedLauncherIntentIDs()
 
         for excluded in [
-            "dev.tenon.core-commands.pane.close.v1",
+            "dev.tenon.core-commands.pane.close.v2",
             "dev.tenon.core-commands.tab.next.v1",
             "dev.tenon.core-commands.tab.previous.v1",
             "dev.tenon.core-commands.pane.focus-next.v1",

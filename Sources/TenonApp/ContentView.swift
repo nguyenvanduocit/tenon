@@ -7,13 +7,14 @@ import TenonIntentCore
 /// The shell composition root: a single top title bar — traffic lights, app identity,
 /// and the tab strip share one row — over a body of workspace navigation and a
 /// tab-local spatial canvas. Every visible region is its own view; this struct only
-/// owns the sidebar's show/width layout state and wires the pieces together.
+/// owns the sidebar's expanded/collapsed width state and wires the pieces together.
 struct ContentView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     var host: PluginHost
     var store: WorkspaceStore
     var pool: SurfacePool
     var closeCoordinator: ShellCloseCoordinator
+    var paneRenamer: PaneRenameCoordinator
     var agentLens: AgentLensPool
     var webPool: PluginWebSurfacePool
     var intentRuntime: AppIntentRuntime
@@ -38,6 +39,7 @@ struct ContentView: View {
     @State private var paneHeaders = PaneHeaderStore()
     @State private var agentSuggestions: [AgentLaunchSuggestion] = []
 
+    /// `false` means the persistent icon rail; the workspace switcher never disappears.
     @State private var sidebarVisible = AppPreferencesStore.shared.preferences.sidebarVisibleOnLaunch
     @State private var sidebarWidth: CGFloat =
         CGFloat(AppPreferencesStore.shared.preferences.sidebarWidth)
@@ -76,14 +78,18 @@ struct ContentView: View {
                 .frame(height: 1)
 
             HStack(spacing: 0) {
-                if sidebarVisible {
-                    WorkspaceSidebarView(
-                        store: store,
-                        pool: pool,
-                        closeCoordinator: closeCoordinator
+                WorkspaceSidebarView(
+                    store: store,
+                    pool: pool,
+                    closeCoordinator: closeCoordinator,
+                    isCollapsed: !sidebarVisible
+                )
+                .frame(
+                    width: SidebarResize.renderedWidth(
+                        isExpanded: sidebarVisible,
+                        expandedWidth: sidebarWidth
                     )
-                        .frame(width: sidebarWidth)
-                }
+                )
 
                 VStack(spacing: 0) {
                     WorkspaceStageView(
@@ -97,6 +103,7 @@ struct ContentView: View {
                         agentSuggestions: agentSuggestions,
                         editorStates: editorStates,
                         paneHeaders: paneHeaders,
+                        paneRenamer: paneRenamer,
                         router: router,
                         automation: automation,
                         automationSchedulesEnabled: automationSchedulesEnabled,
@@ -198,8 +205,8 @@ struct ContentView: View {
                                 sidebarWidth = width
                             case .collapse:
                                 resizeStartWidth = nil
-                                // The edge unmounts on collapse, so its hover-exit
-                                // never fires — balance the pushed resize cursor here.
+                                // The resize edge unmounts when the sidebar becomes a rail,
+                                // so its hover-exit never fires — balance the cursor here.
                                 if resizeHovering {
                                     resizeHovering = false
                                     NSCursor.pop()

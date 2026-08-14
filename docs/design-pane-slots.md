@@ -132,7 +132,7 @@ The current public inventory is:
 - `workspace.tab.focus.v1`;
 - `workspace.pane.split.v1`;
 - `workspace.pane.focus.v1`;
-- `workspace.pane.close.v1`;
+- `workspace.pane.close.v2`;
 - `workspace.pane.content.set.v1`;
 - `workspace.content.open.v1`;
 - `workspace.tab.next.v1`;

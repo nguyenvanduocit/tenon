@@ -277,6 +277,25 @@ has to become a prompt naming the transcript rather than a flag that does not ex
 (→ `agent-lens`), the pane and PTY the agent runs in (→ `terminal-surface`,
 `terminal-teardown`), and the kernel the two contracts travel through (→ `intent-bus`).
 
+## companion
+
+The person's reusable defaults for short host-owned AI assistance: which installed coding
+agent performs it, which model it asks for, the stable user-authored instruction suffix, and
+the directory in which the provider starts. It also owns the provider adapters that turn one
+bounded task prompt into machine-readable structured output, plus their shared subprocess
+limits and cancellation contract.
+
+The product concern is that AI assistance is a relationship the person configures once, not a
+vendor/model/prompt/cwd choice silently reinvented by every button. A task still owns its own
+evidence, schema, budget, timeout, and visible overrides; Companion supplies the defaults and
+the common execution edge.
+
+**Excludes:** launching an interactive coding-agent session into a pane (→ `agent-control`),
+reading or controlling an already-running session (→ `agent-lens`), plugin process authority
+or public invocation (→ `intent-bus`), and the pane content or workspace state an assistance
+task may summarize. Companion is host-private configuration and TASK execution, not a new
+principal, intent, event, contribution, or `tenon` namespace.
+
 ## command-surface
 
 Everything a person types a name into to make something happen: the palette and its providers,

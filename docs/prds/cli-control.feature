@@ -208,6 +208,21 @@ Feature: Control the correct local Tenon instance through canonical intents
       Then the CLI principal uses normal policy, resolution, validation, timeout, and telemetry
       And no socket-specific domain service runs
 
+    @req-cli-fr-029 @req-cli-nfr-002 @req-cli-nfr-004 @workspace-identity
+    Scenario: CLI or AI customizes one exact workspace through the generic intent route
+      Given the caller knows a workspace UUID
+      When it sends workspace.identity.set.v1 with a finite name, accent, or icon patch
+      Then the existing intent.send action dispatches the request with that workspace scope
+      And success returns the final workspace ID, name, accent, and icon
+      But missing or stale workspace scope never targets the selected workspace
+
+    @req-cli-fr-029 @workspace-identity @custom-icon
+    Scenario: CLI custom image input is bounded before it enters workspace state
+      Given icon kind custom carries base64 image data
+      When workspace.identity.set.v1 handles the request
+      Then the encoded field and decoded source are bounded
+      And the host stores only its normalized bounded PNG
+
     @req-cli-fr-018 @errors
     Scenario: Intent failure remains structurally useful
       Given canonical dispatch fails
@@ -338,3 +353,17 @@ Feature: Control the correct local Tenon instance through canonical intents
       When no early disconnect cancellation is installed
       Then the per-call deadline or server watchdog still settles the host request
       And its permit is eventually released exactly once
+
+  @req-cli-fr-028 @cli
+  Scenario: An agent renames its own pane with no argument but the words
+    Given a shell running inside a Tenon pane
+    When it runs "tenon-cli rename Fixing the token refresh race"
+    Then the pane named by TENON_PANE_ID carries that title
+    When it runs "tenon-cli rename" with no text
+    Then the pinned title is cleared
+
+  @req-cli-fr-028 @cli
+  Scenario: A rename outside a pane fails before anything is sent
+    Given no --pane flag and no TENON_PANE_ID
+    When "tenon-cli rename anything" runs
+    Then it fails without sending a request

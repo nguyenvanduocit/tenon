@@ -181,6 +181,8 @@ panes keep that channel's intended path rather than falling back.
 | `CLI-FR-025` | Server teardown **MUST** settle pending clients as unavailable and release socket and claim ownership in safe order. | shipped | `@req-cli-fr-025` |
 | `CLI-FR-026` | Success/failure/usage **MUST** use exit codes 0/1/2 respectively and machine-readable JSON for server replies. | shipped | `@req-cli-fr-026` |
 | `CLI-FR-027` | `ping` **MUST** answer exactly `{protocolVersion, pid, active, version, build, socketPath}` — facts about this process and no others. `socketPath` **MUST** be derived from the same resolved `AppInstanceChannel` the server binds, so a channel can never report the other's socket, and `version`/`build` **MUST** report the unknown marker for a build carrying no `Info.plist` version keys. It **MUST NOT** carry any provider, contract, plugin, or health field. | shipped | `@req-cli-fr-027` |
+| `CLI-FR-028` | `rename [--pane <uuid>] [<text...>]` **MUST** compile to `workspace.pane.title.set.v1` and default its scope to `$TENON_PANE_ID` like every other pane-scoped verb, so an agent labels its own pane with no argument. Invoking it with no text **MUST** clear the pinned title rather than fail, and invoking it with neither `--pane` nor `$TENON_PANE_ID` **MUST** fail before a request is sent. | shipped | `@req-cli-fr-028` |
+| `CLI-FR-029` | The CLI principal **MUST** discover and send `workspace.identity.set.v1` through the existing `intent.send` action. The intent **MUST** accept a finite optional `{name, accent, icon}` patch with exact `--workspace <uuid>` scope, closed 24-symbol and 12-accent vocabularies, or bounded base64 custom-image data; missing scope **MUST NOT** target the selected workspace, and success **MUST** return the final complete identity. | shipped | `@req-cli-fr-029` |
 
 ### Non-functional requirements
 
@@ -198,7 +200,7 @@ panes keep that channel's intended path rather than falling back.
 
 ## 8. Acceptance specification
 
-[`cli-control.feature`](cli-control.feature) tags all 35 requirements. Pure codec/parser,
+[`cli-control.feature`](cli-control.feature) tags all 36 requirements. Pure codec/parser,
 socket integration, dispatcher, packaging checks, channel state, and installed Settings
 verification are the evidence seams. The bare-Xcode-Archive limitation remains an explicit
 operational exclusion rather than an unverified promise.
@@ -225,7 +227,7 @@ Settings follows `docs/designs.md`; command output is stable machine-readable JS
 | 001…005 | installer, `install.sh`, channel/env composition | shipped; bare Archive excluded |
 | 006…010 | `AppInstanceChannel`, `CLISocketServer`, socket tests | shipped |
 | 011…013/018/020/026 | v3 codec/action parser/client tests | shipped |
-| 014…019, 027 | `CLICommandExecutor`, intent boundary tests, `CLIPingPayloadTests` | shipped; `CLI-FR-027` restates the ping payload `CLI-FR-014` scoped |
+| 014…019, 027, 029 | `CLICommandExecutor`, core intent catalog and provider tests, `CLIPingPayloadTests` | shipped; `CLI-FR-027` restates the ping payload `CLI-FR-014` scoped; identity customization uses generic `intent.send` |
 | 021…023 | CLI builder, terminal provider, consent deadline tests | shipped |
 | 024…025 | connection permits/watchdog/drain tests | shipped |
 | NFR set | fitness, saturation, packaging, installed checklist | shipped under stated release path |
@@ -255,6 +257,7 @@ intent contract. Protocol v4 requires exact migration/rejection tests; current v
 | 2026-08-12 | `ping` widens to carry build and socket path, and `CLI-FR-014` is superseded rather than edited. | The first thing a script does is find the app; `{protocolVersion, pid, active}` answered neither "which build is this" nor "where do I send the next request". Every added field is still a fact about *this process*, so the line `CLI-FR-014` drew — no claim about provider readiness — is intact and is now asserted directly by `CLIPingPayloadTests`, which pins the exact key set rather than only the additions. It is superseded rather than reworded because a shipped requirement stating a narrower payload was true when written. | `CLI-FR-014`'s three-field payload |
 | 2026-08-12 | `ping` resolves its socket path from `AppInstanceChannel` inside `CLICommandExecutor` rather than receiving the server's bound path. | Both sides derive the path from the same resolved channel — `CLISocketServer.clientSocketPath` is `socketPath ?? instanceChannel.socketPath()` and its bind target is that same value — so the two cannot disagree in production, and a ping can only arrive at all on a socket that bound. The alternative, threading `cliServer.clientSocketPath` through the one call site, would have edited `TenonApp.swift`, which another task held at the time. ⚠️ The consequence to revisit: if a future degraded-bind path ever serves requests on a path other than the channel's own, this derivation would report the wrong one, and the fix is to pass the server's value in. | passing the bound path from the caller |
 | 2026-08-10 | The installer detaches its replacement half when run from inside the app it replaces, rather than refusing. | the only terminal a person working on Tenon has open is a Tenon pane, and refusing would send them to another app to install this one. Detaching is not a preference: `TerminalJobTerminator.sweep` lists victims with `ps -t <tty>` and escalates to SIGKILL, so leaving the terminal session is the one thing that survives — measured, a `nohup` child is still listed and dies, a `setsid` child is not listed and completes | installing only from outside the app |
+| 2026-08-14 | Workspace customization is a discoverable `workspace.identity.set.v1` contract, not a sixth control action or a CLI-only alias. | it is finite domain work across the CLI principal boundary, so the existing `intent send` route supplies policy, validation, timeout, telemetry, and the exact workspace scope an unattended agent needs. | a `workspace.rename` socket action, selected-workspace fallback, or duplicated CLI service |
 
 Open operational question: if Xcode Archive becomes a supported release path, it must gain an
 equivalent self-contained SwiftPM CLI build/copy/verification step rather than a dynamic target.
@@ -268,9 +271,12 @@ equivalent self-contained SwiftPM CLI build/copy/verification step rather than a
 | 2026-08-10 | current tree, T-115 | the app/CLI instance channel after the bundle identifier moved from `com.firegroup.tenon` to `dev.tenon.app` | the control socket path and single-instance channel are derived from the bundle identifier, so both ends moved together: `CLISocketServerTests` resolved the closed channels for the new production and staging identifiers, and `InteractionBoundaryFitnessTests` confirmed the installer scripts and `AppInstanceChannel` agree on the same pair. Both suites were **red first** against the old identifier, which is how the rename found every file that carried it. Full suite 1872 / 0 | the identifier is proved consistent in-tree, not on disk: no install replaced the running app in this session, so a live socket handshake under the new identifier is unobserved, and any `/Applications` bundle still carrying the old identifier remains launchable by it |
 
 | 2026-08-12 | current tree, T-132 | `CLI-FR-027`: the exact `ping` payload | `CLIPingPayloadTests` 4 / 0 against the pure `CLICommandExecutor.pingPayload`. The assertions were proved to bite by **mutation**: deleting the `socketPath` line from the payload turns 2 of the 4 red (exact-object equality and the exact-key-set check), and the file was restored byte-identically from a `cmp`-verified copy. Both channels' reported paths are asserted equal to `AppInstanceChannel.socketPath()` and unequal to each other; an unversioned bundle reports `AppVersion.unknown` for both version fields | no live socket: the payload is asserted as a pure value, so what is unproven is the wiring — that `execute(.ping:)` reaches this function with `NSApp.isActive` and the real resolved channel is source-level, not observed over a socket. `tenon-cli --version` also remains an unknown command; the task's item (e) named it and this change does not add a client verb |
+| 2026-08-14 | current dirty tree, T-154 | `CLI-FR-029`: discover and send `workspace.identity.set.v1` | Catalog/schema, interaction fitness, and `WorkspaceIntentProviderTests` pin the closed patch, `{plugin, cli, agent}` audience, exact workspace UUID scope with no selection fallback, atomic typed mutation, shared custom-image normalization, and complete final identity. Final full suite: **2233 / 0** | no live socket round trip; the existing CLI `intent send` compiler/dispatcher route is covered separately, while this pass mounted the new contract and provider headlessly |
 
 ## 14. Change history
 
 | Date | Change | Why |
 |---|---|---|
 | 2026-08-09 | Initial canonical PRD | consolidate shipped CLI and correct v2/stale-socket history |
+| 2026-08-14 | Add `CLI-FR-029` and `workspace.identity.set.v1`. | Let CLI/agent callers customize a named workspace without widening the closed control plane or duplicating the host mutation. |
+| 2026-08-14 | current tree, T-147 | `CLI-FR-028`: the `rename` verb | the verb is a pure argument-to-`CLIRequest` compilation asserted through the same `intentSendRequest` path every other alias uses; the intent behind it is proved by `PaneTitleIntentTests` 4 / 0 | no live socket for this verb specifically: what is unproven is the round trip, not the compilation |

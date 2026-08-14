@@ -8,7 +8,7 @@ below is what it costs to make it true.
 ## The measurement
 
 Against the running app on 2026-08-07, through `tenon-cli`. A pane opened with
-`nohup sleep 4343 >/dev/null 2>&1 & sleep 4242`, then closed with `workspace.pane.close.v1`:
+`nohup sleep 4343 >/dev/null 2>&1 & sleep 4242`, then closed with the pane-close intent:
 
 | process | after the close |
 |---|---|

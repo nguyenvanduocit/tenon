@@ -1,6 +1,7 @@
 // @domain: plugin-contributions
 import AppKit
 import SwiftUI
+import TenonBundledPlugins
 import TenonCore
 import TenonIntentCore
 
@@ -174,7 +175,8 @@ enum PluginViewSnapshot {
                         tabID: store?.catalog.activeTab?.id,
                         paneID: store?.catalog.activeSlotID
                     )
-                }
+                },
+                runtimeFactory: BundledPluginRuntime.factory
             )
             try await intentRuntime.start()
             try await host.loadAll()
@@ -198,7 +200,7 @@ enum PluginViewSnapshot {
                     slotID: slotID
                 )
             }
-            if section?.body != nil || section?.items.isEmpty == false { break }
+            if showsSomething(section) { break }
             try? await Task.sleep(for: .milliseconds(20))
         }
         guard let section else {
@@ -226,6 +228,31 @@ enum PluginViewSnapshot {
                 ?? CGSize(width: 900, height: 620),
             to: request.outputPath
         )
+    }
+
+    /// Whether this section is drawing anything a photograph would show.
+    ///
+    /// "Has a body" is not the same fact: a pane still waiting on an intent round trip
+    /// publishes an empty container, which satisfies `body != nil` and photographs as an
+    /// empty pane. `claude-sessions` does exactly that while it scans. The deadline above
+    /// still ends the wait, so a view whose settled state really is empty is captured as
+    /// empty rather than hanging.
+    private static func showsSomething(_ section: PluginViewSection?) -> Bool {
+        guard let section else { return false }
+        if !section.items.isEmpty { return true }
+        guard let body = section.body else { return false }
+        return showsSomething(body)
+    }
+
+    private static func showsSomething(_ node: PluginViewNode) -> Bool {
+        switch node {
+        case .spacer, .divider:
+            false
+        case .vstack, .hstack, .card, .scroll, .box, .grid, .field, .dragSource, .dropTarget:
+            node.children.contains(where: showsSomething)
+        default:
+            true
+        }
     }
 
     private static func fail(_ message: String) -> Never {

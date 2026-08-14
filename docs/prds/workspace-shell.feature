@@ -124,6 +124,28 @@ Feature: Resume work in a stable native workspace shell
       And slot focused follows for that tab's active pane
       And no public customization or navigation capability is created by the native action
 
+    @req-ws-fr-031 @req-ws-nfr-005 @req-ws-nfr-007 @reorder
+    Scenario: Dragging a workspace row changes the sidebar order under the pointer
+      Given the sidebar displays several workspace rows
+      When the operator drags one row past a neighboring row
+      Then that workspace moves to the insertion place named by the pointer
+      And the active workspace, tabs, panes, roots, and surface identities remain unchanged
+      And exactly one workspace-moved fact describes each settled catalog move
+
+    @req-ws-fr-031 @req-ws-nfr-005 @accessibility @reorder
+    Scenario: Assistive technology can reorder workspaces without a pointer drag
+      Given VoiceOver is focused on a workspace that has a row below it
+      When it activates Move workspace down
+      Then the same typed workspace move places it one row lower
+      And the row's spoken position and completion announcement report its new place
+
+    @req-ws-fr-031 @persistence @reorder
+    Scenario: Workspace order returns after relaunch
+      Given the operator has reordered the workspace rows
+      When the catalog is saved and restored
+      Then the restored workspaces appear in the chosen order
+      And the active workspace remains selected by stable identity
+
     @req-ws-fr-006 @remove-workspace
     Scenario: Removing an inactive workspace does not steal selection
       Given the catalog has at least two workspaces
@@ -297,6 +319,101 @@ Feature: Resume work in a stable native workspace shell
       When a restored terminal is first viewed
       Then it starts a fresh shell rather than claiming old PTY or scrollback continuity
 
+    @req-ws-fr-027 @agent-lens @relaunch
+    Scenario: A pane running an agent comes back reading that session
+      Given a terminal pane whose foreground process is the agent that reported its session
+      When the application quits and is launched again
+      Then that pane comes back reading the recorded session rather than a blank shell
+      And the reading offers to resume the session in place
+      And the pane keeps the working directory its shell would spawn into
+
+    @req-ws-fr-027 @agent-lens @relaunch
+    Scenario: A pane whose agent has already exited comes back as the terminal it was
+      Given a terminal pane whose agent has exited and handed the shell back
+      When the application quits and is launched again
+      Then that pane comes back as a terminal
+
+    @req-ws-fr-027 @agent-lens @degrade
+    Scenario: An agent pane whose transcript is gone still comes back as a terminal
+      Given a saved pane names a session transcript that is no longer readable
+      When the catalog is restored
+      Then that pane comes back as a terminal rather than an empty pane
+
+  Rule: Pane names remain presentation and AI work belongs to pane lifetime
+
+    @req-ws-fr-028 @req-ws-fr-030 @rename @accessibility
+    Scenario: Renaming a pane changes its label without changing its identity
+      Given a pane has a stable identity, content, geometry, and automatic title
+      When the operator chooses Rename from its header menu
+      Then the pane's own title becomes the field the name is typed into
+      And nothing is presented over the shell
+      When the operator types a normalized name and presses Return
+      Then the pane, active tab, and process monitor prefer that custom name
+      And the pane identity, content, geometry, owner, and live surface are unchanged
+      And the custom name survives a relaunch
+      And VoiceOver offers the same Rename action through the same typed mutation
+
+    @req-ws-fr-028 @rename @automatic
+    Scenario: Clearing a pane name restores its automatic content title
+      Given a pane has a custom name and a changing terminal title
+      When the operator empties the title field and commits it
+      Then the custom name is removed
+      And the pane resumes showing the title derived from its content
+
+    @req-ws-fr-028 @req-ws-fr-030 @rename @cancel
+    Scenario: Escape abandons an inline rename and leaves the pane as it was
+      Given the operator is typing a new name on a pane's title
+      When the operator presses Escape
+      Then the pane's title returns to the name it was showing
+      And no rename mutation is recorded
+
+    @req-ws-fr-029 @req-ws-nfr-011 @ai-rename
+    Scenario: AI Rename accepts only one bounded Companion JSON title
+      Given a pane contains work the operator wants summarized as a title
+      When the operator chooses AI Rename
+      Then Tenon snapshots the Companion profile and sends its selected agent one bounded untrusted pane brief
+      And Claude uses JSON output with a JSON schema or Codex uses its JSONL agent-message event
+      And only a response matching the title JSON schema may rename the pane
+      And failure leaves the current pane name unchanged
+
+    @req-ws-fr-030 @ai-rename @attention
+    Scenario: A generating pane reports on its own title and stays usable
+      Given the operator chooses AI Rename on a pane
+      When the Companion task is running
+      Then that pane's title reads "Naming…"
+      And no surface is presented over the shell
+      And the pane keeps its content, its focus, and its own name underneath
+      And another pane may generate its own title at the same time
+
+    @req-ws-fr-030 @ai-rename @failure
+    Scenario: A failed generation says so on the pane and withdraws itself
+      Given AI Rename is generating a title for a pane
+      When the Companion task fails
+      Then that pane's title reads "Rename failed" with the provider's message as its tooltip
+      And after a bounded linger the pane returns to its automatic title with no operator gesture
+      And the pane's custom name is unchanged throughout
+
+    @req-ws-fr-029 @cancel @pane-lifecycle
+    Scenario Outline: Losing the pane cancels its AI rename process
+      Given AI Rename is generating a title for a pane
+      When the pane is removed by <operation>
+      Then Tenon cancels the generation task and terminates its Companion process
+      And no late response can name another pane
+
+      Examples:
+        | operation |
+        | Close Pane |
+        | Close Tab |
+        | Remove Workspace |
+        | application shutdown |
+
+    @req-ws-fr-029 @cancel @tab-switch
+    Scenario: Switching tabs does not kill an AI rename owned by a live pane
+      Given AI Rename is generating a title for a pane
+      When the operator switches to another tab while that pane remains in the catalog
+      Then the generation remains owned by the original pane
+      And a validated result may rename only that pane
+
   Rule: Workspace presentation changes without changing identity
 
     @req-ws-fr-015 @identity
@@ -314,17 +431,26 @@ Feature: Resume work in a stable native workspace shell
       Then both rows may display Payments
       And selecting either row addresses its own stable workspace identity
 
-    @req-ws-fr-016 @req-ws-nfr-005 @req-ws-nfr-006 @appearance
-    Scenario: A workspace can use a curated mark and semantic accent
+    @req-ws-fr-032 @req-ws-nfr-005 @req-ws-nfr-006 @appearance
+    Scenario: A workspace can use an expanded curated mark and semantic accent
       Given the workspace identity form is open
       When the operator chooses a supported mark and accent
-      Then the workspace uses the closed mark and semantic-color vocabulary
+      Then the workspace offers exactly 24 marks and 12 named semantic colours
       And the selected choices have a non-color visual indication
       And the workspace row announces the useful mark and workspace name
 
-    @req-ws-fr-016 @appearance @reset
+    @req-ws-fr-032 @req-ws-nfr-003 @appearance @upload
+    Scenario: An uploaded icon survives its source file
+      Given the workspace identity form is open
+      When the operator chooses a decodable image within the source bounds
+      Then image decoding and normalization run off MainActor
+      And the workspace stores a PNG no larger than 64 by 64 pixels and 128 KiB
+      And moving or deleting the source file does not remove the workspace icon
+      And malformed saved image bytes fall back to the selected system mark
+
+    @req-ws-fr-032 @appearance @reset
     Scenario: Reset restores default presentation without recreating work
-      Given a workspace has a custom name, mark, and accent
+      Given a workspace has a custom name, uploaded icon, and accent
       When the operator resets its identity
       Then the name is derived from its folder
       And the folder mark and the automatic colour are restored
@@ -366,6 +492,14 @@ Feature: Resume work in a stable native workspace shell
       When the edit is submitted
       Then the catalog remains unchanged
       And no identity-changed fact is published
+
+    @req-ws-fr-033 @req-ws-nfr-004 @intent
+    Scenario: An external caller customizes one exact workspace
+      Given a CLI, plugin, or agent sends workspace.identity.set.v1 with workspace UUID scope
+      When its finite name, accent, or icon patch is valid
+      Then the provider calls the same typed identity mutation as the native form
+      And it returns the final complete identity after exactly one identity-changed fact
+      But missing or stale workspace scope never falls back to the selected workspace
 
     @req-ws-fr-021 @preferences
     Scenario: Sidebar layout has one persistence owner

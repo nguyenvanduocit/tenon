@@ -75,11 +75,19 @@ public struct WorkspaceSlot: Equatable, Identifiable, Sendable {
     public let id: UUID
     public internal(set) var rect: GridRect
     public internal(set) var content: SlotContent
+    /// A person-pinned chrome label. `nil` means derive the title from live pane content.
+    public internal(set) var customTitle: String?
 
-    public init(id: UUID = UUID(), rect: GridRect, content: SlotContent = .terminal) {
+    public init(
+        id: UUID = UUID(),
+        rect: GridRect,
+        content: SlotContent = .terminal,
+        customTitle: String? = nil
+    ) {
         self.id = id
         self.rect = rect
         self.content = content
+        self.customTitle = customTitle.flatMap(PaneTitle.sanitized)
     }
 
     public var spatialSlot: SpatialSlot {
@@ -268,6 +276,9 @@ public enum WorkspaceEvent: Equatable, Sendable {
     /// A workspace's name, mark, or tint changed. Nothing below it moved — this is the one
     /// workspace fact that leaves every tab, pane, and selection exactly where it was.
     case workspaceIdentityChanged(UUID)
+    /// A workspace took a different place in the catalog's sidebar order. Its tabs, panes,
+    /// identity, and active selection are unchanged.
+    case workspaceMoved(workspace: UUID, from: Int, to: Int)
     case tabOpened(tab: UUID, workspace: UUID)
     case tabClosed(tab: UUID, workspace: UUID)
     case tabSelected(tab: UUID, workspace: UUID)
@@ -295,6 +306,8 @@ public enum WorkspaceEvent: Equatable, Sendable {
         tab: UUID,
         workspace: UUID
     )
+    /// A pane's optional display label changed. Its UUID, content, geometry, and owner did not.
+    case slotIdentityChanged(slot: UUID, tab: UUID, workspace: UUID)
     case slotMovedToTab(
         slot: UUID,
         fromTab: UUID,
@@ -460,12 +473,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         _ id: UUID,
         to typed: String
     ) -> [WorkspaceEvent] {
-        guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return [] }
-        let name = WorkspaceName.sanitized(typed)
-            ?? WorkspaceName.derived(for: workspaces[index].path)
-        guard name != workspaces[index].name else { return [] }
-        workspaces[index].name = name
-        return [.workspaceIdentityChanged(id)]
+        setWorkspaceIdentity(id, name: typed)
     }
 
     /// Mark and tint this workspace.
@@ -474,10 +482,30 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         _ id: UUID,
         _ appearance: WorkspaceAppearance
     ) -> [WorkspaceEvent] {
-        guard let index = workspaces.firstIndex(where: { $0.id == id }),
-              workspaces[index].appearance != appearance
-        else { return [] }
-        workspaces[index].appearance = appearance
+        setWorkspaceIdentity(id, appearance: appearance)
+    }
+
+    /// Apply one finite presentation patch. `nil` means a field was absent and stays as it
+    /// is; an empty `name` is present and therefore restores the derived folder name.
+    /// Applying name + appearance together publishes one fact and one catalog snapshot,
+    /// which is the atomic typed operation the public intent adapts.
+    @discardableResult
+    public mutating func setWorkspaceIdentity(
+        _ id: UUID,
+        name typedName: String? = nil,
+        appearance: WorkspaceAppearance? = nil
+    ) -> [WorkspaceEvent] {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }) else { return [] }
+
+        let current = workspaces[index]
+        let name = typedName.map {
+            WorkspaceName.sanitized($0) ?? WorkspaceName.derived(for: current.path)
+        } ?? current.name
+        let nextAppearance = appearance ?? current.appearance
+        guard name != current.name || nextAppearance != current.appearance else { return [] }
+
+        workspaces[index].name = name
+        workspaces[index].appearance = nextAppearance
         return [.workspaceIdentityChanged(id)]
     }
 
@@ -509,6 +537,21 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             events.append(.slotFocused(slot: slotID, tab: tab.id, workspace: id))
         }
         return events
+    }
+
+    /// Moves a workspace to another place in the catalog order.
+    ///
+    /// Selection is UUID-owned, so moving either the active workspace or one of its neighbors
+    /// changes only display order. Tabs, panes, roots, and resource identities travel with the
+    /// workspace value untouched.
+    @discardableResult
+    public mutating func moveWorkspace(_ id: UUID, to index: Int) -> [WorkspaceEvent] {
+        guard let from = workspaces.firstIndex(where: { $0.id == id }),
+              index >= 0, index < workspaces.count, index != from
+        else { return [] }
+
+        workspaces.insert(workspaces.remove(at: from), at: index)
+        return [.workspaceMoved(workspace: id, from: from, to: index)]
     }
 
     /// Drop a workspace, keeping at least one alive so the catalog stays valid.
@@ -733,6 +776,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 var events: [WorkspaceEvent] = [
                     .slotClosed(slot: id, tab: tab.id, workspace: workspaceID),
                 ]
+                events.append(contentsOf: closeTabIfEmpty(tab.id, in: workspaceID))
                 if let activeSlotID,
                    activeSlotID != tab.activeSlotID,
                    activeWorkspaceID == workspaceID,
@@ -905,11 +949,18 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     }
 
     @discardableResult
-    public mutating func closeSlot(_ id: UUID) -> [WorkspaceEvent] {
+    public mutating func closeSlot(
+        _ id: UUID,
+        sizing: NewPaneSizing = .unlimited
+    ) -> [WorkspaceEvent] {
         guard let location = activeTabLocation else { return [] }
         let tab = workspaces[location.workspace].tabs[location.tab]
         guard let removedIndex = tab.slots.firstIndex(where: { $0.id == id }),
-              let transaction = SpatialLayout.close(tab.spatialSlots, slotID: id)
+              let transaction = SpatialLayout.close(
+                  tab.spatialSlots,
+                  slotID: id,
+                  maximumAbsorbedWidth: sizing.maximumColumns
+              )
         else { return [] }
 
         let remainingByID = Dictionary(
@@ -949,6 +1000,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 workspace: workspaceID
             ))
         }
+        events.append(contentsOf: closeTabIfEmpty(tab.id, in: workspaceID))
         if let activeSlotID, activeSlotID != tab.activeSlotID {
             events.append(.slotFocused(
                 slot: activeSlotID,
@@ -1029,10 +1081,35 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         return []
     }
 
+    /// Pin a display name to a pane, or clear it back to its content-derived title.
+    @discardableResult
+    public mutating func renameSlot(_ id: UUID, to typed: String) -> [WorkspaceEvent] {
+        let title = PaneTitle.sanitized(typed)
+        for workspaceIndex in workspaces.indices {
+            for tabIndex in workspaces[workspaceIndex].tabs.indices {
+                guard let slotIndex = workspaces[workspaceIndex].tabs[tabIndex].slots
+                    .firstIndex(where: { $0.id == id }),
+                    workspaces[workspaceIndex].tabs[tabIndex].slots[slotIndex].customTitle != title
+                else { continue }
+
+                workspaces[workspaceIndex].tabs[tabIndex].slots[slotIndex].customTitle = title
+                return [
+                    .slotIdentityChanged(
+                        slot: id,
+                        tab: workspaces[workspaceIndex].tabs[tabIndex].id,
+                        workspace: workspaces[workspaceIndex].id
+                    ),
+                ]
+            }
+        }
+        return []
+    }
+
     /// Pop a slot out of its current tab into a brand-new tab, keeping the slot's
     /// identity (so its terminal surface survives) and content. The source tab
-    /// reflows exactly like `closeSlot`; moving a tab's only slot leaves that tab
-    /// empty (a valid state). The new tab becomes active and the moved slot focused.
+    /// reflows exactly like `closeSlot`; moving a tab's only slot closes that empty
+    /// source tab after the new tab exists. The new tab becomes active and the moved
+    /// slot focused.
     @discardableResult
     public mutating func moveSlotToNewTab(_ slotID: UUID) -> [WorkspaceEvent] {
         guard let source = location(ofSlot: slotID) else { return [] }
@@ -1043,7 +1120,8 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         let movedSlot = WorkspaceSlot(
             id: detached.slot.id,
             rect: fullGridRect,
-            content: detached.slot.content
+            content: detached.slot.content,
+            customTitle: detached.slot.customTitle
         )
         let newTab = Tab(
             slots: [movedSlot],
@@ -1069,6 +1147,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             toTab: newTab.id,
             workspace: workspaceID
         ))
+        events.append(contentsOf: closeTabIfEmpty(sourceTabID, in: workspaceID))
         events.append(.tabSelected(tab: newTab.id, workspace: workspaceID))
         events.append(.slotFocused(
             slot: movedSlot.id,
@@ -1111,6 +1190,12 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         guard let detached = detachSlot(slotID, at: source) else { return [] }
 
         workspaces[source.workspace].tabs[targetIndex].slots = placement.slots
+        if let movedIndex = workspaces[source.workspace].tabs[targetIndex].slots
+            .firstIndex(where: { $0.id == slotID })
+        {
+            workspaces[source.workspace].tabs[targetIndex].slots[movedIndex].customTitle =
+                detached.slot.customTitle
+        }
         workspaces[source.workspace].tabs[targetIndex].activeSlotID = slotID
         workspaces[source.workspace].activeTabID = targetTabID
 
@@ -1129,6 +1214,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             toTab: targetTabID,
             workspace: workspaceID
         ))
+        events.append(contentsOf: closeTabIfEmpty(sourceTabID, in: workspaceID))
         if !placement.changed.isEmpty {
             events.append(.slotsResized(
                 slots: placement.changed,
@@ -1193,7 +1279,12 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         workspaces[source.workspace].tabs[targetIndex].slots = insertion.proposal.map {
             spatial in
             if spatial.id == slotID {
-                return WorkspaceSlot(id: slotID, rect: spatial.rect, content: content)
+                return WorkspaceSlot(
+                    id: slotID,
+                    rect: spatial.rect,
+                    content: content,
+                    customTitle: detached.slot.customTitle
+                )
             }
             var slot = targetSlotsByID[spatial.id]!
             slot.rect = spatial.rect
@@ -1217,6 +1308,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             toTab: targetTabID,
             workspace: workspaceID
         ))
+        events.append(contentsOf: closeTabIfEmpty(sourceTabID, in: workspaceID))
         if !changedTargetIDs.isEmpty {
             events.append(.slotsResized(
                 slots: changedTargetIDs,
@@ -1409,6 +1501,19 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         )
     }
 
+    /// Collapse a tab whose last pane just left through a pane-level mutation. The
+    /// workspace's required final tab remains as its empty structural placeholder;
+    /// `closeTab` owns that invariant and the neighboring-tab selection events.
+    private mutating func closeTabIfEmpty(
+        _ tabID: UUID,
+        in workspaceID: UUID
+    ) -> [WorkspaceEvent] {
+        guard let workspace = workspaces.first(where: { $0.id == workspaceID }),
+              workspace.tabs.first(where: { $0.id == tabID })?.slots.isEmpty == true
+        else { return [] }
+        return closeTab(tabID, in: workspaceID)
+    }
+
     private func changedSlotIDs(
         baseline: [SpatialSlot],
         proposal: [SpatialSlot],
@@ -1447,9 +1552,10 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         return nil
     }
 
-    /// Remove a slot from its tab and reflow the survivors, mirroring `closeSlot`'s
-    /// absorption. Returns the removed slot (identity + content intact for reparenting)
-    /// and the ids of any slots that grew to absorb the freed space.
+    /// Remove a slot from its tab and reflow the survivors with the same structural
+    /// absorption as `closeSlot`, but without the close-only configured width cap. Returns
+    /// the removed slot (identity + content intact for reparenting) and the ids of any slots
+    /// that grew to absorb the freed space.
     private mutating func detachSlot(
         _ slotID: UUID,
         at location: (workspace: Int, tab: Int)

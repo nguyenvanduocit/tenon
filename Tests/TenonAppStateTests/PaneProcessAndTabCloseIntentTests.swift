@@ -169,6 +169,28 @@ final class PaneProcessAndTabCloseIntentTests: XCTestCase {
         )
         XCTAssertEqual(store.catalog.activeWorkspace?.tabs.count, 2)
     }
+
+    // MARK: - workspace.pane.close.v2
+
+    func testPaneCloseAlsoClosesItsEmptyTabWhenAnotherTabSurvives() async throws {
+        let store = WorkspaceStore()
+        let closingTabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        let closingPaneID = try XCTUnwrap(store.catalog.activeSlotID)
+        store.newTab(content: .terminal)
+        let survivingTabID = try XCTUnwrap(store.catalog.activeTab?.id)
+        store.selectTab(closingTabID)
+
+        _ = try successReply(
+            await invoke(
+                .workspacePaneClose,
+                scope: InvocationScope(paneID: closingPaneID),
+                bindings: try WorkspaceIntentProvider(store: store).bindings()
+            )
+        )
+
+        XCTAssertEqual(store.catalog.activeWorkspace?.tabs.map(\.id), [survivingTabID])
+        XCTAssertNil(store.catalog.slot(id: closingPaneID))
+    }
 }
 
 // MARK: - Fixture

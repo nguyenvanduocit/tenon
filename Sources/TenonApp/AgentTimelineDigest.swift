@@ -13,6 +13,8 @@ struct AgentEvidenceFact: Identifiable, Equatable, Sendable {
         case assistantMessage
         case reasoning
         case toolRun
+        case plan
+        case changes
         case interaction
         case diagnostic
     }
@@ -51,6 +53,8 @@ extension AgentEvidenceFact.Kind {
         case .assistantMessage: "Agent"
         case .reasoning: "Reasoning"
         case .toolRun: "Tool"
+        case .plan: "Plan"
+        case .changes: "Changes"
         case .interaction: "Decision"
         case .diagnostic: "Diagnostic"
         }
@@ -135,9 +139,8 @@ struct AgentTimelineDigest: Equatable, Sendable {
     ) -> Result<Self, AgentTimelineInsufficiency> {
         guard snapshot.provider != nil else { return .failure(.noSession) }
 
-        // `timelineItems` rather than `sessionTimelineItems`: Chat deliberately hides completed
-        // tool runs so the conversation stays readable, and those runs are exactly what a
-        // milestone about "found the competing writers" has to stand on.
+        // `timelineItems` rather than the Chat read model: Chat folds execution into quiet work
+        // logs, while a milestone must continue to stand on each original evidence fact.
         let items = snapshot.timelineItems
         guard !items.isEmpty else { return .failure(.empty) }
 
@@ -218,6 +221,36 @@ struct AgentTimelineDigest: Equatable, Sendable {
                 isUnsettled: group.state == .running,
                 location: item.sourceLocation
             )
+
+        case .plan(let plan):
+            let body = plan.steps.map { step in
+                "\(step.state.rawValue): \(step.text)"
+            }.joined(separator: " · ")
+            return AgentEvidenceFact(
+                id: item.id,
+                occurredAt: item.occurredAt,
+                kind: .plan,
+                title: "Plan",
+                body: clipped([plan.explanation, body].filter { !$0.isEmpty }.joined(separator: " — ")),
+                isUnsettled: plan.steps.contains(where: { $0.state == .running }),
+                location: item.sourceLocation
+            )
+
+        case .changes(let changeSet):
+            return AgentEvidenceFact(
+                id: item.id,
+                occurredAt: item.occurredAt,
+                kind: .changes,
+                title: "Changes",
+                body: clipped(changeSet.changedPaths.joined(separator: ", ")),
+                isUnsettled: false,
+                location: item.sourceLocation
+            )
+
+        case .work:
+            // `work` exists only in the read model. The digest reads raw snapshot facts so a
+            // fold never becomes a second evidence source.
+            return nil
 
         case .interaction(let request):
             return AgentEvidenceFact(

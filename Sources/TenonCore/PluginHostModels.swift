@@ -184,6 +184,7 @@ public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible
     case installationMissing(PluginID)
     case settingNotDeclared(pluginID: PluginID, key: String)
     case invalidSettingValue(pluginID: PluginID, key: String)
+    case bundledSwiftRuntimeRequiresBundledInventory(PluginID)
     case runtimeFailed(pluginID: PluginID, diagnostic: String)
     case providerActivationFailed(pluginID: PluginID, diagnostic: String)
 
@@ -222,6 +223,8 @@ public enum PluginHostError: Error, Sendable, Equatable, CustomStringConvertible
             "plugin \(pluginID.rawValue) does not declare setting \(key)"
         case let .invalidSettingValue(pluginID, key):
             "setting \(key) for \(pluginID.rawValue) has the wrong value type"
+        case let .bundledSwiftRuntimeRequiresBundledInventory(pluginID):
+            "plugin \(pluginID.rawValue) requests bundled Swift code from an untrusted inventory"
         case let .runtimeFailed(pluginID, diagnostic):
             "plugin runtime \(pluginID.rawValue) failed: \(diagnostic)"
         case let .providerActivationFailed(pluginID, diagnostic):
@@ -278,7 +281,7 @@ public struct PluginHostAuthorization: Sendable {
 
 // MARK: - Runtime boundary  @domain: plugin-host
 
-protocol PluginHostRuntime: AnyObject, Sendable {
+package protocol PluginHostRuntime: AnyObject, Sendable {
     var manifest: PluginManifest { get }
     var directory: URL { get }
 
@@ -310,12 +313,12 @@ protocol PluginHostRuntime: AnyObject, Sendable {
 
 extension PluginRuntime: PluginHostRuntime {}
 
-struct PluginHostRuntimeFactory: Sendable {
-    typealias Make = @Sendable (
+package struct PluginHostRuntimeFactory: Sendable {
+    package typealias Make = @Sendable (
         PluginRuntimeConfiguration
     ) async throws -> any PluginHostRuntime
 
-    static let live = PluginHostRuntimeFactory { configuration in
+    package static let live = PluginHostRuntimeFactory { configuration in
         // Runtime construction waits for a dedicated pinned thread to start. It owns no UI
         // state, so this work must not occupy MainActor during app launch or reload.
         try await Task.detached(priority: .userInitiated) {
@@ -323,9 +326,9 @@ struct PluginHostRuntimeFactory: Sendable {
         }.value
     }
 
-    let make: Make
+    package let make: Make
 
-    init(make: @escaping Make) {
+    package init(make: @escaping Make) {
         self.make = make
     }
 }

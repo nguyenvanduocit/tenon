@@ -1,4 +1,5 @@
-// @domain: plugin-settings
+// @domain: plugin-settings, companion
+import AppKit
 import SwiftUI
 import TenonCore
 import TenonIntentCore
@@ -6,9 +7,9 @@ import TenonIntentCore
 /// The Settings window (⌘,), styled like modern macOS System Settings: a source-list
 /// sidebar on the left, a grouped `Form` detail on the right.
 ///
-/// The sidebar is **flat** — General, then one entry per plugin that declares settings
+/// The sidebar is **flat** — General, Companion, then one entry per plugin that declares settings
 /// (drawn generically from its manifest, no plugin-specific Swift), then the host's own
-/// pages: Automation, Permissions, CLI, and Extensions for enable/permissions of every
+/// pages: Automation, Permissions, CLI, Agent Harness, and Extensions for enable/permissions of every
 /// plugin. A plugin's settings pane looks exactly like a built-in one because the same
 /// `PluginSettingsForm` renders both.
 struct SettingsView: View {
@@ -27,6 +28,7 @@ struct SettingsView: View {
         NavigationSplitView {
             List(selection: $route) {
                 sidebarRow(.general, "General", "gearshape.fill")
+                sidebarRow(.companion, "Companion", "sparkles")
 
                 if !settingsPlugins.isEmpty {
                     Section("Plugins") {
@@ -44,6 +46,7 @@ struct SettingsView: View {
                     sidebarRow(.automation, "Automation", "clock.arrow.circlepath")
                     sidebarRow(.permissions, "Permissions", "hand.raised.fill")
                     sidebarRow(.cli, "CLI", "terminal.fill")
+                    sidebarRow(.agentHarness, "Agent Harness", "graduationcap.fill")
                     sidebarRow(.extensions, "Extensions", "puzzlepiece.extension.fill")
                 }
             }
@@ -53,7 +56,7 @@ struct SettingsView: View {
         } detail: {
             detail
         }
-        .frame(minWidth: 730, idealWidth: 760, minHeight: 470, idealHeight: 560)
+        .frame(minWidth: 730, idealWidth: 760, minHeight: 560, idealHeight: 660)
     }
 
     private func sidebarRow(
@@ -75,12 +78,16 @@ struct SettingsView: View {
         switch route {
         case .general:
             GeneralSettingsDetail(prefs: prefs).navigationTitle("General")
+        case .companion:
+            CompanionSettingsDetail(prefs: prefs).navigationTitle("Companion")
         case .automation:
             AutomationSettingsDetail(prefs: prefs).navigationTitle("Automation")
         case .permissions:
             PermissionsSettingsDetail(prefs: prefs).navigationTitle("Permissions")
         case .cli:
             CLISettingsDetail(instanceChannel: instanceChannel).navigationTitle("CLI")
+        case .agentHarness:
+            AgentHarnessSettingsDetail().navigationTitle("Agent Harness")
         case .extensions:
             ExtensionsDetail(host: host).navigationTitle("Extensions")
         case .plugin(let pluginID):
@@ -100,11 +107,143 @@ struct SettingsView: View {
 
 private enum SettingsRoute: Hashable {
     case general
+    case companion
     case automation
     case permissions
     case cli
+    case agentHarness
     case extensions
     case plugin(PluginID)
+}
+
+// MARK: - Companion  @domain: companion
+
+/// Defaults for short host-owned AI assistance. A feature may expose a deliberate per-run
+/// override, but otherwise it takes one snapshot of this profile when its task starts.
+struct CompanionSettingsDetail: View {
+    @Bindable var prefs: AppPreferencesStore
+    @State private var installedAgents: Set<AgentCLI> = []
+    @State private var didCheckAgents = false
+    @FocusState private var promptFocused: Bool
+
+    private var profile: CompanionProfile { prefs.preferences.companion }
+
+    var body: some View {
+        Form {
+            Section {
+                Picker("Agent", selection: $prefs.preferences.companion.agent) {
+                    ForEach(AgentCLI.allCases) { agent in
+                        Text(agent.label).tag(agent)
+                    }
+                }
+
+                TextField(
+                    "Model",
+                    text: $prefs.preferences.companion.model,
+                    prompt: Text("Provider default")
+                )
+                .accessibilityHint("Leave blank to use the agent's configured default model.")
+
+                LabeledContent("Availability") {
+                    if !didCheckAgents {
+                        ProgressView()
+                            .controlSize(.small)
+                            .accessibilityLabel("Checking installed agents")
+                    } else if installedAgents.contains(profile.agent) {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                    } else {
+                        Label("Not found", systemImage: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                    }
+                }
+            } header: {
+                Text("Assistant")
+            } footer: {
+                Text("These are defaults for Tenon's host-native AI helpers. A task with its own visible agent or model controls may override them for that run.")
+            }
+
+            Section {
+                LabeledContent("Working folder") {
+                    HStack(spacing: 8) {
+                        Text(profile.workingDirectory.isEmpty
+                            ? "Task default"
+                            : profile.workingDirectory)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+
+                        if !profile.workingDirectory.isEmpty {
+                            Button("Clear") {
+                                prefs.preferences.companion.workingDirectory = ""
+                            }
+                        }
+                        Button("Choose…") { chooseWorkingDirectory() }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 7) {
+                    Text("Custom prompt")
+                        .font(.callout)
+
+                    TextEditor(text: $prefs.preferences.companion.customPrompt)
+                        .font(TenonTheme.interfaceFont(size: 12))
+                        .scrollContentBackground(.hidden)
+                        .padding(8)
+                        .frame(minHeight: 84)
+                        .background(TenonTheme.panel)
+                        .clipShape(RoundedRectangle(cornerRadius: 6))
+                        .overlay {
+                            RoundedRectangle(cornerRadius: 6)
+                                .stroke(
+                                    promptFocused ? TenonTheme.amber : TenonTheme.line,
+                                    lineWidth: promptFocused ? 2 : 1
+                                )
+                        }
+                        .focused($promptFocused)
+                        .accessibilityLabel("Companion instructions")
+
+                    HStack {
+                        Text("Applied before task instructions")
+                        Spacer()
+                        Text("\(profile.customPrompt.utf8.count) / \(CompanionProfile.maximumPromptBytes) bytes")
+                            .monospacedDigit()
+                            .accessibilityLabel(
+                                "\(profile.customPrompt.utf8.count) of \(CompanionProfile.maximumPromptBytes) bytes used"
+                            )
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            } header: {
+                Text("Personalization")
+            } footer: {
+                Text("Instructions set stable tone, terminology, or language; task schemas and safety rules still win. Depending on the provider and task, files in the chosen folder may be available to the agent.")
+            }
+        }
+        .tenonScrollbarStyle()
+        .formStyle(.grouped)
+        .task {
+            installedAgents = Set(await AgentExecutableLocator.scanLive().keys)
+            didCheckAgents = true
+        }
+    }
+
+    private func chooseWorkingDirectory() {
+        let panel = NSOpenPanel()
+        panel.title = Shell.text("Choose Companion Working Folder")
+        panel.prompt = Shell.text("Choose")
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        if let current = profile.workingDirectoryURL {
+            panel.directoryURL = current
+        }
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        prefs.preferences.companion.workingDirectory = url.standardizedFileURL.path
+    }
 }
 
 /// A white SF Symbol on a rounded, tinted square — the macOS System Settings sidebar glyph.
@@ -304,6 +443,131 @@ private struct CLISettingsDetail: View {
     }
 }
 
+// MARK: - Agent Harness  @domain: agent-control
+
+/// The "Agent Harness" page: one button that teaches every agent on this machine what Tenon
+/// is and what it can do about it.
+///
+/// The page names the exact files it writes and offers Remove beside Install, because these
+/// are the person's own global instruction files — loaded into every session they ever run,
+/// including the ones that have nothing to do with Tenon. A settings page that edits those
+/// silently, or that can only add, would not have earned the right to be a button.
+private struct AgentHarnessSettingsDetail: View {
+    private let installer = AgentHarnessInstaller()
+    @State private var status = AgentHarnessInstaller.Status()
+    @State private var isWorking = false
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Teach your agents about Tenon")
+                        .font(.headline)
+                    Text("Installs a short briefing into the instructions your agents already "
+                        + "read at the start of every session: that they are running in a "
+                        + "Tenon pane, how to label their own tab so you can see what each "
+                        + "one is working on, how to resolve their pane and workspace, and "
+                        + "how to ask you a real question instead of stalling.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Section {
+                HStack(spacing: 10) {
+                    Button(installButtonTitle) { install() }
+                        .disabled(isWorking)
+
+                    if status.state == .current {
+                        Label("Installed", systemImage: "checkmark.circle.fill")
+                            .foregroundStyle(.green)
+                            .font(.callout)
+                    } else if status.state == .outdated {
+                        Label("Update available", systemImage: "arrow.triangle.2.circlepath")
+                            .foregroundStyle(.orange)
+                            .font(.callout)
+                    }
+
+                    Spacer()
+
+                    if status.state != .absent {
+                        Button("Remove") { remove() }
+                            .disabled(isWorking)
+                    }
+                }
+
+                if let errorMessage {
+                    Label(errorMessage, systemImage: "exclamationmark.triangle.fill")
+                        .foregroundStyle(.red)
+                        .font(.caption)
+                }
+            } header: {
+                Text("Installation")
+            } footer: {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(AgentHarnessInstaller.Target.allCases, id: \.relativePath) { target in
+                        Text("~/\(target.relativePath)")
+                            .font(.system(.caption, design: .monospaced))
+                            .textSelection(.enabled)
+                    }
+                    Text("The two instruction files keep everything you wrote in them: the "
+                        + "briefing goes between Tenon's own markers, and Remove takes only "
+                        + "what is between them. The skill file belongs to Tenon entirely.")
+                        .font(.caption)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+
+            Section {
+                Text("The briefing describes `tenon-cli`. Install it on the CLI page first, or "
+                    + "an agent that reads this will find no command to run.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+            } header: {
+                Text("Requires")
+            }
+        }
+        .tenonScrollbarStyle()
+        .formStyle(.grouped)
+        .task { refresh() }
+    }
+
+    private var installButtonTitle: String {
+        switch status.state {
+        case .absent: "Install Harness"
+        case .current: "Reinstall Harness"
+        case .outdated: "Update Harness"
+        }
+    }
+
+    private func install() {
+        perform { try installer.install() }
+    }
+
+    private func remove() {
+        perform { try installer.remove() }
+    }
+
+    private func perform(_ work: @escaping () throws -> Void) {
+        isWorking = true
+        errorMessage = nil
+        do {
+            try work()
+        } catch {
+            errorMessage = "\(error)"
+        }
+        refresh()
+        isWorking = false
+    }
+
+    private func refresh() {
+        status = installer.status()
+    }
+}
+
 // MARK: - General  @domain: plugin-settings
 
 private struct GeneralSettingsDetail: View {
@@ -315,22 +579,26 @@ private struct GeneralSettingsDetail: View {
                 paneContentPicker("New tab opens", selection: $prefs.preferences.newTabContent)
                 paneContentPicker("New split opens", selection: $prefs.preferences.newSplitContent)
                 paneContentPicker("New workspace opens", selection: $prefs.preferences.newWorkspaceContent)
-                Picker("Widest a new pane opens", selection: $prefs.preferences.newPaneMaximumWidth) {
+                Picker("Maximum automatic pane width", selection: $prefs.preferences.newPaneMaximumWidth) {
                     Text("As wide as it fits").tag(SpatialExtentFraction?.none)
                     ForEach(SpatialExtentFraction.allCases, id: \.self) { fraction in
                         Text(fraction.label).tag(SpatialExtentFraction?.some(fraction))
                     }
                 }
+                .accessibilityLabel("Maximum automatic pane width")
+                .accessibilityHint(
+                    "Limits pane width when opening a pane or absorbing space after a close."
+                )
             } header: {
-                Text("New panes")
+                Text("Pane defaults")
             } footer: {
-                Text("The view a freshly opened pane starts on, and how much of the canvas "
-                    + "it may take when it opens. The width is a starting size only — drag "
-                    + "any pane's border past it, and panes already open keep their size.")
+                Text("Choose what a freshly opened pane starts on. The width limit applies "
+                    + "when a pane opens and when a neighboring pane closes. Changing it "
+                    + "does not resize existing panes, and you can still drag beyond it.")
             }
 
             Section("Sidebar") {
-                Toggle("Show workspace sidebar on launch", isOn: $prefs.preferences.sidebarVisibleOnLaunch)
+                Toggle("Expand workspace sidebar on launch", isOn: $prefs.preferences.sidebarVisibleOnLaunch)
                 LabeledContent("Default width") {
                     HStack(spacing: 10) {
                         Slider(

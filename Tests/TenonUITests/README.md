@@ -25,6 +25,8 @@ The shell publishes these identifiers from the SwiftUI/AppKit views in `Sources/
 | `tenon.launcher` | the shared launcher popover | proves `+` and a tab secondary-click reach one presentation |
 | `tenon.launcher.search` | the shared launcher's search field | distinguishes the searchable launcher from a native context menu |
 | `tenon.launcher.copyTabID` | the tab launcher's fixed Copy Tab ID row | proves unifying the launcher does not remove the tab identity utility |
+| `tenon.launcher.arrangePanes` | the tab launcher's fixed Arrange Panes row | proves multi-pane tabs expose the host-native cascading layout utility |
+| `tenon.launcher.arrangement.<preset>` | each row in the Arrange Panes submenu | proves hover reveals a preset and a click reaches whole-tab geometry |
 | `tenon.launcher.row.<commandID>` | each row in the shared launcher popover | proves the popover projects plugin-declared launcher intents, and that clicking one invokes that plugin |
 | `tenon.canvas`  | the active tab's spatial-canvas container    | launch/readiness anchor; scopes slot lookups |
 | `tenon.slot`    | each slot view on the canvas (same id on all)| counts slots — split/close change the count; drag reorders them |

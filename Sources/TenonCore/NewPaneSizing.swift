@@ -1,12 +1,15 @@
 // @domain: workspace-model
 import Foundation
 
-/// The widest a *newly created* pane may be, chosen once in Settings and applied by every
-/// path that opens one.
+/// The widest a pane may become through automatic layout, chosen once in Settings and
+/// applied by every path that opens one and by close-time absorption. The creation-oriented
+/// type name is retained because it is already threaded through every creation API; its
+/// value now also governs the one automatic resize that follows an actual close.
 ///
-/// This is a constraint on creation, not a lock on the pane. The person drags its borders
-/// afterwards exactly as before, and changing the preference never moves a pane that
-/// already exists — the value is read when a pane is born and never consulted again.
+/// This is not a lock on the pane. The person drags its borders afterwards exactly as
+/// before, and changing the preference by itself never moves a pane that already exists.
+/// Automatic layout reads the current value when it creates a pane or gives released width
+/// to a surviving pane.
 ///
 /// The width vocabulary is the canvas's own `SpatialExtentFraction`: the same three
 /// destinations the pane border's contextual menu offers, so Settings and the border name
@@ -16,7 +19,7 @@ import Foundation
 /// so no stored value describes a pane too narrow to exist, and a value the current build
 /// cannot name decodes back to `unlimited`. There is no range to validate at the edge.
 public struct NewPaneSizing: Equatable, Sendable {
-    /// Creation bounded only by the space the layout offers — what Tenon does when the
+    /// Automatic layout bounded only by the space it offers — what Tenon does when the
     /// preference is unset, and the default wherever a caller supplies no policy.
     public static let unlimited = NewPaneSizing(maximumWidth: nil)
 
@@ -26,7 +29,7 @@ public struct NewPaneSizing: Equatable, Sendable {
         self.maximumWidth = maximumWidth
     }
 
-    /// The maximum in canvas columns, or nil while creation is unbounded. Floored at
+    /// The maximum in canvas columns, or nil while automatic layout is unbounded. Floored at
     /// `SpatialLayout.minimumWidth`, so a fraction can only ever ask for a pane the layout
     /// accepts — without the floor a vocabulary or canvas change lands as a `Tab.init`
     /// precondition crash at the moment a pane is created. That the floor never has to

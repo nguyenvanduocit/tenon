@@ -10,6 +10,7 @@ import TenonCore
 ///     TENON_TIMELINE_SNAPSHOT_SIZE=380x620 TENON_TIMELINE_SNAPSHOT=/tmp/narrow.png swift run tenon
 ///     TENON_TIMELINE_SNAPSHOT_STATE=running swift run tenon
 ///     TENON_TIMELINE_SNAPSHOT_STATE=question swift run tenon
+///     TENON_TIMELINE_SNAPSHOT_STATE=work swift run tenon
 ///     TENON_TIMELINE_ACCESSIBILITY_HOLD=30 TENON_TIMELINE_SNAPSHOT_STATE=question swift run tenon
 ///
 /// A test proves a view tree has the right *shape* and says nothing about its geometry —
@@ -44,7 +45,7 @@ enum AgentTimelineSnapshot {
             questions: questions,
             resolveTimelineSynthesizer: { _ in SnapshotSynthesizer(state: state) }
         )
-        model.account = state == "question" ? .chat : .timeline
+        model.account = ["question", "work"].contains(state) ? .chat : .timeline
         model.receive(["insufficient", "question"].contains(state) ? shortSession() : session)
         model.start()
 
@@ -96,7 +97,7 @@ enum AgentTimelineSnapshot {
         // `insufficient` is drawn from the snapshot, not from a generation, so asking for a
         // reading there would be asking the account to refuse one — the picture is the same
         // either way, and this says which state is being photographed.
-        if !["idle", "insufficient", "question"].contains(state) {
+        if !["idle", "insufficient", "question", "work"].contains(state) {
             model.generateTimeline()
             // `running` is photographed mid-flight, once the run has said something about
             // itself — a picture taken before the first report would show the launching state
@@ -122,18 +123,14 @@ enum AgentTimelineSnapshot {
         headers.publish(
             AgentLensPaneHeader.header(
                 isAgentDetected: true,
-                provider: .claude,
-                status: session.status,
-                currentAction: session.currentActionSummary,
-                hasDiagnostics: false,
                 presentation: .session,
                 showsInspector: false,
-                account: .timeline
+                account: model.account
             ),
             for: slot.id
         )
 
-        let content = if state == "question" {
+        let content = if ["question", "work"].contains(state) {
             AnyView(
                 AgentSessionView(
                     model: model,
@@ -321,6 +318,48 @@ enum AgentTimelineSnapshot {
                 )
             )
         }
+        let activeTurn = AgentTurnID.derived(from: "u2")
+        snapshot.plans = [
+            AgentPlanUpdate(
+                id: "turn:u2",
+                turnID: activeTurn,
+                explanation: "Verify the routing owner before shipping",
+                steps: [
+                    AgentPlanStep(id: "p0", text: "Reproduce the loop", state: .completed),
+                    AgentPlanStep(id: "p1", text: "Move focus ownership", state: .completed),
+                    AgentPlanStep(id: "p2", text: "Run the full suite", state: .running),
+                ],
+                evidence: evidence("plan", at: 395)
+            ),
+        ]
+        snapshot.changeSets = [
+            AgentChangeSet(
+                id: "turn:u2",
+                turnID: activeTurn,
+                unifiedDiff: "diff --git a/PaneFocusRouting.swift b/PaneFocusRouting.swift",
+                changedPaths: ["PaneFocusRouting.swift", "PaneFocusRoutingTests.swift"],
+                evidence: evidence("changes", at: 400)
+            ),
+        ]
+        snapshot.contextUsage = AgentContextUsage(
+            turnID: activeTurn,
+            last: AgentTokenUsage(
+                inputTokens: 41_000,
+                cachedInputTokens: 8_000,
+                outputTokens: 3_400,
+                reasoningOutputTokens: 1_200,
+                totalTokens: 45_600
+            ),
+            total: AgentTokenUsage(
+                inputTokens: 93_000,
+                cachedInputTokens: 18_000,
+                outputTokens: 8_100,
+                reasoningOutputTokens: 2_400,
+                totalTokens: 103_500
+            ),
+            modelContextWindow: 200_000,
+            evidence: evidence("usage", at: 405)
+        )
         return snapshot
     }
 

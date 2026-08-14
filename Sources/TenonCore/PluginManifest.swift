@@ -2,6 +2,17 @@
 import Foundation
 import TenonIntentCore
 
+/// The code backend used by one manifest-backed plugin generation.
+///
+/// `bundledSwift` is deliberately not a general native extension ABI. It names Swift code
+/// compiled into this exact Tenon build; `PluginHost` admits it only from a host-controlled
+/// bundled inventory. The manifest still owns identity, enablement, declarations, and
+/// lifecycle regardless of which backend implements them.
+public enum PluginRuntimeKind: String, Sendable, Equatable, Codable {
+    case javaScript = "javascript"
+    case bundledSwift = "bundled-swift"
+}
+
 /// Everything a plugin declares about itself, verbatim from `manifest.json`.
 public struct PluginManifest: Sendable, Equatable, Codable {
     /// Stable authority and namespace identity. Directory names and display names are not
@@ -9,6 +20,8 @@ public struct PluginManifest: Sendable, Equatable, Codable {
     public let id: PluginID
     public let name: String
     public let version: String
+    /// How this plugin's implementation is loaded. Existing manifests default to JavaScript.
+    public let runtime: PluginRuntimeKind
     public let permissions: [String]
     public let intents: PluginIntentManifest
     public let settings: [PluginSettingSpec]
@@ -30,6 +43,7 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         id: PluginID,
         name: String,
         version: String,
+        runtime: PluginRuntimeKind = .javaScript,
         permissions: [String] = [],
         intents: PluginIntentManifest = PluginIntentManifest(),
         settings: [PluginSettingSpec] = [],
@@ -42,6 +56,7 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         self.id = id
         self.name = name
         self.version = version
+        self.runtime = runtime
         self.permissions = permissions
         self.intents = intents
         self.settings = settings
@@ -58,6 +73,10 @@ public struct PluginManifest: Sendable, Equatable, Codable {
         id = try c.decode(PluginID.self, forKey: .id)
         name = try c.decode(String.self, forKey: .name)
         version = try c.decode(String.self, forKey: .version)
+        runtime = try c.decodeIfPresent(
+            PluginRuntimeKind.self,
+            forKey: .runtime
+        ) ?? .javaScript
         permissions = try c.decodeIfPresent([String].self, forKey: .permissions) ?? []
         // The envelope itself stays required: stating what a plugin uses and provides,
         // even as two empty lists, is a deliberate act by its author
@@ -621,9 +640,11 @@ public enum PluginLoader {
         } catch {
             throw PluginLoadError.manifestInvalid(describedPath, "\(error)")
         }
-        let entrypoint = entrypoint(for: url)
-        guard FileManager.default.fileExists(atPath: entrypoint.path) else {
-            throw PluginLoadError.entrypointMissing(entrypoint.path)
+        if manifest.runtime == .javaScript {
+            let entrypoint = entrypoint(for: url)
+            guard FileManager.default.fileExists(atPath: entrypoint.path) else {
+                throw PluginLoadError.entrypointMissing(entrypoint.path)
+            }
         }
         return manifest
     }

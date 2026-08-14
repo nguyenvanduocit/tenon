@@ -38,10 +38,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 49, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 49)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 49)
-        XCTAssertEqual(compiled.dispatchRules.count, 49)
+        XCTAssertEqual(revisions, Array(repeating: 51, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 51)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 51)
+        XCTAssertEqual(compiled.dispatchRules.count, 51)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -65,8 +65,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 49)
-        XCTAssertEqual(actualNames.count, 49)
+        XCTAssertEqual(Set(actualNames).count, 51)
+        XCTAssertEqual(actualNames.count, 51)
 
         let forbiddenFragments = [
             "tenon.",
@@ -130,6 +130,24 @@ final class CoreIntentCatalogTests: XCTestCase {
             .objectValue?["items"]?.objectValue?["properties"]?.objectValue
         XCTAssertNotNil(entry?["sizeBytes"])
         XCTAssertNotNil(entry?["modifiedAt"])
+    }
+
+    /// Closing a pane now also closes its empty tab when another tab survives. That is an
+    /// observable destructive side effect, so the executable compatibility table forbids
+    /// silently teaching the retained v1 contract the new meaning.
+    func testPaneCloseSideEffectChangeMintedV2AndRemovedV1() throws {
+        XCTAssertNil(CoreIntentName(rawValue: "workspace.pane.close.v1"))
+        XCTAssertEqual(
+            CoreIntentName.workspacePaneClose.rawValue,
+            "workspace.pane.close.v2"
+        )
+
+        let definition = try XCTUnwrap(
+            try CoreIntentCatalog.definitions().first {
+                $0.declaration.name.rawValue == "workspace.pane.close.v2"
+            }
+        )
+        XCTAssertTrue(definition.declaration.description?.contains("final pane") == true)
     }
 
     func testEverySchemaHasTheExactTopLevelShapeAndClosedObjectBoundaries() throws {
@@ -683,6 +701,49 @@ final class CoreIntentCatalogTests: XCTestCase {
         )
     }
 
+    func testWorkspaceIdentityContractIsANonemptyClosedPatch() async throws {
+        let compiled = try await CoreIntentCatalog(components: makeKernel()).install()
+        let identity = try contract(.workspaceIdentitySet, in: compiled)
+        let workspaceID = UUID()
+
+        XCTAssertTrue(
+            try identity.validateInput(
+                .object([
+                    "name": .string("Infra"),
+                    "accent": .string("teal"),
+                    "icon": .object([
+                        "kind": .string("symbol"),
+                        "name": .string("server"),
+                    ]),
+                ])
+            ).isValid
+        )
+        XCTAssertFalse(try identity.validateInput(.object([:])).isValid)
+        XCTAssertFalse(
+            try identity.validateInput(
+                .object([
+                    "icon": .object([
+                        "kind": .string("symbol"),
+                        "name": .string("unknown"),
+                    ]),
+                ])
+            ).isValid
+        )
+        XCTAssertTrue(
+            try identity.validateOutput(
+                .object([
+                    "workspaceID": .string(workspaceID.uuidString),
+                    "name": .string("Infra"),
+                    "accent": .string("teal"),
+                    "icon": .object([
+                        "kind": .string("symbol"),
+                        "name": .string("server"),
+                    ]),
+                ])
+            ).isValid
+        )
+    }
+
     func testCapabilityInventoryAndArgumentBindingsAreExact() throws {
         let definitions = try CoreIntentCatalog.definitions()
         let expectedCapabilities = expectedCapabilityIDs()
@@ -843,7 +904,11 @@ final class CoreIntentCatalogTests: XCTestCase {
         )
 
         // 48 → 49 (T-139): one bounded evidence-backed question with a pane-owned record.
-        XCTAssertEqual(CoreIntentName.allCases.count, 49)
+        // 49 → 50 (T-147): an agent labels its own pane, so the harness Tenon installs into
+        // a person's global agent instructions describes a capability that exists.
+        // 50 → 51 (T-154): one finite identity patch exposes the workspace name, colour,
+        // and icon that the native form already owns, on the existing workspace lane.
+        XCTAssertEqual(CoreIntentName.allCases.count, 51)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -890,6 +955,7 @@ final class CoreIntentCatalogTests: XCTestCase {
             .network: [.networkFetch],
             .workspace: [
                 .workspaceState,
+                .workspaceIdentitySet,
                 .workspacePaneOwner,
                 .workspaceTabCreate,
                 .workspaceTabFocus,
@@ -898,6 +964,7 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .workspacePaneFocus,
                 .workspacePaneClose,
                 .workspacePaneContentSet,
+                .workspacePaneTitleSet,
                 .workspaceContentOpen,
                 .workspaceTabNext,
                 .workspaceTabPrevious,
@@ -1210,6 +1277,12 @@ private extension CoreIntentCatalogTests {
                     "nextCursor",
                 ]
             ),
+            .workspaceIdentitySet: SchemaShape(
+                ["name", "accent", "icon"],
+                required: [],
+                output: ["workspaceID", "name", "accent", "icon"],
+                requiredOutput: ["workspaceID", "name", "accent", "icon"]
+            ),
             .workspacePaneOwner: SchemaShape(
                 ["paneID"],
                 required: ["paneID"],
@@ -1235,6 +1308,12 @@ private extension CoreIntentCatalogTests {
             .workspacePaneContentSet: SchemaShape(
                 ["content"],
                 required: ["content"],
+                output: [],
+                requiredOutput: []
+            ),
+            .workspacePaneTitleSet: SchemaShape(
+                ["title"],
+                required: ["title"],
                 output: [],
                 requiredOutput: []
             ),
@@ -1326,6 +1405,7 @@ private extension CoreIntentCatalogTests {
             .secretsSet: ["secrets"],
             .secretsDelete: ["secrets"],
             .workspaceState: [],
+            .workspaceIdentitySet: ["workspace.control"],
             .workspacePaneOwner: [],
             .workspaceTabCreate: ["workspace.control"],
             .workspaceTabFocus: ["workspace.control"],
@@ -1334,6 +1414,7 @@ private extension CoreIntentCatalogTests {
             .workspacePaneFocus: ["workspace.control"],
             .workspacePaneClose: ["workspace.control"],
             .workspacePaneContentSet: ["workspace.control"],
+            .workspacePaneTitleSet: ["workspace.control"],
             .workspaceContentOpen: ["workspace.control"],
             .workspaceTabNext: ["workspace.control"],
             .workspaceTabPrevious: ["workspace.control"],

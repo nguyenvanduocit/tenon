@@ -1,4 +1,4 @@
-// @domain: workspace-model
+// @domain: workspace-model, companion
 import Foundation
 import TenonIntentCore
 
@@ -49,16 +49,30 @@ public enum DefaultPaneContent: String, CaseIterable, Codable, Sendable {
 /// selection. The terminal palette is ghostty's own config and untouched here.
 public enum AccentColor: String, CaseIterable, Codable, Sendable {
     case amber
+    case red
+    case orange
+    case yellow
     case blue
+    case cyan
     case green
+    case mint
+    case teal
+    case indigo
     case purple
     case pink
 
     public var label: String {
         switch self {
         case .amber: return "Amber"
+        case .red: return "Red"
+        case .orange: return "Orange"
+        case .yellow: return "Yellow"
         case .blue: return "Blue"
+        case .cyan: return "Cyan"
         case .green: return "Green"
+        case .mint: return "Mint"
+        case .teal: return "Teal"
+        case .indigo: return "Indigo"
         case .purple: return "Purple"
         case .pink: return "Pink"
         }
@@ -68,8 +82,15 @@ public enum AccentColor: String, CaseIterable, Codable, Sendable {
     public var hex: UInt32 {
         switch self {
         case .amber: return 0xE6A33A
+        case .red: return 0xE17070
+        case .orange: return 0xE19F70
+        case .yellow: return 0xE1CE70
         case .blue: return 0x4C8DFF
+        case .cyan: return 0x70C3E1
         case .green: return 0x4CC38A
+        case .mint: return 0x70E1CA
+        case .teal: return 0x36B7B4
+        case .indigo: return 0x7092E1
         case .purple: return 0x9B7BFF
         case .pink: return 0xF06AA0
         }
@@ -84,9 +105,9 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     public var newTabContent: DefaultPaneContent
     public var newSplitContent: DefaultPaneContent
     public var newWorkspaceContent: DefaultPaneContent
-    /// The widest a pane may be when it is created, or nil to let the layout decide as it
-    /// always has. Read at creation only, so raising or lowering it never disturbs a pane
-    /// already on the canvas.
+    /// The widest automatic layout may make a pane through creation or close-time absorption,
+    /// or nil to let the layout decide as it always has. Changing the value alone never
+    /// disturbs a pane already on the canvas, and manual resize remains unrestricted.
     public var newPaneMaximumWidth: SpatialExtentFraction?
     public var sidebarVisibleOnLaunch: Bool
     public var sidebarWidth: Double
@@ -107,6 +128,9 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     /// invocation either way, exactly as they are behind standing consent. It answers the
     /// confirmation phase and nothing else.
     public var bypassAllPermissionPrompts: Bool
+    /// Defaults shared by short host-owned AI assistance tasks. Per-run controls may override
+    /// these values, but no feature should invent another persistent provider preference.
+    public var companion: CompanionProfile
 
     public init(
         newTabContent: DefaultPaneContent = .terminal,
@@ -118,7 +142,8 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         accent: AccentColor = .amber,
         automationSchedulesEnabled: Bool = true,
         pausedAutomationSchedules: Set<AutomationScheduleKey> = [],
-        bypassAllPermissionPrompts: Bool = true
+        bypassAllPermissionPrompts: Bool = true,
+        companion: CompanionProfile = CompanionProfile()
     ) {
         self.newTabContent = newTabContent
         self.newSplitContent = newSplitContent
@@ -130,6 +155,7 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         self.automationSchedulesEnabled = automationSchedulesEnabled
         self.pausedAutomationSchedules = pausedAutomationSchedules
         self.bypassAllPermissionPrompts = bypassAllPermissionPrompts
+        self.companion = companion
     }
 
     public init(from decoder: any Decoder) throws {
@@ -172,5 +198,9 @@ public struct AppPreferences: Equatable, Sendable, Codable {
             Bool.self,
             forKey: .bypassAllPermissionPrompts
         ) ?? defaults.bypassAllPermissionPrompts
+        // Companion was added after the original preferences document. An unknown future
+        // provider costs this field only; workspace and permission choices still load.
+        companion = (try? container.decode(CompanionProfile.self, forKey: .companion))
+            ?? defaults.companion
     }
 }

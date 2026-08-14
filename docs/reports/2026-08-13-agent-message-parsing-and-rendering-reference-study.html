@@ -1,0 +1,739 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Agent message parsing &amp; rendering — Reference study for Tenon</title>
+  <style>
+    :root {
+      --bg: #f4f5f7;
+      --paper: #ffffff;
+      --paper-2: #f8f9fb;
+      --ink: #17202a;
+      --muted: #65717f;
+      --line: #dce1e7;
+      --line-strong: #c8d0da;
+      --blue: #2c63d8;
+      --blue-soft: #eaf0ff;
+      --green: #117a55;
+      --green-soft: #e8f7f1;
+      --amber: #9a6500;
+      --amber-soft: #fff4d8;
+      --red: #bd3944;
+      --red-soft: #ffeaec;
+      --purple: #7651c9;
+      --purple-soft: #f0ebff;
+      --code: #eff2f6;
+      --shadow: 0 14px 45px rgba(26, 35, 48, .07);
+      --radius: 14px;
+      --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+      --sans: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --bg: #0e1116;
+        --paper: #151a21;
+        --paper-2: #11161c;
+        --ink: #edf1f6;
+        --muted: #9ba6b4;
+        --line: #29313c;
+        --line-strong: #394452;
+        --blue: #85a8ff;
+        --blue-soft: #1b2947;
+        --green: #6dd5ab;
+        --green-soft: #143128;
+        --amber: #efc46d;
+        --amber-soft: #372a12;
+        --red: #ff929c;
+        --red-soft: #3c1b20;
+        --purple: #bea8ff;
+        --purple-soft: #2b2245;
+        --code: #202731;
+        --shadow: 0 14px 45px rgba(0, 0, 0, .22);
+      }
+    }
+
+    * { box-sizing: border-box; }
+    html { scroll-behavior: smooth; }
+    body {
+      margin: 0;
+      color: var(--ink);
+      background: var(--bg);
+      font: 15px/1.6 var(--sans);
+      -webkit-font-smoothing: antialiased;
+    }
+    a { color: var(--blue); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+    code, .mono { font-family: var(--mono); font-size: .91em; }
+    code { padding: .12rem .32rem; border-radius: 5px; background: var(--code); }
+    h1, h2, h3 { line-height: 1.2; letter-spacing: -.025em; }
+    h1 { margin: 0 0 14px; font-size: clamp(32px, 5vw, 58px); max-width: 900px; }
+    h2 { margin: 0 0 15px; font-size: clamp(24px, 3vw, 34px); }
+    h3 { margin: 0 0 10px; font-size: 18px; }
+    p { margin: 0 0 14px; }
+    ul, ol { margin: 8px 0 0; padding-left: 21px; }
+    li + li { margin-top: 6px; }
+
+    .page { max-width: 1220px; margin: 0 auto; padding: 38px 28px 80px; }
+    .eyebrow {
+      display: flex; flex-wrap: wrap; gap: 8px 13px; align-items: center;
+      color: var(--muted); text-transform: uppercase; letter-spacing: .11em;
+      font-size: 11px; font-weight: 750;
+    }
+    .hero { padding: 44px 0 34px; }
+    .hero .dek { max-width: 820px; font-size: 19px; color: var(--muted); }
+    .hero-meta { display: flex; flex-wrap: wrap; gap: 9px; margin-top: 24px; }
+    .pill {
+      display: inline-flex; align-items: center; min-height: 29px; padding: 4px 10px;
+      border: 1px solid var(--line); border-radius: 999px; color: var(--muted);
+      background: var(--paper); font-size: 12px; font-weight: 650;
+    }
+    .pill.good { color: var(--green); border-color: color-mix(in srgb, var(--green) 35%, var(--line)); background: var(--green-soft); }
+    .pill.warn { color: var(--amber); border-color: color-mix(in srgb, var(--amber) 35%, var(--line)); background: var(--amber-soft); }
+
+    .toc {
+      position: sticky; top: 0; z-index: 10; margin: 0 -28px 35px; padding: 10px 28px;
+      display: flex; gap: 19px; overflow-x: auto; white-space: nowrap;
+      border-block: 1px solid var(--line); background: color-mix(in srgb, var(--bg) 88%, transparent);
+      backdrop-filter: blur(14px);
+    }
+    .toc a { color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 650; }
+    .toc a:hover { color: var(--ink); }
+
+    section { scroll-margin-top: 70px; margin-top: 56px; }
+    .section-head { max-width: 820px; margin-bottom: 22px; }
+    .section-head > p { color: var(--muted); font-size: 16px; }
+    .grid { display: grid; grid-template-columns: repeat(12, 1fr); gap: 16px; }
+    .span-4 { grid-column: span 4; }
+    .span-5 { grid-column: span 5; }
+    .span-6 { grid-column: span 6; }
+    .span-7 { grid-column: span 7; }
+    .span-8 { grid-column: span 8; }
+    .span-12 { grid-column: span 12; }
+    .card {
+      padding: 20px; border: 1px solid var(--line); border-radius: var(--radius);
+      background: var(--paper); box-shadow: var(--shadow);
+    }
+    .card.flat { box-shadow: none; }
+    .card p:last-child, .card ul:last-child { margin-bottom: 0; }
+    .callout {
+      padding: 24px; border: 1px solid color-mix(in srgb, var(--blue) 35%, var(--line));
+      border-left: 4px solid var(--blue); border-radius: var(--radius); background: var(--blue-soft);
+    }
+    .verdict { padding: 27px; }
+    .verdict strong { display: block; margin-bottom: 7px; font-size: 23px; letter-spacing: -.02em; }
+    .verdict p { max-width: 930px; font-size: 17px; }
+    .metric { display: flex; gap: 15px; align-items: baseline; }
+    .metric .value { font-size: 35px; line-height: 1; font-weight: 780; letter-spacing: -.05em; }
+    .metric .label { color: var(--muted); font-size: 13px; }
+    .small { color: var(--muted); font-size: 13px; }
+
+    .flow {
+      display: grid; grid-template-columns: repeat(7, minmax(110px, 1fr)); gap: 10px;
+      align-items: stretch; overflow-x: auto; padding-bottom: 5px;
+    }
+    .flow-step {
+      position: relative; min-width: 118px; padding: 15px 13px; border: 1px solid var(--line);
+      border-radius: 11px; background: var(--paper-2);
+    }
+    .flow-step:not(:last-child)::after {
+      content: "→"; position: absolute; right: -9px; top: 50%; transform: translate(50%, -50%);
+      z-index: 2; width: 23px; height: 23px; display: grid; place-items: center;
+      border-radius: 50%; color: var(--blue); background: var(--paper); border: 1px solid var(--line);
+    }
+    .flow-step b { display: block; margin-bottom: 4px; font-size: 13px; }
+    .flow-step span { display: block; color: var(--muted); font-size: 11px; line-height: 1.45; }
+    .flow-step.key { border-color: color-mix(in srgb, var(--blue) 45%, var(--line)); background: var(--blue-soft); }
+
+    .ladder { display: grid; grid-template-columns: repeat(5, 1fr); gap: 8px; counter-reset: rung; }
+    .rung {
+      counter-increment: rung; padding: 16px; border: 1px solid var(--line); border-radius: 11px;
+      background: var(--paper-2); min-height: 133px;
+    }
+    .rung::before {
+      content: counter(rung); display: grid; place-items: center; width: 25px; height: 25px;
+      margin-bottom: 12px; border-radius: 50%; color: white; background: var(--blue); font-weight: 800; font-size: 12px;
+    }
+    .rung b { display: block; margin-bottom: 5px; }
+    .rung span { color: var(--muted); font-size: 12px; }
+
+    .table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper); }
+    table { width: 100%; border-collapse: collapse; min-width: 730px; }
+    th, td { padding: 12px 14px; text-align: left; vertical-align: top; border-bottom: 1px solid var(--line); }
+    th { color: var(--muted); background: var(--paper-2); font-size: 11px; text-transform: uppercase; letter-spacing: .065em; }
+    tbody tr:last-child td { border-bottom: 0; }
+    td:first-child { font-weight: 650; }
+    .yes, .partial, .no, .best { font-weight: 750; white-space: nowrap; }
+    .yes, .best { color: var(--green); }
+    .partial { color: var(--amber); }
+    .no { color: var(--muted); }
+    .best::before { content: "★ "; }
+
+    .tag {
+      display: inline-block; margin: 2px 4px 2px 0; padding: 2px 7px; border-radius: 999px;
+      color: var(--muted); background: var(--code); font: 11px/1.55 var(--mono);
+    }
+    .tag.blue { color: var(--blue); background: var(--blue-soft); }
+    .tag.green { color: var(--green); background: var(--green-soft); }
+    .tag.amber { color: var(--amber); background: var(--amber-soft); }
+    .tag.purple { color: var(--purple); background: var(--purple-soft); }
+    .tag.red { color: var(--red); background: var(--red-soft); }
+
+    .tracker-meta {
+      display: flex; flex-wrap: wrap; gap: 8px 18px; margin: 0 0 14px;
+      color: var(--muted); font-size: 12px;
+    }
+    .tracker-meta b { color: var(--ink); }
+    .status { display: inline-flex; align-items: center; gap: 5px; font-weight: 750; white-space: nowrap; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status.done { color: var(--green); }
+    .status.progress { color: var(--blue); }
+    .status.planned { color: var(--amber); }
+    .status.blocked { color: var(--red); }
+    .receipt { font-size: 12px; line-height: 1.5; }
+
+    .split-line { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .bucket { padding: 16px; border-radius: 10px; background: var(--paper-2); border: 1px solid var(--line); }
+    .bucket h3 { font-size: 14px; }
+    .bucket p, .bucket li { color: var(--muted); font-size: 13px; }
+    .bucket.keep { border-top: 3px solid var(--green); }
+    .bucket.add { border-top: 3px solid var(--blue); }
+    .bucket.avoid { border-top: 3px solid var(--red); }
+
+    .filterbar { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+    .filterbar button {
+      appearance: none; border: 1px solid var(--line); border-radius: 999px; padding: 7px 11px;
+      color: var(--muted); background: var(--paper); font: 650 12px var(--sans); cursor: pointer;
+    }
+    .filterbar button[aria-pressed="true"] { color: var(--blue); border-color: var(--blue); background: var(--blue-soft); }
+    tr[hidden] { display: none; }
+
+    .roadmap { counter-reset: phase; display: grid; gap: 12px; }
+    .phase {
+      counter-increment: phase; display: grid; grid-template-columns: 74px 1fr; gap: 17px;
+      padding: 20px; border: 1px solid var(--line); border-radius: var(--radius); background: var(--paper);
+    }
+    .phase-num { color: var(--blue); font-size: 12px; font-weight: 750; text-transform: uppercase; letter-spacing: .08em; }
+    .phase-num::after { content: " " counter(phase); }
+    .phase h3 { margin-bottom: 6px; }
+    .phase p { color: var(--muted); }
+
+    .footnotes { font-size: 12px; color: var(--muted); }
+    .footnotes li { margin-top: 9px; }
+    .source-path { overflow-wrap: anywhere; font-family: var(--mono); font-size: 11px; }
+    footer { margin-top: 60px; padding-top: 20px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+
+    @media (max-width: 900px) {
+      .span-4, .span-5, .span-6, .span-7, .span-8 { grid-column: span 12; }
+      .ladder { grid-template-columns: 1fr 1fr; }
+      .flow { grid-template-columns: repeat(7, 150px); }
+    }
+    @media (max-width: 620px) {
+      body { font-size: 14px; }
+      .page { padding: 24px 16px 56px; }
+      .hero { padding-top: 28px; }
+      .hero .dek { font-size: 17px; }
+      .toc { margin-inline: -16px; padding-inline: 16px; }
+      section { margin-top: 44px; }
+      .ladder, .split-line { grid-template-columns: 1fr; }
+      .phase { grid-template-columns: 1fr; gap: 4px; }
+      .card, .callout { padding: 17px; }
+    }
+    @media print {
+      :root { --bg: #fff; --paper: #fff; --paper-2: #f6f7f9; --ink: #111; --muted: #555; --line: #ccc; }
+      body { font-size: 10.5pt; }
+      .page { max-width: none; padding: 0; }
+      .toc, .filterbar { display: none; }
+      section { break-inside: avoid; margin-top: 30px; }
+      .card { box-shadow: none; }
+      a { color: inherit; }
+    }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <header class="hero">
+      <div class="eyebrow"><span>Tenon research note</span><span>13 Aug 2026</span><span>Local source audit</span></div>
+      <h1>Agent message parsing &amp; rendering</h1>
+      <p class="dek">T3 Code là reference mạnh nhất cho pipeline semantic đầy đủ; Orca là reference tốt nhất cho transcript fallback. <code>libghostty-vt</code> giải quyết terminal cells, không giải quyết agent message semantics.</p>
+      <div class="hero-meta">
+        <span class="pill good">8 repositories inspected</span>
+        <span class="pill good">Web + mobile traced</span>
+        <span class="pill good">Living tracker · implementation started</span>
+        <span class="pill warn">Source support ≠ UI support</span>
+      </div>
+    </header>
+
+    <nav class="toc" aria-label="Mục lục">
+      <a href="#verdict">Kết luận</a>
+      <a href="#tracker">Tracker</a>
+      <a href="#method">Cách đọc support</a>
+      <a href="#t3">T3 Code</a>
+      <a href="#render">Render thực tế</a>
+      <a href="#orca">Orca</a>
+      <a href="#terminal">Terminal engine</a>
+      <a href="#tenon">Tenon</a>
+      <a href="#proposal">Đề xuất</a>
+      <a href="#sources">Nguồn</a>
+    </nav>
+
+    <section id="verdict">
+      <div class="callout verdict">
+        <strong>Có thể dùng <code>libghostty-vt</code>, nhưng không dùng nó làm parser cho Agent Lens.</strong>
+        <p>Dùng nó để Tenon chủ động render terminal trên macOS/mobile: cell grid, style, hyperlink, selection, damage, shell integration và graphics. Song song, xây một semantic pipeline độc lập theo hướng T3: provider/transcript adapter → canonical event → durable read model → các projection dành riêng cho conversation, work, approval, plan, diff và subagent.</p>
+      </div>
+      <div class="grid" style="margin-top:16px">
+        <article class="card span-4">
+          <div class="metric"><span class="value">49</span><span class="label">canonical event variants thực tế trong T3</span></div>
+          <p class="small">Literal type list chỉ có 48 và bỏ sót <code>tool.denied</code>; đây là schema-enumeration drift cần tránh.</p>
+        </article>
+        <article class="card span-4">
+          <div class="metric"><span class="value">16</span><span class="label">item types chuẩn hóa</span></div>
+          <p class="small">Message, reasoning, plan, command, file, MCP, dynamic tool, subagent, web, image, review, compaction, error, unknown.</p>
+        </article>
+        <article class="card span-4">
+          <div class="metric"><span class="value">9</span><span class="label">request types chuẩn hóa</span></div>
+          <p class="small">Approval, user input, dynamic call và auth refresh; UI chỉ render một tập con có hành động từ người dùng.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="tracker">
+      <div class="section-head">
+        <h2>Implementation tracker</h2>
+        <p>Đây là nguồn tracking sống cho hướng Agent Lens/message renderer rút ra từ nghiên cứu. Một dòng chỉ được chuyển sang <b>Done</b> khi có source và test hoặc visual receipt; phần chưa có platform/product decision giữ nguyên trạng thái.</p>
+      </div>
+      <div class="card flat">
+        <div class="tracker-meta">
+          <span><b>Owner:</b> Agent Lens</span>
+          <span><b>Updated:</b> 2026-08-13</span>
+          <span><b>Contract:</b> macOS trước, platform-neutral read model</span>
+          <span><b>Boundary:</b> EVENT → reducer → DIRECT read projection</span>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr><th>ID</th><th>Feature / acceptance</th><th>Status</th><th>Evidence / next gate</th></tr></thead>
+            <tbody>
+              <tr><td><code>ALR-001</code></td><td>Stable lifecycle correlation: provider <code>turnID</code>, explicit derived fallback, item/request IDs và subagent <code>taskID</code>.</td><td><span class="status done">Done</span></td><td class="receipt"><a href="../../Sources/TenonApp/AgentLensDomain.swift">AgentLensDomain.swift</a> · <a href="../../Sources/TenonApp/AgentLensDecoders.swift">AgentLensDecoders.swift</a> · decoder/read-model tests</td></tr>
+              <tr><td><code>ALR-002</code></td><td>Platform-neutral projections cho Conversation, Work, Plans, Changes, Agents, Interactions và Context.</td><td><span class="status done">Done</span></td><td class="receipt"><a href="../../Sources/TenonApp/AgentLensReadModel.swift">AgentLensReadModel.swift</a> · <a href="../../Tests/TenonAppStateTests/AgentLensReadModelTests.swift">AgentLensReadModelTests.swift</a></td></tr>
+              <tr><td><code>ALR-003</code></td><td>Quiet work log: completed work collapsed, running work shows latest step, expand/inspect giữ từng evidence anchor.</td><td><span class="status done">Done</span></td><td class="receipt"><a href="../../Sources/TenonApp/AgentLensView.swift">AgentLensView.swift</a> · wide/narrow Chat snapshot receipt</td></tr>
+              <tr><td><code>ALR-004</code></td><td>Typed Codex <code>turn/plan/updated</code>, <code>turn/diff/updated</code>, <code>thread/tokenUsage/updated</code>, file-read approval và turn-scoped items/requests.</td><td><span class="status done">Done</span></td><td class="receipt">Pinned by <a href="../../Tests/TenonAppStateTests/AgentLensTests.swift">AgentLensDecoderTests</a>; context usage renders in inspector.</td></tr>
+              <tr><td><code>ALR-005</code></td><td>Typed content blocks: image/file/reference/review/compaction/error và richer MCP/subagent progress.</td><td><span class="status planned">Planned</span></td><td class="receipt">Next: choose the smallest provider-backed subset and add fixtures before UI.</td></tr>
+              <tr><td><code>ALR-006</code></td><td>Mobile native feed dùng cùng projection contract và golden contract tests.</td><td><span class="status planned">Planned</span></td><td class="receipt">Gate: mobile target/navigation ownership and persistence boundary decision.</td></tr>
+              <tr><td><code>ALR-007</code></td><td><code>libghostty-vt</code> terminal-core spike: iOS build/FFI, damage snapshot, IME, selection, accessibility và graphics.</td><td><span class="status planned">Planned</span></td><td class="receipt">Independent from Agent Lens semantics; do not parse agent state from cells.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <p class="small" style="margin:14px 0 0"><b>Latest verification · 2026-08-13:</b> focused decoder/reducer/read-model suites <b>28 / 0</b>, session timeline suite <b>30 / 0</b>, full suite <b>2106 / 0</b> in 134 s; Chat photographed at 900×620 and 380×620, and this tracker checked at desktop and 390 px mobile width with no page-level overflow.</p>
+      </div>
+    </section>
+
+    <section id="method">
+      <div class="section-head">
+        <h2>“Support” có năm tầng</h2>
+        <p>Nếu chỉ grep type name, kết quả sẽ phóng đại năng lực sản phẩm. Báo cáo này chỉ gọi một loại message là “được support” khi xác định được nó đi tới đâu trong pipeline.</p>
+      </div>
+      <div class="card flat">
+        <div class="ladder">
+          <div class="rung"><b>Schema</b><span>Contract biết tên event/item/request và shape của payload.</span></div>
+          <div class="rung"><b>Adapter emits</b><span>Ít nhất một provider thực sự phát event đó.</span></div>
+          <div class="rung"><b>Persist / project</b><span>Server giữ nó trong read model hay side channel.</span></div>
+          <div class="rung"><b>UI renders</b><span>Web/mobile có component nhìn thấy được.</span></div>
+          <div class="rung"><b>Interactive</b><span>Người dùng có thể approve, answer, inspect hay navigate.</span></div>
+        </div>
+      </div>
+      <div class="grid" style="margin-top:16px">
+        <article class="card span-6">
+          <h3>Phạm vi</h3>
+          <p>T3 Code được trace end-to-end. Orca được trace như một kiến trúc transcript-first. Herdr, Kero, Supacode, Mux0, Muxy và Factory Floor được dùng để kiểm chứng ranh giới giữa terminal state, agent status và semantic transcript.</p>
+        </article>
+        <article class="card span-6">
+          <h3>Đơn vị phân tích</h3>
+          <p>Source revision được khóa bằng Git SHA. Kết luận dựa trên source đang clone tại <code>references/</code>, không dựa trên screenshot hay marketing copy. “Observed” trong các bảng nghĩa là có đường code cụ thể.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="t3">
+      <div class="section-head">
+        <h2>T3 Code: semantic pipeline đầy đủ nhất</h2>
+        <p>Năm provider giữ protocol riêng ở adapter boundary, rồi cùng phát một canonical runtime event union. Server nén event stream thành read model nhỏ hơn; UI tiếp tục nén read model thành timeline yên tĩnh.</p>
+      </div>
+      <div class="card flat">
+        <div class="flow" aria-label="T3 parse to render pipeline">
+          <div class="flow-step"><b>Native provider</b><span>Codex app-server<br>Claude SDK<br>OpenCode SDK<br>ACP Cursor/Grok</span></div>
+          <div class="flow-step"><b>Adapter</b><span>Parse envelope<br>classify tools<br>normalize deltas</span></div>
+          <div class="flow-step key"><b>Canonical events</b><span>49 variants<br>16 item types<br>9 request types</span></div>
+          <div class="flow-step"><b>Ingestion</b><span>buffer assistant<br>persist activities<br>resolve lifecycle</span></div>
+          <div class="flow-step"><b>Read model</b><span>messages<br>plans<br>work<br>checkpoints</span></div>
+          <div class="flow-step"><b>Projection</b><span>fold noise<br>re-home agents<br>derive rows</span></div>
+          <div class="flow-step key"><b>Web / mobile UI</b><span>conversation<br>work log<br>interactions<br>diffs</span></div>
+        </div>
+      </div>
+
+      <div class="grid" style="margin-top:16px">
+        <article class="card span-7">
+          <h3>49 canonical event variants, nhóm theo lifecycle</h3>
+          <p>
+            <span class="tag blue">session ×4</span>
+            <span class="tag blue">thread ×9</span>
+            <span class="tag blue">turn ×7</span>
+            <span class="tag green">item/content ×4</span>
+            <span class="tag amber">request/input ×4</span>
+            <span class="tag purple">task ×4</span>
+            <span class="tag purple">hook ×3</span>
+            <span class="tag amber">tool ×3</span>
+            <span class="tag">auth/account ×3</span>
+            <span class="tag">MCP ×2</span>
+            <span class="tag red">config/runtime/etc ×6</span>
+          </p>
+          <p class="small">Các nhánh ít thấy trên main timeline vẫn tồn tại trong contract: realtime audio, rate limits, config warning, deprecation, MCP OAuth, model reroute, files persisted và runtime warning/error.</p>
+        </article>
+        <article class="card span-5">
+          <h3>Schema drift đáng chú ý</h3>
+          <p><code>ProviderRuntimeEvent</code> union có <code>tool.denied</code>, nhưng literal <code>ProviderRuntimeEventType</code> không liệt kê nó. Đếm trực tiếp cho kết quả 49 so với 48.</p>
+          <p class="small">Không đủ bằng chứng để gọi đây là runtime bug, nhưng nó cho thấy một enum song song rất dễ drift. Tenon nên có một nguồn discriminator duy nhất và exhaustive tests.</p>
+        </article>
+      </div>
+
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th>Canonical family</th><th>Những loại đáng giữ</th><th>Ý nghĩa cho renderer</th></tr></thead>
+          <tbody>
+            <tr><td>Content stream</td><td><span class="tag">assistant_text</span><span class="tag">reasoning_text</span><span class="tag">reasoning_summary_text</span><span class="tag">plan_text</span><span class="tag">command_output</span><span class="tag">file_change_output</span><span class="tag">unknown</span></td><td>Dùng một delta channel chung nhưng giữ <code>contentKind</code>; không mặc định mọi delta là chat prose.</td></tr>
+            <tr><td>Tool items</td><td><span class="tag">command_execution</span><span class="tag">file_change</span><span class="tag">mcp_tool_call</span><span class="tag">dynamic_tool_call</span><span class="tag">collab_agent_tool_call</span><span class="tag">web_search</span><span class="tag">image_view</span></td><td>Stable item identity + lifecycle cho phép update tại chỗ, collapse, group và attach progress.</td></tr>
+            <tr><td>Non-tool items</td><td><span class="tag">user_message</span><span class="tag">assistant_message</span><span class="tag">reasoning</span><span class="tag">plan</span><span class="tag">review_entered/exited</span><span class="tag">context_compaction</span><span class="tag">error</span><span class="tag">unknown</span></td><td>Không nên ép reasoning, plan hay compaction thành một bubble assistant thông thường.</td></tr>
+            <tr><td>Requests</td><td>command/file/apply-patch/exec approvals; tool user input; dynamic call; auth refresh; unknown</td><td>Request phải có ID, state và resolution riêng; renderer card chỉ là projection của state này.</td></tr>
+            <tr><td>Tasks / subagents</td><td>agent identity, parent, model, effort, phase, attempt, run handle, usage, output file</td><td>Task panel/roster nên là side projection, không nhồi toàn bộ subagent chatter vào main timeline.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="section-head" style="margin-top:30px">
+        <h3>Provider coverage quan sát từ adapter source</h3>
+        <p>Đây là coverage theo canonical family, không phải cam kết mọi native event đều có UI tương ứng.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Provider</th><th>Transport</th><th>Coverage nổi bật</th><th>Nhận xét</th></tr></thead>
+          <tbody>
+            <tr><td>Codex</td><td>App Server</td><td class="best">Rộng nhất</td><td>Session/thread/turn/item, approvals &amp; user input, diff, realtime, token, account, MCP, config, subagent task lifecycle.</td></tr>
+            <tr><td>Claude</td><td>Agent SDK</td><td class="yes">Rất rộng</td><td>Messages, tools, Todo/Task plan, hooks, tool progress/summary/denial, approvals, questions, tasks, auth/rate limit.</td></tr>
+            <tr><td>OpenCode</td><td>OpenCode SDK</td><td class="partial">Trung bình</td><td>Message parts, text/reasoning stream, permission, questions, session status/error; ít side-channel hơn Codex/Claude.</td></tr>
+            <tr><td>Cursor</td><td>ACP JSON-RPC</td><td class="partial">Core ACP</td><td>Dùng shared ACP mapping cho assistant text, tool call, plan và request; adapter thêm session/turn/proposed plan/user input.</td></tr>
+            <tr><td>Grok</td><td>ACP JSON-RPC</td><td class="partial">Core ACP</td><td>Gần Cursor nhưng không có toàn bộ proprietary side-channel của Codex/Claude.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="render">
+      <div class="section-head">
+        <h2>T3 parse nhiều, render có chủ đích ít</h2>
+        <p>Main timeline không phải event log. Projection chỉ trả về message, proposed plan, turn plan, work row/fold/toggle và working indicator.</p>
+      </div>
+      <div class="grid">
+        <article class="card span-6">
+          <h3>Người dùng thực sự thấy</h3>
+          <ul>
+            <li>User bubble với Markdown, image/annotation/terminal context và review comments.</li>
+            <li>Assistant Markdown, copy/timestamp và changed-files checkpoint card.</li>
+            <li>Work row cho command, file change, MCP, approval/question và error.</li>
+            <li>Proposed plan, turn plan, working indicator, turn fold.</li>
+            <li>Subagent rollup ngắn; roster đầy đủ được chuyển sang Agents panel.</li>
+          </ul>
+        </article>
+        <article class="card span-6">
+          <h3>Bị ẩn, fold hoặc chuyển nơi khác</h3>
+          <ul>
+            <li><code>tool.started</code>, phần lớn <code>task.started/updated</code>, <code>tool.progress</code>, context-window và checkpoint rows.</li>
+            <li>Agent-internal chatter và các work row cũ trong một turn.</li>
+            <li>System-role messages không có renderer trong <code>TimelineRowContent</code>.</li>
+            <li>Reasoning có ở provider contract nhưng không được biến thành main conversation message.</li>
+            <li>Auth/account/config/realtime/MCP status sống ở side state hoặc không có main-timeline component.</li>
+          </ul>
+        </article>
+      </div>
+      <div class="callout" style="margin-top:16px">
+        <h3>Nguyên tắc nên copy: quiet timeline</h3>
+        <p>Chuẩn hóa rộng để không mất fact, nhưng project hẹp theo job-to-be-done. Renderer không nên switch trực tiếp trên toàn bộ canonical event union; nó nên nhận các row model đã được fold, group và re-home.</p>
+      </div>
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th>Surface</th><th>List / markdown</th><th>Interactive state</th><th>Điểm đáng học</th></tr></thead>
+          <tbody>
+            <tr><td>T3 Web</td><td><code>LegendList</code> virtualization; Markdown; diff component</td><td>Approval, user input, plan, changed files, revert/copy</td><td>Long history tốt; work rows fold; subagent roster tách khỏi chat.</td></tr>
+            <tr><td>T3 Mobile</td><td>Native feed projection; Markdown</td><td>Pending approval/user-input cards riêng</td><td>Chia sẻ semantic contract và projection rules, không chia sẻ terminal DOM.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="orca">
+      <div class="section-head">
+        <h2>Orca: transcript fallback đơn giản và thực dụng</h2>
+        <p>Orca chuẩn hóa Claude, Codex, Grok và OMP vào contract rất nhỏ: 5 roles, 4 content blocks. Nó render transcript tốt hơn status-only references, nhưng lifecycle/tool identity yếu hơn T3.</p>
+      </div>
+      <div class="grid">
+        <article class="card span-5">
+          <h3>Canonical contract</h3>
+          <p><span class="tag blue">user</span><span class="tag blue">assistant</span><span class="tag purple">reasoning</span><span class="tag amber">tool</span><span class="tag">system</span></p>
+          <p><span class="tag green">text</span><span class="tag green">tool-call</span><span class="tag green">tool-result</span><span class="tag green">image-ref</span></p>
+          <p class="small">Mỗi message có ID, source priority, timestamp và optional turn ID. Source arbitration ưu tiên transcript hơn hook hơn scrape.</p>
+        </article>
+        <article class="card span-7">
+          <h3>Decoder behavior</h3>
+          <ul>
+            <li><b>Claude:</b> text/thinking/tool use/tool result/image; lọc injected meta/compact summary; tool-only user record trở thành role tool.</li>
+            <li><b>Codex:</b> wrapped/unwrapped response items, event messages, reasoning, function/local shell/custom tools, image refs và interruption.</li>
+            <li><b>Grok:</b> user/assistant/reasoning/backend tool; lọc bootstrap context và khôi phục pasted-image path.</li>
+            <li><b>OMP:</b> message/custom message, thinking/tool calls/bash/python/file mention; content-addressed image blob chưa render; branch parents bị bỏ qua.</li>
+          </ul>
+        </article>
+      </div>
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th>Đặc tính</th><th>T3 Code</th><th>Orca</th><th>Chọn cho Tenon</th></tr></thead>
+          <tbody>
+            <tr><td>Primary source</td><td>Provider-native protocol/SDK</td><td>Transcript JSONL + hook/scrape</td><td>Native protocol primary; transcript fallback.</td></tr>
+            <tr><td>Canonical richness</td><td class="best">49 event variants</td><td>5 roles / 4 blocks</td><td>T3-shaped lifecycle, Orca-shaped block simplicity.</td></tr>
+            <tr><td>Tool lifecycle</td><td class="yes">Stable item/request/task IDs</td><td class="partial">Mostly call/result blocks</td><td>Giữ IDs và explicit state transitions.</td></tr>
+            <tr><td>Interaction reply</td><td>Provider request handling</td><td>PTY keystrokes/fallback parsing</td><td>Typed provider reply; PTY chỉ degraded fallback.</td></tr>
+            <tr><td>Evidence model</td><td class="partial">Runtime/read-model provenance</td><td class="partial">Source priority</td><td class="best">Giữ Tenon evidence anchors + authority + freshness.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="terminal">
+      <div class="section-head">
+        <h2>Terminal parser không phải agent parser</h2>
+        <p><code>libghostty-vt</code> và Alacritty bridge đều cho host quyền render grid rất sâu. Nhưng terminal protocol chỉ biết bytes, escape sequences, cells và shell markers — nó không biết đâu là assistant plan, approval request hay subagent task.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Capability</th><th>libghostty-vt / Herdr</th><th>Alacritty bridge / Kero</th><th>Semantic Agent Lens</th></tr></thead>
+          <tbody>
+            <tr><td>Cells, style, wide glyph, wrap, dirty/damage</td><td class="yes">Có</td><td class="yes">Có</td><td class="no">Không phải nhiệm vụ</td></tr>
+            <tr><td>Hyperlink, clipboard, title, PWD, bell</td><td class="yes">Có callbacks</td><td class="yes">Có host events/interceptor</td><td class="no">Chỉ nhận fact khi hữu ích</td></tr>
+            <tr><td>Kitty graphics / image placements</td><td class="yes">Có</td><td class="yes">Có bridge</td><td class="partial">Cần content/image block riêng</td></tr>
+            <tr><td>OSC 133 shell lifecycle</td><td class="yes">Prompt/input/output semantics</td><td class="yes">A/B/C/D events</td><td class="partial">Có thể dùng làm terminal evidence</td></tr>
+            <tr><td>Assistant/reasoning/plan/tool/approval AST</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Bắt buộc có provider/transcript adapter</td></tr>
+            <tr><td>Stable turn/item/request/task identity</td><td class="no">Không</td><td class="no">Không</td><td class="yes">Bắt buộc</td></tr>
+          </tbody>
+        </table>
+      </div>
+      <div class="grid" style="margin-top:16px">
+        <article class="card span-4">
+          <h3>Herdr</h3>
+          <p><code>libghostty-vt</code> expose cells, style, hyperlink, semantic prompt/input/output và Kitty graphics. Agent state vẫn được suy ra từ bottom-of-buffer patterns: idle, working, blocked, unknown.</p>
+        </article>
+        <article class="card span-4">
+          <h3>Kero</h3>
+          <p>Alacritty bridge thêm OSC 7/9/22/777/133 interception và agent integration. HEAD chủ động bỏ progress inference từ terminal text; provider-reported status được coi là authority.</p>
+        </article>
+        <article class="card span-4">
+          <h3>Supacode</h3>
+          <p>Dùng OSC 3008 + hook/socket cho presence, notification, compacting và error. Đây là status transport tốt qua SSH, không phải transcript/message renderer.</p>
+        </article>
+      </div>
+      <div class="callout" style="margin-top:16px">
+        <h3>Điều libghostty-vt thực sự mang lại cho mobile</h3>
+        <p>Tenon có thể sở hữu surface và renderer: snapshot cell grid, damage-driven redraw, selection, links, images, accessibility projection và native gestures. Nhưng phần “giống Claude Code trên web” phải render từ semantic read model bên cạnh terminal surface, không phải OCR/scrape lại grid.</p>
+      </div>
+    </section>
+
+    <section id="tenon">
+      <div class="section-head">
+        <h2>Tenon Agent Lens: nền móng đúng, coverage còn hẹp</h2>
+        <p>Agent Lens đã có pure reducer, bounded storage, evidence model và protocol/transcript/hook sources. Đây là kiến trúc đáng mở rộng thay vì thay bằng một VT parser.</p>
+      </div>
+      <div class="split-line">
+        <article class="bucket keep">
+          <h3>Giữ nguyên và nâng cấp</h3>
+          <ul>
+            <li>Evidence source, authority, freshness và byte/location anchors.</li>
+            <li>Pure <code>AgentLensEvent → Snapshot</code> reducer.</li>
+            <li>Transcript tail backpressure và bounded collections.</li>
+            <li>Context/instruction tách khỏi conversation timeline.</li>
+            <li>Protocol-native ưu tiên, transcript/hook là reconciliation/fallback.</li>
+          </ul>
+        </article>
+        <article class="bucket add">
+          <h3>Cần bổ sung</h3>
+          <ul>
+            <li><s>Stable <code>turnID</code>, <code>itemID</code>, <code>requestID</code>, <code>taskID</code>.</s> <span class="tag green">ALR-001 done</span></li>
+            <li>Typed content blocks: text/markdown/image/file/ref/diff.</li>
+            <li>Plan/diff/task/token context đã typed; proposed-plan, checkpoint và compaction còn mở.</li>
+            <li>Typed approval/question decision và provider reply state.</li>
+            <li><s>Read projections cho Conversation, Work, Interactions, Changes, Agents và Context.</s> <span class="tag green">ALR-002 done</span></li>
+          </ul>
+        </article>
+      </div>
+
+      <div class="table-wrap" style="margin-top:16px">
+        <table>
+          <thead><tr><th>Area</th><th>Tenon hiện tại</th><th>T3 reference</th><th>Gap / quyết định</th></tr></thead>
+          <tbody>
+            <tr><td>Providers</td><td>Claude, Codex</td><td>Claude, Codex, OpenCode, Cursor, Grok</td><td>Đừng mở rộng provider trước khi ổn định canonical lifecycle.</td></tr>
+            <tr><td>Normalized facts</td><td>19 <code>AgentLensEvent</code> cases, gồm typed plan/change/context updates</td><td>49 runtime event variants</td><td>Tiếp tục thêm theo product projection, không copy mù toàn union.</td></tr>
+            <tr><td>Tool taxonomy</td><td>Stable item/request IDs; provider/derived turn IDs; task grouping; typed plan/change</td><td>Exact item + request + task families</td><td>Progress chi tiết và collab-agent lifecycle vẫn mở.</td></tr>
+            <tr><td>Codex app-server</td><td>Core thread/turn/item, deltas, approvals/questions, plan, diff, token usage, error</td><td>Thêm metadata/compaction/realtime/MCP/account/config/subagents</td><td>Ưu tiên compaction, task progress và typed content blocks; side settings sau.</td></tr>
+            <tr><td>UI</td><td>Quiet work folds, typed steps, evidence inspection, context budget; completed work không còn bị xóa</td><td>Quiet work log, changed files, plans, folds, Agents panel</td><td>Agents/change secondary surfaces còn planned; read model đã sẵn.</td></tr>
+            <tr><td>Trust/provenance</td><td class="best">Evidence anchors + authority + freshness</td><td class="partial">Có source/read-model provenance nhưng ít explicit hơn</td><td>Đây là lợi thế Tenon; không hy sinh để copy T3.</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="grid" style="margin-top:16px">
+        <article class="card span-6">
+          <h3>Điểm thiếu trong Codex decoder hiện tại</h3>
+          <p>Đã normalize token usage, turn diff/plan và turn-scoped item/request. Còn thiếu thread metadata/compaction, item update phong phú, MCP progress, account/config/realtime/model reroute và collab-agent task lifecycle.</p>
+        </article>
+        <article class="card span-6">
+          <h3>Điểm thiếu trong transcript decoder</h3>
+          <p>Codex transcript chưa có typed image view, collab-agent items, review/compaction/error items đầy đủ; classifier tool còn nhiều nhánh rơi về generic.</p>
+        </article>
+      </div>
+    </section>
+
+    <section id="proposal">
+      <div class="section-head">
+        <h2>Kiến trúc đề xuất cho Tenon</h2>
+        <p>Mục tiêu là một contract dùng chung cho macOS/mobile, trong khi terminal renderer và Agent Lens renderer vẫn là hai surface độc lập.</p>
+      </div>
+      <div class="card flat">
+        <div class="flow" aria-label="Proposed Tenon architecture">
+          <div class="flow-step"><b>Provider streams</b><span>Codex protocol<br>Claude hooks/SDK<br>transcript fallback</span></div>
+          <div class="flow-step"><b>Source adapters</b><span>decode native<br>assign evidence<br>stable identities</span></div>
+          <div class="flow-step key"><b>Agent semantic facts</b><span>turn/item/request/task<br>message/content<br>plan/diff/context</span></div>
+          <div class="flow-step"><b>Session reducer</b><span>dedupe/reconcile<br>bounded history<br>lifecycle state</span></div>
+          <div class="flow-step"><b>Read projections</b><span>conversation<br>work/interactions<br>plans/changes/agents</span></div>
+          <div class="flow-step key"><b>Native renderers</b><span>SwiftUI/AppKit<br>mobile native<br>virtualized feeds</span></div>
+          <div class="flow-step"><b>Terminal surface</b><span>libghostty-vt<br>cells/damage/images<br>separate evidence</span></div>
+        </div>
+      </div>
+
+      <div class="roadmap" style="margin-top:16px">
+        <article class="phase">
+          <div class="phase-num">Phase</div>
+          <div><h3>Ổn định identity và lifecycle <span class="tag blue">In progress</span></h3><p><code>turnID</code> provider/derived, item/request identity và task grouping đã ship; collab-agent lifecycle và richer progress còn mở. Exhaustive decoder tests pin subset đang support.</p></div>
+        </article>
+        <article class="phase">
+          <div class="phase-num">Phase</div>
+          <div><h3>Tách canonical facts khỏi UI rows <span class="tag green">Core done</span></h3><p><code>AgentLensReadModel</code> hiện project <b>Conversation</b>, <b>Work log</b>, <b>Interactions</b>, <b>Plans</b>, <b>Changes</b>, <b>Agents</b>, <b>Context/Evidence</b>. Chat render work row model; secondary panels là iteration sau.</p></div>
+        </article>
+        <article class="phase">
+          <div class="phase-num">Phase</div>
+          <div><h3>Đóng gap có giá trị cao <span class="tag blue">In progress</span></h3><p>Codex plan, diff, token/context và file-read approval đã ship. Tiếp theo: Claude/Codex task lifecycle, proposed plan/checkpoint, compaction và richer content blocks. Realtime audio/account/config để sau.</p></div>
+        </article>
+        <article class="phase">
+          <div class="phase-num">Phase</div>
+          <div><h3>Mobile renderer dùng chung contract <span class="tag amber">Planned</span></h3><p>Native virtualized feed và interaction cards dùng cùng projection tests với macOS. Không cần WebView để đạt trải nghiệm “Claude Code-like”; cần chốt mobile target và ownership trước.</p></div>
+        </article>
+        <article class="phase">
+          <div class="phase-num">Phase</div>
+          <div><h3>libghostty-vt như terminal rendering core <span class="tag amber">Planned</span></h3><p>Đánh giá FFI/platform fit cho iOS, snapshot/damage API, IME, accessibility, selection và graphics. Terminal surface chỉ phát terminal evidence/shell markers vào Agent Lens; không suy diễn agent progress từ screen text.</p></div>
+        </article>
+      </div>
+
+      <div class="grid" style="margin-top:16px">
+        <article class="card span-7">
+          <h3>Interaction boundary mapping cho Tenon</h3>
+          <ul>
+            <li>Provider/runtime facts đã xảy ra → <b>EVENT</b>.</li>
+            <li>Transcript/protocol body lớn hoặc stream sống lâu → <b>RESOURCE / STREAM / TASK</b>.</li>
+            <li>SwiftUI gọi application service cùng owner → typed <b>DIRECT</b>.</li>
+            <li>Finite request/reply qua plugin/CLI/agent boundary → <b>INTENT</b>; provider adapter cuối cùng gọi cùng typed service.</li>
+          </ul>
+        </article>
+        <article class="card span-5">
+          <h3>Không nên làm</h3>
+          <ul>
+            <li>Parse assistant/tool state từ terminal cells.</li>
+            <li>Để provider SDK types đi thẳng vào SwiftUI.</li>
+            <li>Persist từng text delta như một activity row.</li>
+            <li>Hiện mọi event trên main timeline.</li>
+            <li>Dùng PTY keystroke làm primary approval transport.</li>
+          </ul>
+        </article>
+      </div>
+    </section>
+
+    <section id="decision">
+      <div class="section-head">
+        <h2>Decision matrix</h2>
+        <p>Lọc theo lớp để xem recommendation. Đây là kết luận “apple-to-apple” ở cấp library/architecture, không phải so sánh toàn bộ app.</p>
+      </div>
+      <div class="filterbar" role="group" aria-label="Lọc decision matrix">
+        <button type="button" data-filter="all" aria-pressed="true">Tất cả</button>
+        <button type="button" data-filter="terminal" aria-pressed="false">Terminal</button>
+        <button type="button" data-filter="semantic" aria-pressed="false">Semantic</button>
+        <button type="button" data-filter="ui" aria-pressed="false">UI</button>
+      </div>
+      <div class="table-wrap">
+        <table id="decision-table">
+          <thead><tr><th>Lựa chọn</th><th>Lớp</th><th>Giá trị</th><th>Lo ngại chính</th><th>Quyết định</th></tr></thead>
+          <tbody>
+            <tr data-layer="terminal"><td>libghostty-vt</td><td>Terminal</td><td>VT correctness, cells/styles, shell integration, damage, graphics</td><td>FFI/API maturity, platform build, ownership/lifetime, accessibility vẫn do host làm</td><td class="yes">Adopt/evaluate cho terminal core</td></tr>
+            <tr data-layer="terminal"><td>Alacritty terminal bridge</td><td>Terminal</td><td>Rust core, event/cell snapshot; Kero chứng minh custom host bridge</td><td>Phải tự intercept OSC thiếu; semantic agent vẫn bên ngoài</td><td class="partial">Reference, không có lý do đổi nếu Ghostty fit</td></tr>
+            <tr data-layer="semantic"><td>T3 canonical runtime model</td><td>Semantic</td><td>Provider breadth, lifecycle, requests, tasks, side channels</td><td>Rộng hơn nhu cầu; schema/UI support dễ bị đánh đồng</td><td class="yes">Adopt pattern, chọn subset</td></tr>
+            <tr data-layer="semantic"><td>Orca transcript blocks</td><td>Semantic</td><td>Fallback đơn giản, đa transcript format, source priority</td><td>Tool/task lifecycle và interactive transport yếu</td><td class="yes">Adopt fallback ideas</td></tr>
+            <tr data-layer="semantic"><td>Terminal screen inference</td><td>Semantic</td><td>Hoạt động khi không có integration</td><td>False positives, scrollback noise, viewer state, provider UI đổi liên tục</td><td class="no">Chỉ degraded diagnostic</td></tr>
+            <tr data-layer="ui"><td>T3 quiet timeline</td><td>UI</td><td>Fold noise, virtualized history, side panels, changed files</td><td>Cần projection layer và stable IDs trước</td><td class="yes">Adopt</td></tr>
+            <tr data-layer="ui"><td>Web renderer / WebView</td><td>UI</td><td>Reuse web Markdown ecosystem</td><td>Không bắt buộc; bridge/state/a11y/selection complexity</td><td class="partial">Không phải prerequisite</td></tr>
+            <tr data-layer="ui"><td>Native SwiftUI renderer</td><td>UI</td><td>Platform behavior, shared app state, mobile fit</td><td>Cần virtualization và Markdown/diff components tốt</td><td class="yes">Preferred cho Tenon</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section id="sources">
+      <div class="section-head">
+        <h2>Source trail &amp; locked revisions</h2>
+        <p>Các link GitHub được khóa theo commit. Đường dẫn local trỏ vào clone dùng để nghiên cứu.</p>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Repository</th><th>Revision</th><th>Primary evidence</th></tr></thead>
+          <tbody>
+            <tr><td><a href="https://github.com/pingdotgg/t3code/tree/6bc6cb6be4ebecd5bd7a3b7b88f07cb61815ded5">T3 Code</a></td><td class="mono">6bc6cb6</td><td class="source-path"><a href="../../references/t3code/packages/contracts/src/providerRuntime.ts">providerRuntime.ts</a> · <a href="../../references/t3code/apps/server/src/orchestration/Layers/ProviderRuntimeIngestion.ts">ProviderRuntimeIngestion.ts</a> · <a href="../../references/t3code/apps/web/src/components/chat/MessagesTimeline.tsx">MessagesTimeline.tsx</a></td></tr>
+            <tr><td><a href="https://github.com/stablyai/orca/tree/346e59c879adfa7c55fd22485a221a42116de1d2">Orca</a></td><td class="mono">346e59c</td><td class="source-path"><a href="../../references/orca/src/shared/native-chat-types.ts">native-chat-types.ts</a> · <a href="../../references/orca/src/main/native-chat/">transcript decoders</a> · <a href="../../references/orca/src/renderer/src/components/native-chat/">renderers</a></td></tr>
+            <tr><td><a href="https://github.com/herdrdev/herdr/tree/5600197f00e871764465d4e3d9ba5e6aa6fd9547">Herdr</a></td><td class="mono">5600197</td><td class="source-path"><a href="../../references/herdr/src/ghostty/bindings.rs">ghostty/bindings.rs</a> · <a href="../../references/herdr/src/detect/mod.rs">detect/mod.rs</a></td></tr>
+            <tr><td><a href="https://github.com/egoist/kero/tree/fd2fbbde6c1c3ad9936b975e1151eb0d98f0f293">Kero</a></td><td class="mono">fd2fbbd</td><td class="source-path"><a href="../../references/kero/Vendor/alacritty-bridge/include/kero_alacritty.h">kero_alacritty.h</a> · <a href="../../references/kero/kero/AgentAutomation.swift">AgentAutomation.swift</a></td></tr>
+            <tr><td><a href="https://github.com/supabitapp/supacode/tree/86f3219568225ed05b08a25092b2f277a827a9c6">Supacode</a></td><td class="mono">86f3219</td><td class="source-path"><a href="../../references/supacode/SupacodeSettingsShared/BusinessLogic/AgentPresenceOSC.swift">AgentPresenceOSC.swift</a> · <a href="../../references/supacode/Supacode/Infrastructure/AgentHookSocketServer.swift">AgentHookSocketServer.swift</a></td></tr>
+            <tr><td><a href="https://github.com/10xChengTu/Mux0/tree/17129372b2665fccf06793bb50d1ea0660f0d682">Mux0</a></td><td class="mono">1712937</td><td class="source-path"><a href="../../references/Mux0/mux0/Models/HookMessage.swift">HookMessage.swift</a> — status/summary transport, không phải rich transcript.</td></tr>
+            <tr><td><a href="https://github.com/muxy-app/muxy/tree/346a561de669947eaecfede6bde0387aa10045e0">Muxy</a></td><td class="mono">346a561</td><td>Ghostty terminal + composer; không thấy canonical message/read-model tương đương T3.</td></tr>
+            <tr><td><a href="https://github.com/alltuner/factoryfloor/tree/b91f313d69c9840be2fc6ec44cfb0b793c6b2b5f">Factory Floor</a></td><td class="mono">b91f313</td><td>Ghostty/tmux terminal workflow; không phải semantic agent transcript renderer.</td></tr>
+            <tr><td>Tenon</td><td>working tree 2026-08-13</td><td class="source-path"><a href="../../Sources/TenonApp/AgentLensDomain.swift">AgentLensDomain.swift</a> · <a href="../../Sources/TenonApp/AgentLensReadModel.swift">AgentLensReadModel.swift</a> · <a href="../../Sources/TenonApp/AgentLensDecoders.swift">AgentLensDecoders.swift</a> · <a href="../../Sources/TenonApp/AgentLensView.swift">AgentLensView.swift</a> · <a href="../../Tests/TenonAppStateTests/AgentLensReadModelTests.swift">projection receipts</a></td></tr>
+          </tbody>
+        </table>
+      </div>
+      <ol class="footnotes">
+        <li>T3 source contract: <a href="https://github.com/pingdotgg/t3code/blob/6bc6cb6be4ebecd5bd7a3b7b88f07cb61815ded5/packages/contracts/src/providerRuntime.ts">canonical provider runtime</a>; UI projection: <a href="https://github.com/pingdotgg/t3code/blob/6bc6cb6be4ebecd5bd7a3b7b88f07cb61815ded5/apps/web/src/session-logic.ts">session-logic.ts</a>.</li>
+        <li>Orca contract: <a href="https://github.com/stablyai/orca/blob/346e59c879adfa7c55fd22485a221a42116de1d2/src/shared/native-chat-types.ts">native-chat-types.ts</a>.</li>
+        <li>GitNexus MCP was not available in this session. Tenon’s Repowise index was queried first as required, but returned low confidence/no hits because the index trails the current Agent Lens source; the report therefore uses direct current-source reads for that section.</li>
+        <li>“Literal emissions observed” is not a completeness claim: adapters can construct event objects through helpers, so the provider matrix is grouped by verified behavior rather than raw grep counts.</li>
+      </ol>
+    </section>
+
+    <footer>
+      Prepared from local source clones in <code>/Users/firegroup/projects/tenon/references</code>. No external runtime behavior was inferred beyond the locked source revisions.
+    </footer>
+  </main>
+  <script>
+    (() => {
+      const buttons = Array.from(document.querySelectorAll('[data-filter]'));
+      const rows = Array.from(document.querySelectorAll('#decision-table tbody tr'));
+      for (const button of buttons) {
+        button.addEventListener('click', () => {
+          const filter = button.dataset.filter;
+          for (const candidate of buttons) candidate.setAttribute('aria-pressed', String(candidate === button));
+          for (const row of rows) row.hidden = filter !== 'all' && row.dataset.layer !== filter;
+        });
+      }
+    })();
+  </script>
+</body>
+</html>

@@ -16,6 +16,7 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
       And new pane width is unrestricted
       And sidebar is visible at 232 points
       And accent is Amber and schedules are enabled
+      And Companion defaults to Claude with model Haiku
 
     @req-set-fr-002 @req-set-fr-003 @content
     Scenario Outline: Each creation context resolves its configured content
@@ -32,11 +33,12 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
         | a new split | Empty | empty pane |
 
     @req-set-fr-004 @pane-width
-    Scenario: New-pane width is a creation preference only
+    Scenario: Pane width constrains automatic layout without locking manual resize
       Given existing panes have committed geometry
       When the user changes widest new pane
       Then existing panes keep their size
-      And only later pane creation applies the selected fraction
+      And later pane creation and close absorption apply the selected fraction
+      And ordinary pane resize can still exceed it
 
     @req-set-fr-005 @sidebar
     Scenario: Launch initializes sidebar presentation from preferences
@@ -90,6 +92,7 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
     Scenario: Settings uses one flat source list
       Given Settings opens
       Then its sidebar contains General
+      And its sidebar contains Companion
       And each plugin declaring settings has one Plugins-section entry
       And Automation, CLI, and Extensions are visible
       And no hardcoded Browser route is required
@@ -129,6 +132,57 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
       When accessibility inspects it
       Then a label and state convey the meaning
       And keyboard interaction reaches the same outcome
+
+  Rule: Companion is one reusable default for host-owned AI assistance
+
+    @req-set-fr-025 @req-set-fr-026 @companion
+    Scenario: An older preferences document gains compatible Companion defaults
+      Given a valid app preferences blob was written before Companion existed
+      When AppPreferences decodes it
+      Then its existing workspace and appearance choices remain unchanged
+      And Companion selects Claude with model Haiku
+      And custom prompt and working folder are empty
+
+    @req-set-fr-027 @req-set-nfr-010 @companion
+    Scenario: Companion reports the selected agent without changing it
+      Given the Companion page is visible
+      When installed agents are detected off the main actor
+      Then the selected agent says Installed or Not found
+      And a missing selected agent is not silently replaced
+
+    @req-set-fr-027 @companion @model
+    Scenario: Changing Companion provider restores a compatible model
+      Given Companion uses Claude with model Haiku
+      When the user changes its agent to Codex
+      Then Model is cleared to use Codex's configured default
+      And changing back to Claude restores model Haiku
+
+    @req-set-fr-028 @companion @bounds
+    Scenario: Companion free text stays bounded
+      Given the user edits model, custom prompt, or working folder
+      Then model is capped at 120 bytes
+      And custom prompt is capped at 8192 bytes
+      And working folder is capped at 4096 bytes
+      And clearing model means the provider default
+
+    @req-set-fr-029 @companion @lifecycle
+    Scenario: A running task keeps the profile it started with
+      Given a Companion-backed task is running
+      When the user changes agent, model, prompt, or folder in Settings
+      Then the running task keeps its original profile snapshot
+      And the next task uses the changed profile
+
+    @req-set-nfr-011 @companion @structured-output
+    Scenario Outline: Companion accepts only the provider's JSON result channel
+      Given Companion uses <agent>
+      When the provider finishes a task
+      Then Tenon reads <channel>
+      And terminal rendering and stderr cannot become the result
+
+      Examples:
+        | agent | channel |
+        | Claude | output-format json validated against json-schema |
+        | Codex | the JSONL item.completed agent_message validated against output-schema |
 
     @req-set-nfr-008 @nonblocking
     Scenario: Settings body performs no repeated filesystem or process work
@@ -300,3 +354,37 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
       Given a confirmation arrives after the switch was changed in Settings
       When the host takes its standing answer
       Then the answer is the one the store holds now
+
+  @req-set-fr-030 @agent-harness
+  Scenario: One page teaches every agent on this machine what Tenon is
+    Given the Settings window is open
+    Then an Agent Harness page sits beside CLI
+    And it names every file it would write before anything is pressed
+
+  @req-set-fr-031 @agent-harness
+  Scenario: A person's own instructions survive Tenon writing into their file
+    Given "~/.claude/CLAUDE.md" already contains instructions the person wrote
+    When the harness is installed and then installed again over a stale briefing
+    Then everything the person wrote above and below Tenon's markers is unchanged
+    And exactly one managed block is present
+
+  @req-set-fr-032 @agent-harness
+  Scenario: The button tells the truth before it is pressed
+    Given the harness has never been installed
+    Then the page reports it as absent
+    When the harness is installed
+    Then the page reports it as installed
+    And installing again writes no file
+
+  @req-set-fr-033 @agent-harness
+  Scenario: Removal takes Tenon's block and leaves the rest
+    Given the harness is installed and the person has added notes below it
+    When the harness is removed
+    Then their notes remain and no Tenon marker does
+    And the skill file Tenon owned is gone
+
+  @req-set-fr-034 @agent-harness
+  Scenario: The briefing cannot describe a Tenon that does not exist
+    Given the briefing names environment variables and intent ids
+    Then every variable it names is one a Tenon terminal exports
+    And every intent id it prints is in the shipping catalog

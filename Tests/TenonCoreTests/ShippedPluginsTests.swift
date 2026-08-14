@@ -1,13 +1,14 @@
 import Foundation
+@testable import TenonBundledPlugins
+@testable import TenonCore
 import TenonIntentCore
 import XCTest
-@testable import TenonCore
 
-/// Architecture fitness tests for the JavaScript that ships with the app.
+/// Architecture fitness tests for every plugin implementation that ships with the app.
 ///
-/// These tests intentionally inspect source and manifests together. Adding a public
-/// bridge surface or hiding an undeclared intent behind a helper must fail locally
-/// before the plugin can ship.
+/// JavaScript candidates are inspected source-to-manifest; both backends are then staged
+/// through the hybrid factory so exact provider bindings remain a shipped-plugin invariant.
+/// Backend-specific boundary fitness lives beside the code shape it constrains.
 final class ShippedPluginsTests: XCTestCase {
     private static var pluginsRoot: URL {
         URL(fileURLWithPath: #filePath)
@@ -64,9 +65,10 @@ final class ShippedPluginsTests: XCTestCase {
         ]
 
         for record in try shippedPlugins() {
+            guard let source = record.source else { continue }
             for pattern in bannedPatterns {
                 XCTAssertFalse(
-                    hasMatch(pattern, in: record.source),
+                    hasMatch(pattern, in: source),
                     "\(record.directory.lastPathComponent) uses banned surface \(pattern)"
                 )
             }
@@ -75,23 +77,22 @@ final class ShippedPluginsTests: XCTestCase {
 
     func testEveryLiteralSendAndHandlerMatchesItsManifestExactly() throws {
         for record in try shippedPlugins() {
+            guard let source = record.source else { continue }
             let sends = captures(
                 #"(?:tenon\.intents|call)\.send\(\s*["']([^"']+)["']"#,
-                in: record.source
+                in: source
             )
             let handlers = captures(
                 #"tenon\.intents\.handle\(\s*["']([^"']+)["']"#,
-                in: record.source
+                in: source
             )
             let uses = record.manifest.intents.uses.map(\.rawValue)
-            let provides = record.manifest.intents.provides.map {
-                $0.name.rawValue
-            }
+            let provides = record.manifest.intents.provides.map(\.name.rawValue)
 
             XCTAssertEqual(
                 matchCount(
                     #"(?:tenon\.intents|call)\.send\("#,
-                    in: record.source
+                    in: source
                 ),
                 sends.count,
                 "\(record.directory.lastPathComponent) must send literal intent IDs"
@@ -99,7 +100,7 @@ final class ShippedPluginsTests: XCTestCase {
             XCTAssertEqual(
                 matchCount(
                     #"tenon\.intents\.handle\("#,
-                    in: record.source
+                    in: source
                 ),
                 handlers.count,
                 "\(record.directory.lastPathComponent) must handle literal intent IDs"
@@ -137,8 +138,8 @@ final class ShippedPluginsTests: XCTestCase {
                     }
                 }
             )
-            let runtime = try PluginRuntime(
-                configuration: PluginRuntimeConfiguration(
+            let runtime = try await BundledPluginRuntime.factory.make(
+                PluginRuntimeConfiguration(
                     manifest: record.manifest,
                     directory: record.directory,
                     intents: PluginRuntimeIntentBridge(
@@ -157,10 +158,10 @@ final class ShippedPluginsTests: XCTestCase {
                     "\(record.directory.lastPathComponent) did not stage every provider"
                 )
             } catch {
-                _ = await runtime.shutdown()
+                _ = await runtime.shutdown(timeout: 2)
                 throw error
             }
-            let report = await runtime.shutdown()
+            let report = await runtime.shutdown(timeout: 2)
             XCTAssertEqual(
                 report.executorResult,
                 .stopped,
@@ -172,20 +173,22 @@ final class ShippedPluginsTests: XCTestCase {
     private struct ShippedPlugin {
         let directory: URL
         let manifest: PluginManifest
-        let source: String
+        let source: String?
     }
 
     private func shippedPlugins() throws -> [ShippedPlugin] {
         try PluginLoader.discover(in: Self.pluginsRoot)
             .map { directory in
-                let sourceURL = directory.appendingPathComponent("main.js")
-                return ShippedPlugin(
+                let manifest = try PluginLoader.loadManifest(at: directory)
+                return try ShippedPlugin(
                     directory: directory,
-                    manifest: try PluginLoader.loadManifest(at: directory),
-                    source: try String(
-                        contentsOf: sourceURL,
-                        encoding: .utf8
-                    )
+                    manifest: manifest,
+                    source: manifest.runtime == .javaScript
+                        ? String(
+                            contentsOf: directory.appendingPathComponent("main.js"),
+                            encoding: .utf8
+                        )
+                        : nil
                 )
             }
             .sorted {

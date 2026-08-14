@@ -291,7 +291,9 @@ final class WorkspaceTabOrderTests: XCTestCase {
         store.newTab()
         XCTAssertEqual(store.catalog.activeWorkspace!.tabs.map(\.number), [1, 2, 3])
 
-        // A pane pulled out of its tab into one of its own is the third route.
+        // A pane pulled out of its tab into one of its own is the third route. Because it
+        // was the source tab's final pane, that source closes and leaves its number as a
+        // gap; the newly created tab keeps the number it received at creation.
         let crowded = store.catalog.activeWorkspace!.tabs[2]
         store.selectTab(crowded.id)
         let slot = crowded.slots[0].id
@@ -299,7 +301,7 @@ final class WorkspaceTabOrderTests: XCTestCase {
 
         XCTAssertEqual(
             store.catalog.activeWorkspace!.tabs.map(\.number).sorted(),
-            [1, 2, 3, 4],
+            [1, 2, 4],
             "a pane dragged out into its own tab arrived unnumbered"
         )
         XCTAssertEqual(

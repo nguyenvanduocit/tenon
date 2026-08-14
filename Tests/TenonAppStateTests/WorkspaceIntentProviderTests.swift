@@ -9,6 +9,122 @@ import XCTest
 /// split beside it when there is none, and never open a tab.
 @MainActor
 final class WorkspaceIntentProviderTests: XCTestCase {
+    func testWorkspaceIdentityIntentUpdatesTheExactWorkspaceAtomically() async throws {
+        var catalog = WorkspaceCatalog(
+            name: "First",
+            path: URL(fileURLWithPath: "/first", isDirectory: true)
+        )
+        let selectedID = catalog.activeWorkspaceID
+        catalog.addWorkspace(
+            name: "Second",
+            path: URL(fileURLWithPath: "/second", isDirectory: true)
+        )
+        let targetID = catalog.activeWorkspaceID
+        catalog.selectWorkspace(selectedID)
+        let store = WorkspaceStore(catalog: catalog)
+        var published: [WorkspaceEvent] = []
+        store.onEvents = { events, _ in published.append(contentsOf: events) }
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        let value = try successReply(
+            await invoke(
+                .workspaceIdentitySet,
+                input: .object([
+                    "name": .string("Infra"),
+                    "accent": .string("teal"),
+                    "icon": .object([
+                        "kind": .string("symbol"),
+                        "name": .string("server"),
+                    ]),
+                ]),
+                scope: InvocationScope(workspaceID: targetID),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(
+            value,
+            .object([
+                "workspaceID": .string(targetID.uuidString),
+                "name": .string("Infra"),
+                "accent": .string("teal"),
+                "icon": .object([
+                    "kind": .string("symbol"),
+                    "name": .string("server"),
+                ]),
+            ])
+        )
+        XCTAssertEqual(store.catalog.activeWorkspaceID, selectedID)
+        let target = try XCTUnwrap(store.catalog.workspaces.first { $0.id == targetID })
+        XCTAssertEqual(target.name, "Infra")
+        XCTAssertEqual(target.appearance, WorkspaceAppearance(symbol: .server, accent: .teal))
+        XCTAssertEqual(published, [.workspaceIdentityChanged(targetID)])
+    }
+
+    func testWorkspaceIdentityIntentNormalizesCustomImageBytes() async throws {
+        let source = Data("raw image supplied by cli".utf8)
+        let png = try XCTUnwrap(
+            Data(base64Encoded: """
+                iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8A
+                AQUBAScY42YAAAAASUVORK5CYII=
+                """.filter { !$0.isWhitespace })
+        )
+        let normalized = try XCTUnwrap(WorkspaceCustomIcon(pngData: png))
+        let store = WorkspaceStore()
+        let workspaceID = store.catalog.activeWorkspaceID
+        let bindings = try WorkspaceIntentProvider(
+            store: store,
+            normalizeCustomIcon: { data in
+                guard data == source else { throw TestError.invalidData }
+                return normalized
+            }
+        ).bindings()
+
+        let value = try successReply(
+            await invoke(
+                .workspaceIdentitySet,
+                input: .object([
+                    "icon": .object([
+                        "kind": .string("custom"),
+                        "data": .string(source.base64EncodedString()),
+                    ]),
+                ]),
+                scope: InvocationScope(workspaceID: workspaceID),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(store.catalog.activeWorkspace?.appearance.customIcon, normalized)
+        guard case let .object(output) = value,
+              case let .object(icon)? = output["icon"]
+        else { return XCTFail("identity output must contain an icon object") }
+        XCTAssertEqual(icon["kind"], .string("custom"))
+        XCTAssertEqual(icon["id"], .string(normalized.id.uuidString))
+        XCTAssertEqual(icon["data"], .string(normalized.pngData.base64EncodedString()))
+    }
+
+    func testWorkspaceIdentityIntentNeverFallsBackToSelection() async throws {
+        let store = WorkspaceStore()
+        let before = store.catalog.activeWorkspace
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        let reply = try await invoke(
+            .workspaceIdentitySet,
+            input: .object(["name": .string("Wrong workspace")]),
+            scope: InvocationScope(),
+            bindings: bindings
+        )
+
+        guard case let .failure(failure) = reply else {
+            return XCTFail("missing workspace scope must fail closed")
+        }
+        XCTAssertEqual(
+            failure.code,
+            .domain(try IntentDomainErrorCode("dev.tenon.core.workspace-not-found"))
+        )
+        XCTAssertEqual(store.catalog.activeWorkspace, before)
+    }
+
     func testAutomationContentRoundTripsThroughPublicWorkspaceIntents() async throws {
         let store = WorkspaceStore()
         let bindings = try WorkspaceIntentProvider(store: store).bindings()
@@ -686,5 +802,6 @@ private extension WorkspaceIntentProviderTests {
 
     enum TestError: Error {
         case expectedSuccess
+        case invalidData
     }
 }

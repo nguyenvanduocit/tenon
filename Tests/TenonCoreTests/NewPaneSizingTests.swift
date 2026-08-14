@@ -1,8 +1,8 @@
 import XCTest
 @testable import TenonCore
 
-/// The creation maximum: a cap the layout applies while a pane is being born, and never
-/// again. Every assertion here runs on the pure workspace value — no window, no canvas.
+/// The automatic-layout maximum: a cap applied when a pane is born or when close reflow
+/// offers a neighbor released width. Every assertion runs on the pure workspace value.
 final class NewPaneSizingTests: XCTestCase {
     private let third = NewPaneSizing(maximumWidth: .oneThird)   // 4 of 12 columns
     private let half = NewPaneSizing(maximumWidth: .oneHalf)     // 6 of 12 columns
@@ -22,6 +22,26 @@ final class NewPaneSizingTests: XCTestCase {
 
     private func rects(_ catalog: WorkspaceCatalog) -> [GridRect] {
         catalog.activeTab?.slots.map(\.rect) ?? []
+    }
+
+    private func store(
+        slots: [WorkspaceSlot],
+        activeSlotID: UUID,
+        maximumWidth: SpatialExtentFraction
+    ) -> WorkspaceStore {
+        let tab = Tab(slots: slots, activeSlotID: activeSlotID)
+        let workspace = Workspace(
+            name: "w",
+            path: Self.path,
+            tabs: [tab],
+            activeTabID: tab.id
+        )
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        ))
+        store.newPaneSizingProvider = { NewPaneSizing(maximumWidth: maximumWidth) }
+        return store
     }
 
     private static let path = URL(fileURLWithPath: "/tmp", isDirectory: true)
@@ -268,6 +288,99 @@ final class NewPaneSizingTests: XCTestCase {
         XCTAssertEqual(rects(catalog).last?.width, 4, "only the new pane obeys the maximum")
     }
 
+    func testClosingAPaneOnlyAutoExpandsItsNeighborToTheConfiguredMaximum() throws {
+        let survivingID = UUID()
+        let closingID = UUID()
+        let store = store(
+            slots: [
+                WorkspaceSlot(
+                    id: survivingID,
+                    rect: GridRect(x: 0, y: 0, width: 3, height: 12),
+                    content: .terminal
+                ),
+                WorkspaceSlot(
+                    id: closingID,
+                    rect: GridRect(x: 3, y: 0, width: 9, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: closingID,
+            maximumWidth: .oneThird
+        )
+
+        store.closeSlot(closingID)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: survivingID)).rect,
+            GridRect(x: 0, y: 0, width: 4, height: 12),
+            "automatic close reflow may grow a pane up to the live maximum, not past it"
+        )
+    }
+
+    func testCloseReflowNeverShrinksAPaneAlreadyWiderThanTheConfiguredMaximum() throws {
+        let survivingID = UUID()
+        let closingID = UUID()
+        let store = store(
+            slots: [
+                WorkspaceSlot(
+                    id: survivingID,
+                    rect: GridRect(x: 0, y: 0, width: 6, height: 12),
+                    content: .terminal
+                ),
+                WorkspaceSlot(
+                    id: closingID,
+                    rect: GridRect(x: 6, y: 0, width: 6, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: closingID,
+            maximumWidth: .oneThird
+        )
+        var events: [WorkspaceEvent] = []
+        store.onEvents = { published, _ in events = published }
+
+        store.closeSlot(closingID)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: survivingID)).rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12),
+            "the setting limits automatic growth; it never retroactively shrinks a pane"
+        )
+        XCTAssertFalse(events.contains { event in
+            if case .slotsResized = event { return true }
+            return false
+        })
+    }
+
+    func testRightNeighborKeepsItsRightEdgeWhenCloseReflowIsCapped() throws {
+        let closingID = UUID()
+        let survivingID = UUID()
+        let store = store(
+            slots: [
+                WorkspaceSlot(
+                    id: closingID,
+                    rect: GridRect(x: 0, y: 0, width: 9, height: 12),
+                    content: .terminal
+                ),
+                WorkspaceSlot(
+                    id: survivingID,
+                    rect: GridRect(x: 9, y: 0, width: 3, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: closingID,
+            maximumWidth: .oneThird
+        )
+
+        store.closeSlot(closingID)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: survivingID)).rect,
+            GridRect(x: 8, y: 0, width: 4, height: 12),
+            "a right neighbor grows left into the released region without jumping right"
+        )
+    }
+
     func testSplittingStillResizesThePaneBeingSplit() {
         // The exception that proves the rule above: a split has always changed its
         // target's width, maximum or no maximum. What the maximum changes is only how
@@ -288,7 +401,7 @@ final class NewPaneSizingTests: XCTestCase {
 
         XCTAssertEqual(
             catalog.activeTab?.slots[0].rect.width, 12,
-            "the maximum bounds creation only; the border is the person's"
+            "the maximum bounds automatic layout only; the border is the person's"
         )
     }
 }

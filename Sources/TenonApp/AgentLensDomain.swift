@@ -126,8 +126,39 @@ enum AgentMessageKind: String, Sendable {
     case skill
 }
 
+/// Stable provider lifecycle identity. A provider id is kept verbatim; a derived id is
+/// explicitly namespaced by the projection so it can never be mistaken for provider truth.
+struct AgentTurnID: RawRepresentable, Hashable, Codable, Sendable {
+    let rawValue: String
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    init(_ rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    static func derived(from messageID: String) -> Self {
+        Self("derived:message:\(messageID)")
+    }
+}
+
+struct AgentTaskID: RawRepresentable, Hashable, Codable, Sendable {
+    let rawValue: String
+
+    init(rawValue: String) {
+        self.rawValue = rawValue
+    }
+
+    init(_ rawValue: String) {
+        self.rawValue = rawValue
+    }
+}
+
 struct AgentLensMessage: Identifiable, Equatable, Sendable {
     let id: String
+    var turnID: AgentTurnID? = nil
     var role: AgentMessageRole
     var kind: AgentMessageKind = .conversation
     var text: String
@@ -157,6 +188,8 @@ enum AgentToolState: String, Sendable {
 
 struct AgentToolRun: Identifiable, Equatable, Sendable {
     let id: String
+    var turnID: AgentTurnID? = nil
+    var taskID: AgentTaskID? = nil
     var name: String
     var kind: AgentToolKind = .generic
     var summary: String
@@ -185,12 +218,68 @@ struct AgentInteractionOption: Identifiable, Equatable, Sendable {
 
 struct AgentInteractionRequest: Identifiable, Equatable, Sendable {
     let id: String
+    var turnID: AgentTurnID? = nil
     let kind: AgentInteractionKind
     var title: String
     var detail: String
     var options: [AgentInteractionOption] = []
     var state: AgentInteractionState
     var evidence: AgentEvidence
+}
+
+enum AgentPlanStepState: String, Sendable {
+    case pending
+    case running
+    case completed
+}
+
+struct AgentPlanStep: Identifiable, Equatable, Sendable {
+    let id: String
+    let text: String
+    let state: AgentPlanStepState
+}
+
+/// Latest provider-authored plan for one turn. Updates replace the value with the same id;
+/// they are state, not a growing list of duplicate timeline events.
+struct AgentPlanUpdate: Identifiable, Equatable, Sendable {
+    let id: String
+    let turnID: AgentTurnID
+    let explanation: String
+    let steps: [AgentPlanStep]
+    let evidence: AgentEvidence
+
+    var completedCount: Int { steps.count(where: { $0.state == .completed }) }
+}
+
+/// Latest aggregated diff a provider reports for one turn. The text stays bounded at ingress;
+/// the lightweight path list makes the read projection useful without parsing it in SwiftUI.
+struct AgentChangeSet: Identifiable, Equatable, Sendable {
+    let id: String
+    let turnID: AgentTurnID
+    let unifiedDiff: String
+    let changedPaths: [String]
+    let evidence: AgentEvidence
+}
+
+struct AgentTokenUsage: Equatable, Sendable {
+    let inputTokens: Int
+    let cachedInputTokens: Int
+    let outputTokens: Int
+    let reasoningOutputTokens: Int
+    let totalTokens: Int
+}
+
+struct AgentContextUsage: Equatable, Sendable {
+    let turnID: AgentTurnID?
+    let last: AgentTokenUsage
+    let total: AgentTokenUsage
+    let modelContextWindow: Int?
+    let evidence: AgentEvidence
+
+    var usedFraction: Double? {
+        guard let modelContextWindow, modelContextWindow > 0 else { return nil }
+        return min(1, Double(last.totalTokens) / Double(modelContextWindow))
+    }
 }
 
 enum AgentLensStatus: Equatable, Sendable {
@@ -273,26 +362,15 @@ struct AgentTimelineToolGroup: Identifiable, Equatable, Sendable {
     }
 
     var evidence: AgentEvidence? { tools.first?.evidence }
-
-    mutating func append(_ tool: AgentToolRun) {
-        tools.append(tool)
-    }
-
-    func canMerge(with tool: AgentToolRun) -> Bool {
-        switch (kind, tool.kind) {
-        case (.subagent, .subagent):
-            true
-        case (.skill, .skill):
-            tools.first?.name.caseInsensitiveCompare(tool.name) == .orderedSame
-        default:
-            false
-        }
-    }
 }
 
 enum AgentTimelineContent: Equatable, Sendable {
     case message(AgentLensMessage)
     case tools(AgentTimelineToolGroup)
+    case plan(AgentPlanUpdate)
+    case changes(AgentChangeSet)
+    /// A read-side fold over adjacent execution facts. Raw evidence never stores this case.
+    case work(AgentWorkLog)
     case interaction(AgentInteractionRequest)
     case diagnostic(AgentLensDiagnostic)
 }
@@ -302,6 +380,7 @@ struct AgentTimelineItem: Identifiable, Equatable, Sendable {
     let occurredAt: Date
     let sourceLocation: String
     let sourceOffset: UInt64?
+    var turnID: AgentTurnID? = nil
     var content: AgentTimelineContent
 }
 
@@ -326,8 +405,11 @@ struct AgentLensSnapshot: Equatable, Sendable {
     var status: AgentLensStatus = .detecting
     var messages: [AgentLensMessage] = []
     var tools: [AgentToolRun] = []
+    var plans: [AgentPlanUpdate] = []
+    var changeSets: [AgentChangeSet] = []
     var interactions: [AgentInteractionRequest] = []
     var diagnostics: [AgentLensDiagnostic] = []
+    var contextUsage: AgentContextUsage?
     var transcriptPath: String?
     /// Where the visible history begins, when it does not begin at the session's start.
     ///
@@ -350,12 +432,16 @@ struct AgentLensSnapshot: Equatable, Sendable {
     /// that question is asked on every publish. Counting `timelineItems` instead would sort and
     /// group the whole session to answer it.
     var factCount: Int {
-        messages.count + tools.count + interactions.count + diagnostics.count
+        messages.count + tools.count + plans.count + changeSets.count
+            + interactions.count + diagnostics.count
     }
 
     var timelineItems: [AgentTimelineItem] {
         var items: [AgentTimelineItem] = []
-        items.reserveCapacity(messages.count + tools.count + interactions.count + diagnostics.count)
+        items.reserveCapacity(
+            messages.count + tools.count + plans.count + changeSets.count
+                + interactions.count + diagnostics.count
+        )
 
         for message in messages where message.kind == .conversation {
             items.append(
@@ -364,6 +450,7 @@ struct AgentLensSnapshot: Equatable, Sendable {
                     occurredAt: message.evidence.capturedAt,
                     sourceLocation: message.evidence.location,
                     sourceOffset: message.evidence.byteOffset,
+                    turnID: message.turnID,
                     content: .message(message)
                 )
             )
@@ -375,7 +462,32 @@ struct AgentLensSnapshot: Equatable, Sendable {
                     occurredAt: tool.evidence.capturedAt,
                     sourceLocation: tool.evidence.location,
                     sourceOffset: tool.evidence.byteOffset,
+                    turnID: tool.turnID,
                     content: .tools(AgentTimelineToolGroup(tool: tool))
+                )
+            )
+        }
+        for plan in plans {
+            items.append(
+                AgentTimelineItem(
+                    id: "plan-\(plan.id)",
+                    occurredAt: plan.evidence.capturedAt,
+                    sourceLocation: plan.evidence.location,
+                    sourceOffset: plan.evidence.byteOffset,
+                    turnID: plan.turnID,
+                    content: .plan(plan)
+                )
+            )
+        }
+        for changeSet in changeSets {
+            items.append(
+                AgentTimelineItem(
+                    id: "changes-\(changeSet.id)",
+                    occurredAt: changeSet.evidence.capturedAt,
+                    sourceLocation: changeSet.evidence.location,
+                    sourceOffset: changeSet.evidence.byteOffset,
+                    turnID: changeSet.turnID,
+                    content: .changes(changeSet)
                 )
             )
         }
@@ -386,6 +498,7 @@ struct AgentLensSnapshot: Equatable, Sendable {
                     occurredAt: interaction.evidence.capturedAt,
                     sourceLocation: interaction.evidence.location,
                     sourceOffset: interaction.evidence.byteOffset,
+                    turnID: interaction.turnID,
                     content: .interaction(interaction)
                 )
             )
@@ -411,51 +524,33 @@ struct AgentLensSnapshot: Equatable, Sendable {
             return lhs.id < rhs.id
         }
 
-        var grouped: [AgentTimelineItem] = []
-        grouped.reserveCapacity(items.count)
-        for item in items {
-            guard case let .tools(nextGroup) = item.content,
-                  let nextTool = nextGroup.tools.first,
-                  let lastIndex = grouped.indices.last,
-                  case var .tools(previousGroup) = grouped[lastIndex].content,
-                  previousGroup.canMerge(with: nextTool)
-            else {
-                grouped.append(item)
+        // Claude transcripts do not expose a turn id. Associate semantic facts with the
+        // preceding user message using an explicitly derived id. Codex facts keep the native
+        // id carried by app-server frames. This is correlation, never a rewritten source fact.
+        var activeTurnID: AgentTurnID?
+        for index in items.indices {
+            if case .message(let message) = items[index].content, message.role == .user {
+                activeTurnID = items[index].turnID ?? .derived(from: message.id)
+                items[index].turnID = activeTurnID
                 continue
             }
-            previousGroup.append(nextTool)
-            grouped[lastIndex].content = .tools(previousGroup)
+            if let nativeTurnID = items[index].turnID {
+                activeTurnID = nativeTurnID
+            } else if Self.belongsToTurn(items[index].content) {
+                items[index].turnID = activeTurnID
+            }
         }
-        return grouped
+
+        // Raw facts retain one item id and one evidence anchor each. Grouping is a read-model
+        // decision below this layer; merging here made later tool ids impossible to inspect.
+        return items
     }
 
-    /// The Session view keeps completed execution history in the snapshot but projects
-    /// only the most recently started tool that is still running. Detailed execution
-    /// remains available in the terminal instead of accumulating in the conversation.
-    var sessionTimelineItems: [AgentTimelineItem] {
-        var items = timelineItems.filter { item in
-            guard case .tools = item.content else { return true }
-            return false
+    private static func belongsToTurn(_ content: AgentTimelineContent) -> Bool {
+        switch content {
+        case .message, .tools, .plan, .changes, .interaction, .work: true
+        case .diagnostic: false
         }
-        guard let tool = tools.last(where: { $0.state == .running }) else { return items }
-        items.append(
-            AgentTimelineItem(
-                id: "tool-\(tool.id)",
-                occurredAt: tool.evidence.capturedAt,
-                sourceLocation: tool.evidence.location,
-                sourceOffset: tool.evidence.byteOffset,
-                content: .tools(AgentTimelineToolGroup(tool: tool))
-            )
-        )
-        items.sort { lhs, rhs in
-            if lhs.occurredAt != rhs.occurredAt { return lhs.occurredAt < rhs.occurredAt }
-            if lhs.sourceLocation != rhs.sourceLocation { return lhs.sourceLocation < rhs.sourceLocation }
-            if lhs.sourceOffset != rhs.sourceOffset {
-                return (lhs.sourceOffset ?? .max) < (rhs.sourceOffset ?? .max)
-            }
-            return lhs.id < rhs.id
-        }
-        return items
     }
 
     var goalSummary: String {
@@ -520,6 +615,9 @@ enum AgentLensEvent: Equatable, Sendable {
     case toolStarted(AgentToolRun)
     case toolDelta(id: String, text: String, evidence: AgentEvidence)
     case toolFinished(AgentToolRun)
+    case planUpdated(AgentPlanUpdate)
+    case changeSetUpdated(AgentChangeSet)
+    case contextUsageUpdated(AgentContextUsage)
     case interactionRequested(AgentInteractionRequest)
     case interactionResolved(id: String, evidence: AgentEvidence)
     case status(AgentLensStatus, evidence: AgentEvidence)
@@ -527,7 +625,8 @@ enum AgentLensEvent: Equatable, Sendable {
 
     var isHighFrequencyDelta: Bool {
         switch self {
-        case .assistantDelta, .toolDelta:
+        case .assistantDelta, .toolDelta, .planUpdated, .changeSetUpdated,
+             .contextUsageUpdated:
             true
         default:
             false
@@ -540,6 +639,8 @@ enum AgentLensEvent: Equatable, Sendable {
 struct AgentLensReducer: Sendable {
     private static let messageCapacity = 600
     private static let toolCapacity = 240
+    private static let planCapacity = 120
+    private static let changeSetCapacity = 120
     private static let interactionCapacity = 120
     private static let diagnosticCapacity = 40
 
@@ -621,6 +722,15 @@ struct AgentLensReducer: Sendable {
         case .toolFinished(let tool):
             upsertTool(tool)
 
+        case .planUpdated(let plan):
+            upsert(plan, in: &snapshot.plans, capacity: Self.planCapacity)
+
+        case .changeSetUpdated(let changeSet):
+            upsert(changeSet, in: &snapshot.changeSets, capacity: Self.changeSetCapacity)
+
+        case .contextUsageUpdated(let usage):
+            snapshot.contextUsage = usage
+
         case .interactionRequested(let request):
             if let index = snapshot.interactions.firstIndex(where: { $0.id == request.id }) {
                 // The live hook raises a question the transcript describes again once the
@@ -677,7 +787,11 @@ struct AgentLensReducer: Sendable {
 
     private mutating func upsertMessage(_ message: AgentLensMessage) {
         if let index = snapshot.messages.firstIndex(where: { $0.id == message.id }) {
-            snapshot.messages[index] = message
+            var replacement = message
+            if replacement.turnID == nil {
+                replacement.turnID = snapshot.messages[index].turnID
+            }
+            snapshot.messages[index] = replacement
             return
         }
         // Transcript formats often repeat a durable response as an event record and a
@@ -710,6 +824,12 @@ struct AgentLensReducer: Sendable {
     private mutating func upsertTool(_ tool: AgentToolRun) {
         if let index = snapshot.tools.firstIndex(where: { $0.id == tool.id }) {
             var replacement = tool
+            if replacement.turnID == nil {
+                replacement.turnID = snapshot.tools[index].turnID
+            }
+            if replacement.taskID == nil {
+                replacement.taskID = snapshot.tools[index].taskID
+            }
             if replacement.kind == .generic, snapshot.tools[index].kind != .generic {
                 replacement.kind = snapshot.tools[index].kind
             }
@@ -735,6 +855,21 @@ struct AgentLensReducer: Sendable {
             snapshot.tools.append(tool)
             if snapshot.tools.count > Self.toolCapacity {
                 snapshot.tools.removeFirst(snapshot.tools.count - Self.toolCapacity)
+            }
+        }
+    }
+
+    private func upsert<Value: Identifiable & Sendable>(
+        _ value: Value,
+        in values: inout [Value],
+        capacity: Int
+    ) where Value.ID: Equatable {
+        if let index = values.firstIndex(where: { $0.id == value.id }) {
+            values[index] = value
+        } else {
+            values.append(value)
+            if values.count > capacity {
+                values.removeFirst(values.count - capacity)
             }
         }
     }

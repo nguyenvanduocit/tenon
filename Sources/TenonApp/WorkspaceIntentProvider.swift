@@ -5,6 +5,10 @@ import TenonIntentCore
 
 @MainActor
 final class WorkspaceIntentProvider {
+    typealias CustomIconNormalizer = @Sendable (
+        Data
+    ) async throws -> WorkspaceCustomIcon
+
     private struct ErrorCodes {
         let workspaceUnavailable: IntentErrorCode
         let workspaceNotFound: IntentErrorCode
@@ -55,9 +59,16 @@ final class WorkspaceIntentProvider {
 
     private let store: WorkspaceStore
     private let codes: ErrorCodes
+    private let normalizeCustomIcon: CustomIconNormalizer
 
-    init(store: WorkspaceStore) throws {
+    init(
+        store: WorkspaceStore,
+        normalizeCustomIcon: @escaping CustomIconNormalizer = {
+            try await WorkspaceCustomIconImport.icon(from: $0)
+        }
+    ) throws {
         self.store = store
+        self.normalizeCustomIcon = normalizeCustomIcon
         codes = try ErrorCodes()
     }
 
@@ -68,6 +79,12 @@ final class WorkspaceIntentProvider {
             ) { envelope, context in
                 try context.checkCancellation()
                 return await self.state(envelope: envelope)
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.workspaceIdentitySet.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return try await self.setWorkspaceIdentity(envelope: envelope)
             },
             IntentProviderBinding(
                 intentID: try CoreIntentName.workspacePaneOwner.intentID
@@ -116,6 +133,12 @@ final class WorkspaceIntentProvider {
             ) { envelope, context in
                 try context.checkCancellation()
                 return await self.setPaneContent(envelope: envelope)
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.workspacePaneTitleSet.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return await self.setPaneTitle(envelope: envelope)
             },
             IntentProviderBinding(
                 intentID: try CoreIntentName.workspaceContentOpen.intentID
@@ -203,6 +226,118 @@ private extension WorkspaceIntentProvider {
                 codes.workspaceUnavailable,
                 reason: "workspace-state-page-unavailable"
             )
+        }
+    }
+
+    /// Public adapter over `WorkspaceStore.setWorkspaceIdentity`. Scope is the only
+    /// designation: a missing UUID never falls back to the selected workspace, because that
+    /// would let a background agent recolour whichever project the person just clicked.
+    func setWorkspaceIdentity(
+        envelope: IntentEnvelope
+    ) async throws -> IntentProviderReply {
+        do {
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            let allowed = Set(["name", "accent", "icon"])
+            guard !object.isEmpty, object.keys.allSatisfy(allowed.contains) else {
+                throw AppIntentInputError.missingOrInvalidField("identity")
+            }
+            guard let workspaceID = envelope.scope.workspaceID,
+                  let current = store.catalog.workspaces.first(where: {
+                      $0.id == workspaceID
+                  })
+            else {
+                return failure(
+                    codes.workspaceNotFound,
+                    reason: "workspace-scope-not-found"
+                )
+            }
+
+            let name: String?
+            switch object["name"] {
+            case .none:
+                name = nil
+            case let .some(.string(value)):
+                name = value
+            default:
+                throw AppIntentInputError.missingOrInvalidField("name")
+            }
+
+            var appearance = current.appearance
+            var changesAppearance = false
+            if let rawAccent = object["accent"] {
+                guard case let .string(value) = rawAccent else {
+                    throw AppIntentInputError.missingOrInvalidField("accent")
+                }
+                if value == "automatic" {
+                    appearance.accent = nil
+                } else if let accent = AccentColor(rawValue: value) {
+                    appearance.accent = accent
+                } else {
+                    throw AppIntentInputError.missingOrInvalidField("accent")
+                }
+                changesAppearance = true
+            }
+
+            if let rawIcon = object["icon"] {
+                let icon = try AppIntentProviderSupport.object(rawIcon)
+                guard icon.keys.allSatisfy({ ["kind", "name", "data"].contains($0) })
+                else {
+                    throw AppIntentInputError.missingOrInvalidField("icon")
+                }
+                switch try AppIntentProviderSupport.string("kind", in: icon) {
+                case "symbol":
+                    guard Set(icon.keys) == Set(["kind", "name"]),
+                          let symbol = WorkspaceSymbol(
+                              rawValue: try AppIntentProviderSupport.string(
+                                  "name",
+                                  in: icon
+                              )
+                          )
+                    else {
+                        throw AppIntentInputError.missingOrInvalidField("icon.name")
+                    }
+                    appearance.symbol = symbol
+                    appearance.customIcon = nil
+                case "custom":
+                    guard Set(icon.keys) == Set(["kind", "data"]) else {
+                        throw AppIntentInputError.missingOrInvalidField("icon.data")
+                    }
+                    let encoded = try AppIntentProviderSupport.string("data", in: icon)
+                    guard encoded.count
+                        <= WorkspaceCustomIcon.maximumImportBase64Characters,
+                        let data = Data(base64Encoded: encoded)
+                    else {
+                        throw AppIntentInputError.missingOrInvalidField("icon.data")
+                    }
+                    do {
+                        appearance.customIcon = try await normalizeCustomIcon(data)
+                    } catch is CancellationError {
+                        throw CancellationError()
+                    } catch {
+                        throw AppIntentInputError.missingOrInvalidField("icon.data")
+                    }
+                default:
+                    throw AppIntentInputError.missingOrInvalidField("icon.kind")
+                }
+                changesAppearance = true
+            }
+
+            store.setWorkspaceIdentity(
+                workspaceID,
+                name: name,
+                appearance: changesAppearance ? appearance : nil
+            )
+            guard let updated = store.catalog.workspaces.first(where: {
+                $0.id == workspaceID
+            }) else {
+                return failure(
+                    codes.workspaceNotFound,
+                    reason: "workspace-identity-update-failed"
+                )
+            }
+            return .success(Self.identityValue(updated))
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
         }
     }
 
@@ -448,6 +583,37 @@ private extension WorkspaceIntentProvider {
                 codes.contentUnavailable,
                 reason: "content-is-invalid"
             )
+        }
+    }
+
+    /// The public adapter over the same `renameSlot` the rename UI and the Companion title
+    /// generator call DIRECT (invariant 6). Scope names the pane, exactly as it does for
+    /// focus, close, and content: a caller that omits it is refused rather than renaming
+    /// whichever pane happens to be focused, which is how one agent would relabel another's.
+    ///
+    /// An empty or whitespace-only title clears the pin — the same operation, not a second
+    /// contract — because `PaneTitle.sanitized` answers nil for both.
+    func setPaneTitle(envelope: IntentEnvelope) -> IntentProviderReply {
+        do {
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            let title = try AppIntentProviderSupport.string("title", in: object)
+            guard let paneID = envelope.scope.paneID,
+                  store.catalog.slot(id: paneID) != nil
+            else {
+                return failure(codes.paneNotFound, reason: "pane-scope-not-found")
+            }
+
+            store.renameSlot(paneID, to: title)
+            guard store.catalog.slot(id: paneID)?.customTitle
+                == PaneTitle.sanitized(title)
+            else {
+                return failure(codes.paneNotFound, reason: "pane-title-update-failed")
+            }
+            return AppIntentProviderSupport.emptySuccess
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return failure(codes.paneNotFound, reason: "pane-title-update-failed")
         }
     }
 
@@ -815,6 +981,28 @@ private extension WorkspaceIntentProvider {
             "workspaceID": .string(owner.workspaceID.uuidString),
             "workspacePath": .string(owner.workspacePath.path),
             "tabID": .string(owner.tabID.uuidString),
+        ])
+    }
+
+    static func identityValue(_ workspace: Workspace) -> IntentValue {
+        let icon: IntentValue
+        if let custom = workspace.appearance.customIcon {
+            icon = .object([
+                "kind": .string("custom"),
+                "id": .string(custom.id.uuidString),
+                "data": .string(custom.pngData.base64EncodedString()),
+            ])
+        } else {
+            icon = .object([
+                "kind": .string("symbol"),
+                "name": .string(workspace.appearance.symbol.rawValue),
+            ])
+        }
+        return .object([
+            "workspaceID": .string(workspace.id.uuidString),
+            "name": .string(workspace.name),
+            "accent": .string(workspace.appearance.accent?.rawValue ?? "automatic"),
+            "icon": icon,
         ])
     }
 

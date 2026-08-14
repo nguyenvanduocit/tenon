@@ -61,7 +61,8 @@ For the current product:
 
 - `TenonCore`, `TenonApp`, and their built-in Swift services are one semantic owner;
 - each plugin `PluginID` is a separate semantic owner because it is independently
-  installed, disabled, and hot-reloaded;
+  installed, disabled, and hot-reloaded, including when its implementation is compiled
+  into the app as bundled Swift;
 - CLI, user, and agent entry points are public adapter principals even though the app
   ultimately serves them;
 - two plugins always have different semantic owners, including bundled plugins.
@@ -180,9 +181,18 @@ application-service interfaces. They MUST NOT encode/decode `IntentValue` merely
 file, actor, target, or test seam.
 
 DIRECT is also the default inside one plugin's own semantic owner. Functions inside one
-plugin generation call ordinary JavaScript functions directly; they MUST NOT self-send
-intents merely to organize implementation. The plugin's public intent handler is an adapter
-that calls that same local function when external invocation is required.
+plugin generation call ordinary local functions in that plugin's implementation language;
+they MUST NOT self-send intents merely to organize implementation. The plugin's public
+intent handler is an adapter that calls that same local function when external invocation
+is required.
+
+Implementation language never reclassifies the boundary. A `bundled-swift` manifest still
+owns a plugin generation, not a piece of the host semantic owner: enablement, retirement,
+CONTRIBUTION, EVENT, INTENT, and scoped-facility rules remain unchanged, and its compiled
+program receives no typed host application service. Only the sealed bundled inventory may
+select code linked into the app; a user manifest naming that backend is refused before
+activation. Swift calls inside that one plugin remain DIRECT, while calls from it into host
+domain work cross the same public adapter boundary as JavaScript plugins.
 
 One behavior may have several adapters but only one implementation:
 
@@ -221,16 +231,36 @@ Current DIRECT inventory:
   `WorkspaceStore.moveTab`, and the resulting order is published on the existing
   `workspace/tab/pane/content/focus` EVENT family. It registers no host-wide command and no
   keybinding, so it stays focused-view local control; VoiceOver reaches the same typed
-  mutation through the chip's own custom actions rather than through a second path. The
+  mutation through the chip's own custom actions rather than through a second path. A
+  workspace-reorder gesture is the vertical counterpart inside the host sidebar: the row
+  travels on no pasteboard, the pure `WorkspaceReorder` rule names only an insertion boundary
+  in the one displayed catalog, and both pointer and VoiceOver routes call the typed
+  `WorkspaceStore.moveWorkspace` mutation. Stable workspace UUID selection, tabs, panes,
+  roots, and surface lifetimes travel untouched; `workspace.moved` publishes the completed
+  order fact on the same EVENT family. The
   tab Copy ID row and pane menu copy their host-owned stable UUIDs as raw text so a
   person can designate the same tab or pane through CLI/agent intent scope; writing that
   value to the pasteboard is one finite same-owner UI action, and each surface's VoiceOver
-  action enters the same clipboard route.
+  action enters the same clipboard route. A pane-header secondary click and the pane's
+  VoiceOver custom actions also enter one typed `WorkspaceStore.renameSlot` route. Manual
+  Rename stores an optional 60-character presentation label while leaving UUID, content,
+  geometry, ownership, and surface lifetime unchanged; clearing it restores the derived
+  content title. AI Rename starts the bounded host-private TASK inventoried below, then its
+  validated result enters that same typed rename route. The accepted in-window gesture is
+  its authority, including explicit consent to send the displayed bounded pane brief to the
+  person's configured Companion agent; no app principal, command registration, public intent,
+  or second mutation implementation is created. The Settings Companion page edits one
+  `CompanionProfile` inside the existing typed `AppPreferences` value: provider, optional
+  model, 8 KiB of reusable instructions, and an optional working directory. Each edit is finite
+  same-owner DIRECT preference state; a task snapshots the value when it starts, so a later
+  Settings change governs the next run rather than replacing a process in flight.
   **why not a plugin:** no CONTRIBUTION declares fixed shell-footer Help or Feedback
   destinations or intercepts host tab chrome, no EVENT exposes host-private terminal process
-  occupancy, no CONTRIBUTION or INTENT places a chip or identity action in the host's own tab
-  or pane chrome or accepts a pointer gesture inside it, and no plugin-owned INTENT owns the
-  app's Settings scene or a host tab/workspace close;
+  occupancy, no CONTRIBUTION or INTENT places a chip, workspace-order control, or identity
+  action in the host's own tab/sidebar/pane chrome or accepts a pointer gesture inside it, and
+  no plugin-owned INTENT owns the app's Settings scene, Companion defaults, or a host
+  tab/workspace close. Companion also
+  consumes host-private pane/session evidence that no plugin EVENT or CONTRIBUTION exposes;
 - app lifecycle and composition-root wiring;
 - install-channel routing: the exact closed set `{production, staging}` is resolved from
   the app bundle identity at the composition root. Each channel is a singleton within
@@ -244,6 +274,18 @@ Current DIRECT inventory:
   that cannot prove ownership of its channel claim stops before state/UI assembly, and
   activation probes reject socket-path symlinks rather than following them across channels;
 - `WorkspaceStore` and typed workspace use cases;
+- whole-tab pane arrangement presets: the built-in launcher offers the exact closed set
+  `{grid, equal columns, equal rows, main left, main right, main top, main bottom}` and calls
+  the typed `WorkspaceStore` resize path for the tab the accepted gesture names. The focused
+  pane is the main pane; the four main layouts give it two thirds of the canvas and distribute
+  the remaining panes across the opposite one-third strip. The semantic owner is the native
+  shell and workspace model, the caller is an attended in-window gesture with no public
+  principal, and one selection has one finite local outcome: one atomic geometry mutation or
+  a no-op when the pane count cannot satisfy the minimum size. It creates no lifetime, queue,
+  backpressure, intent, event, contribution, capability, or public `tenon` path. **why not a
+  plugin:** no CONTRIBUTION places a cascading utility inside the host launcher's fixed rows,
+  and no INTENT atomically replaces a whole tab's pane geometry; the existing public workspace
+  contracts split or resize one designated pane instead;
 - terminal and web surface pool retain/reconcile/focus/lifecycle;
 - pane activity/attention state (T-029): one `PaneActivity` per slot, fed by the shell's
   fixed-interval terminal-observation poll and the shell's viewed projection, read
@@ -415,7 +457,7 @@ Current DIRECT inventory:
 
 #### Adding a DIRECT entry
 
-This inventory has 19 entries, pinned in `DirectInventoryGateTests`.
+This inventory has 20 entries, pinned in `DirectInventoryGateTests`.
 
 Step 4 of the ordered decision law is self-ratifying. The five same-owner conditions in
 **Terms** — one semantic owner, no caller principal, no independent lifetime, no public
@@ -553,7 +595,7 @@ requires the change protocol below.
 | Browser surface | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` | plugin |
 | User interaction | `ui.pick.v1`, `ui.prompt.v1`, `ui.confirm.v1`, `ui.toast.v1` | plugin |
 | Secrets | `secrets.get.v1`, `secrets.set.v1`, `secrets.delete.v1` | plugin |
-| Workspace | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
+| Workspace | `workspace.state.v1`, `workspace.identity.set.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v2`, `workspace.pane.content.set.v1`, `workspace.pane.title.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` | plugin, CLI, agent |
 | Network | `network.fetch.v1` | plugin, CLI, agent |
 | Agent | `agent.inventory.v1`, `agent.command.v1`, `agent.ask.v1` | plugin, CLI, agent |
 
@@ -577,7 +619,7 @@ execution topology is the following closed map:
 | `system` | `file.reveal.v1`, `file.open.v1`, `url.open.v1`, `clipboard.write.v1` |
 | `process` | `process.exec.v1` |
 | `network` | `network.fetch.v1` |
-| `workspace` | `workspace.state.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v1`, `workspace.pane.content.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
+| `workspace` | `workspace.state.v1`, `workspace.identity.set.v1`, `workspace.pane.owner.v1`, `workspace.tab.create.v1`, `workspace.tab.focus.v1`, `workspace.tab.close.v1`, `workspace.pane.split.v1`, `workspace.pane.focus.v1`, `workspace.pane.close.v2`, `workspace.pane.content.set.v1`, `workspace.pane.title.set.v1`, `workspace.content.open.v1`, `workspace.tab.next.v1`, `workspace.tab.previous.v1`, `workspace.pane.focus-next.v1`, `workspace.select.v1` |
 | `terminalImmediate` | `terminal.write.v1`, `terminal.run.v1`, `terminal.open.v1`, `terminal.viewport.read.v1`, `terminal.scrollback.read.v1`, `terminal.process.read.v1` |
 | `terminalWait` | `terminal.wait.v1` |
 | `browser` | `browser.surface.load.v1`, `browser.surface.back.v1`, `browser.surface.forward.v1`, `browser.surface.reload.v1` |
@@ -625,9 +667,13 @@ caller's handle—such as a filesystem watch or process run—the interaction is
 
 Current EVENT inventory:
 
-- workspace/tab/pane/content/focus/identity facts emitted by `WorkspaceStore`.
+- workspace/tab/pane/content/focus/identity/order facts emitted by `WorkspaceStore`.
   `workspace.identity-changed` is the one that moves nothing: a workspace's name, mark or
-  tint changed and every tab, pane and selection stayed where it was;
+  tint changed and every tab, pane and selection stayed where it was.
+  `workspace.moved` says one workspace changed catalog indices while its stable selection,
+  tree, roots, and surface identities moved with it unchanged.
+  `workspace.slot-identity-changed` likewise says only that one pane's optional display
+  label changed; its payload carries IDs and never the label or pane content;
 - terminal title, command-finished, exit, and other terminal facts;
 - host-private agent lifecycle facts reported by Codex and Claude provider hooks. Each
   adapter accepts an already-happened root session event (`session_id`, `transcript_path`)
@@ -699,7 +745,7 @@ below had exactly one answerer (intent) or none (event). None needed both at onc
 |---|---|---|
 | Ask and be answered, either direction | INTENT out via `intents.send`; INTENT in via a contract in `intents.provides` + `intents.handle`. Two directions is two declared contracts, not one duplex pipe | plugin↔plugin request/reply |
 | Tell, with 0..n listeners | EVENT. No reply — if the publisher needs one, it is an intent | `automation.fired`, palette `onQuery` |
-| Long work with progress and cancellation | **A bounded value that names the work, re-presented on each call.** Not a live handle | `terminal.open.v1` → pane id; progress via `terminal.wait.v1`/`terminal.scrollback.read.v1` scoped to it; cancel via `workspace.pane.close.v1` |
+| Long work with progress and cancellation | **A bounded value that names the work, re-presented on each call.** Not a live handle | `terminal.open.v1` → pane id; progress via `terminal.wait.v1`/`terminal.scrollback.read.v1` scoped to it; cancel via `workspace.pane.close.v2` |
 
 **Why the third row is a value and not a handle.** An agent's lifetime *is* its pane's
 lifetime — closing the pane releases the surface and frees the PTY with its child process —
@@ -790,6 +836,25 @@ Current RESOURCE inventory:
   none is added here. What the reading *asks* is the person's own installed agent CLI, run
   headlessly with no interactive input; the pane's presentation choice between the verbatim
   and synthesized accounts is same-owner DIRECT UI state and mints no principal;
+- Companion pane-title synthesis: one host-private task owned by the pane selected for AI Rename.
+  Capacity is one run for the app's one rename modal; starting another run cancels and
+  supersedes the first. Overflow is a 12 KiB pane excerpt, 64 KiB stdout, and 8 KiB retained
+  stderr; execution is one turn through the snapshotted `CompanionProfile`, with Claude +
+  Haiku as the compatible default. Claude uses `--output-format json` plus `--json-schema`;
+  Codex uses `exec --json` plus `--output-schema`, and only its JSONL
+  `item.completed/agent_message` event may carry the result. Raw terminal rendering and stderr
+  are never result channels. Both paths require the same title schema and have a 60-second
+  deadline off `MainActor`; the configured reusable instructions are capped at 8 KiB and the
+  optional directory is validated before launch. Cancellation comes from the modal's
+  Cancel/Escape/backdrop controls, replacement, app shutdown, or any catalog mutation that
+  removes the pane UUID; each cancels the Swift task, signals its owned POSIX process group,
+  escalates from `SIGTERM` to `SIGKILL` when needed, and reaps the leader. Teardown
+  is therefore pane closure rather than view disappearance, so switching tabs does not kill
+  valid work. Terminal state is one sanitized title applied through
+  `WorkspaceStore.renameSlot`, or a named unavailable/launch/exit/timeout/overflow/schema
+  failure. The content excerpt is explicitly delimited as untrusted data. This is not a
+  public RESOURCE protocol: no handle, event body, principal, capability, or `tenon` member
+  exposes the task;
 - future large filesystem/process/terminal bodies returned as opaque handles.
 
 Plugin runtime retirement MUST cancel or retire every resource owned by that generation.

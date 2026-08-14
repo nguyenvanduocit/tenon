@@ -142,6 +142,7 @@ struct AgentTranscriptDecoder: Sendable {
                     .toolStarted(
                         AgentToolRun(
                             id: id,
+                            taskID: Self.taskID(Self.summary(block["input"])),
                             name: presentation.name,
                             kind: presentation.kind,
                             summary: presentation.summary,
@@ -239,10 +240,18 @@ struct AgentTranscriptDecoder: Sendable {
         guard let payload = record["payload"] as? [String: Any] else { return [] }
         let baseID = Self.string(payload["id"]) ?? Self.string(payload["call_id"])
             ?? "codex-\(byteOffset)"
+        let turnID = (Self.string(payload["turn_id"]) ?? Self.string(payload["turnId"]))
+            .map { AgentTurnID($0) }
 
         switch Self.string(record["type"]) {
         case "response_item":
-            return Self.codexItem(payload, id: baseID, completed: true, evidence: evidence)
+            return Self.codexItem(
+                payload,
+                id: baseID,
+                turnID: turnID,
+                completed: true,
+                evidence: evidence
+            )
 
         case "event_msg":
             switch Self.string(payload["type"]) {
@@ -252,6 +261,7 @@ struct AgentTranscriptDecoder: Sendable {
                     .userMessage(
                         AgentLensMessage(
                             id: baseID,
+                            turnID: turnID,
                             role: .user,
                             text: text,
                             isStreaming: false,
@@ -265,6 +275,7 @@ struct AgentTranscriptDecoder: Sendable {
                     .assistantMessage(
                         AgentLensMessage(
                             id: baseID,
+                            turnID: turnID,
                             role: .assistant,
                             text: text,
                             isStreaming: false,
@@ -289,6 +300,7 @@ struct AgentTranscriptDecoder: Sendable {
     fileprivate static func codexItem(
         _ item: [String: Any],
         id: String,
+        turnID: AgentTurnID?,
         completed: Bool,
         evidence: AgentEvidence
     ) -> [AgentLensEvent] {
@@ -300,6 +312,7 @@ struct AgentTranscriptDecoder: Sendable {
             let kind = messageKind(role: .user, text: text)
             let message = AgentLensMessage(
                 id: id,
+                turnID: turnID,
                 role: .user,
                 kind: kind,
                 text: text,
@@ -314,6 +327,7 @@ struct AgentTranscriptDecoder: Sendable {
             guard let role = messageRole(string(item["role"])) else { return [] }
             let message = AgentLensMessage(
                 id: id,
+                turnID: turnID,
                 role: role,
                 kind: messageKind(role: role, text: text),
                 text: text,
@@ -340,6 +354,7 @@ struct AgentTranscriptDecoder: Sendable {
                 .assistantMessage(
                     AgentLensMessage(
                         id: id,
+                        turnID: turnID,
                         role: .assistant,
                         text: text,
                         isStreaming: !completed,
@@ -355,6 +370,7 @@ struct AgentTranscriptDecoder: Sendable {
                 .reasoning(
                     AgentLensMessage(
                         id: id,
+                        turnID: turnID,
                         role: .reasoning,
                         text: text,
                         isStreaming: !completed,
@@ -372,6 +388,8 @@ struct AgentTranscriptDecoder: Sendable {
                 .toolStarted(
                     AgentToolRun(
                         id: string(item["call_id"]) ?? id,
+                        turnID: turnID,
+                        taskID: taskID(input),
                         name: name,
                         kind: kind,
                         summary: toolSummary(input, name: name, kind: kind),
@@ -392,6 +410,7 @@ struct AgentTranscriptDecoder: Sendable {
                 .toolFinished(
                     AgentToolRun(
                         id: string(item["call_id"]) ?? id,
+                        turnID: turnID,
                         name: "Tool",
                         summary: failed ? "Tool failed" : "Tool completed",
                         detail: capped(contentText(outputRecord?["content"] ?? output)),
@@ -407,6 +426,7 @@ struct AgentTranscriptDecoder: Sendable {
             let state = toolState(status: status, exitCode: item["exitCode"] as? Int)
             let tool = AgentToolRun(
                 id: id,
+                turnID: turnID,
                 name: "Command",
                 kind: .command,
                 summary: string(item["command"]) ?? "Shell command",
@@ -421,6 +441,7 @@ struct AgentTranscriptDecoder: Sendable {
             let status = string(item["status"]) ?? (completed ? "completed" : "inProgress")
             let tool = AgentToolRun(
                 id: id,
+                turnID: turnID,
                 name: "File change",
                 kind: .fileChange,
                 summary: changesSummary(item["changes"]),
@@ -437,6 +458,7 @@ struct AgentTranscriptDecoder: Sendable {
             let status = string(item["status"]) ?? (completed ? "completed" : "inProgress")
             let tool = AgentToolRun(
                 id: id,
+                turnID: turnID,
                 name: server.map { "\($0) / \(name)" } ?? name,
                 summary: summary(item["arguments"]),
                 detail: capped(summary(item["result"] ?? item["contentItems"] ?? item["error"])),
@@ -449,6 +471,7 @@ struct AgentTranscriptDecoder: Sendable {
         case "webSearch":
             let tool = AgentToolRun(
                 id: id,
+                turnID: turnID,
                 name: "Web search",
                 kind: .webSearch,
                 summary: string(item["query"]) ?? "Search",
@@ -463,6 +486,7 @@ struct AgentTranscriptDecoder: Sendable {
             guard let text = string(item["text"]), !text.isEmpty else { return [] }
             let tool = AgentToolRun(
                 id: id,
+                turnID: turnID,
                 name: "Plan",
                 kind: .plan,
                 summary: text.split(whereSeparator: \.isNewline).first.map(String.init) ?? "Execution plan",
@@ -602,6 +626,16 @@ struct AgentTranscriptDecoder: Sendable {
             return .command
         }
         return .generic
+    }
+
+    private static func taskID(_ input: String) -> AgentTaskID? {
+        guard let data = input.data(using: .utf8),
+              let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else { return nil }
+        let value = string(object["taskId"]) ?? string(object["task_id"])
+            ?? string(object["task_name"])
+        guard let value, !value.isEmpty else { return nil }
+        return AgentTaskID(value)
     }
 
     private static func toolName(
@@ -757,6 +791,42 @@ struct CodexProtocolFrameDecoder: Sendable {
                 ),
                 .status(.ready, evidence: evidence),
             ]
+        case "thread/status/changed":
+            let status = params["status"] as? [String: Any]
+            switch AgentTranscriptDecoder.string(status?["type"]) {
+            case "idle":
+                return [.status(.ready, evidence: evidence)]
+            case "active":
+                let flags = status?["activeFlags"] as? [String] ?? []
+                return [
+                    .status(
+                        flags.contains("waitingOnApproval") || flags.contains("waitingOnUserInput")
+                            ? .waitingForUser
+                            : .running,
+                        evidence: evidence
+                    ),
+                ]
+            case "systemError":
+                return [.status(.failed("Codex thread reported a system error"), evidence: evidence)]
+            default:
+                return []
+            }
+        case "thread/tokenUsage/updated":
+            guard let tokenUsage = params["tokenUsage"] as? [String: Any],
+                  let last = Self.tokenUsage(tokenUsage["last"]),
+                  let total = Self.tokenUsage(tokenUsage["total"])
+            else { return [] }
+            return [
+                .contextUsageUpdated(
+                    AgentContextUsage(
+                        turnID: AgentTranscriptDecoder.string(params["turnId"]).map { AgentTurnID($0) },
+                        last: last,
+                        total: total,
+                        modelContextWindow: Self.integer(tokenUsage["modelContextWindow"]),
+                        evidence: evidence
+                    )
+                ),
+            ]
         case "turn/started":
             return [.status(.running, evidence: evidence)]
         case "turn/completed":
@@ -766,12 +836,59 @@ struct CodexProtocolFrameDecoder: Sendable {
                 return [.status(.failed(AgentTranscriptDecoder.summary(turn?["error"])), evidence: evidence)]
             }
             return [.status(.completed, evidence: evidence)]
+        case "turn/plan/updated":
+            guard let rawTurnID = AgentTranscriptDecoder.string(params["turnId"]),
+                  let rawSteps = params["plan"] as? [[String: Any]]
+            else { return [] }
+            let turnID = AgentTurnID(rawTurnID)
+            let steps = rawSteps.enumerated().compactMap { index, raw -> AgentPlanStep? in
+                guard let text = AgentTranscriptDecoder.string(raw["step"]), !text.isEmpty else {
+                    return nil
+                }
+                let state: AgentPlanStepState = switch AgentTranscriptDecoder.string(raw["status"]) {
+                case "completed": .completed
+                case "inProgress": .running
+                default: .pending
+                }
+                return AgentPlanStep(
+                    id: "derived:plan:\(rawTurnID):\(index)",
+                    text: text,
+                    state: state
+                )
+            }
+            return [
+                .planUpdated(
+                    AgentPlanUpdate(
+                        id: "turn:\(rawTurnID)",
+                        turnID: turnID,
+                        explanation: AgentTranscriptDecoder.string(params["explanation"]) ?? "",
+                        steps: steps,
+                        evidence: evidence
+                    )
+                ),
+            ]
+        case "turn/diff/updated":
+            guard let rawTurnID = AgentTranscriptDecoder.string(params["turnId"]),
+                  let diff = AgentTranscriptDecoder.string(params["diff"])
+            else { return [] }
+            return [
+                .changeSetUpdated(
+                    AgentChangeSet(
+                        id: "turn:\(rawTurnID)",
+                        turnID: AgentTurnID(rawTurnID),
+                        unifiedDiff: AgentTranscriptDecoder.capped(diff),
+                        changedPaths: Self.changedPaths(in: diff),
+                        evidence: evidence
+                    )
+                ),
+            ]
         case "item/started", "item/completed":
             guard let item = params["item"] as? [String: Any] else { return [] }
             let id = AgentTranscriptDecoder.string(item["id"]) ?? "item-\(sequence)"
             return AgentTranscriptDecoder.codexItem(
                 item,
                 id: id,
+                turnID: AgentTranscriptDecoder.string(params["turnId"]).map { AgentTurnID($0) },
                 completed: method == "item/completed",
                 evidence: evidence
             )
@@ -805,13 +922,14 @@ struct CodexProtocolFrameDecoder: Sendable {
                   let delta = AgentTranscriptDecoder.string(params["delta"])
             else { return [] }
             return [.toolDelta(id: id, text: delta, evidence: evidence)]
-        case "item/commandExecution/requestApproval", "item/fileChange/requestApproval",
-             "item/permissions/requestApproval":
+        case "item/commandExecution/requestApproval", "item/fileRead/requestApproval",
+             "item/fileChange/requestApproval", "item/permissions/requestApproval":
             let requestID = Self.requestID(frame["id"]) ?? "approval-\(sequence)"
             return [
                 .interactionRequested(
                     AgentInteractionRequest(
                         id: requestID,
+                        turnID: AgentTranscriptDecoder.string(params["turnId"]).map { AgentTurnID($0) },
                         kind: .approval,
                         title: "Approval required",
                         detail: AgentTranscriptDecoder.summary(params),
@@ -827,6 +945,7 @@ struct CodexProtocolFrameDecoder: Sendable {
                 .interactionRequested(
                     AgentInteractionRequest(
                         id: requestID,
+                        turnID: AgentTranscriptDecoder.string(params["turnId"]).map { AgentTurnID($0) },
                         kind: .question,
                         title: presentation.title,
                         detail: presentation.detail,
@@ -837,6 +956,9 @@ struct CodexProtocolFrameDecoder: Sendable {
                 ),
             ]
         case "serverRequest/resolved":
+            guard let requestID = Self.requestID(params["requestId"]) else { return [] }
+            return [.interactionResolved(id: requestID, evidence: evidence)]
+        case "item/requestApproval/decision", "item/tool/requestUserInput/answered":
             guard let requestID = Self.requestID(params["requestId"]) else { return [] }
             return [.interactionResolved(id: requestID, evidence: evidence)]
         case "error":
@@ -852,6 +974,36 @@ struct CodexProtocolFrameDecoder: Sendable {
         if let string = value as? String { return string }
         if let number = value as? NSNumber { return number.stringValue }
         return nil
+    }
+
+    private static func integer(_ value: Any?) -> Int? {
+        if let value = value as? Int { return value }
+        return (value as? NSNumber)?.intValue
+    }
+
+    private static func tokenUsage(_ value: Any?) -> AgentTokenUsage? {
+        guard let value = value as? [String: Any],
+              let totalTokens = integer(value["totalTokens"])
+        else { return nil }
+        return AgentTokenUsage(
+            inputTokens: integer(value["inputTokens"]) ?? 0,
+            cachedInputTokens: integer(value["cachedInputTokens"]) ?? 0,
+            outputTokens: integer(value["outputTokens"]) ?? 0,
+            reasoningOutputTokens: integer(value["reasoningOutputTokens"]) ?? 0,
+            totalTokens: totalTokens
+        )
+    }
+
+    private static func changedPaths(in diff: String) -> [String] {
+        var paths: [String] = []
+        for line in diff.split(separator: "\n", omittingEmptySubsequences: false) {
+            guard line.hasPrefix("+++ ") else { continue }
+            var path = String(line.dropFirst(4))
+            if path == "/dev/null" { continue }
+            if path.hasPrefix("b/") { path.removeFirst(2) }
+            if !path.isEmpty, !paths.contains(path) { paths.append(path) }
+        }
+        return paths
     }
 
     private static func questionPresentation(_ params: [String: Any]) -> (

@@ -121,12 +121,14 @@ Convenience aliases (all compile to intent.send):
   wait [--pane <uuid> | --tab <uuid>] --for exit|tui-idle|command-finished [--timeout <ms>]
   pane-focus --pane <uuid>
   tab-focus --tab <uuid>
+  rename [--pane <uuid>] [<text...>]
 
 Scope/options:
   --workspace <uuid> --tab <uuid> --pane <uuid>
   --provider <provider-id> --idempotency-key <key> --timeout <ms>
 
 When neither --pane nor --tab is present, $TENON_PANE_ID is used when available.
+`rename` with no text clears the pinned title back to the pane's content-derived one.
 Every wire-level domain request is intent.send with explicit input and scope objects.
 """
 
@@ -217,6 +219,21 @@ private func buildRequest(
         return intentSendRequest(
             name: "workspace.pane.focus.v1",
             input: .object([:]),
+            flags: flags
+        )
+
+    case "rename":
+        let flags = Flags(arguments)
+        guard resolvedPaneID(flags) != nil else {
+            fail("rename needs --pane or TENON_PANE_ID")
+        }
+        // No positionals is the clear, not an error: `tenon-cli rename` hands the pane back
+        // to the title its content derives, which is what an agent does when it finishes.
+        return intentSendRequest(
+            name: "workspace.pane.title.set.v1",
+            input: .object([
+                "title": .string(flags.positional.joined(separator: " "))
+            ]),
             flags: flags
         )
 

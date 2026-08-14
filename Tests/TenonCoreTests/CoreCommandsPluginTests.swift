@@ -1,7 +1,8 @@
 import Foundation
+@testable import TenonBundledPlugins
+@testable import TenonCore
 @testable import TenonIntentCore
 import XCTest
-@testable import TenonCore
 
 final class CoreCommandsPluginTests: XCTestCase {
     private static var pluginDirectory: URL {
@@ -76,7 +77,7 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "dev.tenon.core-commands.tab.new.v1": "⌘T",
                 "dev.tenon.core-commands.pane.split-right.v1": "⌘D",
                 "dev.tenon.core-commands.pane.split-down.v1": "⇧⌘D",
-                "dev.tenon.core-commands.pane.close.v1": "⌘W",
+                "dev.tenon.core-commands.pane.close.v2": "⌘W",
                 "dev.tenon.core-commands.tab.next.v1": "⇧⌘]",
                 "dev.tenon.core-commands.tab.previous.v1": "⇧⌘[",
                 "dev.tenon.core-commands.pane.focus-next.v1": "⌘]",
@@ -86,7 +87,7 @@ final class CoreCommandsPluginTests: XCTestCase {
     }
 
     func testHandlersDelegateToCanonicalWorkspaceIntents() async throws {
-        let runtime = try makeRuntime()
+        let runtime = try await makeRuntime()
         let started = try await runtime.start()
         let recorder = NestedRequestRecorder()
 
@@ -95,7 +96,7 @@ final class CoreCommandsPluginTests: XCTestCase {
             "dev.tenon.core-commands.terminal.new.v1",
             "dev.tenon.core-commands.pane.split-right.v1",
             "dev.tenon.core-commands.pane.split-down.v1",
-            "dev.tenon.core-commands.pane.close.v1",
+            "dev.tenon.core-commands.pane.close.v2",
             "dev.tenon.core-commands.changes.open.v1",
             "dev.tenon.core-commands.automation.open.v1",
             "dev.tenon.core-commands.tab.next.v1",
@@ -128,7 +129,7 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "workspace.tab.create.v1",
                 "workspace.pane.split.v1",
                 "workspace.pane.split.v1",
-                "workspace.pane.close.v1",
+                "workspace.pane.close.v2",
                 "workspace.tab.create.v1",
                 "workspace.tab.create.v1",
                 "workspace.tab.next.v1",
@@ -141,15 +142,15 @@ final class CoreCommandsPluginTests: XCTestCase {
             recordedRequests[6].input,
             .object([
                 "content": .object([
-                    "kind": .string("automation")
-                ])
+                    "kind": .string("automation"),
+                ]),
             ])
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     func testSwitchWorkspaceReadsPicksAndSelects() async throws {
-        let runtime = try makeRuntime()
+        let runtime = try await makeRuntime()
         let started = try await runtime.start()
         let intentID = try IntentID(
             "dev.tenon.core-commands.workspace.switch.v1"
@@ -204,7 +205,7 @@ final class CoreCommandsPluginTests: XCTestCase {
                 "workspace.select.v1",
             ]
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     private func loadManifest() throws -> PluginManifest {
@@ -217,9 +218,9 @@ final class CoreCommandsPluginTests: XCTestCase {
         )
     }
 
-    private func makeRuntime() throws -> PluginRuntime {
-        try PluginRuntime(
-            configuration: PluginRuntimeConfiguration(
+    private func makeRuntime() async throws -> any PluginHostRuntime {
+        try await BundledPluginRuntime.factory.make(
+            PluginRuntimeConfiguration(
                 manifest: loadManifest(),
                 directory: Self.pluginDirectory,
                 intents: PluginRuntimeIntentBridge(

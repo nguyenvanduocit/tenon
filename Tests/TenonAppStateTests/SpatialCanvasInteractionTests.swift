@@ -2183,7 +2183,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
     }
 
-    func testHeaderContextMenuOffersSplitStackDuplicateCopyIDAndClose() throws {
+    func testHeaderContextMenuOffersSplitStackRenameCopyIDAndClose() throws {
         let slotID = UUID()
         let fixture = try makeCanvasFixture(
             slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
@@ -2196,11 +2196,17 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
         XCTAssertEqual(
             menu.items.map(\.title),
-            ["Split", "Stack", "Duplicate", "", "Copy Pane ID", "", "Close"]
+            [
+                "Split", "Stack", "Duplicate", "",
+                "Rename…", "AI Rename…", "",
+                "Copy Pane ID", "", "Close",
+            ]
         )
         XCTAssertTrue(try menuItem(menu, "Split").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Stack").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Duplicate").isEnabled)
+        XCTAssertTrue(try menuItem(menu, "Rename…").isEnabled)
+        XCTAssertTrue(try menuItem(menu, "AI Rename…").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Copy Pane ID").isEnabled)
         XCTAssertTrue(try menuItem(menu, "Close").isEnabled)
         XCTAssertTrue(
@@ -2223,6 +2229,100 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         try menuItem(menu, "Copy Pane ID").invoke()
 
         XCTAssertEqual(copiedIDs, [slotID])
+    }
+
+    func testHeaderMenuAndVoiceOverRenameEnterTheSameCoordinator() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+        try menuItem(menu, "Rename…").invoke()
+        XCTAssertEqual(fixture.paneRenamer.phase(for: slotID)?.isEditing, true)
+        fixture.paneRenamer.cancel(slotID: slotID)
+
+        let card = try XCTUnwrap(fixture.card(for: slotID))
+        let renameAction = try XCTUnwrap(
+            card.accessibilityCustomActions()?.first { $0.name == "Rename Pane" }
+        )
+        XCTAssertEqual(renameAction.handler?(), true)
+        XCTAssertEqual(fixture.paneRenamer.phase(for: slotID)?.isEditing, true)
+    }
+
+    /// The rename happens where the name is. Nothing is presented over the shell, the pane's
+    /// own title becomes the field, and Return enters the one typed mutation.
+    func testManualRenameIsTypedOnThePaneTitleItself() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        let card = try XCTUnwrap(fixture.card(for: slotID))
+        XCTAssertFalse(card.isRenamingInline)
+
+        try menuItem(
+            try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID)),
+            "Rename…"
+        ).invoke()
+        fixture.reconfigure()
+        XCTAssertTrue(card.isRenamingInline)
+        // The field owns the band between the glyph and the close control, so a rename is
+        // never typed into a rect the solver folded away to zero.
+        let field = card.editingTitleRect(headerHeight: TenonTheme.slotHeaderHeight)
+        XCTAssertGreaterThan(field.width, 0)
+        XCTAssertLessThanOrEqual(field.maxX, card.bounds.width - 27)
+
+        card.setRenameText("API failures")
+        // The canvas reconfigures on every catalog mutation, and a pane being renamed is
+        // still a pane other work happens around. What is half-typed must survive that.
+        fixture.reconfigure()
+        XCTAssertEqual(card.displayedTitle, "API failures")
+        // The open field is a control, not pane-drag surface: clicking it places a caret.
+        let hit = card.hitTest(
+            card.convert(CGPoint(x: field.midX, y: field.midY), to: card.superview)
+        )
+        XCTAssertFalse(hit === card, "clicking the rename field must not pick the pane up")
+
+        card.commitRename()
+        fixture.reconfigure()
+
+        XCTAssertEqual(fixture.store.catalog.slot(id: slotID)?.customTitle, "API failures")
+        XCTAssertNil(fixture.paneRenamer.phase(for: slotID))
+        XCTAssertFalse(card.isRenamingInline)
+        XCTAssertEqual(card.displayedTitle, "API failures")
+    }
+
+    func testAIRenameSaysSoOnThePaneTitleAndPresentsNothingOverTheShell() throws {
+        let slotID = UUID()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID,
+            renameGenerator: StalledPaneTitleGenerator()
+        )
+        defer { fixture.window.orderOut(nil) }
+        let card = try XCTUnwrap(fixture.card(for: slotID))
+        let namedBefore = card.displayedTitle
+
+        try menuItem(
+            try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID)),
+            "AI Rename…"
+        ).invoke()
+        fixture.reconfigure()
+
+        XCTAssertEqual(fixture.paneRenamer.phase(for: slotID), .generating)
+        XCTAssertEqual(card.displayedTitle, PaneRenameChrome.generatingTitle)
+        XCTAssertFalse(card.isRenamingInline, "generating is reported, not edited")
+        // The pane keeps its own name underneath, so a second rename starts from the real
+        // one rather than from the state the header is reporting.
+        XCTAssertEqual(card.presentedTitle, namedBefore)
+
+        fixture.paneRenamer.cancel(slotID: slotID)
+        fixture.reconfigure()
+        XCTAssertEqual(card.displayedTitle, namedBefore)
     }
 
     func testWorkspaceIdentifierClipboardWritesOnlyTheRawUUID() {
@@ -2470,7 +2570,8 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         slots: [WorkspaceSlot],
         activeSlotID: UUID,
         additionalTabs: [TenonCore.Tab] = [],
-        paneHeaders: [UUID: PaneHeader] = [:]
+        paneHeaders: [UUID: PaneHeader] = [:],
+        renameGenerator: (any PaneTitleGenerating)? = nil
     ) throws -> CanvasFixture {
         // A slot whose header THIS fixture injects must be a pane with no producer of its
         // own, and `.empty` is the one pane kind that contributes nothing. A terminal pane
@@ -2547,6 +2648,11 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             headerStore.publish(header, for: slotID)
         }
         let router = DragRouter()
+        let paneRenamer = PaneRenameCoordinator(
+            store: store,
+            pool: pool,
+            generator: renameGenerator
+        )
         let container = FlippedTestView(
             frame: CGRect(x: 0, y: 0, width: 1_200, height: 1_200)
         )
@@ -2581,6 +2687,8 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             paneAttention: [:],
             paneHeaders: headerStore.headers,
             paneHeaderStore: headerStore,
+            paneRenames: paneRenamer.phases,
+            paneRenamer: paneRenamer,
             router: router,
             automation: automation,
             automationSchedulesEnabled: true,
@@ -2600,11 +2708,21 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             editorStates: editorStates,
             agentLens: agentLens,
             paneHeaders: headerStore,
+            paneRenamer: paneRenamer,
             router: router,
             automation: automation,
             automationActions: automationActions,
             workspacePath: workspacePath
         )
+    }
+}
+
+/// A Companion that never answers, so a pane stays in its generating state for the length
+/// of a test rather than for the length of a subprocess.
+private struct StalledPaneTitleGenerator: PaneTitleGenerating {
+    func generateTitle(from brief: PaneRenameBrief) async throws -> String {
+        try await Task.sleep(for: .seconds(600))
+        return ""
     }
 }
 
@@ -2629,6 +2747,7 @@ private struct CanvasFixture {
     let editorStates: EditorPaneStateStore
     let agentLens: AgentLensPool
     let paneHeaders: PaneHeaderStore
+    let paneRenamer: PaneRenameCoordinator
     let router: DragRouter
     let automation: AutomationScheduler
     let automationActions: AutomationPaneActions
@@ -2675,6 +2794,8 @@ private struct CanvasFixture {
             paneAttention: [:],
             paneHeaders: paneHeaders.headers,
             paneHeaderStore: paneHeaders,
+            paneRenames: paneRenamer.phases,
+            paneRenamer: paneRenamer,
             router: router,
             automation: automation,
             automationSchedulesEnabled: automationSchedulesEnabled,

@@ -73,7 +73,7 @@ final class PaneProcessAndTabCloseContractTests: XCTestCase {
         XCTAssertEqual(name.audienceProfile, .programmatic)
         XCTAssertEqual(name.executionLane, .workspace)
 
-        // Exactly `workspace.pane.close.v1`'s classification: closing a tab destroys every
+        // Exactly `workspace.pane.close.v2`'s classification: closing a tab destroys every
         // pane under it, and standing consent — not a dialog per call — is the gate.
         XCTAssertEqual(contract.effects.kind, .destructive)
         XCTAssertEqual(contract.effects.confirmation, .policy)

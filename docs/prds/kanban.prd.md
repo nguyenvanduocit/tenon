@@ -221,6 +221,36 @@ detail; pointer drag and accessible buttons share one move; the first duplicated
 the rendered/moved one; same-column drop writes nothing; live tracking exists only while detail is
 open; the feature remains plugin-only.
 
+**2026-08-14 — the board becomes a host-native surface (operator decision; supersedes "the
+feature remains plugin-only" above, which governs until T-150 ships).** The operator stated
+the product intent this rests on: the board is how Tenon organizes parallel workstreams for
+its users, not a convention private to this repository. That makes the `host-native core:`
+clause the interaction law requires citable and true — VISION.md:54-55 puts organizing
+parallel workstreams by goal, delta, decision, blocker, evidence, freshness, and next action
+in the product promise, and VISION.md:61-62 makes the supervisable-workstream count the
+measure Tenon exists to raise.
+
+Three cheaper justifications were tested against the tree first and refuted; they are recorded
+so they are not re-offered. Drag/drop is not missing — `PluginViewNode.swift:63-66` ships
+`dragSource`/`dropTarget` and `plugin-ui.prd.md:55` names Kanban as its consumer. "No plugin
+presentation surface" is refuted by name in the law itself
+(`architecture-interaction-boundaries.md:468-472`, citing this plugin's own modal). And
+"heavy in JavaScript" measured false as a language claim: the weight is
+`PluginRuntime.setViewBody` (`PluginRuntime.swift:1864-1893`) reparsing the whole
+specification with no diff against the previous body, which a Swift plugin calling the same
+contribution would pay identically — that defect is owned by T-151 and fixed for every plugin.
+
+What the change buys is therefore stated narrowly: SwiftUI's own diffing with nothing
+serialized across the boundary, and the ~375 lines of board parsing, task relocation, and
+paged writes at `plugins/kanban/main.js:108-482` becoming Swift values testable without a
+window. What it costs is that this plugin is today the most demanding proof the public
+boundary carries a real feature; naming the replacement dogfood is a T-150 criterion.
+
+Sequence is gated and recorded in T-150: VISION, then the law and the entry count at
+`architecture-interaction-boundaries.md:443`, then the `DirectInventoryGateTests` pin, then
+this PRD's requirements, then code. Requirement IDs for the native surface are written at that
+fourth step rather than now, because they depend on the registry T-149 has yet to design.
+
 ## 9. Verification receipts and change history
 
 | Date | Worktree | Result | Exclusions |

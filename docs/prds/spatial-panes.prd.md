@@ -7,7 +7,7 @@
 | Owner | Tenon spatial-canvas, pane-chrome, attention, workspace-model, and terminal-surface domains |
 | Reviewers | product, native UI, accessibility, performance, plugin runtime, test |
 | Created | 2026-08-09 |
-| Last reviewed | 2026-08-09 |
+| Last reviewed | 2026-08-13 |
 | Related work | T-025, T-026, T-029, T-031, T-059, T-064, T-065, T-076, T-079, T-087, T-088, T-091 |
 | Existing designs | [`design-pane-slots.md`](../design-pane-slots.md), [`design-pane-header.md`](../design-pane-header.md), [`design-pane-hosting.md`](../design-pane-hosting.md) |
 | Acceptance specification | [`spatial-panes.feature`](spatial-panes.feature) |
@@ -167,7 +167,7 @@ addressing.
 - Pane creation, exact empty-canvas placement, split, duplicate, close, focus, move, swap,
   cross-tab move, resize, fill-width, named fractions, and cycle sizing.
 - Pointer preview/commit/cancel/stale arbitration and drag presentation.
-- Default maximum width for future pane creation.
+- Default maximum width for future pane creation and automatic horizontal close absorption.
 - Flat pane menu including Copy Pane ID and its accessibility action.
 - One host-owned header with bounded native/plugin items, folding, routing, and drag bands.
 - Per-pane attention state, rollups, non-color vocabulary, and background notification.
@@ -283,9 +283,9 @@ intrinsic/min/max sizing options back upward.
 | `SP-FR-001` | Every tab layout **MUST** use a 12×12 logical grid; panes **MUST** stay in bounds, remain at least 3×3, have unique IDs, and never overlap. | must | shipped | `@req-sp-fr-001` |
 | `SP-FR-002` | Pane UUID **MUST** be the stable join among geometry, typed content, live native resources, plugin instance, titles, focus, and attention; geometry/navigation changes **MUST NOT** mint a replacement or restart the resource. | must | shipped | `@req-sp-fr-002` |
 | `SP-FR-003` | Pane creation **MUST** use the best valid empty region near the named/clicked anchor when available, otherwise split the named pane on a valid axis; an exact empty-canvas launch **MUST** reserve the clicked region rather than another gap. | must | shipped | `@req-sp-fr-003` |
-| `SP-FR-004` | The optional default maximum width **MUST** use the existing 1/3, 1/2, Full vocabulary, constrain every future creation path only, never exceed available space, keep a clicked cell inside the new pane, and leave existing panes freely resizable. | must | shipped | `@req-sp-fr-004` |
+| `SP-FR-004` | The optional default maximum width **MUST** use the existing 1/3, 1/2, Full vocabulary, constrain every future creation path and automatic horizontal growth after close, never shrink a surviving pane, never exceed available space, keep a clicked cell inside a new pane, and leave manual resize unrestricted. | must | shipped | `@req-sp-fr-004` |
 | `SP-FR-005` | Split/Stack **MUST** target the named pane, create a new stable pane to its right/below when valid, preserve the original content/resource, and focus the new pane. | must | shipped | `@req-sp-fr-005` |
-| `SP-FR-006` | Closing a pane **MUST** deterministically absorb its geometry into a valid neighbor when possible, preserve unrelated panes, choose a valid active pane, and leave an empty tab when the final pane closes. | must | shipped | `@req-sp-fr-006` |
+| `SP-FR-006` | Closing a pane **MUST** deterministically absorb its geometry into a valid neighbor when possible, except that horizontal absorption stops at the SP-FR-004 maximum and leaves declined width empty; it **MUST** preserve unrelated panes and choose a valid active pane. When the final pane leaves a tab, that empty tab **MUST** close if another tab survives; a workspace's required final tab remains as an empty placeholder. | must | shipped | `@req-sp-fr-006` |
 | `SP-FR-007` | Duplicate **MUST** create a new pane with the clicked pane's content value and a new UUID, prefer free space near that pane, otherwise split it on a valid axis, focus the copy, and be disabled when no valid placement exists. | must | shipped | `@req-sp-fr-007` |
 | `SP-FR-008` | The pane header menu **MUST** be flat and ordered Split, Stack, Duplicate, Copy Pane ID, Close with separators; it **MUST NOT** include Change Type, and every action **MUST** target the clicked pane without first focusing for Close. | must | shipped | `@req-sp-fr-008` |
 | `SP-FR-009` | Copy Pane ID **MUST** remain directly reachable from the header menu and accessibility action, use one shared route, and copy only the raw pane UUID. | must | shipped | `@req-sp-fr-009` |
@@ -307,6 +307,7 @@ intrinsic/min/max sizing options back upward.
 | `SP-FR-025` | `workspace.pane.owner.v1` **MUST** accept one pane UUID, search the whole catalog including unselected/paged workspaces, and return only owning workspace UUID/path and tab UUID to plugin, CLI, or agent callers; malformed/unknown panes **MUST** fail deterministically. | must | shipped | `@req-sp-fr-025` |
 | `SP-FR-026` | Each pane **MUST** speak useful one-based grid position/extent, focused state, and attention words; exact UUID/geometry **MUST** remain available non-verbally to tests/tools; non-color shapes and accessible empty-region/Copy ID actions **MUST** exist. | must | shipped | `@req-sp-fr-026` |
 | `SP-FR-027` | The canvas **MUST** answer the size it is proposed, so measuring the stage never reaches AppKit's fitting-size path and never sweeps Auto Layout across the card tree. A canvas that answers nothing sends that question to AppKit, whose sweep dirties the text fields it walks and re-arms the measurement that caused it. | must | shipped | `@req-sp-fr-027` |
+| `SP-FR-028` | A pane's pinned title **MUST** be settable across the public principal boundary by `workspace.pane.title.set.v1`, scoped to the pane it names and refused when scope names none, so an agent working in a pane can label its own tab. It **MUST** reach the same `renameSlot` the rename UI and the Companion title generator call DIRECT, bound by the same `PaneTitle` rule, and an empty or whitespace-only title **MUST** clear the pin rather than fail. | must | shipped | `@req-sp-fr-028` |
 | `SP-FR-028` | `workspace.tab.close.v1` **MUST** close the tab named by invocation scope, with every pane under it, as a `.destructive` contract confirmed under `.policy`. It **MUST NOT** infer a tab from the selection, and it **MUST** refuse a workspace's only tab with `dev.tenon.core.close-refused` rather than report a success that removed nothing. | must | shipped | `@req-sp-fr-028` |
 
 ### Non-functional requirements
@@ -338,6 +339,7 @@ intrinsic/min/max sizing options back upward.
 | SP-FR-021…023, SP-NFR-003…005, 011, 013 | attention and lazy lifetime | pure state, projection/notifier, lifecycle, relaunch tests, and a poll that counts how often it asked a screen for its characters |
 | SP-FR-024, SP-NFR-003, 011…012 | update convergence and incident status | pane hosting/update-bound tests plus T-091 diagnostics/runbook |
 | SP-FR-027 | the canvas answers its own size | pane hosting tests measuring whether the question reaches Auto Layout |
+| SP-FR-028 | an agent labels its own pane | provider tests over a real `WorkspaceStore`, asserting the catalog's `customTitle` rather than a view |
 | SP-FR-025…026, SP-NFR-005, 007…008 | owner intent/accessibility | intent catalog/provider and accessibility tests |
 | SP-FR-028 | tab close is destructive, scoped, and refuses the last tab | intent catalog/provider tests over `WorkspaceStore.closeTab` |
 
@@ -414,7 +416,8 @@ resource exactly once.
 - Public pane-owner intent is versioned `v1`; schema changes require the normative inventory
   and architecture change protocol.
 - Unknown/invalid header items fail soft at value admission; supported siblings remain.
-- Creation maximum is optional and unknown persisted values degrade to unlimited.
+- The automatic pane-width maximum is optional and unknown persisted values degrade to
+  unlimited.
 
 ## 10. Delivery plan
 
@@ -488,8 +491,10 @@ resource exactly once.
 | 2026-08-08 | Pane content publishes no sizing options and a convergence bound stays permanent. | canvas already owns size; content-derived ideal measurement is unnecessary | default `NSHostingView` sizing options |
 | 2026-08-09 | Invalid move clears/rolls back; invalid resize retains last valid preview. | current source and tests are authoritative | T-059's uniform “hold last valid” narrative |
 | 2026-08-09 | T-091 is mitigated/observable, not closed. | no real reproduction or proven root cause exists | any implication that the sizing cleanup fixed the incident |
-| 2026-08-12 | `workspace.tab.close.v1` refuses a workspace's only tab instead of emptying it. | `WorkspaceCatalog.closeTab` has always kept the last tab (`Workspace.swift:613`, pinned by `WorkspaceTests.swift:209`), and it signals that by returning no events. A pass-through adapter would therefore have answered success while removing nothing — the failure mode a scripted caller looping over tabs hits first. `dev.tenon.core.close-refused` is the same code `workspace.pane.close.v1` already declares for a refused removal. | the assumption in T-132 that tab close is a straight pass-through |
+| 2026-08-12 | `workspace.tab.close.v1` refuses a workspace's only tab instead of emptying it. | `WorkspaceCatalog.closeTab` has always kept the last tab (`Workspace.swift:613`, pinned by `WorkspaceTests.swift:209`), and it signals that by returning no events. A pass-through adapter would therefore have answered success while removing nothing — the failure mode a scripted caller looping over tabs hits first. `dev.tenon.core.close-refused` is the same code the pane-close contract already declares for a refused removal. | the assumption in T-132 that tab close is a straight pass-through |
 | 2026-08-12 | `workspace.pane.split.v1` still returns nothing, and widening it is NOT deferred on cost — it is a **major mint** this task's file set cannot carry. | Its output is a closed object with no properties. Adding `paneID` is "add any top-level input/output field to a closed object", which `docs/design-intent-bus.md:620-624` answers "same major? no", `FC-NFR-009` states as "closed schemas MUST not widen inside one major", and `IAR-NFR-008` repeats. `filesystem.directory.list.v2` is the standing precedent and its v1 was removed outright. So the correct change is `workspace.pane.split.v2`, and that reaches `plugins/core-commands/{manifest.json,main.js}`, `plugins/file-explorer/{manifest.json,main.js}` — both name `workspace.pane.split.v1` in `uses`, so an unmigrated manifest breaks their split commands — plus `FileExplorerPluginTests`, `CoreCommandsPluginTests`, `design-command-palette.md`, `design-pane-slots.md`, and `architecture-interaction-boundaries.md`. None of those is in T-132's claimed file set. | T-132's criterion (d), which names `workspace.pane.split.v1` and assumes a same-major edit |
+| 2026-08-13 | A pane-level mutation that leaves a tab empty closes that tab whenever another tab survives. `workspace.pane.close.v2` and `dev.tenon.core-commands.pane.close.v2` replace their v1 contracts. | Empty source tabs were residue from closing or moving a final pane, not durable working state. The model applies the rule once across close, move, and reservation cleanup; the required last tab remains because every workspace must keep one tab. The extra tab removal changes observable side-effect meaning, so same-major evolution is forbidden and both superseded v1 paths are deleted. | SP-FR-006's rule that every final-pane close leaves an empty tab |
+| 2026-08-13 | Automatic horizontal close absorption reads the live pane-width preference and stops growing at that width; declined columns remain empty canvas. Existing over-limit panes and manual resize remain untouched. | close reflow previously bypassed the creation sizing policy and could widen the survivor straight to the full canvas | creation-only maximum-width semantics |
 | 2026-08-12 | The attention poll asks a pane for a screen *fingerprint*, and `PaneActivity.Observation` carries `screen: Int` instead of `text: String`. | The machine's only use of a screen is `IdleDetector.record`, which is one `==`. Paying for that with `GhosttySurface.renderedText` — one Swift `String` per row appended a `Character` at a time, plus one ICU regular expression per row to trim trailing blanks — put **83% of a stalled main thread** inside that getter in incident `0005-87f24878`, reached from `AppComposition.startAttentionPolling` → `SurfacePool.pollActivity`. At the shipped 200 ms cadence a headless count is 40 renders per 8 panes per 5 turns, 1600 a minute. `renderedText` stays exactly as it is for `pane.read`, `terminal.wait.v1` and `agents.run`, which read the characters. | the assumption that one observation type can serve both the poll and the readers |
 | 2026-08-11 | The canvas answers the size it is proposed; silence is not neutral, it routes the question to AppKit. | a `sample` of the stalled process put 2395 of 3461 main-thread samples in `_ZStackLayout.sizeThatFits` → `AppKitPlatformViewHost.fittingSize` → `_populateEngineWithConstraintsForViewSubtree`, and the sweep dirtied the `NSTextField`s it measured | the 2026-08-09 reading that the root cause was unproven |
 
@@ -571,3 +576,5 @@ resource exactly once.
 |---|---|---|
 | 2026-08-09 | Created canonical PRD from current spatial/header/focus/attention/resource source, twelve tasks, and focused tests; recorded T-059 supersession and T-091 partial status. | Codex |
 | 2026-08-11 | Added SP-FR-027 after T-121 reproduced the stall and sampled it; moved SP-FR-024 and the T-091 row off partial. | Claude |
+| 2026-08-13 | Extended the pane-width policy to cap automatic horizontal close absorption without locking manual resize. | Codex |
+| 2026-08-14 | Added SP-FR-028: the pinned pane title became a public capability so the Agent Harness briefing (`SET-FR-030`…`034`) could describe a rename that exists. | Claude |

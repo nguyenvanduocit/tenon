@@ -2,6 +2,23 @@ import XCTest
 @testable import TenonApp
 
 final class SidebarResizeTests: XCTestCase {
+    func testCollapsedSidebarKeepsANonzeroIconRail() {
+        XCTAssertEqual(
+            SidebarResize.renderedWidth(isExpanded: false, expandedWidth: 300),
+            SidebarResize.collapsedWidth
+        )
+        XCTAssertEqual(SidebarResize.collapsedWidth, 48)
+        XCTAssertGreaterThan(SidebarResize.collapsedWidth, 0)
+        XCTAssertLessThan(SidebarResize.collapsedWidth, SidebarResize.minWidth)
+    }
+
+    func testExpandedSidebarKeepsItsStoredWidth() {
+        XCTAssertEqual(
+            SidebarResize.renderedWidth(isExpanded: true, expandedWidth: 300),
+            300
+        )
+    }
+
     func testWidthWithinBoundsIsKeptAsIs() {
         XCTAssertEqual(SidebarResize.resolve(proposedWidth: 300), .resize(300))
         XCTAssertEqual(

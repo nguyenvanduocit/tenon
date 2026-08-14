@@ -283,7 +283,7 @@ public final class PluginHost {
     }
 
     /// One writable inventory — the shape every test and the developer override use.
-    convenience init(
+    package convenience init(
         pluginsRoot: URL,
         stateRoot: URL,
         kernel: IntentKernelComponents,
@@ -330,14 +330,15 @@ public final class PluginHost {
         persistence: PluginHostPersistence,
         invocationScopeProvider: @escaping InvocationScopeProvider = {
             InvocationScope()
-        }
+        },
+        runtimeFactory: PluginHostRuntimeFactory = .live
     ) throws {
         try self.init(
             inventories: inventories,
             stateRoot: stateRoot,
             kernel: kernel,
             invocationScopeProvider: invocationScopeProvider,
-            runtimeFactory: .live,
+            runtimeFactory: runtimeFactory,
             persistence: persistence
         )
     }
@@ -634,6 +635,18 @@ public final class PluginHost {
         dispatcherSnapshot: IntentDispatcherSnapshot,
         scratchCatalog: ContractCatalog
     ) async throws -> PreparedPlugin {
+        let inventory = PluginInventoryResolution.inventory(
+            for: item.directory,
+            in: inventories
+        )
+        if item.manifest.runtime == .bundledSwift,
+           inventory?.authorization.inventoryTrust != .bundledStandingConsent
+        {
+            throw PluginHostError.bundledSwiftRuntimeRequiresBundledInventory(
+                item.manifest.id
+            )
+        }
+
         var declarations: [IntentContractDeclaration] = []
         var rules: [IntentDispatchRule] = []
         var openReferences: Set<IntentID> = []
@@ -696,10 +709,6 @@ public final class PluginHost {
             }
         }
 
-        let inventory = PluginInventoryResolution.inventory(
-            for: item.directory,
-            in: inventories
-        )
         let disposition = try await installations.reconcileInventoryTrust(
             for: item.manifest.id,
             inventoryTrust: inventory?.authorization.inventoryTrust

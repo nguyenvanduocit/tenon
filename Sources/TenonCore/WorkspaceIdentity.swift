@@ -60,6 +60,18 @@ public enum WorkspaceSymbol: String, CaseIterable, Codable, Sendable {
     case bug
     case sandbox
     case starred
+    case code
+    case braces
+    case server
+    case drive
+    case processor
+    case memory
+    case network
+    case tools
+    case document
+    case verified
+    case shield
+    case flame
 
     /// What a workspace is marked with until someone chooses otherwise.
     public static let `default` = WorkspaceSymbol.folder
@@ -79,6 +91,18 @@ public enum WorkspaceSymbol: String, CaseIterable, Codable, Sendable {
         case .bug: return "ant"
         case .sandbox: return "leaf"
         case .starred: return "star"
+        case .code: return "chevron.left.forwardslash.chevron.right"
+        case .braces: return "curlybraces"
+        case .server: return "server.rack"
+        case .drive: return "externaldrive"
+        case .processor: return "cpu"
+        case .memory: return "memorychip"
+        case .network: return "network"
+        case .tools: return "wrench.and.screwdriver"
+        case .document: return "doc.text"
+        case .verified: return "checkmark.seal"
+        case .shield: return "shield"
+        case .flame: return "flame"
         }
     }
 
@@ -97,7 +121,49 @@ public enum WorkspaceSymbol: String, CaseIterable, Codable, Sendable {
         case .bug: return "Bugs"
         case .sandbox: return "Sandbox"
         case .starred: return "Starred"
+        case .code: return "Code"
+        case .braces: return "Braces"
+        case .server: return "Server"
+        case .drive: return "Drive"
+        case .processor: return "Processor"
+        case .memory: return "Memory"
+        case .network: return "Network"
+        case .tools: return "Tools"
+        case .document: return "Document"
+        case .verified: return "Verified"
+        case .shield: return "Shield"
+        case .flame: return "Flame"
         }
+    }
+}
+
+/// One uploaded workspace mark after the host has decoded, bounded, and normalized it.
+///
+/// The bytes live with the catalog rather than pointing back to the selected file: upload
+/// means the workspace keeps its mark after the source file moves or disappears. The UUID
+/// gives SwiftUI a cheap cache key and survives persistence with the bytes.
+public struct WorkspaceCustomIcon: Equatable, Sendable {
+    public static let maximumPNGBytes = 128 * 1_024
+    public static let maximumPNGBase64Characters =
+        ((maximumPNGBytes + 2) / 3) * 4
+    private static let pngSignature: [UInt8] = [
+        0x89, 0x50, 0x4E, 0x47, 0x0D, 0x0A, 0x1A, 0x0A,
+    ]
+
+    /// A raw image sent through `workspace.identity.set.v1` is still bounded by the 1 MiB
+    /// intent envelope. Base64 expands by about one third, so this leaves room for framing
+    /// while accepting a 512 KiB source image that the host then normalizes.
+    public static let maximumImportBase64Characters = 700_000
+
+    public let id: UUID
+    public let pngData: Data
+
+    public init?(id: UUID = UUID(), pngData: Data) {
+        guard pngData.count <= Self.maximumPNGBytes,
+              pngData.starts(with: Self.pngSignature)
+        else { return nil }
+        self.id = id
+        self.pngData = pngData
     }
 }
 
@@ -177,14 +243,26 @@ public enum WorkspaceTint {
 /// `accent` is optional and nil is not a colour: it means automatic, and the colour that
 /// stands in is the one `WorkspaceTint` derives from the workspace's own folder. So a
 /// catalog nobody has customised already reads as a set of distinct workspaces, and the
-/// five named accents remain available to anyone who wants to settle a colour themselves.
+/// twelve named accents remain available to anyone who wants to settle a colour themselves.
 public struct WorkspaceAppearance: Equatable, Sendable {
     public var symbol: WorkspaceSymbol
     public var accent: AccentColor?
+    public var customIcon: WorkspaceCustomIcon?
 
-    public init(symbol: WorkspaceSymbol = .default, accent: AccentColor? = nil) {
+    public init(
+        symbol: WorkspaceSymbol = .default,
+        accent: AccentColor? = nil,
+        customIcon: WorkspaceCustomIcon? = nil
+    ) {
         self.symbol = symbol
         self.accent = accent
+        self.customIcon = customIcon
+    }
+
+    /// What a row and VoiceOver call the selected mark. A custom bitmap has no trustworthy
+    /// embedded label, so its product meaning is exactly the choice the person made.
+    public var iconLabel: String {
+        customIcon == nil ? symbol.label : "Custom icon"
     }
 
     /// What every workspace looks like until someone customises it, and what `resetIdentity`
