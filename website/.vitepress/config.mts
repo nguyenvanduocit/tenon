@@ -37,7 +37,11 @@ export default defineConfig({
     ],
   ],
 
-  sitemap: { hostname: 'https://tenon.dev' },
+  // The sitemap tells search engines which URLs exist, so it has to name the
+  // host that actually serves them. Set SITE_URL when a custom domain lands;
+  // until then this is where the site really is, and a sitemap pointing at a
+  // domain nobody owns is worse than no sitemap.
+  sitemap: { hostname: process.env.SITE_URL ?? 'https://tenon-docs.pages.dev' },
 
   themeConfig: {
     logo: '/mark.svg',

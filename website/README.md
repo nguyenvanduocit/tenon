@@ -1,7 +1,12 @@
 # Tenon documentation site
 
-The public documentation at [tenon.dev](https://tenon.dev). VitePress 1.6.4,
-built with Bun, deployed to Cloudflare Pages.
+The public documentation at
+[tenon-docs.pages.dev](https://tenon-docs.pages.dev). VitePress 1.6.4, built
+with Bun, deployed to Cloudflare Pages.
+
+Set `SITE_URL` at build time when a custom domain lands — it is what the
+sitemap names, and a sitemap pointing at a host nobody serves is worse than
+none.
 
 ```sh
 bun install
