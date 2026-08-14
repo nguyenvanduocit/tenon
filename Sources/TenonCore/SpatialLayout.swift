@@ -825,6 +825,59 @@ public enum SpatialLayout {
         )
     }
 
+    /// Moves `slotID` into `rect`, adopting the region's exact geometry — the routed
+    /// drop of a carried pane onto empty canvas, where the hole (not the pane's old
+    /// footprint) decides the size.
+    public static func move(
+        _ slots: [SpatialSlot],
+        slotID: UUID,
+        toRect rect: GridRect
+    ) -> SpatialLayoutTransaction {
+        guard isValid(slots),
+              slots.contains(where: { $0.id == slotID })
+        else {
+            return SpatialLayoutTransaction(
+                kind: .move,
+                isValid: false,
+                baseline: slots,
+                proposal: slots,
+                affectedSlotIDs: []
+            )
+        }
+
+        let proposal = replacingRect(in: slots, slotID: slotID, with: rect)
+        return SpatialLayoutTransaction(
+            kind: .move,
+            isValid: isValid(proposal),
+            baseline: slots,
+            proposal: proposal,
+            affectedSlotIDs: [slotID]
+        )
+    }
+
+    /// Admits a pane that does not yet belong to this layout at an exact rect — the
+    /// cross-tab counterpart of `move(_:slotID:toRect:)`, mirroring `insertBeside`.
+    public static func insertAt(
+        _ slots: [SpatialSlot],
+        newSlotID: UUID,
+        rect: GridRect
+    ) -> SpatialLayoutTransaction? {
+        guard isValid(slots),
+              !slots.contains(where: { $0.id == newSlotID })
+        else { return nil }
+
+        let proposal = slots + [SpatialSlot(id: newSlotID, rect: rect)]
+        guard isValid(proposal) else { return nil }
+
+        return SpatialLayoutTransaction(
+            kind: .split,
+            isValid: true,
+            baseline: slots,
+            proposal: proposal,
+            affectedSlotIDs: [newSlotID]
+        )
+    }
+
     /// Collapses the carried pane's old footprint, then divides the target in half
     /// and places the carried pane on the requested edge. The operation mirrors a
     /// structural pane move while preserving the spatial model's stable slot order.

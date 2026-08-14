@@ -665,6 +665,81 @@ final class SpatialLayoutTests: XCTestCase {
         ))
     }
 
+    func testMoveToRectAdoptsTheChosenEmptyRegion() {
+        let original = [
+            slot(a, 0, 0, 3, 3),
+            slot(b, 6, 0, 6, 12),
+        ]
+
+        let transaction = SpatialLayout.move(
+            original,
+            slotID: a,
+            toRect: GridRect(x: 0, y: 3, width: 6, height: 9)
+        )
+
+        XCTAssertTrue(transaction.isValid)
+        XCTAssertEqual(transaction.kind, .move)
+        XCTAssertEqual(transaction.baseline, original)
+        XCTAssertEqual(transaction.proposal, [
+            slot(a, 0, 3, 6, 9),
+            slot(b, 6, 0, 6, 12),
+        ])
+        XCTAssertEqual(transaction.affectedSlotIDs, [a])
+        XCTAssertEqual(original[0].rect, GridRect(x: 0, y: 0, width: 3, height: 3))
+    }
+
+    func testMoveToRectRefusesOverlapSubMinimumAndUnknownIdentity() {
+        let original = [
+            slot(a, 0, 0, 3, 3),
+            slot(b, 6, 0, 6, 12),
+        ]
+
+        XCTAssertFalse(SpatialLayout.move(
+            original,
+            slotID: a,
+            toRect: GridRect(x: 3, y: 0, width: 6, height: 12)
+        ).isValid, "a destination overlapping another pane is refused")
+        XCTAssertFalse(SpatialLayout.move(
+            original,
+            slotID: a,
+            toRect: GridRect(x: 0, y: 3, width: 3, height: 2)
+        ).isValid, "a destination below the minimum pane size is refused")
+        XCTAssertFalse(SpatialLayout.move(
+            original,
+            slotID: UUID(),
+            toRect: GridRect(x: 0, y: 3, width: 3, height: 3)
+        ).isValid)
+    }
+
+    func testInsertAtAdmitsAPaneAtTheExactRect() throws {
+        let destination = [slot(b, 0, 0, 6, 12)]
+
+        let transaction = try XCTUnwrap(SpatialLayout.insertAt(
+            destination,
+            newSlotID: a,
+            rect: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ))
+
+        XCTAssertEqual(transaction.kind, .split)
+        XCTAssertEqual(transaction.baseline, destination)
+        XCTAssertEqual(transaction.proposal, [
+            slot(b, 0, 0, 6, 12),
+            slot(a, 6, 0, 6, 12),
+        ])
+        XCTAssertEqual(transaction.affectedSlotIDs, [a])
+
+        XCTAssertNil(SpatialLayout.insertAt(
+            destination,
+            newSlotID: a,
+            rect: GridRect(x: 3, y: 0, width: 6, height: 12)
+        ), "an occupied destination admits nothing")
+        XCTAssertNil(SpatialLayout.insertAt(
+            destination,
+            newSlotID: b,
+            rect: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ), "an identity already in the layout admits nothing")
+    }
+
     func testSwapExchangesGeometryWithoutChangingInputOrOrdering() {
         let original = [
             slot(a, 0, 0, 7, 12),

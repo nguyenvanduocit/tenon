@@ -29,13 +29,21 @@ enum TabBarDropResolver {
     }
 }
 
+/// Where in the revealed tab's body a routed pane drop would land: beside an
+/// existing pane on one of its edges, or filling an empty grid region — the same
+/// two destinations the in-canvas drag offers, so switching tabs mid-drag never
+/// shrinks where a pane may go.
+enum RoutedPaneBodyDestination: Equatable {
+    case beside(slotID: UUID, edge: SpatialDropEdge)
+    case emptyRegion(GridRect)
+}
+
 /// The body destination chosen after a pane drag has switched tabs. The router owns
 /// this value because the source tab's canvas is no longer the visible interaction
 /// owner once the tab bar reveals another tab.
 struct RoutedPaneDropTarget: Equatable {
     let tabID: UUID
-    let slotID: UUID
-    let edge: SpatialDropEdge
+    let destination: RoutedPaneBodyDestination
 }
 
 /// Identity-only state for a pane drag whose lifetime can cross tab-local canvases.
@@ -45,6 +53,10 @@ struct RoutedPaneDrag: Equatable {
     let slotID: UUID
     let sourceTabID: UUID
     var bodyTarget: RoutedPaneDropTarget?
+    /// Body drops route only for a drag that actually visited the tab bar. An
+    /// in-canvas gesture whose interaction died another way — an intervening store
+    /// mutation staled its baseline — stays dead: releasing it commits nothing.
+    var reachedTabBar: Bool = false
 }
 
 /// Main-thread geometry bridge between the SwiftUI tab bar and the AppKit spatial
@@ -79,6 +91,10 @@ final class DragRouter {
 
     func setBodyTarget(_ target: RoutedPaneDropTarget?) {
         paneDrag?.bodyTarget = target
+    }
+
+    func markPaneDragReachedTabBar() {
+        paneDrag?.reachedTabBar = true
     }
 
     func endPaneDrag() {

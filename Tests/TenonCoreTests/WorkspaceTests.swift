@@ -1337,6 +1337,132 @@ final class WorkspaceCatalogTests: XCTestCase {
         }, "drop must not publish a second selection after hover selected the tab")
     }
 
+    func testMoveSlotAtRectPlacesThePaneInTheChosenEmptyRegion() throws {
+        let stayingID = UUID()
+        let movingID = UUID()
+        let targetID = UUID()
+        let sourceTab = Tab(
+            slots: [
+                WorkspaceSlot(
+                    id: stayingID,
+                    rect: GridRect(x: 0, y: 0, width: 6, height: 12)
+                ),
+                WorkspaceSlot(
+                    id: movingID,
+                    rect: GridRect(x: 6, y: 0, width: 6, height: 12)
+                ),
+            ],
+            activeSlotID: movingID
+        )
+        let targetTab = Tab(
+            slots: [
+                WorkspaceSlot(
+                    id: targetID,
+                    rect: GridRect(x: 0, y: 0, width: 6, height: 12)
+                ),
+            ],
+            activeSlotID: targetID,
+            number: 2
+        )
+        let workspace = Workspace(
+            name: "One",
+            path: projectPath,
+            tabs: [sourceTab, targetTab],
+            // Hover already revealed the target before mouse-up.
+            activeTabID: targetTab.id
+        )
+        var catalog = WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        )
+        let rect = GridRect(x: 6, y: 3, width: 6, height: 9)
+
+        let events = catalog.moveSlot(movingID, toTab: targetTab.id, at: rect)
+
+        XCTAssertEqual(catalog.activeTab?.id, targetTab.id)
+        XCTAssertEqual(catalog.activeTab?.slots.map(\.id), [targetID, movingID])
+        XCTAssertEqual(catalog.slot(id: movingID)?.rect, rect)
+        XCTAssertEqual(
+            catalog.slot(id: targetID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12),
+            "admitting into a hole reshapes no existing pane"
+        )
+        XCTAssertEqual(catalog.activeTab?.activeSlotID, movingID)
+        let sourceAfter = try XCTUnwrap(
+            catalog.activeWorkspace?.tabs.first { $0.id == sourceTab.id }
+        )
+        XCTAssertEqual(sourceAfter.slots.map(\.id), [stayingID])
+        XCTAssertEqual(sourceAfter.slots.first?.rect, fullGrid)
+        XCTAssertTrue(events.contains(.slotMovedToTab(
+            slot: movingID,
+            fromTab: sourceTab.id,
+            toTab: targetTab.id,
+            workspace: workspace.id
+        )))
+        XCTAssertTrue(events.contains(.slotFocused(
+            slot: movingID,
+            tab: targetTab.id,
+            workspace: workspace.id
+        )))
+        XCTAssertFalse(events.contains {
+            if case .tabSelected = $0 { return true }
+            return false
+        }, "drop must not publish a second selection after hover selected the tab")
+    }
+
+    func testMoveSlotAtRectRefusesOccupiedRegionSameTabAndUnknownTargetAtomically() throws {
+        let movingID = UUID()
+        let targetID = UUID()
+        let sourceTab = Tab(
+            slots: [
+                WorkspaceSlot(id: movingID, rect: fullGrid),
+            ],
+            activeSlotID: movingID
+        )
+        let targetTab = Tab(
+            slots: [
+                WorkspaceSlot(
+                    id: targetID,
+                    rect: GridRect(x: 0, y: 0, width: 6, height: 12)
+                ),
+            ],
+            activeSlotID: targetID,
+            number: 2
+        )
+        let workspace = Workspace(
+            name: "One",
+            path: projectPath,
+            tabs: [sourceTab, targetTab],
+            activeTabID: targetTab.id
+        )
+        var catalog = WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        )
+        let before = catalog
+
+        XCTAssertEqual(catalog.moveSlot(
+            movingID,
+            toTab: targetTab.id,
+            at: GridRect(x: 3, y: 0, width: 6, height: 12)
+        ), [], "a region overlapping an existing pane refuses the whole move")
+        XCTAssertEqual(catalog, before)
+
+        XCTAssertEqual(catalog.moveSlot(
+            movingID,
+            toTab: sourceTab.id,
+            at: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ), [], "the slot's own tab is not a cross-tab destination")
+        XCTAssertEqual(catalog, before)
+
+        XCTAssertEqual(catalog.moveSlot(
+            movingID,
+            toTab: UUID(),
+            at: GridRect(x: 6, y: 0, width: 6, height: 12)
+        ), [])
+        XCTAssertEqual(catalog, before)
+    }
+
     func testMoveSlotIntoSameTabOrUnknownTargetIsAtomicNoOp() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let a = try XCTUnwrap(catalog.activeSlotID)

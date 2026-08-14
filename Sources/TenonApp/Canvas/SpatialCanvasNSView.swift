@@ -13,6 +13,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     private var displayedSlots: [SpatialSlot] = []
     private var store: WorkspaceStore?
     private var pool: SurfacePool?
+    private var agentLens: AgentLensPool?
     private var host: PluginHost?
     private var intentRuntime: AppIntentRuntime?
     private var palette: CommandPaletteState?
@@ -42,6 +43,17 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     /// VoiceOver action enter this one route.
     var copyWorkspaceIdentifier: (UUID) -> Void = {
         WorkspaceIdentifierClipboard.copy($0)
+    }
+    /// Test seam for the lens edge: which agent session a pane carries right now.
+    /// Production leaves it nil and `agentSessionRef(for:)` reads the pane's own lens —
+    /// the same reading the pane is already showing.
+    var agentSessionReading: ((UUID) -> AgentSessionRef?)?
+    /// Test seam for the clipboard edge of Copy Resume Command, the same one-route rule
+    /// as `copyWorkspaceIdentifier`.
+    var copyResumeCommand: (String) -> Void = { command in
+        let pasteboard = NSPasteboard.general
+        pasteboard.clearContents()
+        pasteboard.setString(command, forType: .string)
     }
 
     private var gestureIsMove = false
@@ -212,6 +224,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         self.intentRuntime = intentRuntime
         self.palette = palette
         self.agentSuggestions = agentSuggestions
+        self.agentLens = agentLens
         self.paneHeaderStore = paneHeaderStore
         self.paneRenamer = paneRenamer
         self.pluginViewSections = pluginViewSections
@@ -562,6 +575,11 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
               let slot = store.catalog.slot(id: slotID)
         else { return nil }
 
+        // Computed once, before the menu draws: the offer states its refusal reason in the
+        // item's tooltip instead of failing under a click — the same rule the pane's own
+        // `+ Resume` button follows. A pane carrying no agent session adds nothing.
+        let sessionRef = agentSessionRef(for: slot)
+
         let menu = NSMenu()
         menu.autoenablesItems = false
 
@@ -589,6 +607,25 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             store?.duplicateSlot(slotID)
         })
 
+        if let sessionRef {
+            // A fork is a duplicate that continues the session as a NEW session: same
+            // placement policy, and the fresh shell opens on the provider's own fork.
+            let offer = AgentSessionResume.offer(
+                for: sessionRef,
+                installed: agentSuggestions,
+                continuation: .fork
+            )
+            let fork = SlotMenuItem(
+                title: "Fork Session",
+                isEnabled: offer.commandLine != nil && store.catalog.canDuplicateSlot(slotID)
+            ) { [weak self] in
+                guard let commandLine = offer.commandLine else { return }
+                self?.forkAgentSession(from: slotID, commandLine: commandLine)
+            }
+            fork.toolTip = offer.reason ?? offer.commandLine
+            menu.addItem(fork)
+        }
+
         menu.addItem(.separator())
 
         menu.addItem(SlotMenuItem(title: Shell.text("Rename…"), isEnabled: true) { [weak self] in
@@ -603,6 +640,19 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         menu.addItem(SlotMenuItem(title: "Copy Pane ID", isEnabled: true) { [weak self] in
             self?.copyWorkspaceIdentifier(slotID)
         })
+
+        if let sessionRef {
+            let offer = AgentSessionResume.offer(for: sessionRef, installed: agentSuggestions)
+            let copy = SlotMenuItem(
+                title: "Copy Resume Command",
+                isEnabled: offer.commandLine != nil
+            ) { [weak self] in
+                guard let commandLine = offer.commandLine else { return }
+                self?.copyResumeCommand(commandLine)
+            }
+            copy.toolTip = offer.reason ?? offer.commandLine
+            menu.addItem(copy)
+        }
 
         menu.addItem(.separator())
 
@@ -621,6 +671,46 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     private func beginAIRename(for slotID: UUID) {
         guard let title = cards[slotID]?.presentedTitle else { return }
         paneRenamer?.beginAI(slotID: slotID, currentTitle: title)
+    }
+
+    /// The agent session a pane carries, in the one form that can be continued. A live
+    /// terminal answers through its own lens under the same `.exact`-confidence gate the
+    /// catalog save uses (`AgentPaneSessionCapture.reference`), so the menu can never offer
+    /// a session the pane itself would not claim. A recorded pane answers with the ref it
+    /// is reading. Every other pane carries none.
+    private func agentSessionRef(for slot: WorkspaceSlot) -> AgentSessionRef? {
+        if let agentSessionReading { return agentSessionReading(slot.id) }
+        switch slot.content {
+        case .agentSession(let ref):
+            return ref
+        case .terminal:
+            guard let resolution = agentLens?.resolution(for: slot.id) else { return nil }
+            return AgentPaneSessionCapture.reference(
+                for: resolution,
+                title: cards[slot.id]?.presentedTitle
+            )
+        default:
+            return nil
+        }
+    }
+
+    /// The fork lands beside the pane it forks: `duplicateSlot`'s placement (anchored on
+    /// this pane, free canvas first), converted to a fresh shell when the anchor was a
+    /// recorded reading, with the fork command queued for the shell that pane is about to
+    /// build. The set-diff finds the pane `duplicateSlot` created; when the layout refused
+    /// to place one, nothing is sent anywhere.
+    private func forkAgentSession(from slotID: UUID, commandLine: String) {
+        guard let store, let pool else { return }
+        let before = Set(store.catalog.activeTab?.slots.map(\.id) ?? [])
+        store.duplicateSlot(slotID)
+        guard let newSlotID = store.catalog.activeTab?.slots
+            .map(\.id)
+            .first(where: { !before.contains($0) })
+        else { return }
+        if store.catalog.slot(id: newSlotID)?.content != .terminal {
+            store.setSlotContent(newSlotID, .terminal)
+        }
+        pool.sendTextWhenReady(commandLine + "\n", to: newSlotID)
     }
 
     /// The border's contextual menu: the drag that border performs, offered as three
@@ -728,6 +818,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
            let windowPoint {
             let target = router.target(at: windowPoint)
             if target != .none {
+                router.markPaneDragReachedTabBar()
                 router.setBodyTarget(nil)
                 router.activeDropTarget = target
                 updateMovePresentation(at: point, acceptsExternalDrop: true)
@@ -748,6 +839,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         if gestureIsMove {
             if !interaction.isActive,
                let routed = router?.paneDrag,
+               routed.reachedTabBar,
                let tabID {
                 let hit = slotFrames.first { frame in
                     frame.key != routed.slotID && frame.value.contains(point)
@@ -776,8 +868,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
                     if valid {
                         let target = RoutedPaneDropTarget(
                             tabID: tabID,
-                            slotID: hit.key,
-                            edge: edge
+                            destination: .beside(slotID: hit.key, edge: edge)
                         )
                         router?.setBodyTarget(target)
                         updateMovePresentation(
@@ -789,6 +880,25 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
                         )
                         return
                     }
+                }
+                // Over no card: the revealed tab's empty canvas is a destination
+                // too, resolved by the same grid-model rule as the empty-canvas
+                // launcher. On the source tab the carried pane's own footprint
+                // counts as free — it vacates on drop.
+                let occupied = tabID == routed.sourceTabID
+                    ? displayedSlots.filter { $0.id != routed.slotID }
+                    : displayedSlots
+                if let region = SpatialCanvasInteractionCoordinator.emptyGridLauncherTarget(
+                    at: point,
+                    canvasSize: bounds.size,
+                    slots: occupied
+                ) {
+                    router?.setBodyTarget(RoutedPaneDropTarget(
+                        tabID: tabID,
+                        destination: .emptyRegion(region.rect)
+                    ))
+                    updateMovePresentation(at: point, routedRegion: region.rect)
+                    return
                 }
                 router?.setBodyTarget(nil)
                 updateMovePresentation(at: point)
@@ -837,23 +947,39 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             if target.tabID == tabID,
                let activeTab = store?.catalog.activeTab,
                activeTab.id == target.tabID {
-                if target.tabID == routed.sourceTabID {
-                    let transaction = SpatialLayout.moveBeside(
-                        activeTab.spatialSlots,
-                        slotID: routed.slotID,
-                        targetID: target.slotID,
-                        edge: target.edge
-                    )
-                    if transaction.isValid {
-                        store?.applyMove(transaction)
+                switch target.destination {
+                case .beside(let targetSlotID, let edge):
+                    if target.tabID == routed.sourceTabID {
+                        let transaction = SpatialLayout.moveBeside(
+                            activeTab.spatialSlots,
+                            slotID: routed.slotID,
+                            targetID: targetSlotID,
+                            edge: edge
+                        )
+                        if transaction.isValid {
+                            store?.applyMove(transaction)
+                        }
+                    } else {
+                        store?.moveSlot(
+                            routed.slotID,
+                            toTab: target.tabID,
+                            beside: targetSlotID,
+                            edge: edge
+                        )
                     }
-                } else {
-                    store?.moveSlot(
-                        routed.slotID,
-                        toTab: target.tabID,
-                        beside: target.slotID,
-                        edge: target.edge
-                    )
+                case .emptyRegion(let rect):
+                    if target.tabID == routed.sourceTabID {
+                        let transaction = SpatialLayout.move(
+                            activeTab.spatialSlots,
+                            slotID: routed.slotID,
+                            toRect: rect
+                        )
+                        if transaction.isValid {
+                            store?.applyMove(transaction)
+                        }
+                    } else {
+                        store?.moveSlot(routed.slotID, toTab: target.tabID, at: rect)
+                    }
                 }
             }
             router?.endPaneDrag()
@@ -910,7 +1036,8 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     private func updateMovePresentation(
         at point: CGPoint,
         acceptsExternalDrop: Bool = false,
-        routedTarget: SpatialCanvasMoveTarget? = nil
+        routedTarget: SpatialCanvasMoveTarget? = nil,
+        routedRegion: GridRect? = nil
     ) {
         guard interaction.isCarryingPane || router?.paneDrag != nil,
               let sourceID = gestureSlotID,
@@ -937,6 +1064,8 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         if let target = routedTarget ?? interaction.moveTarget,
            let targetCard = cards[target.slotID] {
             targetFrame = Self.highlightFrame(for: target.edge, in: targetCard.frame)
+        } else if let routedRegion {
+            targetFrame = cardFrame(for: routedRegion)
         } else if case .move(let transaction) = interaction.preview,
                   let rect = transaction.proposal.first(where: { $0.id == sourceID })?.rect {
             targetFrame = cardFrame(for: rect)

@@ -196,6 +196,37 @@ Feature: Arrange live panes without losing identity, focus, or attention
         | Copy Pane ID from the header menu |
         | the pane's Copy Pane ID accessibility action |
 
+    @req-sp-fr-029 @req-sp-fr-008 @menu @agent-session
+    Scenario: An agent pane offers its session continuations where their groups live
+      Given a pane carries an agent session and its provider's CLI is installed here
+      When the operator secondary-clicks its bare header
+      Then Fork Session appears directly after Duplicate
+      And Copy Resume Command appears directly after Copy Pane ID
+      And a pane carrying no agent session shows neither item
+
+    @req-sp-fr-029 @menu @agent-session
+    Scenario: Fork Session opens a fresh terminal beside the pane running the provider's own fork
+      Given a pane carries a Claude Code session
+      When the operator chooses Fork Session
+      Then a new terminal pane opens beside the clicked pane using Duplicate's placement
+      And the provider's fork of that session is queued for the shell that pane is about to build
+      And the clicked pane is left exactly as it was
+
+    @req-sp-fr-029 @menu @agent-session
+    Scenario: Copy Resume Command places the provider's resume line on the clipboard
+      Given a pane carries an agent session
+      When the operator chooses Copy Resume Command
+      Then the clipboard holds the provider's resume command for that session
+      And the command carries the options this person always passes their agent
+      And it does not mint a new session
+
+    @req-sp-fr-029 @menu @agent-session @refusal
+    Scenario: A missing provider CLI greys the continuations and states why
+      Given a pane carries a session whose provider CLI is not installed on this machine
+      When its header menu opens
+      Then Fork Session and Copy Resume Command are visible but disabled
+      And each item states, where the item is, that the provider is not installed
+
     @req-sp-fr-010 @fill-width
     Scenario: Double-clicking bare header fills available width only
       Given a pane has horizontal free space before its nearest blocking neighbors
@@ -290,6 +321,17 @@ Feature: Arrange live panes without losing identity, focus, or attention
       Then the pane becomes owned by the target tab
       And its source layout reflows validly
       And its stable identity, content, and live resource are preserved
+
+    @req-sp-fr-014 @drag @cross-tab @empty-grid
+    Scenario: A routed tab target accepts a pane on its empty canvas
+      Given a pane is carried from its source tab
+      And the hover-revealed tab still has a fillable empty grid region
+      When the operator points inside that region
+      Then the drop highlight promises exactly the region's committed pane frame
+      When the operator releases there
+      Then the pane fills the empty region containing the pointed cell
+      And no existing pane in the target tab is reshaped
+      And a region too small for a pane is never offered as a destination
 
     @req-sp-fr-014 @req-sp-nfr-002 @cancel
     Scenario Outline: Cancelling an active drag restores authoritative presentation

@@ -1234,6 +1234,36 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         return events
     }
 
+    /// Move a slot into an existing tab at the exact empty region chosen on that tab's
+    /// visible canvas. The destination layout is resolved before the source is
+    /// detached, so an occupied or stale region leaves both tabs unchanged.
+    @discardableResult
+    public mutating func moveSlot(
+        _ slotID: UUID,
+        toTab targetTabID: UUID,
+        at rect: GridRect
+    ) -> [WorkspaceEvent] {
+        guard let source = location(ofSlot: slotID),
+              let targetIndex = workspaces[source.workspace].tabs.firstIndex(
+                  where: { $0.id == targetTabID }
+              ),
+              workspaces[source.workspace].tabs[source.tab].id != targetTabID
+        else { return [] }
+
+        guard let insertion = SpatialLayout.insertAt(
+            workspaces[source.workspace].tabs[targetIndex].spatialSlots,
+            newSlotID: slotID,
+            rect: rect
+        ) else { return [] }
+
+        return admitMovedSlot(
+            slotID,
+            from: source,
+            intoTabAt: targetIndex,
+            proposal: insertion.proposal
+        )
+    }
+
     /// Move a slot into an existing tab at the edge selected on that tab's visible
     /// canvas. The destination layout is resolved before the source is detached, so an
     /// invalid or stale target leaves both tabs unchanged.
@@ -1251,23 +1281,42 @@ public struct WorkspaceCatalog: Equatable, Sendable {
               workspaces[source.workspace].tabs[source.tab].id != targetTabID
         else { return [] }
 
-        let targetTab = workspaces[source.workspace].tabs[targetIndex]
         guard let insertion = SpatialLayout.insertBeside(
-            targetTab.spatialSlots,
+            workspaces[source.workspace].tabs[targetIndex].spatialSlots,
             newSlotID: slotID,
             targetID: targetSlotID,
             edge: edge
         ) else { return [] }
 
+        return admitMovedSlot(
+            slotID,
+            from: source,
+            intoTabAt: targetIndex,
+            proposal: insertion.proposal
+        )
+    }
+
+    /// Detaches `slotID` from `source` and installs the pre-resolved destination
+    /// `proposal` into the target tab, emitting the shared cross-tab move event
+    /// sequence. Callers resolve the destination layout before detaching, so a
+    /// refused admission leaves both tabs untouched.
+    private mutating func admitMovedSlot(
+        _ slotID: UUID,
+        from source: (workspace: Int, tab: Int),
+        intoTabAt targetIndex: Int,
+        proposal: [SpatialSlot]
+    ) -> [WorkspaceEvent] {
         let workspaceID = workspaces[source.workspace].id
         let sourceTabID = workspaces[source.workspace].tabs[source.tab].id
+        let targetTab = workspaces[source.workspace].tabs[targetIndex]
+        let targetTabID = targetTab.id
         let didSelectTarget = workspaces[source.workspace].activeTabID != targetTabID
         let content = workspaces[source.workspace].tabs[source.tab]
             .slots.first { $0.id == slotID }!.content
         let targetSlotsByID = Dictionary(
             uniqueKeysWithValues: targetTab.slots.map { ($0.id, $0) }
         )
-        let changedTargetIDs = insertion.proposal.compactMap { spatial -> UUID? in
+        let changedTargetIDs = proposal.compactMap { spatial -> UUID? in
             guard spatial.id != slotID,
                   targetSlotsByID[spatial.id]?.rect != spatial.rect
             else { return nil }
@@ -1276,7 +1325,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
 
         guard let detached = detachSlot(slotID, at: source) else { return [] }
 
-        workspaces[source.workspace].tabs[targetIndex].slots = insertion.proposal.map {
+        workspaces[source.workspace].tabs[targetIndex].slots = proposal.map {
             spatial in
             if spatial.id == slotID {
                 return WorkspaceSlot(

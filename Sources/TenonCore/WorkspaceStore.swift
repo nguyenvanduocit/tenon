@@ -291,6 +291,10 @@ public final class WorkspaceStore {
         apply { $0.moveSlot(id, toTab: targetTabID) }
     }
 
+    public func moveSlot(_ id: UUID, toTab targetTabID: UUID, at rect: GridRect) {
+        apply { $0.moveSlot(id, toTab: targetTabID, at: rect) }
+    }
+
     public func moveSlot(
         _ id: UUID,
         toTab targetTabID: UUID,

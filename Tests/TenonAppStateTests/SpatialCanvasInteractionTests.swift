@@ -449,7 +449,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
         XCTAssertEqual(
             fixture.router.paneDrag?.bodyTarget,
-            RoutedPaneDropTarget(tabID: targetTab.id, slotID: targetID, edge: .left)
+            RoutedPaneDropTarget(
+                tabID: targetTab.id,
+                destination: .beside(slotID: targetID, edge: .left)
+            )
         )
         XCTAssertEqual(
             fixture.canvas.dropHighlightView?.frame,
@@ -478,6 +481,117 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertNil(fixture.router.paneDrag)
         XCTAssertNil(fixture.canvas.dragThumbnailView)
         XCTAssertNil(fixture.canvas.dropHighlightView)
+    }
+
+    func testHoverSelectedTabBodyAcceptsAnEmptyRegionAndCommitsTheMove() throws {
+        let survivorID = UUID()
+        let movingID = UUID()
+        let targetID = UUID()
+        // The revealed tab's right half is empty canvas.
+        let targetTab = TenonCore.Tab(
+            slots: [workspaceSlot(targetID, x: 0, y: 0, width: 6, height: 12)],
+            activeSlotID: targetID
+        )
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(survivorID, x: 0, y: 0, width: 6, height: 12),
+                workspaceSlot(movingID, x: 6, y: 0, width: 6, height: 12),
+            ],
+            activeSlotID: movingID,
+            additionalTabs: [targetTab]
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.router.tabBarBand = CGRect(x: 0, y: 1_200, width: 1_200, height: 50)
+        fixture.router.tabChipFrames = [
+            targetTab.id: CGRect(x: 800, y: 1_200, width: 200, height: 50),
+        ]
+
+        fixture.canvas.begin(
+            slotID: movingID,
+            region: .header,
+            pointer: CGPoint(x: 900, y: 20)
+        )
+        fixture.canvas.drag(
+            to: CGPoint(x: 900, y: -20),
+            window: CGPoint(x: 900, y: 1_225)
+        )
+        XCTAssertEqual(fixture.store.catalog.activeTab?.id, targetTab.id)
+        fixture.reconfigure()
+
+        fixture.canvas.drag(to: CGPoint(x: 900, y: 600))
+
+        let hole = GridRect(x: 6, y: 0, width: 6, height: 12)
+        XCTAssertEqual(
+            fixture.router.paneDrag?.bodyTarget,
+            RoutedPaneDropTarget(tabID: targetTab.id, destination: .emptyRegion(hole))
+        )
+        let inset = TenonTheme.slotGutter / 2
+        XCTAssertEqual(
+            fixture.canvas.dropHighlightView?.frame,
+            CGRect(
+                x: 600 + inset,
+                y: inset,
+                width: 600 - TenonTheme.slotGutter,
+                height: 1_200 - TenonTheme.slotGutter
+            ),
+            "the highlight promises exactly the committed pane's inset frame"
+        )
+
+        fixture.canvas.end()
+
+        XCTAssertEqual(fixture.store.catalog.activeTab?.id, targetTab.id)
+        XCTAssertEqual(fixture.store.catalog.slot(id: movingID)?.rect, hole)
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: targetID)?.rect,
+            GridRect(x: 0, y: 0, width: 6, height: 12),
+            "landing on empty canvas reshapes no existing pane"
+        )
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: survivorID)?.rect,
+            GridRect(x: 0, y: 0, width: 12, height: 12)
+        )
+        XCTAssertNil(fixture.router.paneDrag)
+        XCTAssertNil(fixture.canvas.dragThumbnailView)
+        XCTAssertNil(fixture.canvas.dropHighlightView)
+    }
+
+    func testHoverSelectedTabBodyRefusesARegionTooSmallForAPane() throws {
+        let movingID = UUID()
+        let targetID = UUID()
+        // The free band below the pane is 12x2 cells — under the minimum pane height.
+        let targetTab = TenonCore.Tab(
+            slots: [workspaceSlot(targetID, x: 0, y: 0, width: 12, height: 10)],
+            activeSlotID: targetID
+        )
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(movingID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: movingID,
+            additionalTabs: [targetTab]
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.router.tabBarBand = CGRect(x: 0, y: 1_200, width: 1_200, height: 50)
+        fixture.router.tabChipFrames = [
+            targetTab.id: CGRect(x: 800, y: 1_200, width: 200, height: 50),
+        ]
+
+        fixture.canvas.begin(
+            slotID: movingID,
+            region: .header,
+            pointer: CGPoint(x: 900, y: 20)
+        )
+        fixture.canvas.drag(
+            to: CGPoint(x: 900, y: -20),
+            window: CGPoint(x: 900, y: 1_225)
+        )
+        XCTAssertEqual(fixture.store.catalog.activeTab?.id, targetTab.id)
+        fixture.reconfigure()
+
+        fixture.canvas.drag(to: CGPoint(x: 600, y: 1_150))
+
+        XCTAssertNil(
+            fixture.router.paneDrag?.bodyTarget,
+            "a region no pane fits in is not a destination"
+        )
     }
 
     func testRoutedDragMonitorSurvivesRemovingTheMouseDownCard() throws {
@@ -536,7 +650,10 @@ final class SpatialCanvasInteractionTests: XCTestCase {
 
         XCTAssertEqual(
             fixture.router.paneDrag?.bodyTarget,
-            RoutedPaneDropTarget(tabID: targetTab.id, slotID: targetID, edge: .left)
+            RoutedPaneDropTarget(
+                tabID: targetTab.id,
+                destination: .beside(slotID: targetID, edge: .left)
+            )
         )
 
         NSApp.sendEvent(try leftMouseEvent(
@@ -2231,6 +2348,176 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertEqual(copiedIDs, [slotID])
     }
 
+    // MARK: - Agent session continuations (SP-FR-029)
+
+    /// Only a pane carrying an agent session offers the continuations, and each joins the
+    /// group whose meaning it shares: Fork Session beside Duplicate (both make a pane),
+    /// Copy Resume Command beside Copy Pane ID (both put a line on the clipboard). The
+    /// offer is computed before the click and travels with the item.
+    func testAnAgentPaneMenuOffersForkSessionAndCopyResumeCommand() throws {
+        let slotID = UUID()
+        let ref = try agentRef()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID,
+            agentSuggestions: [claudeInstall()]
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.canvas.agentSessionReading = { _ in ref }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+
+        XCTAssertEqual(
+            menu.items.map(\.title),
+            [
+                "Split", "Stack", "Duplicate", "Fork Session", "",
+                "Rename…", "AI Rename…", "",
+                "Copy Pane ID", "Copy Resume Command", "", "Close",
+            ]
+        )
+        XCTAssertTrue(try menuItem(menu, "Fork Session").isEnabled)
+        XCTAssertTrue(try menuItem(menu, "Copy Resume Command").isEnabled)
+        XCTAssertTrue(
+            try XCTUnwrap(menuItem(menu, "Fork Session").toolTip)
+                .contains("--fork-session"),
+            "the composed fork travels with the item, stated before any click"
+        )
+    }
+
+    func testCopyResumeCommandCopiesTheComposedResumeNotAFork() throws {
+        let slotID = UUID()
+        let ref = try agentRef()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID,
+            agentSuggestions: [claudeInstall()]
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.canvas.agentSessionReading = { _ in ref }
+        var copied: [String] = []
+        fixture.canvas.copyResumeCommand = { copied.append($0) }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+        try menuItem(menu, "Copy Resume Command").invoke()
+
+        XCTAssertEqual(copied.count, 1)
+        let commandLine = try XCTUnwrap(copied.first)
+        XCTAssertTrue(commandLine.contains("--resume"), commandLine)
+        XCTAssertTrue(commandLine.contains(ref.sessionID), commandLine)
+        XCTAssertFalse(
+            commandLine.contains("--fork-session"),
+            "copying a resume must not mint a new session"
+        )
+    }
+
+    /// The fork lands beside the pane it forks — `duplicateSlot`'s placement — and the
+    /// provider's own fork is queued for the shell that fresh pane is about to build.
+    func testForkOpensAFreshTerminalBesideRunningTheProvidersFork() throws {
+        let slotID = UUID()
+        let ref = try agentRef()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12)],
+            activeSlotID: slotID,
+            agentSuggestions: [claudeInstall()]
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.canvas.agentSessionReading = { _ in ref }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+        try menuItem(menu, "Fork Session").invoke()
+
+        let slots = try XCTUnwrap(fixture.store.catalog.activeTab).slots
+        XCTAssertEqual(slots.count, 2)
+        let forked = try XCTUnwrap(slots.first { $0.id != slotID })
+        XCTAssertEqual(forked.content, .terminal)
+        let surface = try XCTUnwrap(
+            fixture.pool.surface(
+                for: forked.id,
+                workspacePath: fixture.workspacePath
+            ) as? StubTerminalSurface
+        )
+        XCTAssertEqual(surface.sentText.count, 1)
+        let line = try XCTUnwrap(surface.sentText.first)
+        XCTAssertTrue(line.contains("--resume"), line)
+        XCTAssertTrue(line.contains("--fork-session"), line)
+        XCTAssertTrue(line.hasSuffix("\n"), "the fork runs; it is not left half-typed")
+    }
+
+    /// A recorded pane forks the same way, with no seam: the ref is read straight off the
+    /// pane's content, and the duplicate that would have read the recording twice becomes
+    /// the fresh shell the fork runs in.
+    func testARecordedPaneForksIntoAFreshTerminalBesideItsReading() throws {
+        let slotID = UUID()
+        let ref = try agentRef()
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(slotID, x: 0, y: 0, width: 6, height: 12, content: .agentSession(ref)),
+            ],
+            activeSlotID: slotID,
+            agentSuggestions: [claudeInstall()]
+        )
+        defer { fixture.window.orderOut(nil) }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+        try menuItem(menu, "Fork Session").invoke()
+
+        let slots = try XCTUnwrap(fixture.store.catalog.activeTab).slots
+        XCTAssertEqual(slots.count, 2)
+        let forked = try XCTUnwrap(slots.first { $0.id != slotID })
+        XCTAssertEqual(forked.content, .terminal, "the fork runs in a shell, not in a second reading")
+        XCTAssertEqual(
+            fixture.store.catalog.slot(id: slotID)?.content,
+            .agentSession(ref),
+            "the reading the person was looking at stays exactly where it was"
+        )
+        let surface = try XCTUnwrap(
+            fixture.pool.surface(
+                for: forked.id,
+                workspacePath: fixture.workspacePath
+            ) as? StubTerminalSurface
+        )
+        XCTAssertTrue(try XCTUnwrap(surface.sentText.first).contains("--fork-session"))
+    }
+
+    /// The refusal is stated where the button is, before it is pressed: an agent this
+    /// machine lacks greys both items and the tooltip carries the reason.
+    func testMissingAgentGreysTheContinuationsAndStatesWhy() throws {
+        let slotID = UUID()
+        let ref = try agentRef()
+        let fixture = try makeCanvasFixture(
+            slots: [workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12)],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        fixture.canvas.agentSessionReading = { _ in ref }
+
+        let menu = try XCTUnwrap(fixture.canvas.slotContextMenu(for: slotID))
+
+        XCTAssertFalse(try menuItem(menu, "Fork Session").isEnabled)
+        XCTAssertFalse(try menuItem(menu, "Copy Resume Command").isEnabled)
+        XCTAssertTrue(
+            try XCTUnwrap(menuItem(menu, "Fork Session").toolTip).contains("not installed")
+        )
+    }
+
+    private func agentRef(
+        sessionID: String = "0199f0c1-2b7a-4d51-9d16-5b6f4a5c33d0"
+    ) throws -> AgentSessionRef {
+        try XCTUnwrap(AgentSessionRef(
+            provider: .claude,
+            sessionID: sessionID,
+            transcriptPath: "/Users/x/.claude/projects/-Users-x-p/\(sessionID).jsonl"
+        ))
+    }
+
+    private func claudeInstall() -> AgentLaunchSuggestion {
+        AgentLaunchSuggestion(
+            agent: .claude,
+            executableURL: URL(fileURLWithPath: "/opt/homebrew/bin/claude"),
+            arguments: ["--model", "opus"]
+        )
+    }
+
     func testHeaderMenuAndVoiceOverRenameEnterTheSameCoordinator() throws {
         let slotID = UUID()
         let fixture = try makeCanvasFixture(
@@ -2571,7 +2858,8 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         activeSlotID: UUID,
         additionalTabs: [TenonCore.Tab] = [],
         paneHeaders: [UUID: PaneHeader] = [:],
-        renameGenerator: (any PaneTitleGenerating)? = nil
+        renameGenerator: (any PaneTitleGenerating)? = nil,
+        agentSuggestions: [AgentLaunchSuggestion] = []
     ) throws -> CanvasFixture {
         // A slot whose header THIS fixture injects must be a pane with no producer of its
         // own, and `.empty` is the one pane kind that contributes nothing. A terminal pane
@@ -2679,7 +2967,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
             host: host,
             intentRuntime: intentRuntime,
             palette: palette,
-            agentSuggestions: [],
+            agentSuggestions: agentSuggestions,
             editorStates: editorStates,
             pluginSnapshots: [],
             pluginViewSections: [],

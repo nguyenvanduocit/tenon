@@ -229,13 +229,19 @@ addressing.
 5. Current-source settlement is asymmetric: an invalid move target clears its preview and
    rolls back if released there; an invalid resize candidate retains the last valid resize.
 
-### Pane menu and Copy ID flow
+### Pane menu, Copy ID, and session continuation flow
 
-The header menu is flat and ordered `Split`, `Stack`, `Duplicate`, separator, `Copy Pane ID`,
-separator, `Close`. Split/Stack/Duplicate disable when geometry cannot honor them. Every
-action targets the clicked pane, not whichever pane is active. Copy writes only the raw UUID
-through the same route used by the pane's VoiceOver custom action. The former Change Type
-submenu does not exist; content change remains a typed launcher/public-intent operation.
+The header menu is flat and ordered `Split`, `Stack`, `Duplicate`, separator, `Rename…`,
+`AI Rename…`, separator, `Copy Pane ID`, separator, `Close`. A pane carrying an agent
+session — a live terminal whose lens holds an `.exact` reading, or a recorded-session pane —
+adds `Fork Session` directly after `Duplicate` and `Copy Resume Command` directly after
+`Copy Pane ID`; every other pane shows exactly the base menu. Split/Stack/Duplicate disable
+when geometry cannot honor them; both session items disable with the stated reason when the
+session's provider CLI is not installed, and the composed command travels as the enabled
+item's tooltip. Every action targets the clicked pane, not whichever pane is active. Copy
+Pane ID writes only the raw UUID through the same route used by the pane's VoiceOver custom
+action. The former Change Type submenu does not exist; content change remains a typed
+launcher/public-intent operation.
 
 ### Header contribution flow
 
@@ -287,13 +293,13 @@ intrinsic/min/max sizing options back upward.
 | `SP-FR-005` | Split/Stack **MUST** target the named pane, create a new stable pane to its right/below when valid, preserve the original content/resource, and focus the new pane. | must | shipped | `@req-sp-fr-005` |
 | `SP-FR-006` | Closing a pane **MUST** deterministically absorb its geometry into a valid neighbor when possible, except that horizontal absorption stops at the SP-FR-004 maximum and leaves declined width empty; it **MUST** preserve unrelated panes and choose a valid active pane. When the final pane leaves a tab, that empty tab **MUST** close if another tab survives; a workspace's required final tab remains as an empty placeholder. | must | shipped | `@req-sp-fr-006` |
 | `SP-FR-007` | Duplicate **MUST** create a new pane with the clicked pane's content value and a new UUID, prefer free space near that pane, otherwise split it on a valid axis, focus the copy, and be disabled when no valid placement exists. | must | shipped | `@req-sp-fr-007` |
-| `SP-FR-008` | The pane header menu **MUST** be flat and ordered Split, Stack, Duplicate, Copy Pane ID, Close with separators; it **MUST NOT** include Change Type, and every action **MUST** target the clicked pane without first focusing for Close. | must | shipped | `@req-sp-fr-008` |
+| `SP-FR-008` | The pane header menu **MUST** be flat and ordered Split, Stack, Duplicate, Rename…, AI Rename…, Copy Pane ID, Close with separators — a pane carrying an agent session adds Fork Session after Duplicate and Copy Resume Command after Copy Pane ID (`SP-FR-029`) and no other pane shows either; it **MUST NOT** include Change Type, and every action **MUST** target the clicked pane without first focusing for Close. | must | shipped | `@req-sp-fr-008` |
 | `SP-FR-009` | Copy Pane ID **MUST** remain directly reachable from the header menu and accessibility action, use one shared route, and copy only the raw pane UUID. | must | shipped | `@req-sp-fr-009` |
 | `SP-FR-010` | Double-clicking bare pane header **MUST** grow that pane horizontally to the nearest blocking panes or canvas edges without moving/shrinking neighbors; an already full band **MUST** be a no-op. | must | shipped | `@req-sp-fr-010` |
 | `SP-FR-011` | A border secondary click **MUST** offer 1/3, 1/2, and Full of the canvas on the border's axis, keep the opposite edge fixed, reuse coupled resize rules, and disable impossible/no-op destinations. | must | shipped | `@req-sp-fr-011` |
 | `SP-FR-012` | A border double-click **MUST** cycle Full → 1/2 → 1/3 → Full on that border's axis, skip refused sizes, and leave a pane unchanged when none is valid. | must | shipped | `@req-sp-fr-012` |
 | `SP-FR-013` | Header move **MUST** remain a click before four points of travel, keep the live card mounted, and carry a one-time snapshot of the complete pane including chrome after pickup. | must | shipped | `@req-sp-fr-013` |
-| `SP-FR-014` | A pane drag **MUST** support snapped valid empty-grid movement, four-edge placement beside another pane, and routed cross-tab placement while preserving pane identity/content/resource; cancel or canvas detachment **MUST** restore baseline and presentation. | must | shipped | `@req-sp-fr-014` |
+| `SP-FR-014` | A pane drag **MUST** support snapped valid empty-grid movement, four-edge placement beside another pane, and routed cross-tab placement at either an existing pane's edge or the fillable empty region containing the pointed cell (the empty-canvas launcher's own containing-cell rule), while preserving pane identity/content/resource; cancel or canvas detachment **MUST** restore baseline and presentation. | must | shipped | `@req-sp-fr-014` |
 | `SP-FR-015` | An invalid pane move target **MUST** clear its move preview/target and roll back if released there; an invalid resize candidate **MUST** keep the last valid resize preview; invalid geometry **MUST NEVER** be rendered or committed. | must | shipped; supersedes T-059's uniform settlement wording | `@req-sp-fr-015` |
 | `SP-FR-016` | A spatial commit **MUST** match operation kind, valid proposal, exact active baseline, and actual affected-ID set; stale/mismatched/no-op transactions **MUST** leave catalog state unchanged. | must | shipped | `@req-sp-fr-016` |
 | `SP-FR-017` | Focus routing **MUST** suppress responder callbacks caused by host-driven focus, drop queued commands whose pane is no longer active, ignore overlay restoration, accept genuine pointer focus, and settle newly created pane focus in bounded transitions. | must | shipped | `@req-sp-fr-017` |
@@ -309,6 +315,7 @@ intrinsic/min/max sizing options back upward.
 | `SP-FR-027` | The canvas **MUST** answer the size it is proposed, so measuring the stage never reaches AppKit's fitting-size path and never sweeps Auto Layout across the card tree. A canvas that answers nothing sends that question to AppKit, whose sweep dirties the text fields it walks and re-arms the measurement that caused it. | must | shipped | `@req-sp-fr-027` |
 | `SP-FR-028` | A pane's pinned title **MUST** be settable across the public principal boundary by `workspace.pane.title.set.v1`, scoped to the pane it names and refused when scope names none, so an agent working in a pane can label its own tab. It **MUST** reach the same `renameSlot` the rename UI and the Companion title generator call DIRECT, bound by the same `PaneTitle` rule, and an empty or whitespace-only title **MUST** clear the pin rather than fail. | must | shipped | `@req-sp-fr-028` |
 | `SP-FR-028` | `workspace.tab.close.v1` **MUST** close the tab named by invocation scope, with every pane under it, as a `.destructive` contract confirmed under `.policy`. It **MUST NOT** infer a tab from the selection, and it **MUST** refuse a workspace's only tab with `dev.tenon.core.close-refused` rather than report a success that removed nothing. | must | shipped | `@req-sp-fr-028` |
+| `SP-FR-029` | A pane carrying an agent session **MUST** offer Copy Resume Command and Fork Session in its header menu, each composed before the click through the one launch composer with the person's own options: copy **MUST** place the provider's resume line on the clipboard through one route, and fork **MUST** open a fresh terminal beside the pane — Duplicate's placement, anchored on the clicked pane — queued with the provider's own fork of that session (`--resume <id> --fork-session` for Claude Code, `fork <id>` for Codex). A missing provider CLI **MUST** grey both items and state its reason where the item is, and a live pane **MUST** claim a session only under the same `.exact`-confidence reading the catalog save uses. | must | shipped | `@req-sp-fr-029` |
 
 ### Non-functional requirements
 
@@ -342,6 +349,7 @@ intrinsic/min/max sizing options back upward.
 | SP-FR-028 | an agent labels its own pane | provider tests over a real `WorkspaceStore`, asserting the catalog's `customTitle` rather than a view |
 | SP-FR-025…026, SP-NFR-005, 007…008 | owner intent/accessibility | intent catalog/provider and accessibility tests |
 | SP-FR-028 | tab close is destructive, scoped, and refuses the last tab | intent catalog/provider tests over `WorkspaceStore.closeTab` |
+| SP-FR-029 | an agent pane's menu continues or forks its session | canvas menu tests over the composer's fork spelling (`AgentLaunchCommandTests`, `AgentSessionResumeTests`, `SpatialCanvasInteractionTests`) |
 
 ## 9. Product and architecture constraints
 
@@ -435,6 +443,7 @@ resource exactly once.
 | SP-FR-027 | shipped | `SpatialCanvasView.sizeThatFits` | `PaneHostingSizingTests` | measured offscreen; not yet observed in the installed app |
 | SP-FR-025 | shipped | core intent catalog + workspace provider + catalog owner join | core intent/catalog/provider tests across unselected/paged workspace | no known gap |
 | SP-FR-028 | shipped | `CoreIntentCatalog.workspaceTabClose` + `WorkspaceIntentProvider.closeTab` over `WorkspaceStore.closeTab` | `PaneProcessAndTabCloseContractTests`, `PaneProcessAndTabCloseIntentTests` | `workspace.pane.split.v1` still discards the pane it creates — see the 2026-08-12 decision-log entry; that half of T-132 is not delivered |
+| SP-FR-029 | shipped | `SpatialCanvasNSView.slotContextMenu` over `AgentSessionResume.offer(continuation:)`, `AgentLaunchComposer`'s fork spelling, and `AgentLensPool.resolution(for:)` | `SpatialCanvasInteractionTests` continuation cluster, `AgentLaunchCommandTests`, `AgentSessionResumeTests` | the live-terminal branch is exercised through the recorded-pane path and a seam; a hook-bound live session in the installed app has no automated receipt |
 | SP-FR-026, SP-NFR-005 | shipped | card/canvas accessibility and attention vocabulary | attention accessibility and hosted canvas tests | complete VoiceOver installed-app journey remains manual |
 | SP-NFR-010 | shipped | coordinator responsibility split and domain tags | domain/fitness suites; detailed cross-cutting work moves to PRD-015 | none for current shape |
 
@@ -496,6 +505,9 @@ resource exactly once.
 | 2026-08-13 | A pane-level mutation that leaves a tab empty closes that tab whenever another tab survives. `workspace.pane.close.v2` and `dev.tenon.core-commands.pane.close.v2` replace their v1 contracts. | Empty source tabs were residue from closing or moving a final pane, not durable working state. The model applies the rule once across close, move, and reservation cleanup; the required last tab remains because every workspace must keep one tab. The extra tab removal changes observable side-effect meaning, so same-major evolution is forbidden and both superseded v1 paths are deleted. | SP-FR-006's rule that every final-pane close leaves an empty tab |
 | 2026-08-13 | Automatic horizontal close absorption reads the live pane-width preference and stops growing at that width; declined columns remain empty canvas. Existing over-limit panes and manual resize remain untouched. | close reflow previously bypassed the creation sizing policy and could widen the survivor straight to the full canvas | creation-only maximum-width semantics |
 | 2026-08-12 | The attention poll asks a pane for a screen *fingerprint*, and `PaneActivity.Observation` carries `screen: Int` instead of `text: String`. | The machine's only use of a screen is `IdleDetector.record`, which is one `==`. Paying for that with `GhosttySurface.renderedText` — one Swift `String` per row appended a `Character` at a time, plus one ICU regular expression per row to trim trailing blanks — put **83% of a stalled main thread** inside that getter in incident `0005-87f24878`, reached from `AppComposition.startAttentionPolling` → `SurfacePool.pollActivity`. At the shipped 200 ms cadence a headless count is 40 renders per 8 panes per 5 turns, 1600 a minute. `renderedText` stays exactly as it is for `pane.read`, `terminal.wait.v1` and `agents.run`, which read the characters. | the assumption that one observation type can serve both the poll and the readers |
+| 2026-08-14 | An agent pane's header menu offers Copy Resume Command and Fork Session. The fork spelling joined the one composer — `--resume <id> --fork-session` for Claude Code, `fork <id>` for Codex, both verified against the installed CLIs' own `--help` — and fork placement composes `duplicateSlot` plus a content conversion rather than minting a workspace seam. SP-FR-008's stated order was corrected to include the shipped Rename items it had drifted past. | The offer precomputes through `AgentSessionResume` so a refusal is stated on the item before any click; reusing Duplicate's placement keeps one creation policy, anchors on the clicked pane, and deliberately stays off the core files T-160 holds. A live pane claims a session only under the catalog save's `.exact` gate (`AgentPaneSessionCapture.reference`), so the menu can never offer a session the pane itself would not claim. | SP-FR-008's pre-rename wording |
+| 2026-08-14 | Recorded, not fixed: two distinct requirements both carry the id `SP-FR-028` (the pinned pane title and the tab-close contract). This change mints `SP-FR-029` past the collision. | Renumbering one of them inside an unrelated diff would orphan its `@req-sp-fr-028` scenario tags; the fix wants a change that owns both rows and their feature tags. | — |
+| 2026-08-14 | A routed cross-tab drop accepts the revealed tab's empty grid regions, resolved by `emptyGridLauncherTarget`'s containing-cell rule, uncapped by the creation width preference; on the source tab the carried pane's own footprint counts as free. | Operator report (T-160): a pane dragged onto a tab with free space could only land beside an existing pane — over empty canvas the release *cancelled* the whole gesture (`SpatialCanvasNSView` routed branch resolved card hits only). A move is not a creation, so the `NewPaneSizing` cap does not apply: chip-drop auto-placement (`WorkspaceCatalog.placement`) was already uncapped, and capping one drop path would make two drops onto the same hole land different widths. The pane adopts the hole because the highlight must promise exactly the committed frame. Routed body destinations additionally require that the drag actually visited the tab bar (`RoutedPaneDrag.reachedTabBar`): an in-canvas gesture whose interaction died from an intervening store mutation stays dead — without that gate, the stale-gesture release pinned by `testRejectedStaleGestureRendersTheAuthoritativeStoreGeometry` would silently grow the pane into the canvas's largest hole. | the routed-drop assumption that a body destination is always an existing card |
 | 2026-08-11 | The canvas answers the size it is proposed; silence is not neutral, it routes the question to AppKit. | a `sample` of the stalled process put 2395 of 3461 main-thread samples in `_ZStackLayout.sizeThatFits` → `AppKitPlatformViewHost.fittingSize` → `_populateEngineWithConstraintsForViewSubtree`, and the sweep dirtied the `NSTextField`s it measured | the 2026-08-09 reading that the root cause was unproven |
 
 ## 13. Verification receipts
@@ -528,6 +540,19 @@ resource exactly once.
   in 0.43 s on a quiet pane. One correction to this session's own record: a first pass at the
   load used bash `while … done` against the operator's fish shell, so the panes sat idle and an
   earlier 0.24% figure described no load at all; the numbers above are the re-run.
+- 2026-08-14, T-161, `SP-FR-029`: red first at the fork spellings — `AgentLaunchCommandTests`
+  + `AgentSessionResumeTests` ran 26 with exactly the 4 new fork assertions failing while the
+  composer still answered the resume spelling, green after
+  (`'/opt/homebrew/bin/codex' 'resume' 'rollout-99'` was the recorded wrong answer). The five
+  continuation tests in `SpatialCanvasInteractionTests` cover the pinned agent-pane menu
+  order, the copy route, a live fork landing beside as `.terminal` with the queued line
+  asserted off the stub surface's `sentText`, a recorded pane forking without a seam, and the
+  not-installed refusal with its reason. Full suite **2273 / 2**, both failures outside this
+  scope and non-reproducing in isolation: one run's stale-gesture failures belonged to
+  T-160's then-in-flight move work and passed after their next edit; the next run's
+  `CLISocketServerTests` peer-pid failure (11.2 s under a concurrent peer build) passed alone
+  in 0.003 s — the T-134 flaky-wait shape. Both CLI spellings were verified against the
+  installed binaries' own `--help` before the requirement named them.
 - 2026-08-12, T-132, `SP-FR-028`: `PaneProcessAndTabCloseContractTests` 3 / 0 and
   `PaneProcessAndTabCloseIntentTests` 6 / 0, both **red first** — the contract half on
   "workspace.tab.close.v1 is not in the closed core inventory", the provider half on
@@ -567,6 +592,19 @@ resource exactly once.
   point; mutating its answer to `.zero` turns that test red at 0.0 against an expected 277.0.
   NOT VERIFIED: the fix has not been observed in a running app, because installing over the
   running Tenon would destroy the panes of every other session working in it.
+- 2026-08-14, T-160, `SP-FR-014`: routed drops land on empty canvas. Red first at all three
+  seams — `SpatialLayout.move(toRect:)`/`insertAt` against compiling stubs (4 assertion
+  failures), `WorkspaceCatalog.moveSlot(_:toTab:at:)` (7), and the canvas
+  (`testHoverSelectedTabBodyAcceptsAnEmptyRegionAndCommitsTheMove` red at nil body target,
+  nil highlight, and an unmoved pane) — green after. The first full-suite run then caught the
+  gate the feature needed: `testRejectedStaleGestureRendersTheAuthoritativeStoreGeometry` went
+  red because an intervening-mutation-stale gesture released over empty canvas now grew the
+  pane to the full grid; `RoutedPaneDrag.reachedTabBar` restored it to green with the routed
+  tests still passing. Focused sweeps after the gate: new core tests 5 / 0, routed +
+  stale-gesture canvas tests 6 / 0. The cross-tab admission event sequence is shared with the
+  beside drop through one `admitMovedSlot`, so the two paths cannot drift. NOT VERIFIED: a
+  hardware drag on an installed build; the suite drives the same `drag/end` entry points the
+  mouse monitor calls, not a real pointer.
 - Historical aggregate test counts remain dated receipts, not a claim that this documentation
   change reran the full repository suite.
 
@@ -578,3 +616,5 @@ resource exactly once.
 | 2026-08-11 | Added SP-FR-027 after T-121 reproduced the stall and sampled it; moved SP-FR-024 and the T-091 row off partial. | Claude |
 | 2026-08-13 | Extended the pane-width policy to cap automatic horizontal close absorption without locking manual resize. | Codex |
 | 2026-08-14 | Added SP-FR-028: the pinned pane title became a public capability so the Agent Harness briefing (`SET-FR-030`…`034`) could describe a rename that exists. | Claude |
+| 2026-08-14 | Restated SP-FR-014 after T-160: routed cross-tab placement covers the revealed tab's empty grid regions, not only existing panes' edges. | Claude |
+| 2026-08-14 | Added SP-FR-029 and restated SP-FR-008 for T-161: an agent pane's header menu continues or forks its session; the fork spelling joined the launch composer. | Claude |
