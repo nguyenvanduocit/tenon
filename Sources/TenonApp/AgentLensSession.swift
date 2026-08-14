@@ -929,6 +929,13 @@ final class AgentLensPool {
         models[event.paneID]?.ingest(event)
     }
 
+    /// The reading a pane's own lens currently holds, or nil for a pane with no mounted
+    /// model or one whose discovery has not resolved. For menu-build-time reads: it creates
+    /// nothing and starts nothing, so asking about a pane never becomes watching it.
+    func resolution(for slotID: UUID) -> AgentLensResolution? {
+        models[slotID]?.resolution
+    }
+
     func model(for slotID: UUID, terminalPool: SurfacePool) -> AgentLensViewModel {
         if let existing = models[slotID] { return existing }
         let model = AgentLensViewModel(

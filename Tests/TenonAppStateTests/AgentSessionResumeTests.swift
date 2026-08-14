@@ -176,6 +176,46 @@ final class AgentSessionResumeTests: XCTestCase {
         XCTAssertFalse(commandLine.contains("--resume"), "that is Claude Code's spelling")
     }
 
+    /// The fork continuation composes through the same offer: the same installed check, the
+    /// same reasons, one more word in the spelling. Claude Code forks with `--fork-session`
+    /// on top of its resume; a plain resume must never grow that flag.
+    func testAForkOfferSpellsANewSessionAndAResumeOfferDoesNot() throws {
+        let reference = ref(sessionID: "abc-123")
+        let installed = [suggestion(.claude, arguments: ["--model", "opus"])]
+
+        let fork = AgentSessionResume.offer(
+            for: reference,
+            installed: installed,
+            continuation: .fork
+        )
+        let resume = AgentSessionResume.offer(for: reference, installed: installed)
+
+        let forkLine = try XCTUnwrap(fork.commandLine)
+        XCTAssertTrue(forkLine.contains("--resume"), forkLine)
+        XCTAssertTrue(forkLine.contains("--fork-session"), forkLine)
+        XCTAssertTrue(forkLine.contains("--model"), "the person's options still come along")
+        XCTAssertFalse(
+            try XCTUnwrap(resume.commandLine).contains("--fork-session"),
+            "a resume continues the session it names; only a fork mints a new one"
+        )
+    }
+
+    func testCodexForksTheWayCodexSpellsIt() throws {
+        let offer = AgentSessionResume.offer(
+            for: ref(
+                provider: .codex,
+                sessionID: "rollout-99",
+                path: "/Users/x/.codex/sessions/2026/rollout-99.jsonl"
+            ),
+            installed: [suggestion(.codex)],
+            continuation: .fork
+        )
+        let commandLine = try XCTUnwrap(offer.commandLine)
+
+        XCTAssertTrue(commandLine.contains("'fork' 'rollout-99'"), commandLine)
+        XCTAssertFalse(commandLine.contains("--fork-session"), "that is Claude Code's spelling")
+    }
+
     /// A button that fails on press teaches nothing. The reason is computed before it is
     /// pressed, and it names the agent rather than reporting a code.
     func testAnAgentThisMachineLacksIsRefusedWithAStatedReason() throws {

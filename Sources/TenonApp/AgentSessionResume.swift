@@ -43,7 +43,8 @@ enum AgentSessionResume {
     /// one agent's session with a different one is `agent.command.v1`'s job and stays there.
     static func offer(
         for ref: AgentSessionRef,
-        installed: [AgentLaunchSuggestion]
+        installed: [AgentLaunchSuggestion],
+        continuation: AgentSessionContinuation = .resume
     ) -> AgentSessionResumeOffer {
         let agent = ref.provider.launchAgent
         guard let suggestion = installed.first(where: { $0.agent == agent }) else {
@@ -61,7 +62,8 @@ enum AgentSessionResume {
                 session: AgentSessionHandoff(
                     provider: agent,
                     sessionID: ref.sessionID,
-                    transcriptPath: ref.transcriptPath
+                    transcriptPath: ref.transcriptPath,
+                    continuation: continuation
                 )
             )
             return .ready(commandLine: plan.commandLine)

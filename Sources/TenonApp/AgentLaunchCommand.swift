@@ -2,13 +2,34 @@
 import Foundation
 import TenonCore
 
-/// The session a launch is continuing: which agent recorded it, its identifier, and where
-/// its transcript sits on this machine. The transcript matters only when the agent about to
-/// run is not the one that wrote it.
+/// How a session is picked up again: continued as itself, or forked into a new session that
+/// starts from the same conversation. Both providers distinguish the two in their own CLI —
+/// the distinction is theirs, this type only carries it to the one speller.
+enum AgentSessionContinuation: Equatable, Sendable {
+    case resume
+    case fork
+}
+
+/// The session a launch is continuing: which agent recorded it, its identifier, where its
+/// transcript sits on this machine, and whether it is continued or forked. The transcript
+/// matters only when the agent about to run is not the one that wrote it.
 struct AgentSessionHandoff: Equatable, Sendable {
     let provider: AgentCLI
     let sessionID: String
     let transcriptPath: String?
+    let continuation: AgentSessionContinuation
+
+    init(
+        provider: AgentCLI,
+        sessionID: String,
+        transcriptPath: String?,
+        continuation: AgentSessionContinuation = .resume
+    ) {
+        self.provider = provider
+        self.sessionID = sessionID
+        self.transcriptPath = transcriptPath
+        self.continuation = continuation
+    }
 }
 
 /// One composed invocation: the argument vector after the executable, the shell-ready line,
@@ -64,7 +85,11 @@ enum AgentLaunchComposer {
                 throw AgentLaunchPlanError.invalidSessionIdentifier
             }
             if session.provider == agent {
-                arguments += resumeArguments(agent: agent, sessionID: session.sessionID)
+                arguments += continuationArguments(
+                    agent: agent,
+                    sessionID: session.sessionID,
+                    continuation: session.continuation
+                )
                 if let prompt, !prompt.isEmpty { arguments.append(prompt) }
             } else {
                 guard let transcript = session.transcriptPath, !transcript.isEmpty else {
@@ -98,14 +123,18 @@ enum AgentLaunchComposer {
         )
     }
 
-    /// How each provider spells "continue the session you recorded".
-    private static func resumeArguments(
+    /// How each provider spells "continue the session you recorded" — and, one word more,
+    /// "continue it as a new session".
+    private static func continuationArguments(
         agent: AgentCLI,
-        sessionID: String
+        sessionID: String,
+        continuation: AgentSessionContinuation
     ) -> [String] {
-        switch agent {
-        case .claude: ["--resume", sessionID]
-        case .codex: ["resume", sessionID]
+        switch (agent, continuation) {
+        case (.claude, .resume): ["--resume", sessionID]
+        case (.claude, .fork): ["--resume", sessionID, "--fork-session"]
+        case (.codex, .resume): ["resume", sessionID]
+        case (.codex, .fork): ["fork", sessionID]
         }
     }
 

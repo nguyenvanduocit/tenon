@@ -99,6 +99,72 @@ final class AgentLaunchCommandTests: XCTestCase {
         )
     }
 
+    // MARK: - Forking the agent's own session
+
+    /// A fork is the provider's own "continue this as a NEW session" spelling — verified
+    /// against both installed CLIs: `claude --resume <id> --fork-session`, `codex fork <id>`.
+    /// The person's options still come first, exactly as they do for a resume.
+    func testClaudeForksThroughItsFlagAndCodexThroughItsSubcommand() throws {
+        let session = "0199f0c1-2b7a-4d51-9d16-5b6f4a5c33d0"
+
+        let claude = try AgentLaunchComposer.plan(
+            agent: .claude,
+            executablePath: claudePath,
+            userArguments: ["--model", "opus"],
+            prompt: nil,
+            session: AgentSessionHandoff(
+                provider: .claude,
+                sessionID: session,
+                transcriptPath: "/Users/x/.claude/projects/-Users-x-p/\(session).jsonl",
+                continuation: .fork
+            )
+        )
+        let codex = try AgentLaunchComposer.plan(
+            agent: .codex,
+            executablePath: codexPath,
+            userArguments: ["--full-auto"],
+            prompt: nil,
+            session: AgentSessionHandoff(
+                provider: .codex,
+                sessionID: session,
+                transcriptPath: nil,
+                continuation: .fork
+            )
+        )
+
+        XCTAssertEqual(
+            claude.arguments,
+            ["--model", "opus", "--resume", session, "--fork-session"]
+        )
+        XCTAssertEqual(codex.arguments, ["--full-auto", "fork", session])
+        XCTAssertFalse(claude.handoff)
+        XCTAssertFalse(codex.handoff)
+    }
+
+    /// Across providers there is no fork flag either: the same transcript handoff a resume
+    /// takes, because a handoff already IS a new session reading a recorded one.
+    func testForkingAnotherAgentsSessionStaysTheTranscriptHandoff() throws {
+        let path = "/Users/x/.claude/projects/-Users-x-p/0199f0c1.jsonl"
+
+        let plan = try AgentLaunchComposer.plan(
+            agent: .codex,
+            executablePath: codexPath,
+            userArguments: [],
+            prompt: nil,
+            session: AgentSessionHandoff(
+                provider: .claude,
+                sessionID: "0199f0c1",
+                transcriptPath: path,
+                continuation: .fork
+            )
+        )
+
+        XCTAssertTrue(plan.handoff)
+        XCTAssertFalse(plan.arguments.contains("fork"))
+        XCTAssertFalse(plan.arguments.contains("--fork-session"))
+        XCTAssertTrue(try XCTUnwrap(plan.arguments.last).contains(path))
+    }
+
     // MARK: - Continuing someone else's session
 
     func testAHandoffPromptNamesTheTranscriptTheOtherAgentMustRead() throws {
