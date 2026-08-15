@@ -262,9 +262,9 @@ root. Host UI follows `docs/designs.md` and preserves one pane header.
 | 049 | `AgentCLIStreamReading.requesting`/`.replying`, `AgentRunActivity.awaitsReply()`/`replyStarted()`/`expiry(silenceBudget:ceilingSeconds:)`, `AgentTimelineProgress.waiting` | shipped; `AgentReadingSilenceTests` |
 | 040…043 | `AgentReadingOptions.swift`, `AgentTimelineDigest.build(from:span:)`, `AgentTimelinePrompt.rules(forFacts:)`, `AgentCLITimelineSynthesizer.arguments(provider:model:)`/`installedProviders`, `AgentLensViewModel.readingOptions`/`readingOptionsInUse`/`loadAvailableReaders`, `AgentTimelineView.readingControls` | shipped; `AgentReadingOptionsTests`, invitation photographed at 900 pt and 380 pt |
 | 051…052 | `AgentLensReadModel.swift`, typed lifecycle state in `AgentLensDomain.swift`, Codex notification decoding, quiet work rows and context usage in `AgentLensView.swift` | shipped; `AgentLensReadModelTests`, decoder/reducer suites, Chat snapshots at wide and narrow pane widths |
-| 053 | `plugins/claude-sessions/main.js` — `readFavourites`/`toggleFavourite`/`favouriteIDs`, `recentAndMarked` past the Claude slice, `missingCodexFavourites`/`codexIDFilter` for the by-ID query, grouped `listCard` | shipped; `AgentSessionFavouritesTests` drives the shipped JavaScript in a real runtime |
+| 053 | `ClaudeSessionsPlugin.swift` / `ClaudeSessionsScan.swift` / `ClaudeSessionsView.swift` — `readFavourites`/`toggleFavourite`/`favouriteIDs`, `recentAndMarked` past the Claude slice, `missingCodexFavourites`/`codexIDFilter` for the by-ID query, grouped `listCard` | shipped; `AgentSessionFavouritesTests` drives the compiled program in a real runtime |
 
-| 045…048 | `AgentSessionRef.swift`, `SlotContent.agentSession`, `WorkspaceCatalogStore` capture/restore, `WorkspaceIntentProvider.content(from:transcriptRoots:)`, `AgentTranscriptPath`, `AgentLensAttachment.swift`, `AgentSessionResume.swift`, `AgentSessionResumeView.swift`, `plugins/claude-sessions/main.js` Details | shipped; `AgentRecordedSessionTests` (9), `AgentSessionResumeTests` (11), `AgentTranscriptPathTests` (10) |
+| 045…048 | `AgentSessionRef.swift`, `SlotContent.agentSession`, `WorkspaceCatalogStore` capture/restore, `WorkspaceIntentProvider.content(from:transcriptRoots:)`, `AgentTranscriptPath`, `AgentLensAttachment.swift`, `AgentSessionResume.swift`, `AgentSessionResumeView.swift`, `ClaudeSessionsView.swift` Details | shipped; `AgentRecordedSessionTests` (9), `AgentSessionResumeTests` (11), `AgentTranscriptPathTests` (10) |
 
 Rollout is fail-soft: Terminal remains available; semantic attachment may degrade without
 stopping the process. New provider support requires authoritative identity, bounded ingress,
@@ -327,3 +327,5 @@ The answer requires the pending real-provider test, not source inference.
 |---|---|---|
 | 2026-08-09 | Initial canonical PRD | consolidate evidence, UI, input, Timeline, history plugin, and fleet gaps |
 | 2026-08-13 | Added FR-051/052 | implement the reference-study lifecycle/read-model/work-log slice and make its mobile seam explicit |
+| 2026-08-16 | Corrected AL-FR-053 and AL-FR-045…048 sources | T-167 moved `claude-sessions` from shipped JavaScript to the compiled bundled runtime, so `plugins/claude-sessions/main.js` no longer exists; the rows now name `ClaudeSessionsPlugin.swift`, `ClaudeSessionsScan.swift`, and `ClaudeSessionsView.swift`, and `AgentSessionFavouritesTests` drives the compiled program. The dated 2026-08-14 receipt below keeps its original wording as history. |
+

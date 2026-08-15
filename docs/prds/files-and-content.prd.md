@@ -57,7 +57,7 @@ and Gherkin are the context boundary required before more content work continues
 | Evidence | Source/date | Confidence | What it establishes |
 |---|---|---|---|
 | placement | [`WorkspaceStore.swift`](../../Sources/TenonCore/WorkspaceStore.swift), [`WorkspaceIntentProvider.swift`](../../Sources/TenonApp/WorkspaceIntentProvider.swift), [`WorkspaceOpenContentTests.swift`](../../Tests/TenonCoreTests/WorkspaceOpenContentTests.swift) | high | exact-tab targeting, reuse priority, free-canvas-then-split creation, never-new-tab |
-| Files plugin | [`manifest.json`](../../plugins/file-explorer/manifest.json), [`main.js`](../../plugins/file-explorer/main.js), [`FileExplorerPluginTests.swift`](../../Tests/TenonCoreTests/FileExplorerPluginTests.swift) | high | ownership, menus, editing, intents, root following |
+| Files plugin | [`manifest.json`](../../plugins/file-explorer/manifest.json), [`FileExplorerPlugin.swift`](../../Sources/TenonBundledPlugins/FileExplorerPlugin.swift), [`FileExplorerPluginTests.swift`](../../Tests/TenonCoreTests/FileExplorerPluginTests.swift) | high | ownership, menus, editing, intents, root following |
 | file renderers | [`FilePaneKind.swift`](../../Sources/TenonCore/FilePaneKind.swift), [`FileSlotView.swift`](../../Sources/TenonApp/FileSlotView.swift), [`FilePreviewSlotViews.swift`](../../Sources/TenonApp/FilePreviewSlotViews.swift) | high | image/web/text choice, editor and preview lifecycle |
 | editor state/syntax | [`EditorPaneState.swift`](../../Sources/TenonApp/EditorPaneState.swift), [`SourceEditorView.swift`](../../Sources/TenonApp/SourceEditorView.swift), [`SyntaxHighlighting.swift`](../../Sources/TenonApp/SyntaxHighlighting.swift) | high | state retention, STTextView, tree-sitter |
 | diff | [`LineDiff.swift`](../../Sources/TenonCore/LineDiff.swift), [`DiffRows.swift`](../../Sources/TenonCore/DiffRows.swift), [`DiffSlotView.swift`](../../Sources/TenonApp/DiffSlotView.swift) | high | bounded/off-main projection and lazy rendering |
@@ -419,3 +419,5 @@ materializing surfaces.
 | 2026-08-09 | Codex | Created current-source canonical PRD and exposed write-version/manual-pin gaps. |
 | 2026-08-09 | Codex | Added the user-directed Docs-pane removal and fail-soft legacy-state contract. |
 | 2026-08-14 | Claude | Restated `FC-FR-014`'s creation branch as the shared placement policy after an operator hit a half-width pane being quartered while half the canvas stood empty. |
+| 2026-08-16 | Claude | Corrected the Files-plugin source link: T-167 ported `file-explorer` to the compiled bundled runtime, deleting `plugins/file-explorer/main.js`; the row now points at `FileExplorerPlugin.swift`. |
+

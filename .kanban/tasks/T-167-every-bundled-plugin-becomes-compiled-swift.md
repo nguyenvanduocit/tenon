@@ -75,8 +75,13 @@ implements plugin→host publish behind an `events.publishes` guard. The tree's 
 
 ## Operator decisions recorded
 
-- All seven port. `hello-palette` is rewritten as a JavaScript fixture under `Tests/` so
-  `ShippedPluginsTests` keeps exercising real JS through FSEvents; `plugins/` ships no JS.
+- All seven port; `plugins/` ships no JS. `hello-palette`'s JavaScript was first kept as a
+  fixture under `Tests/`, which nothing ever read — **reversed 2026-08-16**: the fixture is
+  deleted, and the two `ShippedPluginsTests` cases that only ran against `runtime: javascript`
+  are replaced by `testEveryCompiledPluginOnlyNamesIntentsItsOwnManifestDeclares`, which reads
+  each plugin's own Swift sources for versioned intent IDs its manifest never declared
+  (mutation-checked in both a program file and a split-out file). `ShippedPluginsTests` never
+  covered FSEvents, before this task or after it.
 - `PluginViewNode` gains a structured action both backends can emit; the `\u{1}`+JSON encoder
   (`PluginRuntimeValueParsing.swift:699-709`) and `decodeActionIdentifier`
   (`PluginRuntime.swift:2107-2116`) are deleted in that same change — they have zero tests and,

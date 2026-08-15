@@ -90,8 +90,9 @@ principal's settings, storage, secrets, or standing consent.
 
 - Check Settings for a disabled newly discovered plugin and enable it only after reviewing
   its manifest and source.
-- Confirm the directory contains readable `manifest.json` and `main.js` files and that the
-  manifest ID is unique.
+- Confirm the directory contains a readable `manifest.json` and that the manifest ID is
+  unique. A JavaScript plugin needs its `main.js` beside that manifest; a `bundled-swift`
+  manifest has no entrypoint file and is refused outright outside the sealed app inventory.
 - Every sent intent must be in `intents.uses`; every handler must be in
   `intents.provides` and bound exactly once during staging.
 - A syntax, manifest, schema, or binding error leaves the last good generation running;

@@ -49,83 +49,48 @@ final class ShippedPluginsTests: XCTestCase {
         }
     }
 
-    func testShippedSourceUsesOnlyTheCurrentPluginRuntimeSurface() throws {
-        let bannedPatterns = [
-            #"\btenon\.workspace\b"#,
-            #"\btenon\.ui\b"#,
-            #"\btenon\.terminal\b"#,
-            #"\btenon\.commands\b"#,
-            #"\btenon\.web\b"#,
-            #"\btenon\.shell\b"#,
-            #"\btenon\.clipboard\b"#,
-            #"\btenon\.process\.exec\b"#,
-            #"\btenon\.fs\.(readDir|trash|mkdir|createFile|rename)\b"#,
-            #"\btenon\.timers\.debounce\b"#,
-            #"\btenon\.pluginName\b"#,
-        ]
+    /// Naming an intent never grants authority (invariant 5), so a compiled plugin that
+    /// writes an intent ID its own manifest never declared is a drift the dispatcher would
+    /// refuse at runtime — one call path at a time, and only once someone exercises it.
+    /// This settles it statically instead, over every versioned ID a plugin's own sources
+    /// spell out, whether it reaches `IntentID` directly, through an array, or through a
+    /// parameter — `CoreCommandsPlugin` does all three.
+    func testEveryCompiledPluginOnlyNamesIntentsItsOwnManifestDeclares() throws {
+        let records = try shippedPlugins()
+        var checkedPlugins = 0
 
-        for record in try shippedPlugins() {
-            guard let source = record.source else { continue }
-            for pattern in bannedPatterns {
-                XCTAssertFalse(
-                    hasMatch(pattern, in: source),
-                    "\(record.directory.lastPathComponent) uses banned surface \(pattern)"
-                )
+        for record in records {
+            guard record.manifest.runtime == .bundledSwift else { continue }
+            let sources = try compiledSources(for: record)
+            XCTAssertFalse(
+                sources.isEmpty,
+                "\(record.directory.lastPathComponent) has no compiled source file"
+            )
+            checkedPlugins += 1
+
+            let declared = Set(
+                record.manifest.intents.uses.map(\.rawValue)
+                    + record.manifest.intents.provides.map(\.name.rawValue)
+            )
+            for (name, source) in sources {
+                for intentID in captures(
+                    #""([a-z][a-z0-9.-]*\.v[0-9]+)""#,
+                    in: source
+                ) {
+                    XCTAssertTrue(
+                        declared.contains(intentID),
+                        "\(name) names \(intentID), which "
+                            + "\(record.directory.lastPathComponent)'s manifest never declares"
+                    )
+                }
             }
         }
-    }
 
-    func testEveryLiteralSendAndHandlerMatchesItsManifestExactly() throws {
-        for record in try shippedPlugins() {
-            guard let source = record.source else { continue }
-            let sends = captures(
-                #"(?:tenon\.intents|call)\.send\(\s*["']([^"']+)["']"#,
-                in: source
-            )
-            let handlers = captures(
-                #"tenon\.intents\.handle\(\s*["']([^"']+)["']"#,
-                in: source
-            )
-            let uses = record.manifest.intents.uses.map(\.rawValue)
-            let provides = record.manifest.intents.provides.map(\.name.rawValue)
-
-            XCTAssertEqual(
-                matchCount(
-                    #"(?:tenon\.intents|call)\.send\("#,
-                    in: source
-                ),
-                sends.count,
-                "\(record.directory.lastPathComponent) must send literal intent IDs"
-            )
-            XCTAssertEqual(
-                matchCount(
-                    #"tenon\.intents\.handle\("#,
-                    in: source
-                ),
-                handlers.count,
-                "\(record.directory.lastPathComponent) must handle literal intent IDs"
-            )
-            XCTAssertEqual(
-                Set(sends),
-                Set(uses),
-                "\(record.directory.lastPathComponent) send declarations drifted"
-            )
-            XCTAssertEqual(
-                Set(handlers),
-                Set(provides),
-                "\(record.directory.lastPathComponent) handler declarations drifted"
-            )
-            XCTAssertEqual(
-                handlers.count,
-                Set(handlers).count,
-                "\(record.directory.lastPathComponent) binds one handler more than once"
-            )
-            XCTAssertEqual(
-                provides.count,
-                Set(provides).count,
-                "\(record.directory.lastPathComponent) provides one contract more than once"
-            )
-        }
+        XCTAssertEqual(
+            checkedPlugins,
+            records.count,
+            "every shipped plugin is compiled Swift, so every one of them must be checked"
+        )
     }
 
     func testEveryShippedRuntimeStagesAllDeclaredHandlers() async throws {
@@ -173,28 +138,63 @@ final class ShippedPluginsTests: XCTestCase {
     private struct ShippedPlugin {
         let directory: URL
         let manifest: PluginManifest
-        let source: String?
     }
 
     private func shippedPlugins() throws -> [ShippedPlugin] {
         try PluginLoader.discover(in: Self.pluginsRoot)
             .map { directory in
-                let manifest = try PluginLoader.loadManifest(at: directory)
-                return try ShippedPlugin(
+                ShippedPlugin(
                     directory: directory,
-                    manifest: manifest,
-                    source: manifest.runtime == .javaScript
-                        ? String(
-                            contentsOf: directory.appendingPathComponent("main.js"),
-                            encoding: .utf8
-                        )
-                        : nil
+                    manifest: try PluginLoader.loadManifest(at: directory)
                 )
             }
             .sorted {
                 $0.directory.lastPathComponent
                     < $1.directory.lastPathComponent
             }
+    }
+
+    /// The compiled sources belonging to one plugin, keyed by file name.
+    ///
+    /// A plugin's program declares its own `PluginID`, which anchors the group; the files
+    /// split out beside it (`ClaudeSessionsScan`, `KanbanBoardView`, `GitStatusParser`)
+    /// share that program's file-name prefix. A source that names an intent while matching
+    /// no program's prefix would be invisible here, so the group is required to be
+    /// non-empty by the caller and the anchor is read from the file rather than guessed.
+    private func compiledSources(
+        for record: ShippedPlugin
+    ) throws -> [(name: String, source: String)] {
+        let root = Self.pluginsRoot
+            .deletingLastPathComponent()
+            .appendingPathComponent("Sources")
+            .appendingPathComponent("TenonBundledPlugins")
+        let files = try FileManager.default
+            .contentsOfDirectory(at: root, includingPropertiesForKeys: nil)
+            .filter { $0.pathExtension == "swift" }
+        var contents: [String: String] = [:]
+        for file in files {
+            contents[file.lastPathComponent] = try String(
+                contentsOf: file,
+                encoding: .utf8
+            )
+        }
+
+        let anchor = contents.first { _, source in
+            hasMatch(
+                #"static let id: PluginID = "\#(record.manifest.id.rawValue)""#,
+                in: source
+            )
+        }
+        guard let anchor, let prefix = anchor.key.components(
+            separatedBy: "Plugin.swift"
+        ).first, !prefix.isEmpty else {
+            return []
+        }
+
+        return contents
+            .filter { $0.key.hasPrefix(prefix) }
+            .map { (name: $0.key, source: $0.value) }
+            .sorted { $0.name < $1.name }
     }
 
     private func hasMatch(_ pattern: String, in source: String) -> Bool {

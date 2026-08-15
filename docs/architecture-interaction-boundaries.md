@@ -485,8 +485,8 @@ entries would have passed that change without a word.
 "No plugin presentation surface existed" is refuted by shipped code and MUST NOT be offered
 as justification. `PluginViewModal` (`Sources/TenonCore/PluginRuntimeModels.swift:81`)
 publishes a window-level sheet over the whole shell across the plugin boundary, and the
-bundled kanban plugin already uses it (`plugins/kanban/main.js`, `specification.modal =
-modal`). A justification must name what is missing, and that one is not.
+bundled kanban plugin already uses it (`KanbanBoardView.swift:71`, published through
+`KanbanPlugin.swift:693-705`). A justification must name what is missing, and that one is not.
 
 Removal is legitimate and is the direction this law wants: reclassifying a DIRECT behaviour
 into a CONTRIBUTION, EVENT, or INTENT and deleting its entry shrinks the host's private

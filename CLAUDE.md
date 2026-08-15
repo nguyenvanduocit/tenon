@@ -88,10 +88,14 @@ CONTRIBUTION → EVENT → RESOURCE/STREAM/TASK → same-owner DIRECT → exact 
 allowlist → cross-principal finite INTENT. `docs/design-intent-bus.md` specifies the kernel
 only after the law selects INTENT.
 
-A plugin is a directory under `plugins/` with a stable full `id`, `manifest.json`, and
-`main.js`. Its manifest declares permissions, `intents.uses`, `intents.provides`, settings,
+A plugin is a directory under `plugins/` with a stable full `id` and a `manifest.json`. The
+manifest's `runtime` names the implementation: `javascript` (the default) evaluates a
+`main.js` in an isolated JavaScriptCore context, and `bundled-swift` resolves an exact
+compiled program that only the sealed app inventory may select. Every plugin Tenon ships is
+`bundled-swift`; `main.js` is how third-party plugins are written, and they hot-reload on
+save. The manifest declares permissions, `intents.uses`, `intents.provides`, settings,
 automation schedules (wall-clock cadence fired back as the owner-scoped `automation.fired` event),
-and presentation metadata before JavaScript evaluation. Hot reload stages a replacement
+and presentation metadata before any implementation runs. Hot reload stages a replacement
 generation, activates it atomically, drains the retired generation, and tears down its
 calls/resources/contributions. A failed staged generation leaves the last good generation
 active.
@@ -264,7 +268,7 @@ true through the change. Rewriting something old is then an ordinary Tuesday, no
 
 ## Verification
 
-`swift build` + `swift test` are the evidence bar. `ShippedPluginsTests` copies the real `plugins/` directory into a temp dir and exercises the actual shipped `clock` and `hello-palette` JS — including a genuine on-disk edit that must propagate through FSEvents into host state. When you change plugin-host behavior, extend those tests rather than relying on manual app runs.
+`swift build` + `swift test` are the evidence bar. `ShippedPluginsTests` reads the real `plugins/` inventory: it pins the ten shipped identities, stages every compiled runtime and asserts each one binds exactly the providers its manifest declares, and reads every plugin's own Swift sources for versioned intent IDs the manifest never declared. The JavaScript boundary is exercised by `PluginHostTests` and the other host suites, which write throwaway JS plugins into a temp inventory and drive real generations through it — that is where third-party plugin behaviour is proved now that no shipped plugin is JavaScript. Know the one gap: those suites call reload directly, so `PluginWatcher.swift` — the FSEvents path that decides *when* a reload happens — has no test naming it, and an edit that never reaches the host would look identical to a passing suite. When you change plugin-host behavior, extend those tests rather than relying on manual app runs.
 
 A **window** cannot be screenshotted from a headless shell — this process has no Screen Recording grant and `screencapture` fails with "could not create image from window". An offscreen **view** can, and that is a different bar worth clearing, because a passing test says a view tree has the right *shape* and nothing about its geometry. `PaneViewSnapshotWriter` renders any pane's content to a PNG with `NSHostingView` + `cacheDisplay`, no window and no permission:
 

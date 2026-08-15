@@ -240,11 +240,14 @@ presentation surface" is refuted by name in the law itself
 specification with no diff against the previous body, which a Swift plugin calling the same
 contribution would pay identically — that defect is owned by T-151 and fixed for every plugin.
 
-What the change buys is therefore stated narrowly: SwiftUI's own diffing with nothing
-serialized across the boundary, and the ~375 lines of board parsing, task relocation, and
-paged writes at `plugins/kanban/main.js:108-482` becoming Swift values testable without a
-window. What it costs is that this plugin is today the most demanding proof the public
-boundary carries a real feature; naming the replacement dogfood is a T-150 criterion.
+What the change bought is therefore stated narrowly: SwiftUI's own diffing with nothing
+serialized across the boundary, and ~375 lines of board parsing, task relocation, and paged
+writes becoming Swift values testable without a window — they live in
+`KanbanBoardFormat.swift` and `KanbanPlugin.swift`, exercised by `KanbanPluginTests`. What it
+costs is that this plugin was the most demanding proof the public boundary carries a real
+feature; every plugin Tenon ships is compiled now, so that dogfood role belongs to
+third-party JavaScript plugins and to `Tests/Fixtures/hello-palette/main.js`, which
+`ShippedPluginsTests` drives through a real runtime.
 
 Sequence is gated and recorded in T-150: VISION, then the law and the entry count at
 `architecture-interaction-boundaries.md:443`, then the `DirectInventoryGateTests` pin, then
