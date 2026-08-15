@@ -1,5 +1,50 @@
 // @domain: plugin-contributions
 import Foundation
+import TenonIntentCore
+
+/// The action attached to a declarative view node. Plain names remain the common case; object
+/// actions cross the runtime boundary as owned `IntentValue` data instead of being smuggled
+/// through a sentinel-prefixed string.
+public enum PluginNodeAction: Sendable, Equatable, ExpressibleByStringLiteral, CustomStringConvertible {
+    case string(String)
+    case structured(IntentValue)
+
+    public init(stringLiteral value: String) {
+        self = .string(value)
+    }
+
+    public init(_ value: String) {
+        self = .string(value)
+    }
+
+    public var stringValue: String? {
+        guard case let .string(value) = self else { return nil }
+        return value
+    }
+
+    public var intentValue: IntentValue {
+        switch self {
+        case let .string(value): .string(value)
+        case let .structured(value): value
+        }
+    }
+
+    public var description: String {
+        switch self {
+        case let .string(value): value
+        case let .structured(value):
+            String(data: (try? value.canonicalJSONData()) ?? Data(), encoding: .utf8) ?? "{}"
+        }
+    }
+
+    public static func == (lhs: PluginNodeAction, rhs: String) -> Bool {
+        lhs.stringValue == rhs
+    }
+
+    public static func == (lhs: String, rhs: PluginNodeAction) -> Bool {
+        lhs == rhs.stringValue
+    }
+}
 
 /// A node in a plugin's declarative view-tree (`tenon.views.set(id, { body })`).
 ///
@@ -30,9 +75,9 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     case card(children: [PluginViewNode])
     case text(String, style: TextStyle, weight: FontWeight, color: ColorToken)
     case badge(String, tint: ColorToken)
-    case button(label: String, action: String, style: ButtonStyle)
+    case button(label: String, action: PluginNodeAction, style: ButtonStyle)
     /// An editable field; its `action` fires on submit, carrying the typed text.
-    case textfield(value: String, placeholder: String, action: String)
+    case textfield(value: String, placeholder: String, action: PluginNodeAction)
     /// A host-owned `WKWebView` surface keyed by `surfaceID`; the plugin drives it
     /// through `browser.surface.*.v1` intents and never touches the web type.
     case webview(surfaceID: String)
@@ -63,7 +108,7 @@ public indirect enum PluginViewNode: Sendable, Equatable {
     case dragSource(payload: String, children: [PluginViewNode])
     /// A subtree that accepts a drag from its own view instance and fires `action` with the
     /// dragged payload. An empty action means the subtree renders and accepts nothing.
-    case dropTarget(action: String, children: [PluginViewNode])
+    case dropTarget(action: PluginNodeAction, children: [PluginViewNode])
 }
 
 public extension PluginViewNode {

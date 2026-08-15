@@ -2,6 +2,7 @@
   "id": "dev.tenon.hello-palette",
   "name": "hello-palette",
   "version": "0.1.0",
+  "runtime": "bundled-swift",
   "permissions": ["terminal.read"],
   "intents": {
     "uses": [],

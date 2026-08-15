@@ -257,5 +257,6 @@ fourth step rather than now, because they depend on the registry T-149 has yet t
 |---|---|---|---|
 | T-055/T-066 delivery | historical accepted tree | offscreen native renders verified fixed columns, horizontal overflow, top-pinned cards, and modal/run layout; mutation restores byte-identical | snapshot probes were temporary; reusable snapshot capability is now PRD-005 |
 | 2026-08-09 | current dirty tree, documentation audit | current 34 FR/11 NFR mapped to manifest, source, 30 Kanban tests and shared host tests | no board file or running Tenon process touched |
+| 2026-08-14 | T-167, shared `main` | Kanban moved from shipped JavaScript to the compiled Swift bundled runtime; `KanbanPluginTests` passes 32/0, with focused compiled-port coverage and deterministic `xcodegen generate` | The compiled plugin follows the app's release cadence; third-party JavaScript remains supported and hot-reloadable. |
 
 Initial canonical PRD created 2026-08-09 from the shipped implementation and accepted task receipts.

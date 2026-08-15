@@ -130,16 +130,20 @@ struct PluginModalOverlay: View {
     }
 
     private func dismiss(_ presentation: PluginModalPresentation) {
-        send(presentation, action: presentation.modal.dismissAction, value: nil)
+        send(
+            presentation,
+            action: PluginNodeAction(presentation.modal.dismissAction),
+            value: nil
+        )
     }
 
-    private func send(_ presentation: PluginModalPresentation, action: String, value: String?) {
+    private func send(_ presentation: PluginModalPresentation, action: PluginNodeAction, value: String?) {
         Task { @MainActor in
             _ = await host.invokeViewSelect(
                 pluginID: presentation.pluginID,
                 viewID: presentation.viewID,
                 instanceID: presentation.instanceID,
-                itemID: action,
+                action: action,
                 value: value.map(IntentValue.string)
             )
         }

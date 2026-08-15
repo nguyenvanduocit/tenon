@@ -292,11 +292,24 @@ package protocol PluginHostRuntime: AnyObject, Sendable {
     /// Takes a fact for delivery without waiting for the generation's JavaScript to run it.
     /// `false` means this generation cannot take it: retiring, failed, or over its queue depth.
     func acceptEvent(event: String, payload: IntentValue) -> Bool
-    func emit(event: String, payload: IntentValue) async throws
+    /// Delivers a host-owned fact into this generation without consulting its subscription
+    /// table — the channel is one the host addresses directly, such as `settings.changed`,
+    /// whose owned local values the runtime refreshes before the plugin's handler observes it.
+    ///
+    /// This is delivery, host → plugin. A plugin publishing a fact of its own travels the
+    /// opposite way, through the runtime's own plugin-facing surface and out to
+    /// `PluginRuntimeConfiguration.publishEvent`; the two never share a name.
+    func deliverEvent(event: String, payload: IntentValue) async throws
     func invokeViewSelect(
         viewID: String,
         instanceID: String?,
         itemID: String,
+        value: IntentValue?
+    ) async throws -> Bool
+    func invokeViewSelect(
+        viewID: String,
+        instanceID: String?,
+        action: PluginNodeAction,
         value: IntentValue?
     ) async throws -> Bool
     func invokeViewSubmit(
@@ -309,6 +322,40 @@ package protocol PluginHostRuntime: AnyObject, Sendable {
     func closeViewInstance(viewID: String, instanceID: String) async throws
     func deliverPaletteQuery(text: String, revision: Int) async
     func shutdown(timeout: TimeInterval) async -> PluginRuntimeShutdownReport
+}
+
+extension PluginHostRuntime {
+    /// Compatibility for callers whose select has no menu payload. The structured route
+    /// remains the protocol requirement; a missing menu value is simply nil.
+    func invokeViewSelect(
+        viewID: String,
+        instanceID: String?,
+        itemID: String
+    ) async throws -> Bool {
+        try await invokeViewSelect(
+            viewID: viewID,
+            instanceID: instanceID,
+            itemID: itemID,
+            value: nil
+        )
+    }
+
+    /// Compatibility for test doubles and runtimes that only implement the historic string
+    /// route. Real runtimes override this to preserve structured action values.
+    func invokeViewSelect(
+        viewID: String,
+        instanceID: String?,
+        action: PluginNodeAction,
+        value: IntentValue?
+    ) async throws -> Bool {
+        guard let itemID = action.stringValue else { return false }
+        return try await invokeViewSelect(
+            viewID: viewID,
+            instanceID: instanceID,
+            itemID: itemID,
+            value: value
+        )
+    }
 }
 
 extension PluginRuntime: PluginHostRuntime {}

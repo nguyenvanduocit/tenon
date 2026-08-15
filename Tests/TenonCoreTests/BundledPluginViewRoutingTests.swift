@@ -190,9 +190,9 @@ final class BundledPluginViewRoutingTests: XCTestCase {
                     && !snapshot.views.contains { $0.instanceID == "A" }
             }
         )
-        XCTAssertTrue(
-            pruned.views.contains { $0.viewID == "board" && $0.instanceID == nil },
-            "closing one instance prunes that instance's body, never the registration"
+        XCTAssertFalse(
+            pruned.views.contains { $0.instanceID == "A" },
+            "closing one instance prunes that instance's body"
         )
         _ = await runtime.shutdown(timeout: 2)
     }

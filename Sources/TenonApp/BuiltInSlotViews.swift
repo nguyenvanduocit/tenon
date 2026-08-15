@@ -279,7 +279,7 @@ struct PluginSlotView: View {
                                 pluginID: pluginID,
                                 viewID: viewID,
                                 instanceID: section.instanceID,
-                                itemID: action,
+                                action: action,
                                 value: value.map(IntentValue.string)
                             )
                         }
@@ -438,7 +438,7 @@ struct PluginNodeView: View {
     let node: PluginViewNode
     /// (action id, submitted text). Text is nil for a plain button, the typed value
     /// for a `textfield` submit — one route the JS `onSelect(id, value?)` handles.
-    let onAction: (String, String?) -> Void
+    let onAction: (PluginNodeAction, String?) -> Void
     /// Renders a `webview` node's host-owned `WKWebView` surface; nil outside a pane,
     /// where the node degrades to a placeholder.
     var webSurface: ((String) -> AnyView)? = nil
@@ -682,15 +682,15 @@ struct PluginNodeView: View {
 /// answer honestly is the *highlight* — SwiftUI decides that from the dragged type alone,
 /// so text dragged in from another app still lights the target up before being refused.
 private struct PluginDropTargetView<Content: View>: View {
-    let action: String
+    let action: PluginNodeAction
     let scope: PluginViewDragScope?
-    let onAction: (String, String?) -> Void
+    let onAction: (PluginNodeAction, String?) -> Void
     @ViewBuilder let content: () -> Content
 
     @State private var isTargeted = false
 
     var body: some View {
-        if action.isEmpty || scope == nil {
+        if action.stringValue?.isEmpty != false || scope == nil {
             content()
         } else {
             content()

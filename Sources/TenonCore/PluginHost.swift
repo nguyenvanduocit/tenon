@@ -379,15 +379,12 @@ public final class PluginHost {
         }
         do {
             let (prepared, manifestFailures) = try await prepareAllManifests()
+            loadFailures = manifestFailures
             try await installStaticContracts(from: prepared)
             try await activate(
                 prepared,
                 replacingManifestInventory: true
             )
-            // Not `[]`: a user plugin that would not decode was skipped rather than
-            // fatal, and dropping its diagnostic here would leave the author with a
-            // plugin that simply never appears and no way to learn why.
-            loadFailures = manifestFailures
             if prepared.isEmpty {
                 appendLog("host: no plugins found under \(pluginsRoot.path)")
             }
@@ -553,7 +550,16 @@ public final class PluginHost {
                 // owned, a `provides` entry naming no contract at all. Every one of them
                 // is a plausible mistake in a plugin someone just wrote, and none of them
                 // is a reason for Tenon to start with no plugins (invariant 4).
-                guard !isPrimaryInventory(item.directory) else {
+                let recoverableBundledFailure: Bool = {
+                    guard item.manifest.runtime == .bundledSwift else { return false }
+                    if let hostError = error as? PluginHostError,
+                       case .bundledSwiftRuntimeRequiresBundledInventory = hostError
+                    {
+                        return true
+                    }
+                    return false
+                }()
+                guard !isPrimaryInventory(item.directory) || recoverableBundledFailure else {
                     throw error
                 }
                 failures.append(
@@ -884,14 +890,31 @@ public final class PluginHost {
         replacingManifestInventory: Bool
     ) async throws {
         var candidates: [RuntimeCandidate] = []
-        do {
-            for plugin in prepared where plugin.record.isEnabled {
+        var candidateFailures: [(PreparedPlugin, any Error)] = []
+        for plugin in prepared where plugin.record.isEnabled {
+            do {
                 try Task.checkCancellation()
                 candidates.append(try await makeRuntimeCandidate(plugin))
+            } catch is CancellationError {
+                await discard(candidates)
+                throw CancellationError()
+            } catch {
+                // A bad compiled implementation is one plugin's failure, not a reason to
+                // discard otherwise valid candidates from the same inventory. The failure is
+                // recorded after commit so the directory-to-plugin map is authoritative.
+                candidateFailures.append((plugin, error))
             }
-        } catch {
+        }
+
+        // A targeted reload is an atomic replacement of one live session. Unlike a
+        // full inventory load, it must not commit the manifest or retire the active
+        // session when its staged candidate fails.
+        if !replacingManifestInventory, let (plugin, error) = candidateFailures.first {
             await discard(candidates)
-            throw error
+            throw PluginHostError.runtimeFailed(
+                pluginID: plugin.record.manifest.id,
+                diagnostic: Self.diagnostic(for: error)
+            )
         }
 
         var stagedProviderIndices: [Int] = []
@@ -972,6 +995,16 @@ public final class PluginHost {
             prepared: prepared,
             replacingManifestInventory: replacingManifestInventory
         )
+
+        for (plugin, error) in candidateFailures {
+            recordLoadFailure(
+                PluginHostError.runtimeFailed(
+                    pluginID: plugin.record.manifest.id,
+                    diagnostic: Self.diagnostic(for: error)
+                ),
+                fallbackDirectory: plugin.record.directoryName
+            )
+        }
     }
 
     private func makeRuntimeCandidate(
@@ -1335,7 +1368,7 @@ public final class PluginHost {
             return
         }
         do {
-            try await session.runtime.emit(
+            try await session.runtime.deliverEvent(
                 event: "settings.changed",
                 payload: .object([
                     "key": .string(key),
@@ -1730,6 +1763,34 @@ public final class PluginHost {
                 viewID: viewID,
                 instanceID: instanceID,
                 itemID: itemID,
+                value: value
+            )
+        } catch {
+            appendLog(
+                "host: view action failed for \(pluginID.rawValue): "
+                    + Self.diagnostic(for: error)
+            )
+            return false
+        }
+    }
+
+    @discardableResult
+    public func invokeViewSelect(
+        pluginID: PluginID,
+        viewID: String,
+        instanceID: String? = nil,
+        action: PluginNodeAction,
+        value: IntentValue? = nil
+    ) async -> Bool {
+        guard let session = sessions[pluginID] else {
+            appendLog("host: plugin \(pluginID.rawValue) is not active")
+            return false
+        }
+        do {
+            return try await session.runtime.invokeViewSelect(
+                viewID: viewID,
+                instanceID: instanceID,
+                action: action,
                 value: value
             )
         } catch {

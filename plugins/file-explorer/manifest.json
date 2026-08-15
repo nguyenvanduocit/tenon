@@ -4,6 +4,7 @@
   "displayName": "Files",
   "icon": "folder",
   "version": "0.2.0",
+  "runtime": "bundled-swift",
   "permissions": [
     "filesystem.read",
     "filesystem.write",

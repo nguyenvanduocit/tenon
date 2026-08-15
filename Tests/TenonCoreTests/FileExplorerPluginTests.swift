@@ -1,4 +1,5 @@
 import Foundation
+@testable import TenonBundledPlugins
 import TenonIntentCore
 import XCTest
 @testable import TenonCore
@@ -17,7 +18,7 @@ final class FileExplorerPluginTests: XCTestCase {
     func testTreeKeepsDirectoryFirstHidesDotGitAndPublishesMenus() async throws {
         let root = "/tmp/tenon-file-explorer"
         let bridge = FileExplorerIntentBridge(root: root)
-        let runtime = try makeRuntime(root: root, bridge: bridge)
+        let runtime = try await makeRuntime(root: root, bridge: bridge)
         _ = try await runtime.start()
         try await runtime.openViewInstance(viewID: "tree", instanceID: Self.instanceID)
 
@@ -57,13 +58,13 @@ final class FileExplorerPluginTests: XCTestCase {
                 "trash",
             ]
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     func testDirectoryExpansionAndOpenActionsUseCanonicalIntents() async throws {
         let root = "/tmp/tenon-file-explorer"
         let bridge = FileExplorerIntentBridge(root: root)
-        let runtime = try makeRuntime(root: root, bridge: bridge)
+        let runtime = try await makeRuntime(root: root, bridge: bridge)
         _ = try await runtime.start()
         try await runtime.openViewInstance(viewID: "tree", instanceID: Self.instanceID)
         let initialReady = await eventually {
@@ -75,7 +76,8 @@ final class FileExplorerPluginTests: XCTestCase {
         let selectedDirectory = try await runtime.invokeViewSelect(
             viewID: "tree",
             instanceID: Self.instanceID,
-            itemID: sourceDirectory
+            itemID: sourceDirectory,
+            value: nil
         )
         XCTAssertTrue(selectedDirectory)
         let expanded = await eventually {
@@ -88,7 +90,8 @@ final class FileExplorerPluginTests: XCTestCase {
         let opened = try await runtime.invokeViewSelect(
             viewID: "tree",
             instanceID: Self.instanceID,
-            itemID: readme
+            itemID: readme,
+            value: nil
         )
         XCTAssertTrue(opened)
         let openedToSide = try await runtime.invokeViewSelect(
@@ -130,13 +133,13 @@ final class FileExplorerPluginTests: XCTestCase {
                     == "workspace.pane.content.set.v1"
             }
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     func testCreateRenameTrashAndSystemActionsRemainIntentRouted() async throws {
         let root = "/tmp/tenon-file-explorer"
         let bridge = FileExplorerIntentBridge(root: root)
-        let runtime = try makeRuntime(root: root, bridge: bridge)
+        let runtime = try await makeRuntime(root: root, bridge: bridge)
         _ = try await runtime.start()
         try await runtime.openViewInstance(viewID: "tree", instanceID: Self.instanceID)
         let ready = await eventually {
@@ -192,13 +195,13 @@ final class FileExplorerPluginTests: XCTestCase {
         ] {
             XCTAssertTrue(names.contains(expected), "missing \(expected)")
         }
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     private func makeRuntime(
         root: String,
         bridge: FileExplorerIntentBridge
-    ) throws -> PluginRuntime {
+    ) async throws -> any PluginHostRuntime {
         let manifest = try JSONDecoder().decode(
             PluginManifest.self,
             from: Data(
@@ -206,8 +209,8 @@ final class FileExplorerPluginTests: XCTestCase {
                     .appendingPathComponent("manifest.json")
             )
         )
-        return try PluginRuntime(
-            configuration: PluginRuntimeConfiguration(
+        return try await BundledPluginRuntime.factory.make(
+            PluginRuntimeConfiguration(
                 manifest: manifest,
                 directory: Self.pluginDirectory,
                 intents: PluginRuntimeIntentBridge(

@@ -6,15 +6,10 @@ import XCTest
 
 /// The resources a compiled `bundled-swift` generation owns, and what settles them.
 ///
-/// A bundled program owns exactly three things: its event pump task, its bounded event
-/// mailbox, and the provider bindings its start handed the host. It has no timer, watcher,
-/// or process-stream API — the only wall-clock cadence it receives is the host-owned
-/// automation schedule arriving as `automation.fired` — and it has no view-owned resource
-/// seam: `PRT-FR-047`'s `ownedBy` declaration is a JavaScript-runtime seam today, which the
-/// owning PRD records as out of this first compiled slice. So "resource lifetime" here means
-/// what these tests pin: a stopped generation refuses every later event, a handler still
-/// running at shutdown mutates nothing afterwards, and a binding kept past retirement is
-/// refused instead of resurrecting the program.
+/// A bundled program owns its event pump, bounded mailbox, provider bindings, and any typed
+/// timers or filesystem watches it starts. Resource callbacks enter the same pump as events and
+/// view callbacks, while generation retirement and view-instance closure cancel their owned
+/// resources without consulting plugin code.
 final class BundledPluginResourceOwnershipTests: XCTestCase {
     private static var pluginsRoot: URL {
         URL(fileURLWithPath: #filePath)
@@ -169,6 +164,172 @@ final class BundledPluginResourceOwnershipTests: XCTestCase {
         XCTAssertEqual(invocations, 1)
     }
 
+    func testARepeatingTimerOwnedByAViewDiesWhenThatViewCloses() async throws {
+        let counter = InvocationCounter()
+        let runtime = try makeRuntime(
+            program: BundledPluginProgram(
+                id: "dev.example.native-res",
+                subscribedEvents: ["start-timer"],
+                providedIntents: [],
+                activate: { _ in
+                    BundledPluginContribution(
+                        views: [
+                            PluginViewInfo(
+                                viewID: "board",
+                                instanceID: nil,
+                                instanced: true,
+                                title: "Board",
+                                items: [],
+                                body: nil
+                            ),
+                        ]
+                    )
+                },
+                receiveEvent: { _, _, context in
+                    _ = try await context.timers.every(
+                        10,
+                        ownedBy: "pane-a"
+                    ) {
+                        await counter.increment()
+                    }
+                    return nil
+                },
+                invokeIntent: { envelope, _ in
+                    throw PluginRuntimeError.providerHandlerUnavailable(envelope.name)
+                }
+            )
+        )
+
+        _ = try await runtime.start()
+        try await runtime.openViewInstance(viewID: "board", instanceID: "pane-a")
+        XCTAssertTrue(
+            runtime.acceptEvent(event: "start-timer", payload: .object([:]))
+        )
+        try await counter.waitUntil(count: 1)
+        try await runtime.closeViewInstance(viewID: "board", instanceID: "pane-a")
+        let atClose = await counter.count
+
+        try await Task.sleep(for: .milliseconds(80))
+        let afterClose = await counter.count
+        XCTAssertEqual(
+            afterClose,
+            atClose,
+            "a timer owned by a closed view instance fired again"
+        )
+        _ = await runtime.shutdown(timeout: 2)
+    }
+
+    func testAWatchWithoutFilesystemPermissionIsRefusedAndRecorded() async throws {
+        let runtime = try makeRuntime(
+            program: BundledPluginProgram(
+                id: "dev.example.native-res",
+                subscribedEvents: ["start-watch"],
+                providedIntents: [],
+                activate: { _ in .empty },
+                receiveEvent: { _, _, context in
+                    let first = await context.fs.watch("~/project") { _ in }
+                    let second = await context.fs.watch("~/project") { _ in }
+                    await context.publishContribution(
+                        BundledPluginContribution(
+                            statusBarText: (first == nil && second == nil)
+                                ? "watch-denied"
+                                : "watch-started"
+                        )
+                    )
+                    return nil
+                },
+                invokeIntent: { envelope, _ in
+                    throw PluginRuntimeError.providerHandlerUnavailable(envelope.name)
+                }
+            )
+        )
+
+        _ = try await runtime.start()
+        XCTAssertTrue(
+            runtime.acceptEvent(event: "start-watch", payload: .object([:]))
+        )
+        let deadline = ContinuousClock.now + .seconds(2)
+        var snapshot = await runtime.snapshot()
+        while snapshot.statusBarText != "watch-denied", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+            snapshot = await runtime.snapshot()
+        }
+        XCTAssertEqual(snapshot.statusBarText, "watch-denied")
+        XCTAssertEqual(
+            snapshot.permissionViolations,
+            ["tenon.fs.watch requires permission filesystem.read"]
+        )
+        _ = await runtime.shutdown(timeout: 2)
+    }
+
+    func testIntentHandlerPushesASeparatedContributionThroughThePump() async throws {
+        let intentID = try IntentID("dev.example.native-res.render.v1")
+        let runtime = try makeRuntime(
+            program: BundledPluginProgram(
+                id: "dev.example.native-res",
+                subscribedEvents: [],
+                providedIntents: [intentID],
+                activate: { _ in .empty },
+                receiveEvent: { _, _, _ in nil },
+                invokeIntent: { _, _, context in
+                    await context.publishContribution(
+                        BundledPluginContribution(
+                            statusBarText: "intent-pushed",
+                            viewRegistrations: [
+                                BundledPluginViewRegistration(
+                                    viewID: "panel",
+                                    title: "Panel",
+                                    instanced: false
+                                ),
+                            ],
+                            viewBodies: [
+                                BundledPluginViewBody(
+                                    viewID: "panel",
+                                    instanceID: nil,
+                                    body: .text(
+                                        "from intent",
+                                        style: .body,
+                                        weight: .regular,
+                                        color: .default
+                                    )
+                                ),
+                            ]
+                        )
+                    )
+                    return .success(.object([:]))
+                }
+            ),
+            provides: [intentID]
+        )
+
+        let started = try await runtime.start()
+        let binding = try XCTUnwrap(started.bindings.first)
+        let reply = try await binding.invoke(
+            envelope: Self.makeEnvelope(intentID: intentID),
+            context: Self.makeContext()
+        )
+        XCTAssertEqual(reply, .success(.object([:])))
+
+        let deadline = ContinuousClock.now + .seconds(2)
+        var snapshot = await runtime.snapshot()
+        while snapshot.statusBarText != "intent-pushed", ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+            snapshot = await runtime.snapshot()
+        }
+        XCTAssertEqual(snapshot.statusBarText, "intent-pushed")
+        XCTAssertEqual(snapshot.views.map(\.viewID), ["panel"])
+        XCTAssertEqual(
+            snapshot.views.first?.body,
+            .text(
+                "from intent",
+                style: .body,
+                weight: .regular,
+                color: .default
+            )
+        )
+        _ = await runtime.shutdown(timeout: 2)
+    }
+
     func testABindingOutlivingItsRuntimeActorFailsAsProviderRetired() async throws {
         let pingID = try IntentID("dev.example.native-res.ping.v1")
         let counter = InvocationCounter()
@@ -199,8 +360,8 @@ final class BundledPluginResourceOwnershipTests: XCTestCase {
     // There is no view-owned resource to cancel here — the compiled runtime registers no
     // timers, watchers, or streams against a view instance, so open/close carry only the
     // phase gate. This pins the gate: after stop, the remaining host-facing mutation
-    // surfaces (view instance lifecycle, event publication) are refused, not ignored.
-    func testViewLifecycleAndEventPublicationAreRefusedAfterStop() async throws {
+    // surfaces (view instance lifecycle, event delivery) are refused, not ignored.
+    func testViewLifecycleAndEventDeliveryAreRefusedAfterStop() async throws {
         let runtime = try makeRuntime(
             program: BundledPluginProgram(
                 id: "dev.example.native-res",
@@ -222,7 +383,7 @@ final class BundledPluginResourceOwnershipTests: XCTestCase {
         let attempts: [@Sendable () async throws -> Void] = [
             { try await runtime.openViewInstance(viewID: "board", instanceID: "two") },
             { try await runtime.closeViewInstance(viewID: "board", instanceID: "one") },
-            { try await runtime.emit(event: "tick", payload: .object([:])) },
+            { try await runtime.deliverEvent(event: "tick", payload: .object([:])) },
         ]
         for attempt in attempts {
             do {
@@ -237,6 +398,8 @@ final class BundledPluginResourceOwnershipTests: XCTestCase {
     private func makeRuntime(
         program: BundledPluginProgram,
         provides: [IntentID] = [],
+        permissions: [String] = [],
+        watcherStart: @escaping @Sendable (PathWatcher) -> Bool = { _ in false },
         onStateChange: @escaping PluginRuntimeConfiguration.StateChange = { _ in }
     ) throws -> BundledPluginRuntimeActor {
         BundledPluginRuntimeActor(
@@ -246,6 +409,7 @@ final class BundledPluginResourceOwnershipTests: XCTestCase {
                     name: "native-res",
                     version: "1.0.0",
                     runtime: .bundledSwift,
+                    permissions: permissions,
                     intents: PluginIntentManifest(
                         provides: provides.map { PluginIntentProvision(name: $0) }
                     )
@@ -257,7 +421,8 @@ final class BundledPluginResourceOwnershipTests: XCTestCase {
                 ),
                 onStateChange: onStateChange
             ),
-            program: program
+            program: program,
+            watcherStart: watcherStart
         )
     }
 

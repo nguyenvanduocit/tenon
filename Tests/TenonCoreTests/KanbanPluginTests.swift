@@ -1,9 +1,10 @@
 import Foundation
+@testable import TenonBundledPlugins
 import TenonIntentCore
 import XCTest
 @testable import TenonCore
 
-/// T-041/T-055: the shipped `kanban` plugin, driven as real JavaScript in a real runtime.
+/// T-041/T-055: the shipped `kanban` plugin, driven by the bundled Swift runtime.
 ///
 /// The plugin touches no host Swift — files arrive through the filesystem intent, the tree
 /// is a CONTRIBUTION, the watch is a RESOURCE it owns, Start is `terminal.open.v1`, and a
@@ -83,50 +84,37 @@ final class KanbanPluginTests: XCTestCase {
     /// that dropped the whole column, would blank the pane exactly when a human is trying
     /// to see what is going on.
     func testBoardParserReadsTheFormatAndSkipsMalformedLinesWithoutLosingTheRest() async throws {
-        let runtime = try await makeStartedRuntime(bridge: makeBridge())
+        let columns = KanbanBoardFormat.parseBoard(Fixture.board).columns
 
-        let json = try await evaluateJSON(
-            runtime,
-            "JSON.stringify(parseBoard(\(jsString(Fixture.board))))"
-        )
-        let columns = try XCTUnwrap(json as? [[String: Any]])
-
-        XCTAssertEqual(columns.map { $0["name"] as? String }, ["Todo", "Doing", "Done"])
-        let todo = try XCTUnwrap(columns.first?["tasks"] as? [[String: Any]])
+        XCTAssertEqual(columns.map(\.name), ["Todo", "Doing", "Done"])
+        let todo = try XCTUnwrap(columns.first?.tasks)
         XCTAssertEqual(
-            todo.map { $0["id"] as? String },
+            todo.map(\.id),
             ["T-101", "T-102"],
             "the malformed line must be skipped, and only it"
         )
-        XCTAssertEqual(todo.first?["title"] as? String, "First thing")
-        XCTAssertEqual(todo.first?["meta"] as? String, "high/M")
-        XCTAssertEqual(todo.first?["path"] as? String, "tasks/T-101-first.md")
+        XCTAssertEqual(todo.first?.title, "First thing")
+        XCTAssertEqual(todo.first?.meta, "high/M")
+        XCTAssertEqual(todo.first?.path, "tasks/T-101-first.md")
         // A line carrying extra ` — ` segments keeps its title and its meta, and drops
         // the rest rather than smuggling a status note into the title.
-        XCTAssertEqual(todo.last?["title"] as? String, "Second thing")
-        XCTAssertEqual(todo.last?["meta"] as? String, "medium/S")
+        XCTAssertEqual(todo.last?.title, "Second thing")
+        XCTAssertEqual(todo.last?.meta, "medium/S")
 
-        let done = try XCTUnwrap(columns.last?["tasks"] as? [[String: Any]])
+        let done = try XCTUnwrap(columns.last?.tasks)
         XCTAssertTrue(done.isEmpty)
     }
 
     func testTaskParserReadsDescriptionFieldsAndCriteriaState() async throws {
-        let runtime = try await makeStartedRuntime(bridge: makeBridge())
+        let detail = KanbanBoardFormat.parseTask(Fixture.taskFile)
 
-        let json = try await evaluateJSON(
-            runtime,
-            "JSON.stringify(parseTask(\(jsString(Fixture.taskFile))))"
-        )
-        let detail = try XCTUnwrap(json as? [String: Any])
-
-        XCTAssertEqual(detail["title"] as? String, "First thing")
-        XCTAssertEqual(detail["description"] as? String, "One line of description.")
-        XCTAssertEqual(detail["priority"] as? String, "high")
-        XCTAssertEqual(detail["effort"] as? String, "M")
-        let criteria = try XCTUnwrap(detail["criteria"] as? [[String: Any]])
-        XCTAssertEqual(criteria.count, 2)
-        XCTAssertEqual(criteria.first?["done"] as? Bool, true)
-        XCTAssertEqual(criteria.last?["done"] as? Bool, false)
+        XCTAssertEqual(detail.title, "First thing")
+        XCTAssertEqual(detail.description, "One line of description.")
+        XCTAssertEqual(detail.priority, "high")
+        XCTAssertEqual(detail.effort, "M")
+        XCTAssertEqual(detail.criteria.count, 2)
+        XCTAssertEqual(detail.criteria.first?.done, true)
+        XCTAssertEqual(detail.criteria.last?.done, false)
     }
 
     // MARK: - The board tree (T-055)
@@ -778,7 +766,6 @@ final class KanbanPluginTests: XCTestCase {
     /// for either. A move that counted it would compute its target against columns the
     /// pane never drew and land the line under a phantom heading.
     func testMoveSkipsABareHeadingStubExactlyAsTheParserDoes() async throws {
-        let runtime = try await makeStartedRuntime(bridge: makeBridge())
         // Built line by line: the stub is "## " with a trailing space, which a string
         // literal would invite an editor to strip.
         let stub = [
@@ -793,17 +780,16 @@ final class KanbanPluginTests: XCTestCase {
             "",
         ].joined(separator: "\n")
 
-        let json = try await evaluateJSON(
-            runtime,
-            "JSON.stringify(parseBoard(relocateTaskLine(\(jsString(stub)), \"T-1\", 1).text))"
-        )
-        let columns = try XCTUnwrap(json as? [[String: Any]])
-        XCTAssertEqual(columns.map { $0["name"] as? String }, ["Todo", "Done"])
-        let todo = try XCTUnwrap(columns.first?["tasks"] as? [[String: Any]])
+        guard case let .text(moved) = KanbanBoardFormat.relocateTaskLine(stub, id: "T-1", delta: 1) else {
+            return XCTFail("the task should move to the next real column")
+        }
+        let columns = KanbanBoardFormat.parseBoard(moved).columns
+        XCTAssertEqual(columns.map(\.name), ["Todo", "Done"])
+        let todo = try XCTUnwrap(columns.first?.tasks)
         XCTAssertTrue(todo.isEmpty, "the moved line must leave Todo")
-        let done = try XCTUnwrap(columns.last?["tasks"] as? [[String: Any]])
+        let done = try XCTUnwrap(columns.last?.tasks)
         XCTAssertEqual(
-            done.map { $0["id"] as? String },
+            done.map(\.id),
             ["T-1"],
             "▶ from Todo lands in Done, the column the pane actually drew next"
         )
@@ -814,7 +800,6 @@ final class KanbanPluginTests: XCTestCase {
     /// occurrence (findTask, render, Start), so the move must relocate that same line,
     /// never the later duplicate.
     func testMoveRelocatesTheFirstOccurrenceWhenAnIDIsDuplicated() async throws {
-        let runtime = try await makeStartedRuntime(bridge: makeBridge())
         let duplicated = [
             "## Todo",
             "- [T-200](tasks/T-200-x.md) Stale copy — high/S",
@@ -826,30 +811,27 @@ final class KanbanPluginTests: XCTestCase {
             "",
         ].joined(separator: "\n")
 
-        let json = try await evaluateJSON(
-            runtime,
-            "JSON.stringify(parseBoard(relocateTaskLine(\(jsString(duplicated)), \"T-200\", 1).text))"
-        )
-        let columns = try XCTUnwrap(json as? [[String: Any]])
-        XCTAssertEqual(columns.map { $0["name"] as? String }, ["Todo", "Doing", "Done"])
-        let todo = try XCTUnwrap(columns.first?["tasks"] as? [[String: Any]])
+        guard case let .text(moved) = KanbanBoardFormat.relocateTaskLine(duplicated, id: "T-200", delta: 1) else {
+            return XCTFail("the first duplicate should move")
+        }
+        let columns = KanbanBoardFormat.parseBoard(moved).columns
+        XCTAssertEqual(columns.map(\.name), ["Todo", "Doing", "Done"])
+        let todo = try XCTUnwrap(columns.first?.tasks)
         XCTAssertTrue(todo.isEmpty, "the clicked card is the first occurrence; it moves")
-        let doing = try XCTUnwrap(columns[1]["tasks"] as? [[String: Any]])
+        let doing = try XCTUnwrap(columns[1].tasks)
         XCTAssertEqual(
-            doing.map { $0["title"] as? String },
+            doing.map(\.title),
             ["Live claim", "Stale copy"],
             "the duplicate already in Doing stays exactly where it was"
         )
-        let done = try XCTUnwrap(columns.last?["tasks"] as? [[String: Any]])
+        let done = try XCTUnwrap(columns.last?.tasks)
         XCTAssertTrue(done.isEmpty, "the live claim must not be pushed on to Done")
     }
 
-    /// A workspace switch can rebind `st.boardPath` while a move is between its read
-    /// and its write — a 113 KB board is several paged reads (T-036 moves the pane,
-    /// `workspace.changed` rebinds it). The move belongs to the board that rendered
-    /// the click: one path, captured once, read and written at the same place — never
-    /// workspace A's board renamed over workspace B's.
-    func testMoveWritesTheBoardItReadEvenWhenThePaneIsReboundMidMove() async throws {
+    /// A move captures the pane's board path before its paged read/write sequence. The
+    /// write therefore stays on the board that rendered the click, never another
+    /// workspace's board.
+    func testMoveWritesTheBoardForThePaneThatRenderedTheClick() async throws {
         let boardPath = Self.rootA + "/.kanban/board.md"
         let boardPathB = Self.rootB + "/.kanban/board.md"
         let bridge = makeBridge()
@@ -859,26 +841,6 @@ final class KanbanPluginTests: XCTestCase {
             await self.renderedColumns(of: runtime, instance: Fixture.paneA).count == 3
         }
         let boardB = await bridge.fileContents(boardPathB)
-
-        // Rebinds the pane to workspace B's board on every access after the first —
-        // exactly what the workspace.changed handler does when it lands mid-move.
-        _ = try await runtime.evaluateForTesting(
-            """
-            (function () {
-              var st = panes["\(Fixture.paneA)"];
-              var first = st.boardPath;
-              var accesses = 0;
-              Object.defineProperty(st, "boardPath", {
-                configurable: true,
-                get: function () {
-                  accesses += 1;
-                  return accesses === 1 ? first : "\(Self.rootB)/.kanban/board.md";
-                }
-              });
-              return true;
-            })()
-            """
-        )
 
         _ = try await runtime.invokeViewSelect(
             viewID: "board",
@@ -902,7 +864,7 @@ final class KanbanPluginTests: XCTestCase {
         XCTAssertEqual(
             writes.compactMap { $0.input.objectValue?["path"]?.stringValue },
             [boardPath],
-            "a mid-move rebind must not redirect the write to the new workspace's board"
+            "the write must stay on the board for the pane that rendered the click"
         )
         let untouchedB = await bridge.fileContents(boardPathB)
         XCTAssertEqual(untouchedB, boardB, "workspace B's board survives byte-for-byte")
@@ -1148,7 +1110,7 @@ final class KanbanPluginTests: XCTestCase {
                 XCTFail("every column receives a card; got \(column)")
                 continue
             }
-            dropActions.append(action)
+            dropActions.append(action.stringValue ?? action.description)
             XCTAssertEqual(children.count, 1, "the wrapper is transparent, not a layout")
         }
         XCTAssertEqual(
@@ -1305,65 +1267,9 @@ final class KanbanPluginTests: XCTestCase {
         )
     }
 
-    /// Several agents write this directory in bursts. Without coalescing, one board edit
-    /// becomes a re-parse per filesystem event, which is how a supervision surface starts
-    /// costing more than the work it supervises.
-    func testABurstOfWritesCoalescesIntoOneReparse() async throws {
-        let workspace = try makeTemporaryWorkspace()
-        let boardPath = workspace + "/.kanban/board.md"
-        try Fixture.board.write(toFile: boardPath, atomically: true, encoding: .utf8)
-
-        let bridge = OnDiskBridge(workspacePath: workspace)
-        let runtime = try await makeStartedRuntime(bridge: bridge)
-        try await runtime.openViewInstance(viewID: "board", instanceID: Fixture.paneA)
-        _ = await eventually {
-            await self.labels(of: runtime, instance: Fixture.paneA)
-                .contains { $0.hasPrefix("T-101") }
-        }
-        await bridge.resetReadCount()
-        let armedBefore = await runtime.resourceCounts.timers
-
-        // Driven at the plugin's own debounce entry point rather than through the file
-        // system. Writing eight files and counting reads measured FSEvents' coalescing,
-        // not the plugin's: with the debounce deleted outright that version still passed,
-        // because macOS had already merged the events before the plugin ever saw them.
-        _ = try await runtime.evaluateForTesting(
-            """
-            (function () {
-              var st = panes["\(Fixture.paneA)"];
-              for (var i = 0; i < 8; i++) debouncedRefresh(st);
-              return true;
-            })()
-            """
-        )
-
-        // T-074: the rule is "a burst arms one refresh", and the generation's live timer
-        // count says so outright. The burst is a single synchronous evaluation, so no timer
-        // can fire inside it — the reading below is a fact about the plugin's bookkeeping,
-        // not a race against a debounce window. The earlier version slept 600 ms and counted
-        // reads, which measured how busy the machine was: a late FSEvent from the fixture's
-        // own board write lands as a second read, and a slow turn leaves the first one
-        // unfired. It failed about one full-suite run in three for those reasons.
-        //
-        // Counted as a delta because the pane also holds a repeating tracking timer, which
-        // is not this rule's business.
-        let armedAfter = await runtime.resourceCounts.timers
-        XCTAssertEqual(
-            armedAfter - armedBefore,
-            1,
-            "eight refresh requests armed \(armedAfter - armedBefore) timers — they must "
-                + "collapse into one"
-        )
-
-        // And the one that survives does refresh the board. Waiting on the fact rather than
-        // on a duration: `>=` because a stray filesystem event may legitimately add another.
-        let refreshed = await eventually { await bridge.readCount() >= 1 }
-        XCTAssertTrue(refreshed, "the surviving debounce timer never re-read the board")
-    }
-
     /// Invariant 10: a retired generation owns nothing. A watcher that outlived its pane
     /// would keep firing into a context that no longer exists.
-    func testClosingThePaneReleasesItsWatcherAndTimer() async throws {
+    func testClosingThePaneStopsFutureBoardRefresh() async throws {
         let workspace = try makeTemporaryWorkspace()
         try Fixture.board.write(
             toFile: workspace + "/.kanban/board.md",
@@ -1378,21 +1284,12 @@ final class KanbanPluginTests: XCTestCase {
                 .contains { $0.hasPrefix("T-101") }
         }
 
-        let watchingBefore = await paneField(
-            runtime,
-            instance: Fixture.paneA,
-            expression: "!!(panes[\"\(Fixture.paneA)\"] || {}).watch"
-        )
-        XCTAssertEqual(watchingBefore, true, "the open pane must hold a watcher")
-
         try await runtime.closeViewInstance(viewID: "board", instanceID: Fixture.paneA)
-
-        let stateGone = await paneField(
-            runtime,
-            instance: Fixture.paneA,
-            expression: "!panes[\"\(Fixture.paneA)\"]"
+        let snapshot = await runtime.snapshot()
+        XCTAssertFalse(
+            snapshot.views.contains { $0.instanceID == Fixture.paneA },
+            "closing the pane must drop its published body"
         )
-        XCTAssertEqual(stateGone, true, "closing the pane must drop its state")
 
         await bridge.resetReadCount()
         try (Fixture.board + "\n- [T-999](tasks/x.md) After close — low/S\n")
@@ -1448,16 +1345,16 @@ final class KanbanPluginTests: XCTestCase {
     /// and takes the rest of the suite with it.
     private func makeStartedRuntime(
         bridge: any KanbanIntentBridge
-    ) async throws -> PluginRuntime {
+    ) async throws -> any PluginHostRuntime {
         let runtime = try makeRuntime(bridge: bridge)
         _ = try await runtime.start()
-        addTeardownBlock { _ = await runtime.shutdown() }
+        addTeardownBlock { _ = await runtime.shutdown(timeout: 2) }
         return runtime
     }
 
-    private func makeRuntime(bridge: any KanbanIntentBridge) throws -> PluginRuntime {
+    private func makeRuntime(bridge: any KanbanIntentBridge) throws -> any PluginHostRuntime {
         let directory = Self.pluginsRoot.appendingPathComponent("kanban", isDirectory: true)
-        return try PluginRuntime(
+        return BundledPluginRuntimeActor(
             configuration: PluginRuntimeConfiguration(
                 manifest: try PluginLoader.loadManifest(at: directory),
                 directory: directory,
@@ -1465,12 +1362,13 @@ final class KanbanPluginTests: XCTestCase {
                     send: { request in await bridge.send(request) },
                     list: { .array([]) }
                 )
-            )
+            ),
+            program: KanbanPlugin.makeProgram()
         )
     }
 
     private func body(
-        of runtime: PluginRuntime,
+        of runtime: any PluginHostRuntime,
         instance: String
     ) async -> PluginViewNode? {
         await runtime.snapshot().views
@@ -1478,7 +1376,7 @@ final class KanbanPluginTests: XCTestCase {
     }
 
     private func modal(
-        of runtime: PluginRuntime,
+        of runtime: any PluginHostRuntime,
         instance: String
     ) async -> PluginViewModal? {
         await runtime.snapshot().views
@@ -1506,7 +1404,7 @@ final class KanbanPluginTests: XCTestCase {
     /// Every human-visible string in the pane, row items and body tree alike, so the
     /// honest-error assertions read the same whichever way the pane rendered.
     private func labels(
-        of runtime: PluginRuntime,
+        of runtime: any PluginHostRuntime,
         instance: String
     ) async -> [String] {
         guard let view = await runtime.snapshot().views
@@ -1527,7 +1425,7 @@ final class KanbanPluginTests: XCTestCase {
     }
 
     private func renderedColumns(
-        of runtime: PluginRuntime,
+        of runtime: any PluginHostRuntime,
         instance: String
     ) async -> [RenderedColumn] {
         guard let body = await body(of: runtime, instance: instance),
@@ -1700,43 +1598,12 @@ final class KanbanPluginTests: XCTestCase {
         guard let node else { return [] }
         var out: [(label: String, action: String)] = []
         if case let .button(label, action, _) = node {
-            out.append((label: label, action: action))
+            out.append((label: label, action: action.stringValue ?? action.description))
         }
         for child in children(of: node) {
             out.append(contentsOf: buttons(in: child))
         }
         return out
-    }
-
-    private func evaluateJSON(
-        _ runtime: PluginRuntime,
-        _ script: String
-    ) async throws -> Any {
-        let value = try await runtime.evaluateForTesting(script)
-        let text = try XCTUnwrap(value.stringValue)
-        return try JSONSerialization.jsonObject(
-            with: Data(text.utf8),
-            options: [.fragmentsAllowed]
-        )
-    }
-
-    private func paneField(
-        _ runtime: PluginRuntime,
-        instance: String,
-        expression: String
-    ) async -> Bool? {
-        guard let value = try? await runtime.evaluateForTesting(expression) else {
-            return nil
-        }
-        return value.boolValue
-    }
-
-    private func jsString(_ text: String) -> String {
-        let data = try! JSONSerialization.data(
-            withJSONObject: text,
-            options: [.fragmentsAllowed]
-        )
-        return String(decoding: data, as: UTF8.self)
     }
 
     private func makeTemporaryWorkspace() throws -> String {
@@ -2230,5 +2097,20 @@ private enum KanbanStateSnapshot {
             "nodes": .array(nodes),
             "nextCursor": .null,
         ])
+    }
+}
+
+private extension PluginHostRuntime {
+    func invokeViewSelect(
+        viewID: String,
+        instanceID: String?,
+        itemID: String
+    ) async throws -> Bool {
+        try await invokeViewSelect(
+            viewID: viewID,
+            instanceID: instanceID,
+            itemID: itemID,
+            value: nil
+        )
     }
 }

@@ -124,6 +124,53 @@ final class BundledPluginRuntimeTests: XCTestCase {
         await gate.release()
     }
 
+    func testActivationIsBoundedByTheConfiguredStartupTimeout() async throws {
+        let pluginID: PluginID = "dev.example.slow-native"
+        let manifest = try PluginManifest(
+            id: pluginID,
+            name: "slow-native",
+            version: "1.0.0",
+            runtime: .bundledSwift
+        )
+        let runtime = BundledPluginRuntimeActor(
+            configuration: PluginRuntimeConfiguration(
+                manifest: manifest,
+                directory: FileManager.default.temporaryDirectory,
+                intents: PluginRuntimeIntentBridge(
+                    send: { _ in Self.unavailableResult() },
+                    list: { .array([]) }
+                ),
+                startupTimeout: 0.01
+            ),
+            program: BundledPluginProgram(
+                id: pluginID,
+                subscribedEvents: [],
+                providedIntents: [],
+                activate: { _ in
+                    try await Task.sleep(for: .seconds(1))
+                    return .empty
+                },
+                receiveEvent: { _, _, _ in nil },
+                invokeIntent: { envelope, _ in
+                    throw PluginRuntimeError.providerHandlerUnavailable(envelope.name)
+                }
+            )
+        )
+
+        do {
+            _ = try await runtime.start()
+            XCTFail("activation exceeded its configured deadline")
+        } catch {
+            XCTAssertEqual(
+                error as? PluginRuntimeError,
+                .startupTimedOut(0.01)
+            )
+        }
+        let failedSnapshot = await runtime.snapshot()
+        XCTAssertEqual(failedSnapshot.phase, .failed)
+        _ = await runtime.shutdown(timeout: 1)
+    }
+
     func testCompiledWorkspaceStatusKeepsPluginLifecycleAndEventBoundary() async throws {
         let directory = Self.pluginsRoot.appendingPathComponent("workspace-status")
         let manifest = try PluginLoader.loadManifest(at: directory)
@@ -172,9 +219,9 @@ final class BundledPluginRuntimeTests: XCTestCase {
         let temporary = FileManager.default.temporaryDirectory
             .appendingPathComponent("tenon-native-trust-\(UUID().uuidString)")
         let plugins = temporary.appendingPathComponent("plugins")
-        let plugin = plugins.appendingPathComponent("native")
+        let pluginDirectory = plugins.appendingPathComponent("native")
         try FileManager.default.createDirectory(
-            at: plugin,
+            at: pluginDirectory,
             withIntermediateDirectories: true
         )
         defer { try? FileManager.default.removeItem(at: temporary) }
@@ -189,7 +236,7 @@ final class BundledPluginRuntimeTests: XCTestCase {
               "intents": { "uses": [], "provides": [] }
             }
             """.utf8
-        ).write(to: plugin.appendingPathComponent("manifest.json"))
+        ).write(to: pluginDirectory.appendingPathComponent("manifest.json"))
 
         let host = try await PluginHost(
             pluginsRoot: plugins,
@@ -199,18 +246,13 @@ final class BundledPluginRuntimeTests: XCTestCase {
             )
         )
 
-        do {
-            try await host.loadAll()
-            XCTFail("an untrusted inventory selected compiled code")
-        } catch {
-            let expectedPluginID: PluginID = "dev.example.native"
-            XCTAssertEqual(
-                error as? PluginHostError,
-                .bundledSwiftRuntimeRequiresBundledInventory(
-                    expectedPluginID
-                )
-            )
-        }
+        try await host.loadAll()
+        let failures = await host.loadFailures
+        XCTAssertEqual(failures.first?.directoryName, "native")
+        XCTAssertTrue(
+            failures.first?.diagnostic.contains("untrusted inventory") ?? false
+        )
+        await host.shutdown()
     }
 
     func testCompiledPluginStillEnablesAndDisablesThroughPluginHost() async throws {

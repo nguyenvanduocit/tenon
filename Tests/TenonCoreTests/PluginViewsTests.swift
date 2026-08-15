@@ -4,6 +4,17 @@ import XCTest
 @testable import TenonCore
 
 final class PluginViewsTests: XCTestCase {
+    func testCompiledPathHelpersMatchBootstrapPOSIXSemantics() {
+        XCTAssertEqual(PluginPath.normalize("/a/./b/../c//"), "/a/c")
+        XCTAssertEqual(PluginPath.normalize("a/../../b"), "../b")
+        XCTAssertEqual(PluginPath.join("/a", "b", "..", "c"), "/a/c")
+        XCTAssertEqual(PluginPath.basename("/"), "/")
+        XCTAssertEqual(PluginPath.dirname("relative"), ".")
+        XCTAssertEqual(PluginPath.dirname("/relative"), "/")
+        XCTAssertEqual(PluginPath.extname(".env"), "")
+        XCTAssertEqual(PluginPath.extname("archive.tar.gz"), ".gz")
+    }
+
     /// T-056. Both drag wrappers are transparent: the subtree is exactly what the plugin
     /// published, and the wrapper adds only the gesture.
     func testDragSourceAndDropTargetWrapTheirSubtreeUnchanged() async throws {
@@ -29,7 +40,7 @@ final class PluginViewsTests: XCTestCase {
         var leaf: [PluginViewNode] = []
         if case let .dropTarget(action, targetChildren) = view.body,
            case let .dragSource(payload, sourceChildren) = targetChildren.first {
-            dropAction = action
+            dropAction = action.stringValue ?? action.description
             dragPayload = payload
             leaf = sourceChildren
         }
@@ -74,7 +85,7 @@ final class PluginViewsTests: XCTestCase {
                 dragChildren = kept
             }
             if case let .dropTarget(action, kept) = children.last {
-                dropAction = action
+                dropAction = action.stringValue ?? action.description
                 dropChildren = kept
             }
         }

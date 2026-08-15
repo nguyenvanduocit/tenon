@@ -43,7 +43,7 @@ enum PluginRuntimeValueParsing {
                 // Unrecognised is `.row`, like every other token field in this decoder: a
                 // typo in an adjective costs the adjective, never the row.
                 kind: TreeRowItem.Kind(rawValue: object["kind"]?.stringValue ?? "") ?? .row,
-                id: actionIdentifier(from: idValue),
+                id: idValue.stringValue ?? "",
                 label: label,
                 detail: object["detail"]?.stringValue,
                 depth: max(0, object["depth"]?.intValue ?? 0),
@@ -357,7 +357,7 @@ enum PluginRuntimeValueParsing {
     /// A modal is present or it is not: a `modal` that is null, or any other shape,
     /// clears it. That is how a plugin closes one — `views.set` without the key.
     static func modal(from object: [String: IntentValue]) -> PluginViewModal? {
-        let dismiss = object["dismissAction"].map(actionIdentifier(from:))
+        let dismiss = object["dismissAction"]?.stringValue
         return PluginViewModal(
             title: object["title"]?.stringValue ?? "",
             body: object["body"]?.objectValue.flatMap(node(from:)),
@@ -403,7 +403,8 @@ enum PluginRuntimeValueParsing {
             guard let action = object["action"] else { return nil }
             return .button(
                 label: object["label"]?.stringValue ?? "",
-                action: actionIdentifier(from: action),
+                action: action.stringValue.map(PluginNodeAction.string)
+                    ?? .structured(action),
                 style: ButtonStyle(token: object["style"]?.stringValue)
             )
         case "textfield":
@@ -411,7 +412,8 @@ enum PluginRuntimeValueParsing {
             return .textfield(
                 value: object["value"]?.stringValue ?? "",
                 placeholder: object["placeholder"]?.stringValue ?? "",
-                action: actionIdentifier(from: action)
+                action: action.stringValue.map(PluginNodeAction.string)
+                    ?? .structured(action)
             )
         case "webview":
             guard let surfaceID = object["surfaceID"]?.stringValue else { return nil }
@@ -469,7 +471,10 @@ enum PluginRuntimeValueParsing {
             )
         case "dropTarget":
             return .dropTarget(
-                action: object["action"].map(actionIdentifier(from:)) ?? "",
+                action: object["action"].flatMap { value in
+                    value.stringValue.map(PluginNodeAction.string)
+                        ?? .structured(value)
+                } ?? "",
                 children: children
             )
         default:
@@ -696,17 +701,6 @@ enum PluginRuntimeValueParsing {
         } ?? []
     }
 
-    private static func actionIdentifier(from value: IntentValue) -> String {
-        if let string = value.stringValue {
-            return string
-        }
-        guard let data = try? value.canonicalJSONData(),
-              let json = String(data: data, encoding: .utf8)
-        else {
-            return ""
-        }
-        return "\u{1}" + json
-    }
 }
 
 extension IntentValue {

@@ -1,5 +1,6 @@
-// hello-palette — a minimal plugin-owned intent provider projected into the palette.
-
+// JavaScript boundary fixture for the shipped hello-palette contract. The product plugin is
+// compiled Swift; this source remains only for backend parity tests and is never discovered
+// under plugins/.
 var greeting = "hello";
 var count = 0;
 

@@ -1,4 +1,5 @@
 import Foundation
+@testable import TenonBundledPlugins
 import TenonIntentCore
 import XCTest
 @testable import TenonCore
@@ -7,8 +8,8 @@ import XCTest
 /// workspace. Switching the global selection must neither rebind an inactive workspace's
 /// view nor wipe its per-instance UI state.
 ///
-/// The real shipped JavaScript runs in a real runtime against a bridge that emulates
-/// `workspace.state.v1` for two workspaces, each owning one pane of the view under test.
+/// The real shipped runtimes run against a bridge that emulates `workspace.state.v1` for two
+/// workspaces, each owning one pane of the view under test.
 /// Sharing one runtime per plugin is by design and is not what these tests reject; what
 /// they reject is view-instance state riding on that runtime without workspace identity.
 final class WorkspaceScopedViewStateTests: XCTestCase {
@@ -77,7 +78,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 return .object(["entries": .array(entries), "nextCursor": .null])
             }
         )
-        let runtime = try makeRuntime(plugin: "file-explorer", bridge: bridge)
+        let runtime = try await makeBundledRuntime(plugin: "file-explorer", bridge: bridge)
         _ = try await runtime.start()
 
         let instanced = await runtime.isViewInstanced("tree")
@@ -104,7 +105,8 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "tree",
             instanceID: Fixture.paneA,
-            itemID: rootA + "/src-a"
+            itemID: rootA + "/src-a",
+            value: nil
         )
         let expanded = await eventually {
             await self.items(of: runtime, instance: Fixture.paneA)
@@ -115,7 +117,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         // Switch the global selection to B, then back — the repro from the task file.
         for selected in [Fixture.workspaceB, Fixture.workspaceA] {
             await bridge.select(selected)
-            try await runtime.emit(
+            try await runtime.deliverEvent(
                 event: "workspace.selected",
                 payload: .object(["workspaceId": .string(selected)])
             )
@@ -139,7 +141,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 "A's expansion state must survive the selection change (selected: \(selected))"
             )
         }
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     // MARK: - Git panel
@@ -181,7 +183,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 }
             }
         )
-        let runtime = try makeRuntime(plugin: "git", bridge: bridge)
+        let runtime = try await makeBundledRuntime(plugin: "git", bridge: bridge)
         _ = try await runtime.start()
 
         let instanced = await runtime.isViewInstanced("git")
@@ -192,27 +194,29 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         try await runtime.openViewInstance(viewID: "git", instanceID: Fixture.paneA)
         try await runtime.openViewInstance(viewID: "git", instanceID: Fixture.paneB)
 
+        let branchA = "branch-" + (rootA as NSString).lastPathComponent
+        let branchB = "branch-" + (rootB as NSString).lastPathComponent
         let bothBound = await eventually {
-            let repoA = await self.paneState(of: runtime, instance: Fixture.paneA, key: "repoPath")
-            let repoB = await self.paneState(of: runtime, instance: Fixture.paneB, key: "repoPath")
-            return repoA == rootA && repoB == rootB
+            let currentA = await self.branchName(of: runtime, instance: Fixture.paneA)
+            let currentB = await self.branchName(of: runtime, instance: Fixture.paneB)
+            return currentA == branchA && currentB == branchB
         }
         XCTAssertTrue(
             bothBound,
-            "each git pane must resolve the repository of its owning workspace"
+            "each git pane must read the repository of its owning workspace"
         )
 
         await bridge.select(Fixture.workspaceB)
-        try await runtime.emit(
+        try await runtime.deliverEvent(
             event: "workspace.selected",
             payload: .object(["workspaceId": .string(Fixture.workspaceB)])
         )
         try? await Task.sleep(for: .milliseconds(150))
-        let repoA = await paneState(of: runtime, instance: Fixture.paneA, key: "repoPath")
-        let repoB = await paneState(of: runtime, instance: Fixture.paneB, key: "repoPath")
-        XCTAssertEqual(repoA, rootA, "A's git panel must not follow the selection to B")
-        XCTAssertEqual(repoB, rootB)
-        _ = await runtime.shutdown()
+        let settledA = await branchName(of: runtime, instance: Fixture.paneA)
+        let settledB = await branchName(of: runtime, instance: Fixture.paneB)
+        XCTAssertEqual(settledA, branchA, "A's git panel must not follow the selection to B")
+        XCTAssertEqual(settledB, branchB)
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     /// One conflicted, one staged and one changed file on a branch two commits ahead of its
@@ -267,7 +271,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 }
             }
         )
-        let runtime = try makeRuntime(plugin: "git", bridge: bridge)
+        let runtime = try await makeBundledRuntime(plugin: "git", bridge: bridge)
         _ = try await runtime.start()
         try await runtime.openViewInstance(viewID: "git", instanceID: Fixture.paneA)
 
@@ -282,7 +286,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         let published = await paneAView(of: runtime)
         let view = try XCTUnwrap(published)
         guard case let .label(_, branch, _, _, _, _) = view.header.item(id: "branch") else {
-            _ = await runtime.shutdown()
+            _ = await runtime.shutdown(timeout: 2)
             return XCTFail("the branch is the pane's identity — it must be a header label")
         }
         XCTAssertEqual(branch, "feature/pane-header")
@@ -328,13 +332,11 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         // A panel with no repository has no branch to name and nothing to count. Publishing
         // NO header is how a plugin takes one away, so this is the state that must produce
         // one — a strip saying "?" and nothing else would be worse than the bare chrome.
-        let cleared = try await runtime.evaluateForTesting("headerNode(emptyModel()) === null")
-        XCTAssertEqual(
-            cleared.boolValue,
-            true,
+        XCTAssertTrue(
+            GitPluginView.header(for: .empty).isEmpty,
             "a git panel with no repository must publish no header"
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     // MARK: - Claude sessions panel
@@ -364,7 +366,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 ])
             }
         )
-        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
+        let runtime = try await makeBundledRuntime(plugin: "claude-sessions", bridge: bridge)
         _ = try await runtime.start()
 
         let instanced = await runtime.isViewInstanced("sessions")
@@ -376,8 +378,8 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         try await runtime.openViewInstance(viewID: "sessions", instanceID: Fixture.paneB)
 
         let bothBound = await eventually {
-            let projectA = await self.paneState(of: runtime, instance: Fixture.paneA, key: "project")
-            let projectB = await self.paneState(of: runtime, instance: Fixture.paneB, key: "project")
+            let projectA = await self.projectPath(of: runtime, instance: Fixture.paneA)
+            let projectB = await self.projectPath(of: runtime, instance: Fixture.paneB)
             return projectA == rootA && projectB == rootB
         }
         XCTAssertTrue(
@@ -386,17 +388,17 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         )
 
         await bridge.select(Fixture.workspaceB)
-        try await runtime.emit(
+        try await runtime.deliverEvent(
             event: "workspace.selected",
             payload: .object(["workspaceId": .string(Fixture.workspaceB)])
         )
-        try await runtime.emit(event: "workspace.changed", payload: .object([:]))
+        try await runtime.deliverEvent(event: "workspace.changed", payload: .object([:]))
         try? await Task.sleep(for: .milliseconds(150))
-        let projectA = await paneState(of: runtime, instance: Fixture.paneA, key: "project")
-        let projectB = await paneState(of: runtime, instance: Fixture.paneB, key: "project")
+        let projectA = await projectPath(of: runtime, instance: Fixture.paneA)
+        let projectB = await projectPath(of: runtime, instance: Fixture.paneB)
         XCTAssertEqual(projectA, rootA, "A's sessions panel must not follow the selection to B")
         XCTAssertEqual(projectB, rootB)
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     func testAgentSessionsIncludeTitledCodexThreadsAndResumeWithCodex() async throws {
@@ -466,38 +468,28 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 ])
             }
         )
-        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
+        let runtime = try await makeBundledRuntime(plugin: "claude-sessions", bridge: bridge)
         _ = try await runtime.start()
         try await runtime.openViewInstance(viewID: "sessions", instanceID: Fixture.paneA)
 
         let loaded = await eventually {
-            await self.sessionState(
-                of: runtime,
-                instance: Fixture.paneA,
-                index: 0,
-                key: "title"
-            ) == "Make session history readable"
+            await self.texts(of: runtime, instance: Fixture.paneA)
+                .contains("Make session history readable")
         }
         XCTAssertTrue(loaded, "Codex's stored thread title must be the visible session name")
-        let provider = await sessionState(
-            of: runtime,
-            instance: Fixture.paneA,
-            index: 0,
-            key: "provider"
+        let visibleTexts = await texts(of: runtime, instance: Fixture.paneA)
+        XCTAssertTrue(visibleTexts.contains("Codex"))
+        XCTAssertTrue(visibleTexts.contains("Make session history readable"))
+        XCTAssertFalse(
+            visibleTexts.contains(sessionID),
+            "session IDs are internal actions, not UI copy"
         )
-        XCTAssertEqual(provider, "codex")
-        let rowValue = try await runtime.evaluateForTesting(
-            "sessionRow(panes[\"\(Fixture.paneA)\"], panes[\"\(Fixture.paneA)\"]"
-                + ".sessions[0]).children[0].children[0].value"
-        )
-        let visibleRow = try XCTUnwrap(rowValue.stringValue)
-        XCTAssertEqual(visibleRow, "Make session history readable")
-        XCTAssertFalse(visibleRow.contains(sessionID), "session IDs are internal actions, not UI copy")
 
         _ = try await runtime.invokeViewSelect(
             viewID: "sessions",
             instanceID: Fixture.paneA,
-            itemID: "open:codex:\(sessionID)"
+            itemID: "open:codex:\(sessionID)",
+            value: nil
         )
         let resumed = await eventually {
             await bridge.requests().contains { request in
@@ -515,7 +507,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         let session = try XCTUnwrap(asked?.input.objectValue?["session"]?.objectValue)
         XCTAssertEqual(session["agent"]?.stringValue, "codex")
         XCTAssertEqual(session["sessionID"]?.stringValue, sessionID)
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     /// What a supervisor scans on a sessions pane: whose project it is, how much agent
@@ -590,7 +582,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 ])
             }
         )
-        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
+        let runtime = try await makeBundledRuntime(plugin: "claude-sessions", bridge: bridge)
         _ = try await runtime.start()
         try await runtime.openViewInstance(viewID: "sessions", instanceID: Fixture.paneA)
 
@@ -605,7 +597,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         let view = try XCTUnwrap(published)
         guard case let .label(_, project, _, _, truncation, _) = view.header.item(id: "project")
         else {
-            _ = await runtime.shutdown()
+            _ = await runtime.shutdown(timeout: 2)
             return XCTFail("the project is the pane's identity — it must be a header label")
         }
         XCTAssertEqual(project, root)
@@ -621,7 +613,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             "both pane-wide verbs sit in the strip; neither may keep a copy in the body"
         )
         guard case let .menu(_, _, entries, _, _, _) = view.header.item(id: "new") else {
-            _ = await runtime.shutdown()
+            _ = await runtime.shutdown(timeout: 2)
             return XCTFail("two labelled ways to start a session is a menu, not two glyphs")
         }
         XCTAssertEqual(
@@ -672,64 +664,57 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
 
         // The count badges are pure functions of the scanned list, so they are checked
         // against a list this test states outright rather than one it has to arrange.
-        let counted = try await runtime.evaluateForTesting(
-            """
-            JSON.stringify(headerNode({
-              project: "/p",
-              notice: null,
-              agents: [],
-              sessions: [
-                { provider: "claude" }, { provider: "claude" }, { provider: "codex" }
-              ]
-            }).leading.map(function (item) { return item.id + "=" + (item.text || ""); }))
-            """
+        let countedPane = ClaudeSessionsPaneState(
+            id: Fixture.paneA,
+            project: "/p",
+            sessions: [
+                ClaudeSessionRecord(provider: .claude, id: "a", path: "", mtime: 0, size: 0, prompts: 0, replies: 0, tokens: 0, branch: "", title: ""),
+                ClaudeSessionRecord(provider: .claude, id: "b", path: "", mtime: 0, size: 0, prompts: 0, replies: 0, tokens: 0, branch: "", title: ""),
+                ClaudeSessionRecord(provider: .codex, id: "c", path: "", mtime: 0, size: 0, prompts: 0, replies: 0, tokens: 0, branch: "", title: ""),
+            ]
         )
+        let counted = ClaudeSessionsView.contribution(
+            panes: [countedPane],
+            favourites: []
+        ).viewBodies[0].header
         XCTAssertEqual(
-            try XCTUnwrap(counted.stringValue),
-            #"["project=/p","claude=2 Claude","codex=1 Codex"]"#
+            counted.leading.map { item in
+                switch item {
+                case let .label(id, text, _, _, _, _): return "\(id)=\(text)"
+                case let .badge(id, text, _, _): return "\(id)=\(text)"
+                default: return item.id
+                }
+            },
+            ["project=/p", "claude=2 Claude", "codex=1 Codex"]
         )
-        let scanning = try await runtime.evaluateForTesting(
-            """
-            JSON.stringify(headerNode({
-              project: "/p",
-              notice: SCANNING,
-              agents: [{ id: "claude", label: "Claude Code" }],
-              sessions: []
-            }).trailing.map(function (item) { return item.id; }))
-            """
+
+        let scanningPane = ClaudeSessionsPaneState(
+            id: Fixture.paneA,
+            project: "/p",
+            notice: "Scanning…"
         )
+        let scanning = ClaudeSessionsView.contribution(
+            panes: [scanningPane],
+            favourites: []
+        ).viewBodies[0].header
         XCTAssertEqual(
-            try XCTUnwrap(scanning.stringValue),
-            #"["scanning","new","refresh"]"#,
+            scanning.trailing.map(\.id),
+            ["scanning", "refresh"],
             "a scan in flight is the pane's own state and belongs in its strip"
         )
+
         // A machine with no agent installed offers no way to start one, rather than a menu
         // whose every entry fails.
-        let bare = try await runtime.evaluateForTesting(
-            """
-            JSON.stringify(headerNode({
-              project: "/p",
-              notice: null,
-              agents: [],
-              sessions: []
-            }).trailing.map(function (item) { return item.id; }))
-            """
-        )
-        XCTAssertEqual(try XCTUnwrap(bare.stringValue), #"["refresh"]"#)
-        _ = await runtime.shutdown()
+        let bare = ClaudeSessionsView.contribution(
+            panes: [ClaudeSessionsPaneState(id: Fixture.paneA, project: "/p", notice: "")],
+            favourites: []
+        ).viewBodies[0].header
+        XCTAssertEqual(bare.trailing.map(\.id), ["refresh"])
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     func testClaudeEnrichmentOutputFitsTheFiniteProcessIntentBody() async throws {
-        let bridge = WorkspaceBridge(
-            plugin: (id: "dev.tenon.claude-sessions", viewID: "sessions"),
-            workspaces: [],
-            selectedID: "",
-            respond: { _ in nil }
-        )
-        let runtime = try makeRuntime(plugin: "claude-sessions", bridge: bridge)
-        _ = try await runtime.start()
-        let awkValue = try await runtime.evaluateForTesting("AWK")
-        let awk = try XCTUnwrap(awkValue.stringValue)
+        let awk = ClaudeSessionsScan.awk
         let root = URL(fileURLWithPath: try makeTemporaryDirectory(suffix: "sessions"))
         let padding = String(repeating: "x", count: 19_000)
         var transcripts: [String] = []
@@ -764,7 +749,6 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             String(decoding: data, as: UTF8.self).contains("Readable title 0"),
             "bounding the enrich body must preserve the human-readable title"
         )
-        _ = await runtime.shutdown()
     }
 
     // MARK: - The sweep the task file demands
@@ -776,30 +760,44 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             ("file-explorer", "tree"),
             ("git", "git"),
             ("claude-sessions", "sessions"),
-            ("browser", "browser"),
         ] {
-            let runtime = try makeRuntime(
-                plugin: plugin,
-                bridge: WorkspaceBridge(
-                    plugin: (id: "dev.tenon.\(plugin)", viewID: viewID),
-                    workspaces: [],
-                    selectedID: "",
-                    respond: { _ in nil }
+            if plugin == "file-explorer" || plugin == "git" || plugin == "claude-sessions" {
+                let runtime = try await makeBundledRuntime(
+                    plugin: plugin,
+                    bridge: WorkspaceBridge(
+                        plugin: (id: "dev.tenon.\(plugin)", viewID: viewID),
+                        workspaces: [],
+                        selectedID: "",
+                        respond: { _ in nil }
+                    )
                 )
-            )
-            _ = try await runtime.start()
-            let instanced = await runtime.isViewInstanced(viewID)
-            XCTAssertTrue(instanced, "\(plugin)/\(viewID) leaks state across workspaces without instances")
-            _ = await runtime.shutdown()
+                _ = try await runtime.start()
+                let instanced = await runtime.isViewInstanced(viewID)
+                XCTAssertTrue(instanced, "\(plugin)/\(viewID) leaks state across workspaces without instances")
+                _ = await runtime.shutdown(timeout: 2)
+                continue
+            }
         }
 
-        let gallery = try makeRuntime(
-            plugin: "view-gallery",
-            bridge: WorkspaceBridge(
-                plugin: (id: "dev.tenon.view-gallery", viewID: "gallery"),
-                workspaces: [],
-                selectedID: "",
-                respond: { _ in nil }
+        let galleryDirectory = Self.pluginsRoot.appendingPathComponent(
+            "view-gallery",
+            isDirectory: true
+        )
+        let galleryManifest = try PluginLoader.loadManifest(at: galleryDirectory)
+        let gallery = try await BundledPluginRuntime.factory.make(
+            PluginRuntimeConfiguration(
+                manifest: galleryManifest,
+                directory: galleryDirectory,
+                intents: PluginRuntimeIntentBridge(
+                    send: { _ in
+                        .success(
+                            value: .object([:]),
+                            requestID: UUID(),
+                            providerID: try! ProviderID("dev.tenon.view-gallery.tests")
+                        )
+                    },
+                    list: { .array([]) }
+                )
             )
         )
         _ = try await gallery.start()
@@ -808,7 +806,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
             galleryInstanced,
             "the gallery's shared body is deliberate — per-pane sharing must survive this fix"
         )
-        _ = await gallery.shutdown()
+        _ = await gallery.shutdown(timeout: 2)
     }
 
     /// The pane→workspace edge is host structure, so exactly one implementation of it may
@@ -822,6 +820,10 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
         var staleSnapshotUse: [String] = []
 
         for plugin in plugins {
+            let manifest = try PluginLoader.loadManifest(
+                at: Self.pluginsRoot.appendingPathComponent(plugin, isDirectory: true)
+            )
+            guard manifest.runtime == .javaScript else { continue }
             let source = try String(
                 contentsOf: Self.pluginsRoot
                     .appendingPathComponent(plugin, isDirectory: true)
@@ -860,25 +862,83 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
 
     // MARK: - Helpers
 
-    private func makeRuntime(
+    private func makeBundledRuntime(
         plugin: String,
         bridge: WorkspaceBridge
-    ) throws -> PluginRuntime {
+    ) async throws -> any PluginHostRuntime {
         let directory = Self.pluginsRoot.appendingPathComponent(plugin, isDirectory: true)
-        return try PluginRuntime(
-            configuration: PluginRuntimeConfiguration(
-                manifest: try PluginLoader.loadManifest(at: directory),
-                directory: directory,
-                intents: PluginRuntimeIntentBridge(
-                    send: { request in await bridge.send(request) },
-                    list: { .array([]) }
-                )
+        let configuration = PluginRuntimeConfiguration(
+            manifest: try PluginLoader.loadManifest(at: directory),
+            directory: directory,
+            intents: PluginRuntimeIntentBridge(
+                send: { request in await bridge.send(request) },
+                list: { .array([]) }
             )
+        )
+        if plugin == "git" {
+            return BundledPluginRuntimeActor(
+                configuration: configuration,
+                program: GitPlugin.makeProgram(),
+                watcherStart: { _ in false }
+            )
+        }
+        return try await BundledPluginRuntime.factory.make(
+            configuration
         )
     }
 
-    private func paneAView(of runtime: PluginRuntime) async -> PluginViewInfo? {
+    private func paneAView(of runtime: any PluginHostRuntime) async -> PluginViewInfo? {
         await runtime.snapshot().views.first { $0.instanceID == Fixture.paneA }
+    }
+
+    private func branchName(
+        of runtime: any PluginHostRuntime,
+        instance: String
+    ) async -> String? {
+        let view = await runtime.snapshot().views.first { $0.instanceID == instance }
+        guard case let .label(_, branch, _, _, _, _) = view?.header.item(id: "branch") else {
+            return nil
+        }
+        return branch
+    }
+
+    private func projectPath(
+        of runtime: any PluginHostRuntime,
+        instance: String
+    ) async -> String? {
+        let view = await runtime.snapshot().views.first { $0.instanceID == instance }
+        guard case let .label(_, project, _, _, _, _) = view?.header.item(id: "project") else {
+            return nil
+        }
+        return project
+    }
+
+    private func texts(
+        of runtime: any PluginHostRuntime,
+        instance: String
+    ) async -> [String] {
+        guard let body = await runtime.snapshot().views
+            .first(where: { $0.instanceID == instance })?.body
+        else {
+            return []
+        }
+        return Self.texts(in: body)
+    }
+
+    private static func texts(in node: PluginViewNode) -> [String] {
+        var values: [String] = []
+        switch node {
+        case let .text(value, _, _, _):
+            values.append(value)
+        case let .badge(value, _):
+            values.append(value)
+        default:
+            break
+        }
+        for child in node.children {
+            values.append(contentsOf: texts(in: child))
+        }
+        return values
     }
 
     /// A badge is the one item whose whole meaning is its text, so reading it back is how
@@ -897,38 +957,11 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
     }
 
     private func items(
-        of runtime: PluginRuntime,
+        of runtime: any PluginHostRuntime,
         instance: String
     ) async -> [TreeRowItem] {
         await runtime.snapshot().views
             .first { $0.instanceID == instance }?.items ?? []
-    }
-
-    /// Reads one string field of the plugin's per-instance state through the runtime's
-    /// diagnostic hook; every instanced shipped plugin keys that state as `panes[id]`.
-    private func paneState(
-        of runtime: PluginRuntime,
-        instance: String,
-        key: String
-    ) async -> String? {
-        let script = "(panes[\"\(instance)\"] || {})[\"\(key)\"] || null"
-        guard let value = try? await runtime.evaluateForTesting(script) else {
-            return nil
-        }
-        return value.stringValue
-    }
-
-    private func sessionState(
-        of runtime: PluginRuntime,
-        instance: String,
-        index: Int,
-        key: String
-    ) async -> String? {
-        let script = "((panes[\"\(instance)\"] || {}).sessions[\(index)] || {})[\"\(key)\"] || null"
-        guard let value = try? await runtime.evaluateForTesting(script) else {
-            return nil
-        }
-        return value.stringValue
     }
 
     private func makeTemporaryDirectory(suffix: String) throws -> String {

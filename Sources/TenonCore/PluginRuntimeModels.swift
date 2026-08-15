@@ -418,6 +418,8 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
     case missingIntentHandlers([IntentID])
     case duplicateIntentHandler(IntentID)
     case bundledSwiftImplementationUnavailable(PluginID)
+    case invalidStartupTimeout(TimeInterval)
+    case startupTimedOut(TimeInterval)
     case runtimeStopped
     case providerHandlerUnavailable(IntentID)
     case providerHandlerFailed(String)
@@ -444,6 +446,10 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
             "duplicate handler for \(intentID.rawValue)"
         case let .bundledSwiftImplementationUnavailable(pluginID):
             "no bundled Swift implementation was compiled for \(pluginID.rawValue)"
+        case let .invalidStartupTimeout(timeout):
+            "invalid plugin startup timeout: \(timeout)"
+        case let .startupTimedOut(timeout):
+            "plugin activation exceeded startup timeout: \(timeout)s"
         case .runtimeStopped:
             "plugin runtime is stopped"
         case let .providerHandlerUnavailable(intentID):

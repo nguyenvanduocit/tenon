@@ -299,7 +299,7 @@ final class PluginBuiltinsTests: XCTestCase {
             )
         )
         _ = try await runtime.start()
-        try await runtime.emit(
+        try await runtime.deliverEvent(
             event: "settings.changed",
             payload: .object([
                 "key": .string("root"),

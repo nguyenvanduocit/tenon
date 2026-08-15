@@ -3,6 +3,7 @@
   "name": "claude-sessions",
   "version": "0.1.0",
   "displayName": "Agent Sessions",
+  "runtime": "bundled-swift",
   "icon": "clock.arrow.circlepath",
   "permissions": ["filesystem.read", "process.exec", "terminal.write", "workspace.control"],
   "intents": {

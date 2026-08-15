@@ -4,14 +4,10 @@ import Foundation
 import TenonIntentCore
 import XCTest
 
-/// Guards the boundary T-155 stated in prose: compiled plugin view callbacks are a follow-up,
-/// so no shipped bundled-swift plugin may publish a view until the runtime routes them.
-///
-/// `ShippedPluginsTests` proves both backends stage their declared handlers; it cannot see
-/// this failure mode, because a bundled-swift plugin that publishes views stages cleanly and
-/// then drops every select/submit in `BundledPluginRuntimeActor` — working-looking UI whose
-/// clicks go nowhere. When view routing lands, the view assertions here are the ones to
-/// replace with routing coverage, in the same change.
+/// Guards the bundled-Swift replacement boundary: every shipped compiled plugin must delete
+/// its JavaScript entrypoint in the same change. View callback behavior is covered by
+/// `BundledPluginViewRoutingTests`, which exercises the compiled runtime directly alongside
+/// the shipped view ports.
 final class BundledPluginMigrationGuardTests: XCTestCase {
     private static var pluginsRoot: URL {
         URL(fileURLWithPath: #filePath)
@@ -24,6 +20,13 @@ final class BundledPluginMigrationGuardTests: XCTestCase {
     private static let portedIDs: Set<PluginID> = [
         "dev.tenon.clock",
         "dev.tenon.core-commands",
+        "dev.tenon.browser",
+        "dev.tenon.hello-palette",
+        "dev.tenon.file-explorer",
+        "dev.tenon.claude-sessions",
+        "dev.tenon.git",
+        "dev.tenon.kanban",
+        "dev.tenon.view-gallery",
         "dev.tenon.workspace-status",
     ]
 
@@ -43,42 +46,6 @@ final class BundledPluginMigrationGuardTests: XCTestCase {
                 "\(record.manifest.id.rawValue) is compiled Swift but still ships main.js; "
                     + "replacement finishes — delete the shadowing entrypoint"
             )
-        }
-    }
-
-    func testBundledPluginsPublishNoViewsWhileTheRuntimeDropsViewCallbacks() async throws {
-        for record in try bundledSwiftPlugins() {
-            let runtime = try await BundledPluginRuntime.factory.make(
-                configuration(for: record)
-            )
-            let started = try await runtime.start()
-            XCTAssertTrue(
-                started.snapshot.views.isEmpty,
-                "\(record.manifest.id.rawValue) publishes views "
-                    + "\(started.snapshot.views.map(\.viewID)), but the compiled runtime "
-                    + "drops every view callback — route select/submit/open/close through "
-                    + "BundledPluginProgram first, then replace this guard with routing "
-                    + "coverage (T-155 follow-up, docs/plugin-migration-bundled-swift.md)"
-            )
-            let selectHandled = try await runtime.invokeViewSelect(
-                viewID: "any",
-                instanceID: nil,
-                itemID: "any",
-                value: nil
-            )
-            let submitHandled = try await runtime.invokeViewSubmit(
-                viewID: "any",
-                instanceID: nil,
-                itemID: "any",
-                text: ""
-            )
-            XCTAssertFalse(
-                selectHandled || submitHandled,
-                "the compiled runtime now handles view callbacks; the views-empty guard "
-                    + "above must become routing coverage in this same change"
-            )
-            let report = await runtime.shutdown(timeout: 2)
-            XCTAssertEqual(report.executorResult, .stopped)
         }
     }
 

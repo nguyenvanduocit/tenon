@@ -1,4 +1,5 @@
 import Foundation
+@testable import TenonBundledPlugins
 @testable import TenonIntentCore
 import XCTest
 @testable import TenonCore
@@ -25,7 +26,7 @@ final class BrowserPluginTests: XCTestCase {
         XCTAssertNotNil(provision.palette)
 
         let bridge = BrowserIntentBridge()
-        let runtime = try makeRuntime(manifest: manifest, bridge: bridge)
+        let runtime = try await makeRuntime(manifest: manifest, bridge: bridge)
         let started = try await runtime.start()
         let intentID = try IntentID("dev.tenon.browser.open.v1")
         let binding = try XCTUnwrap(
@@ -62,14 +63,14 @@ final class BrowserPluginTests: XCTestCase {
                 ]),
             ])
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     func testBrowserInstanceRendersAndRoutesNavigationThroughSurfaceIntents()
         async throws
     {
         let bridge = BrowserIntentBridge()
-        let runtime = try makeRuntime(
+        let runtime = try await makeRuntime(
             manifest: loadManifest(),
             bridge: bridge
         )
@@ -120,7 +121,7 @@ final class BrowserPluginTests: XCTestCase {
         XCTAssertTrue(navigationSettled)
         snapshot = await runtime.snapshot()
         guard let address = Self.address(of: snapshot.views.first) else {
-            _ = await runtime.shutdown()
+            _ = await runtime.shutdown(timeout: 2)
             return XCTFail("expected the address field in the pane's chrome header")
         }
         XCTAssertEqual(address, "https://example.com")
@@ -129,7 +130,8 @@ final class BrowserPluginTests: XCTestCase {
             let invoked = try await runtime.invokeViewSelect(
                 viewID: "browser",
                 instanceID: "pane-a",
-                itemID: action
+                itemID: action,
+                value: nil
             )
             XCTAssertTrue(invoked)
         }
@@ -160,7 +162,7 @@ final class BrowserPluginTests: XCTestCase {
                 $0.input.objectValue?["surfaceID"]?.stringValue == "pane-a"
             }
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     /// An opener names where it wants to go before the pane it will go in exists. Without
@@ -177,7 +179,7 @@ final class BrowserPluginTests: XCTestCase {
         XCTAssertNil(provision.inputSchema?.objectValue?["required"])
 
         let bridge = BrowserIntentBridge()
-        let runtime = try makeRuntime(manifest: manifest, bridge: bridge)
+        let runtime = try await makeRuntime(manifest: manifest, bridge: bridge)
         let started = try await runtime.start()
         let intentID = try IntentID("dev.tenon.browser.open.v1")
         let binding = try XCTUnwrap(
@@ -208,17 +210,17 @@ final class BrowserPluginTests: XCTestCase {
         XCTAssertTrue(landed, "the new pane never loaded the address it was opened for")
 
         guard let address = Self.address(of: await runtime.snapshot().views.first) else {
-            _ = await runtime.shutdown()
+            _ = await runtime.shutdown(timeout: 2)
             return XCTFail("expected the address field in the pane's chrome header")
         }
         XCTAssertEqual(address, "https://tenon.dev/docs")
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     /// A refused open must not redirect the next one. The parked address is one-shot.
     func testARefusedOpenDoesNotRedirectTheNextPane() async throws {
         let bridge = BrowserIntentBridge(failNestedRequests: true)
-        let runtime = try makeRuntime(manifest: try loadManifest(), bridge: bridge)
+        let runtime = try await makeRuntime(manifest: try loadManifest(), bridge: bridge)
         let started = try await runtime.start()
         let intentID = try IntentID("dev.tenon.browser.open.v1")
         let binding = try XCTUnwrap(
@@ -243,7 +245,7 @@ final class BrowserPluginTests: XCTestCase {
                 == "https://duckduckgo.com"
         }
         XCTAssertTrue(showedHome, "a refused open leaked its address into the next pane")
-        _ = await runtime.shutdown()
+            _ = await runtime.shutdown(timeout: 2)
     }
 
     /// The address this pane is showing, read off the `go` field the browser publishes into
@@ -269,9 +271,9 @@ final class BrowserPluginTests: XCTestCase {
     private func makeRuntime(
         manifest: PluginManifest,
         bridge: BrowserIntentBridge
-    ) throws -> PluginRuntime {
-        try PluginRuntime(
-            configuration: PluginRuntimeConfiguration(
+    ) async throws -> any PluginHostRuntime {
+        try await BundledPluginRuntime.factory.make(
+            PluginRuntimeConfiguration(
                 manifest: manifest,
                 directory: Self.pluginDirectory,
                 intents: PluginRuntimeIntentBridge(

@@ -1,20 +1,19 @@
-# Bundled-Swift migration map — the five view plugins
+# Bundled-Swift migration map — compiled shipped inventory
 
-- **Status:** current — the working map for the ports T-155 left open
+- **Status:** current — all shipped bundled plugins are compiled Swift programs
 - **Anchors:** `.kanban/tasks/T-155-bundled-swift-is-an-implementation-not-a-second-plugin-system.md`
   (decision and follow-up boundary),
   [`architecture-interaction-boundaries.md`](architecture-interaction-boundaries.md)
   ("Implementation language never reclassifies the boundary"),
-  `Tests/TenonCoreTests/BundledPluginMigrationGuardTests.swift` (the guard this map pairs with)
+  `Tests/TenonCoreTests/BundledPluginViewRoutingTests.swift` (compiled callback coverage),
+  `Tests/TenonCoreTests/BundledPluginMigrationGuardTests.swift` (entrypoint guard)
 
-T-155 ported `clock`, `core-commands`, and `workspace-status` — the three plugins with no
-view. The five that remain (`browser`, `git`, `file-explorer`, `claude-sessions`, `kanban`)
-all register an **instanced view**, and the compiled runtime does not route view callbacks
-yet: `BundledPluginRuntimeActor.invokeViewSelect/invokeViewSubmit` return `false`,
-`openViewInstance/closeViewInstance` reach no program code, and `PluginRuntimeSnapshot.
-openViewInstances` is always empty. A port taken today would stage cleanly, render its view,
-and drop every click. The guard test keeps that state unshippable; this map says what has to
-land, in what order, to lift it.
+T-167 has ported all ten shipped bundled plugins — `clock`, `core-commands`,
+`workspace-status`, `browser`, `hello-palette`, `view-gallery`, `file-explorer`,
+`claude-sessions`, `git`, and `kanban`. The compiled runtime routes
+select/submit/open/close through a bounded callback pump, tracks open instances, separates
+static view registration from instance bodies, and accepts push contributions from
+intent/timer/watch work. `BundledPluginViewRoutingTests` covers that seam directly.
 
 Nothing here changes a plugin's classification. A `bundled-swift` manifest still owns a
 plugin generation: views and status stay CONTRIBUTIONs, select/submit stay owner-scoped
@@ -24,51 +23,64 @@ package-internal program shape — not the public boundary.
 
 ## What the compiled runtime serves today
 
-- `activate` / `receiveEvent` → one `BundledPluginContribution` (status-bar text + static
-  views) republished through the snapshot path;
+- `activate` / `receiveEvent` → one `BundledPluginContribution`; static view registrations and
+  per-instance bodies are separate, then materialized into the host snapshot;
 - `invokeIntent` with `IntentProviderContext` for causal nested sends;
 - statically declared `subscribedEvents`, delivered through a bounded 256-entry mailbox;
-- `emit` for manifest-declared published channels;
-- manifest settings via `PluginRuntimeLocalState`, storage via
-  `PluginRuntimeConfiguration.PersistStorage`, attributed logging.
+- view select/submit/open/close callbacks share that mailbox and return replacement contributions;
+- `BundledPluginContext.publishContribution` pushes a contribution back through the same pump;
+- generation-owned timers and filesystem watches are bounded, permission-gated, and cancelled
+  on generation retirement or instance close;
+- two separately named event directions: `PluginHostRuntime.deliverEvent` carries a
+  host-addressed fact into the generation, and `BundledPluginContext.emit` publishes one of
+  the plugin's own manifest-declared channels back out;
+- live manifest settings and plugin-private storage on `BundledPluginContext`
+  (`setting`, `storageValue`, `setStorageValue`), refreshed by a delivered `settings.changed`
+  and by a host-confirmed write; attributed logging.
 
 ## Runtime gaps, in dependency order
 
 | # | Gap | Blocks | Shape of the work |
 |---|---|---|---|
-| 1 | **View event routing.** `BundledPluginProgram` needs a view-event entry (select, submit, open, close — instance-scoped) that `invokeViewSelect/invokeViewSubmit/openViewInstance/closeViewInstance` call, returning an optional replacement contribution like `receiveEvent` does. | all five | Same EVENT classification the JS runtime uses; no new `tenon` surface, no host services. |
-| 2 | **View-instance state.** All five views declare `instanced: true`; the actor must track open instances so `openViewInstances` in the snapshot stops being hardcoded `[]` and per-instance republish works. | all five | Actor-local state, torn down on shutdown (invariant 10). |
-| 3 | **Compiled-program resources: timers and fs.watch.** `timers.after/every/cancel` and `fs.watch` with generation-scoped cancellation on retirement. `process.stream` is needed by none of the five. | git, kanban | Mirror the JS resource bounds; retirement cancels everything the generation owns. |
-| 4 | **Storage read semantics on the compiled context.** The write path exists (`persistStorage`); `claude-sessions` also depends on the documented read-back cache behaviour of `tenon.storage.get` after a refused host write. | claude-sessions | Small; verify parity with the JS facility before relying on it. |
+| 1 | **View event routing and instance state.** **Delivered 2026-08-14 (T-167 S3).** Registration, per-instance bodies, callback routing, open-instance snapshots, close pruning, and ordered callback delivery are covered by `BundledPluginViewRoutingTests`. | all five | No new `tenon` surface; callbacks remain owner-scoped EVENT facts. |
+| 2 | **Compiled-program resources.** **Delivered in the current seam.** `timers.after/every/cancel` and `fs.watch` are bounded, generation-owned, instance-owned when requested, permission-gated, and retired with the owner. | git, kanban | Remaining port work is plugin-specific behavior and parser tests, not runtime plumbing. |
+| 3 | **Storage read semantics on the compiled context.** Shipped 2026-08-14 (T-167 S2): `BundledPluginContext.storageValue` answers with the last host-confirmed write, so a refused write leaves the previous value readable. | claude-sessions | Delivered — `BundledPluginLocalStateTests.testStorageReadsTheCommittedValueAndARefusedWriteKeepsThePrevious`. |
+| 4 | **Exact path semantics and structured actions.** `PluginPath` now matches the bootstrap's POSIX string rules, and `PluginNodeAction` carries string or structured values directly in both backends. | file-explorer, all views | Remaining work is to use the shared path seam in the file-explorer port. |
+| 5 | **Bounded activation and fail-soft inventory.** Startup must obey `startupTimeout`; one untrusted/unregistered bundled program must fail its own record without aborting unrelated plugins. | all ports | Add red-first lifecycle/load tests before flipping manifests. |
 
 Deliberately **not** on the list: dynamic palette providers (`palette.registerProvider` is
-used only by `hello-palette`, which stays JavaScript as the teaching example) and
-`tenon.path.*` (pure string helpers Swift already has).
+available but no shipped plugin uses it).
 
-## Per-plugin map
+## Port status
 
-Measured from `plugins/*/main.js` and each manifest on 2026-08-14.
+The line counts below are the pre-port JavaScript source measurements from 2026-08-14. They
+remain useful as migration evidence; the shipped implementations now live in
+`Sources/TenonBundledPlugins`.
 
-| Plugin | Lines | Waits on gap | Beyond the view: what the port carries |
+| Plugin | Pre-port JS lines | Status | Beyond the view: what the compiled port carries |
 |---|---:|---|---|
-| `browser` | 137 | 1, 2 | 1 provided intent, 5 used intents, observes `web.did-navigate`, 2 settings. No timers, no watch, no storage. |
-| `file-explorer` | 494 | 1, 2 | 5 provided intents, 14 used intents, observes `settings.changed` / `workspace.changed` / `pane.cwd-changed` / `workspace.slot-focused` / `workspace.slot-closed`. Path helpers become plain Swift. |
-| `claude-sessions` | 1,009 | 1, 2, 4 | 2 provided intents, favourites in plugin storage, observes `settings.changed` / `workspace.changed`. Heavy scan logic is pure and moves as ordinary Swift. |
-| `git` | 843 | 1, 2, 3 | 400 ms debounce (`timers.after`), 15 s poll (`timers.every`), recursive `fs.watch` on the repo, status-bar text (already supported), 6 provided intents, six observed channels. |
-| `kanban` | 1,021 | 1, 2, 3 | Debounce + tracking timers, recursive `fs.watch`, publishes `board.changed` (`emit` already supported), staged `filesystem.file.write.v1` for the 113 KB board (host-side resource, unchanged). Owned by T-150; T-151's full-tree resend cost is the other reason this one goes last. |
+| `clock` | — | ported | Status-bar clock contribution. |
+| `core-commands` | — | ported | Core command providers and workspace actions. |
+| `workspace-status` | — | ported | Workspace status-bar contribution. |
+| `browser` | 137 | ported | 1 provided intent, 5 used intents, observes `web.did-navigate`, 2 settings. No timers, watch, or storage. |
+| `hello-palette` | — | ported | Compiled palette provider; the JavaScript parity fixture lives under `Tests/Fixtures`. |
+| `view-gallery` | — | ported | Static and instanced view-gallery contributions. |
+| `file-explorer` | 494 | ported | 5 provided intents, 14 used intents, observes `settings.changed` / `workspace.changed` / `pane.cwd-changed` / `workspace.slot-focused` / `workspace.slot-closed`. Path helpers use the shared Swift seam. |
+| `claude-sessions` | 1,009 | ported | 2 provided intents, favourites in plugin storage, observes `settings.changed` / `workspace.changed`, and keeps scan logic as ordinary Swift. |
+| `git` | 843 | ported | 400 ms debounce, 15 s poll, recursive repository watch, status-bar text, 6 provided intents, and six observed channels. |
+| `kanban` | 1,021 | ported | Debounce and tracking timers, recursive watch, `board.changed`, and staged board writes through the existing host resource. |
 
-**Port order: browser → file-explorer → claude-sessions → git → kanban.** The first three
-need no new resource machinery, so gaps 1–2 alone unlock them smallest-first; git and kanban
-wait for gap 3, and kanban additionally belongs to T-150's scope and decision log.
+**Completed port order:** browser → file-explorer → claude-sessions → git → kanban, with the
+small providers ported alongside the runtime seam. All compiled implementations follow the
+same manifest-backed boundaries; third-party JavaScript remains supported and hot-reloadable.
 
 ## Rules every port keeps (enforced, not remembered)
 
 - The manifest keeps its exact `id`, permissions, `intents.uses/provides`, events, and
   settings; only `runtime: bundled-swift` is added and `main.js` is deleted **in the same
   change** — `BundledPluginMigrationGuardTests` reddens on a shadowing entrypoint.
-- No bundled-swift plugin publishes a view until gap 1 lands —
-  `testBundledPluginsPublishNoViewsWhileTheRuntimeDropsViewCallbacks` reddens, and its
-  companion assertion reddens when routing lands, forcing the guard to become routing
-  coverage in that same change.
+- View callback behavior is covered by `BundledPluginViewRoutingTests`; the migration guard no
+  longer asserts that compiled plugins publish no views. A port must still add its own handler,
+  instance, contribution, and negative lifecycle coverage before its manifest flips.
 - `ShippedPluginsTests` continues to stage every declared handler for both backends; a
   compiled port missing a program or a handler fails there by exact id.

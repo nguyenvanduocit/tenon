@@ -1351,7 +1351,7 @@ private actor FakePluginRuntime: PluginHostRuntime {
         instancedViewIDs.contains(viewID)
     }
 
-    func emit(event: String, payload: IntentValue) throws {
+    func deliverEvent(event: String, payload: IntentValue) throws {
         emittedEvents.record(event: event, payload: payload)
     }
 

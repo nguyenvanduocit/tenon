@@ -1,11 +1,12 @@
 import Foundation
+@testable import TenonBundledPlugins
 import TenonIntentCore
 import XCTest
 @testable import TenonCore
 
 /// Runtime truth, not a regex over source: the real shipped `file-explorer` and `git`
-/// JavaScript is evaluated in a real runtime with its real manifest, and asked whether it
-/// actually registered a subscription for the pane-directory fact.
+/// runtimes are evaluated with their real manifests, and asked whether they actually register
+/// a subscription for the pane-directory fact.
 ///
 /// This is the half of T-030 that a plugin owns. It is deliberately assertable without the
 /// publisher being wired, so "the plugins will re-root when the event lands" is evidence
@@ -61,18 +62,26 @@ final class PaneCwdSubscriptionTests: XCTestCase {
         line: UInt = #line
     ) async throws {
         let directory = Self.pluginsRoot.appendingPathComponent(plugin, isDirectory: true)
-        let runtime = try PluginRuntime(
-            configuration: PluginRuntimeConfiguration(
-                manifest: try PluginLoader.loadManifest(at: directory),
-                directory: directory,
-                intents: PluginRuntimeIntentBridge(
-                    // The plugin's start-up work fails closed here; the subscriptions it
-                    // registers at module scope are what this asserts.
-                    send: { _ in Self.unavailable() },
-                    list: { .array([]) }
-                )
+        let configuration = PluginRuntimeConfiguration(
+            manifest: try PluginLoader.loadManifest(at: directory),
+            directory: directory,
+            intents: PluginRuntimeIntentBridge(
+                // The plugin's start-up work fails closed here; the subscriptions it
+                // registers at module scope are what this asserts.
+                send: { _ in Self.unavailable() },
+                list: { .array([]) }
             )
         )
+        let runtime: any PluginHostRuntime
+        if plugin == "git" {
+            runtime = BundledPluginRuntimeActor(
+                configuration: configuration,
+                program: GitPlugin.makeProgram(),
+                watcherStart: { _ in false }
+            )
+        } else {
+            runtime = try await BundledPluginRuntime.factory.make(configuration)
+        }
         _ = try await runtime.start()
         let handles = await runtime.handles(event: event)
         XCTAssertTrue(
@@ -81,7 +90,7 @@ final class PaneCwdSubscriptionTests: XCTestCase {
             file: file,
             line: line
         )
-        _ = await runtime.shutdown()
+        _ = await runtime.shutdown(timeout: 2)
     }
 
     private static func unavailable() -> IntentResult {

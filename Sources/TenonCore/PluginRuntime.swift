@@ -404,7 +404,10 @@ public actor PluginRuntime {
         ) == .enqueued
     }
 
-    public func emit(event: String, payload: IntentValue) throws {
+    /// Delivers a host-owned fact into this generation: `__tenonEmit` refreshes the owned
+    /// settings cache for a `settings.changed` and then hands the fact to the plugin's own
+    /// `events.on` handlers.
+    public func deliverEvent(event: String, payload: IntentValue) throws {
         guard phase == .active else { throw PluginRuntimeError.runtimeStopped }
         _ = try callJavaScript(
             "__tenonEmit",
@@ -423,12 +426,54 @@ public actor PluginRuntime {
         itemID: String,
         value: IntentValue? = nil
     ) throws -> Bool {
+        try invokeViewSelectAction(
+            viewID: viewID,
+            instanceID: instanceID,
+            action: .string(itemID),
+            value: value
+        )
+    }
+
+    public func invokeViewSelect(
+        viewID: String,
+        instanceID: String? = nil,
+        itemID: PluginNodeAction,
+        value: IntentValue? = nil
+    ) throws -> Bool {
+        try invokeViewSelectAction(
+            viewID: viewID,
+            instanceID: instanceID,
+            action: itemID,
+            value: value
+        )
+    }
+
+    public func invokeViewSelect(
+        viewID: String,
+        instanceID: String? = nil,
+        action: PluginNodeAction,
+        value: IntentValue? = nil
+    ) async throws -> Bool {
+        try invokeViewSelectAction(
+            viewID: viewID,
+            instanceID: instanceID,
+            action: action,
+            value: value
+        )
+    }
+
+    private func invokeViewSelectAction(
+        viewID: String,
+        instanceID: String?,
+        action: PluginNodeAction,
+        value: IntentValue?
+    ) throws -> Bool {
         try callJavaScriptBool(
             "__tenonViewSelect",
             arguments: [
                 viewID,
                 instanceID ?? NSNull(),
-                decodeActionIdentifier(itemID),
+                PluginRuntimeValueParsing.foundationObject(from: action.intentValue),
                 value.map(PluginRuntimeValueParsing.foundationObject(from:)) ?? NSNull(),
             ]
         )
@@ -443,7 +488,12 @@ public actor PluginRuntime {
     ) throws -> Bool {
         try callJavaScriptBool(
             "__tenonViewSubmit",
-            arguments: [viewID, instanceID ?? NSNull(), decodeActionIdentifier(itemID), text]
+            arguments: [
+                viewID,
+                instanceID ?? NSNull(),
+                itemID,
+                text,
+            ]
         )
     }
 
@@ -2102,17 +2152,6 @@ private extension PluginRuntime {
 
     func emitLog(_ message: String) {
         logQueue.append("[\(manifest.name)] " + message)
-    }
-
-    func decodeActionIdentifier(_ identifier: String) -> Any {
-        guard identifier.hasPrefix("\u{1}") else { return identifier }
-        let json = String(identifier.dropFirst())
-        guard let data = json.data(using: .utf8),
-              let value = try? IntentValue(jsonData: data)
-        else {
-            return identifier
-        }
-        return PluginRuntimeValueParsing.foundationObject(from: value)
     }
 
     static func overloadedResultValue() -> IntentValue {

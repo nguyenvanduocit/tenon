@@ -21,7 +21,7 @@ final class PluginPlatformTests: XCTestCase {
         )
         XCTAssertTrue(handlesWorkspaceChanges)
 
-        try await runtime.emit(
+        try await runtime.deliverEvent(
             event: "workspace.changed",
             payload: .object(["tabs": .integer(3)])
         )

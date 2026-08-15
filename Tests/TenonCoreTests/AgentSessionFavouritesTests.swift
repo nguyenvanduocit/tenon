@@ -1,9 +1,10 @@
 import Foundation
+@testable import TenonBundledPlugins
 import TenonIntentCore
 import XCTest
 @testable import TenonCore
 
-/// T-148: the shipped `claude-sessions` plugin's favourites, driven as real JavaScript.
+/// T-148: the shipped `claude-sessions` plugin's favourites, driven through the compiled port.
 ///
 /// The claim these tests make is narrow and is the whole point of the feature: a mark
 /// **outlives the recent cutoff**. The pane slices its scan to the `limit` setting, so a
@@ -11,8 +12,8 @@ import XCTest
 /// when it becomes worth remembering. Claude's listing keeps a marked transcript out of the
 /// slice; Codex's bounded SQLite index is asked a second time, by ID.
 ///
-/// Nothing here needs host Swift: `tenon.storage` is already a closed scoped facility, so
-/// the feature is manifest-free and lives entirely behind the public plugin boundary.
+/// The test keeps the public plugin boundary intact while exercising the compiled program
+/// directly, so it does not depend on the registry owner landing in the same worktree turn.
 final class AgentSessionFavouritesTests: XCTestCase {
     private static var pluginsRoot: URL {
         URL(fileURLWithPath: #filePath)
@@ -38,8 +39,9 @@ final class AgentSessionFavouritesTests: XCTestCase {
     /// The defining case. `sess-25` is the 26th newest transcript with the window set to 10,
     /// so without the mark it is not in the pane at all.
     func testAMarkedClaudeSessionSurvivesTheRecentCutoff() async throws {
+        let bridge = makeBridge(claudeTranscripts: 30)
         let runtime = try await makeStartedRuntime(
-            bridge: makeBridge(claudeTranscripts: 30),
+            bridge: bridge,
             favourites: [Favourite(key: "claude:sess-25", project: Fixture.project)]
         )
         try await runtime.openViewInstance(viewID: "sessions", instanceID: Fixture.pane)
@@ -103,7 +105,8 @@ final class AgentSessionFavouritesTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "sessions",
             instanceID: Fixture.pane,
-            itemID: "fav:claude:sess-01"
+            itemID: "fav:claude:sess-01",
+            value: nil
         )
         let marked = await eventually {
             await persisted.keys() == ["claude:sess-01"]
@@ -123,7 +126,8 @@ final class AgentSessionFavouritesTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "sessions",
             instanceID: Fixture.pane,
-            itemID: "fav:claude:sess-01"
+            itemID: "fav:claude:sess-01",
+            value: nil
         )
         let unmarked = await eventually { await persisted.keys().isEmpty }
         let leftBehind = await persisted.keys()
@@ -194,7 +198,8 @@ final class AgentSessionFavouritesTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "sessions",
             instanceID: Fixture.pane,
-            itemID: "fav:claude:sess-00"
+            itemID: "fav:claude:sess-00",
+            value: nil
         )
         let reported = await eventually {
             await self.texts(of: runtime, instance: Fixture.pane)
@@ -232,7 +237,8 @@ final class AgentSessionFavouritesTests: XCTestCase {
         _ = try await runtime.invokeViewSelect(
             viewID: "sessions",
             instanceID: Fixture.pane,
-            itemID: "fav:claude:sess-01"
+            itemID: "fav:claude:sess-01",
+            value: nil
         )
         let written = await eventually { await persisted.keys().count > 0 }
         XCTAssertTrue(written, "the mark never reached storage")
@@ -281,15 +287,15 @@ final class AgentSessionFavouritesTests: XCTestCase {
         bridge: SessionsBridge,
         favourites: [Favourite] = [],
         persist: @escaping PluginRuntimeConfiguration.PersistStorage = { _, _ in }
-    ) async throws -> PluginRuntime {
+    ) async throws -> any PluginHostRuntime {
         let directory = Self.pluginsRoot
             .appendingPathComponent("claude-sessions", isDirectory: true)
         var storage: [String: IntentValue] = [:]
         if !favourites.isEmpty {
             storage["favourites"] = .array(favourites.map(\.value))
         }
-        let runtime = try PluginRuntime(
-            configuration: PluginRuntimeConfiguration(
+        let runtime = try await BundledPluginRuntime.factory.make(
+            PluginRuntimeConfiguration(
                 manifest: try PluginLoader.loadManifest(at: directory),
                 directory: directory,
                 intents: PluginRuntimeIntentBridge(
@@ -309,11 +315,11 @@ final class AgentSessionFavouritesTests: XCTestCase {
             )
         )
         _ = try await runtime.start()
-        addTeardownBlock { _ = await runtime.shutdown() }
+        addTeardownBlock { _ = await runtime.shutdown(timeout: 2) }
         return runtime
     }
 
-    private func texts(of runtime: PluginRuntime, instance: String) async -> [String] {
+    private func texts(of runtime: any PluginHostRuntime, instance: String) async -> [String] {
         guard let body = await runtime.snapshot().views
             .first(where: { $0.instanceID == instance })?.body
         else {
@@ -323,7 +329,7 @@ final class AgentSessionFavouritesTests: XCTestCase {
     }
 
     private func buttons(
-        of runtime: PluginRuntime,
+        of runtime: any PluginHostRuntime,
         instance: String
     ) async -> [(label: String, action: String)] {
         guard let body = await runtime.snapshot().views
@@ -353,7 +359,7 @@ final class AgentSessionFavouritesTests: XCTestCase {
     private static func buttons(in node: PluginViewNode) -> [(label: String, action: String)] {
         var out: [(label: String, action: String)] = []
         if case let .button(label, action, _) = node {
-            out.append((label: label, action: action))
+            out.append((label: label, action: action.stringValue ?? action.description))
         }
         for child in node.children {
             out.append(contentsOf: buttons(in: child))
@@ -461,7 +467,8 @@ private actor SessionsBridge {
     private func exec(_ input: [String: IntentValue]) -> IntentResult {
         let arguments = (input["arguments"]?.arrayValue ?? []).compactMap(\.stringValue)
         if arguments.first == "LC_ALL=C" {
-            return Self.success(Self.output(claudeDetails(paths: Array(arguments.dropFirst(3)))))
+            let details = claudeDetails(paths: Array(arguments.dropFirst(3)))
+            return Self.success(Self.output(details))
         }
         guard arguments.count >= 4 else { return Self.success(Self.output("")) }
         let query = arguments[3]
