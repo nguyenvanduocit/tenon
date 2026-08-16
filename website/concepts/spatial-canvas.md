@@ -83,7 +83,7 @@ prebuilt `GhosttyKit.xcframework`; the app build never compiles Ghostty with
 Zig.
 
 The reason to embed a real terminal rather than write one is the same reason
-Tenon does not orchestrate: an agent TUI depends on terminal behaviour in ways
+Tenon does not orchestrate: an agent TUI depends on terminal behavior in ways
 that are expensive to approximate and catastrophic to approximate *slightly
 wrong*. A supervision tool that renders agent output almost correctly is not a
 supervision tool.
@@ -96,5 +96,5 @@ preview, or a plugin view. All of them go through one coherent content picker.
 The scope here is narrow on purpose. These are the surfaces you would otherwise
 leave the window for during a coding session — reading a file the agent named,
 checking the diff behind a claim, glancing at a preview. Tenon is not becoming
-an editor-centric IDE; the terminal stays at the centre and these keep you next
+an editor-centric IDE; the terminal stays at the center and these keep you next
 to it.

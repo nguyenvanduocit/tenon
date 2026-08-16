@@ -1,8 +1,8 @@
 # Errors
 
 A failure arrives as `{ ok: false, error }` from `tenon.intents.send`, or as a
-structured envelope from the CLI. There are three layers, and telling them apart
-is most of debugging.
+structured envelope from the CLI. There are three error layers; identify the
+layer before choosing how to handle the failure.
 
 ```json
 {
@@ -16,8 +16,8 @@ is most of debugging.
 intent failures keep the kernel's own structured diagnostics rather than being
 flattened into a handful of CLI-only cases.
 
-An intent failure can also carry `details`, `retryable`,
-`retryAfterMilliseconds`, `outcome`, `requestID` and `providerID`.
+An intent failure can also carry `details`, `retryable`, `retryAfterMs`, `outcome`,
+`requestID` and `providerID`.
 
 ## Control-plane codes
 
@@ -54,12 +54,12 @@ call it, whatever the reason.
 
 ### `busy` is a cap doing its job
 
-The app holds a fixed complement of in-flight requests and refuses past it. The
+The app holds a fixed capacity of in-flight requests and refuses past it. The
 alternative to an immediate answer is an unbounded queue of work waiting behind
 whatever is slow, which is not a better outcome — it is the same failure,
 delayed and harder to attribute.
 
-Back off and retry; `retryAfterMilliseconds` tells you how long.
+Back off and retry; `retryAfterMs` tells you how long.
 
 ## Domain errors
 
@@ -121,7 +121,7 @@ to hold a request open. Multiple values over time is a
 not reached in time:
 
 ```json
-{"paneID":"UUID","condition":"command-finished","met":true}
+{"paneID":"UUID","condition":"command-finished","met":false}
 ```
 
 "It did not finish in 30 seconds" and "something went wrong" are different
@@ -138,7 +138,7 @@ if (!result.ok) {
     case "dev.tenon.core.terminal-unavailable":
       return fallback()
     case "busy":
-      return retryAfter(result.error.retryAfterMilliseconds)
+      return retryAfter(result.error.retryAfterMs)
     default:
       tenon.log("unexpected", result.error.code, result.error.message)
   }

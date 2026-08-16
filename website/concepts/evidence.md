@@ -73,20 +73,8 @@ The clearest place this principle is enforced rather than merely stated is
 
 Its input schema requires `evidence`, with a minimum of one entry. An agent
 literally **cannot** ask you for a decision without attaching what the decision
-should be made from.
-
-```json
-{
-  "question": "Two callers depend on the old signature. Break them or adapt?",
-  "choices": [ /* … */ ],
-  "evidence": [
-    {"label": "caller A", "url": "file:///Users/me/app/src/auth.ts"},
-    {"label": "caller B", "url": "file:///Users/me/app/src/session.ts"}
-  ],
-  "recipient": {"kind": "human"},
-  "timeoutMs": 55000
-}
-```
+should be made from. For a complete CLI example, see
+[Running agents](/guide/running-agents#let-agents-ask-instead-of-stalling).
 
 A question with nothing behind it is an interruption. A question with its
 evidence attached is a request for judgment, and judgment is the thing you are

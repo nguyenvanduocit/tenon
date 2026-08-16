@@ -119,7 +119,7 @@ Using `tenon.intents` inside a handler instead silently detaches the work from
 its invocation: it loses that pane's targeting, escapes the parent deadline,
 drops out of cycle accounting, and keeps running after the caller cancels.
 
-`throwIfCancelled()` early, and again around long stretches, keeps a cancelled
+Call `throwIfCancelled()` early, and again around long stretches, to keep a canceled
 command from doing work nobody is waiting for.
 
 ## Return a value, or throw

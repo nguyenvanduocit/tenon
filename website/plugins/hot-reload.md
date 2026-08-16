@@ -1,7 +1,7 @@
 # Hot reload and generations
 
-Save a file and your plugin reloads. What actually happens underneath is worth
-knowing, because it explains the one behaviour that confuses everyone once.
+Save a file and your plugin reloads. The staging sequence explains what happens
+when a replacement generation fails.
 
 ## Staging, not mutation
 
@@ -31,8 +31,8 @@ outside, nothing happened.
 loaded because the plugin is alive — the *previous* version is alive.
 :::
 
-Try it deliberately once, early: delete a closing brace, save, and watch nothing
-change. Seeing it on purpose is much cheaper than meeting it at 2am.
+Try it deliberately once: delete a closing brace, save, and watch nothing change.
+Then restore the brace and confirm the replacement loads.
 
 ## Bind exactly once, during initial evaluation
 
@@ -55,7 +55,7 @@ registrations, not runtime operations.
 | `tenon.storage` | yes |
 | Settings | yes |
 | Secrets | yes |
-| Timers, watches, streams | no — cancelled with the generation |
+| Timers, watches, streams | no — canceled with the generation |
 | View instances (panes) | yes — the pane stays, your view re-renders |
 | Contributions | re-published by the new generation |
 
@@ -67,14 +67,14 @@ Anything you need across a reload belongs in
 It is logged, marked failed, and reloads itself when you fix it. The workspace
 keeps working and so do the other plugins.
 
-This is enforced by a test named for the behaviour rather than left to hope, and
+This is enforced by a test named for the behavior rather than left to hope, and
 it is why the terminal workspace stays useful with no optional plugins installed
 at all.
 
 ## Disabling and removing
 
 Disabling or removing a plugin retires its runtime the same way: resources
-cancelled, contributions removed, subscriptions dropped.
+canceled, contributions removed, subscriptions dropped.
 
 Uninstall and reinstall gives it a **fresh installation identity** — new
 storage, no inherited secrets, no standing consent. So does moving the same ID

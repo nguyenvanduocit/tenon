@@ -104,11 +104,7 @@ another. See [The intent bus](/concepts/intent-bus).
 
 ## And permissions are not a sandbox
 
-**JavaScriptCore isolation is not a hard process sandbox.** Enabling a plugin
-grants in-process code execution inside Tenon, not merely the capabilities in
-its manifest.
-
-The checks above are real and they fail closed, but they are policy, not a
-process boundary. A hard isolation boundary for untrusted plugin JavaScript is
-open work. Until then, read the manifest **and the source** of anything you did
-not write.
+Permissions are policy, not a process boundary: JavaScriptCore isolation does
+not prevent enabled plugin code from running inside Tenon. Read the manifest and
+the source of anything you did not write; see [Managing plugins](/guide/managing-plugins#two-inventories-two-levels-of-trust)
+for the full trust warning.

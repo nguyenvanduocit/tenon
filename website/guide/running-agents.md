@@ -1,7 +1,7 @@
 # Running agents in panes
 
-There is no "agent mode" to turn on. A pane is a real PTY, so you start an agent
-by running it:
+Once an agent CLI is installed and authenticated, start it in a pane the same way
+you would in any terminal:
 
 ```sh
 claude
@@ -59,8 +59,7 @@ tenon-cli intent send agent.ask.v1 --input '{
 }'
 ```
 
-Three properties are worth understanding, because they are why this is not just
-a fancy `read`:
+The operation has three important properties:
 
 - **It writes nothing into anyone's terminal.** It schedules nothing and types
   nothing. The question is a record, not an injected keystroke.

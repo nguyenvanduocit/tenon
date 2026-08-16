@@ -1,7 +1,8 @@
 # The `tenon` global
 
-The complete public surface a plugin sees. Thirty members, and this is all of
-them — a test pins this exact list, so it cannot drift underneath you.
+The complete public surface a plugin sees. Thirty callable members, plus the
+`apiVersion` metadata member — a test pins this exact list, so it cannot drift
+underneath you.
 
 ```js
 Object.getOwnPropertyNames(tenon)
@@ -88,7 +89,7 @@ when the instance closes.
 
 ## Scoped facilities
 
-The allowlist is **closed**. These three, and nothing else.
+The allowlist is **closed**. These three facilities, and nothing else.
 
 | Member | Notes |
 |---|---|

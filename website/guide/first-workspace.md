@@ -1,8 +1,8 @@
 # Your first workspace
 
-This walks from an empty window to two agents working side by side, with you
-able to see both. It takes about five minutes and assumes Tenon is
-[installed](/guide/install).
+This walks from an empty window to two agents working side by side, with you able
+to see both. It assumes Tenon and your agent CLIs are [installed](/guide/install)
+and authenticated.
 
 ## 1. Open a directory as a workspace
 
@@ -41,15 +41,15 @@ when you pressed the pointer down, with nothing half-applied.
 
 ## 3. Start an agent in each pane
 
-Nothing special is needed. Each pane is a real PTY running your shell, so you
-start an agent the way you always do:
+No extra agent mode is needed. Each pane is a real PTY running your shell, so
+start an installed and authenticated agent the way you always do:
 
 ```sh
 claude          # in the left pane
 codex           # in the right pane
 ```
 
-Tenon does not wrap, proxy, or intercept them. Their keybindings, their colours
+Tenon does not wrap, proxy, or intercept them. Their keybindings, their colors
 and their TUI behave exactly as they do in any terminal, because it is a real
 libghostty surface underneath.
 
@@ -67,8 +67,8 @@ tenon-cli rename          # clears it back to the content-derived title
 ```
 
 Now the tab strip tells you what each workstream is *about*, instead of showing
-you three tabs called `fish`. That is the whole point of the feature: you have
-more panes than attention, and the label is what lets you choose.
+you three tabs called `fish`. The title identifies the workstream without making
+you reopen each terminal.
 
 ::: warning `rename` needs a current build
 `rename` is in the source tree. If your installed Tenon predates it,
@@ -82,30 +82,13 @@ instead: `tenon-cli intent send workspace.pane.title.set.v1 --input
 An agent that hits a decision it should not make alone has two bad options: stop
 and wait for you to notice, or guess. Tenon gives it a third:
 
-```sh
-tenon-cli intent send agent.ask.v1 --input '{
-  "question": "This migration drops the legacy column. Proceed?",
-  "choices": [
-    {"id": "proceed", "label": "Proceed",         "value": "proceed"},
-    {"id": "keep",    "label": "Keep it for now", "value": "keep"}
-  ],
-  "evidence": [
-    {"label": "migration 0042", "url": "file:///Users/me/app/db/0042_drop_legacy.sql"}
-  ],
-  "recipient": {"kind": "human"},
-  "timeoutMs": 55000
-}'
-```
-
 The question appears against that pane with its choices, and the call returns
 the value you picked. It writes nothing into anyone's terminal, and the record
 belongs to the pane — so it survives the agent's own context being compacted.
+For the complete command and payload, see [Running agents](/guide/running-agents#let-agents-ask-instead-of-stalling).
 
-Notice that **`evidence` is required and must have at least one entry**. You
-cannot ask for a decision without attaching what the decision should be made
-from. That is the product's whole argument, spelled as a schema constraint:
-a question with nothing behind it is an interruption, not a request for
-judgment.
+Notice that **`evidence` is required and must have at least one entry**. The
+schema requires an artifact that the person can review before choosing.
 
 `timeoutMs` is capped at 55 000. If nobody answers in time the call fails
 closed rather than picking a default — an unanswered question must not become

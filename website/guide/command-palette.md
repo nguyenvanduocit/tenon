@@ -9,8 +9,8 @@ Every row in the palette is a projection of an intent contract that some plugin
 provides. There is no separate "command" object with its own registry, its own
 identifiers and its own permission story.
 
-That matters more than it sounds. A palette row and a `tenon-cli intent send`
-of the same name invoke the same contract, through the same policy checks, with
+A palette row and a `tenon-cli intent send` of the same name invoke the same
+contract, through the same policy checks, with
 the same schema. There is no path where clicking a row does something the
 contract does not describe.
 

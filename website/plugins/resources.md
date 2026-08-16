@@ -21,7 +21,7 @@ proc.cancel()
 
 `tenon.timers.after` is the one-shot form.
 
-## `ownedBy` — the one that prevents a real bug
+## `ownedBy` — tie a resource to a view instance
 
 A resource created for a **view instance** should say so. Pass the `instanceID`
 the instance handler was given, and the host retires that resource when the
@@ -76,7 +76,7 @@ Where collected output is enough, use `process.exec.v1` instead of a stream.
 ## Everything is bounded
 
 Queues, payloads, lifetimes and generations all have limits. A stream that
-overflows its buffer is cancelled rather than allowed to grow without bound.
+overflows its buffer is canceled rather than allowed to grow without bound.
 
 This is the same rule that makes `terminal.viewport.read.v1` a viewport snapshot
 and `terminal.scrollback.read.v1` a separately bounded, cursor-paged contract —

@@ -104,8 +104,8 @@ tenon.views.set("ci", {
 
 `leading` and `trailing` are runs of a flat ten-item vocabulary — `label`,
 `iconButton`, `toggle`, `segmented`, `menu`, `textfield`, and display items.
-Three `iconButton`s and a flexible `textfield` are a browser toolbar; a
-`segmented` and a badge are a diff viewer's.
+Three `iconButton`s and a flexible `textfield` make a browser toolbar; a
+`segmented` control and a badge make up a diff viewer's toolbar.
 
 Header clicks arrive at the **same `onSelect`** a body button does. A header
 `textfield` commits through `onSubmit`. Omitting the `header` key clears the

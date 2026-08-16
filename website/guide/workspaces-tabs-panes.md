@@ -105,5 +105,5 @@ automations, a local web preview, and any plugin view.
 
 The reason this exists is narrow and worth stating: these are the surfaces you
 would otherwise leave the window for during a coding session. Tenon is not
-trying to become an editor-centric IDE — the terminal stays at the centre, and
+trying to become an editor-centric IDE — the terminal stays at the center, and
 these keep you next to it.

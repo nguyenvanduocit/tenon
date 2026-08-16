@@ -118,8 +118,8 @@ that action.
 | `options` | for `select` | `{ value, label }[]` — the stored value is the `value` string |
 | `group` | no | section heading; omitted groups it into an unnamed leading section |
 
-A `select` that omits `options` is a plugin bug the UI degrades on, not a
-manifest decode failure.
+A `select` that omits `options` is a plugin bug that the UI handles by degrading,
+not a manifest decode failure.
 
 ## `network`
 

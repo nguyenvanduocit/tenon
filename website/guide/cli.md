@@ -134,7 +134,7 @@ tenon-cli intent send workspace.pane.owner.v1 \
 
 # Run a command in a fresh pane and wait for it.
 tenon-cli intent send terminal.open.v1 --input '{"command":"swift test"}'
-tenon-cli wait --for command-finished --timeout 60000
+tenon-cli wait --for command-finished --timeout 55000
 
 # Open a file beside me.
 tenon-cli intent send file.open.v1 --input '{"path":"/abs/path/to/file.swift"}'

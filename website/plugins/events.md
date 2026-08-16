@@ -76,7 +76,7 @@ A manifest schedule fires back as the owner-scoped `automation.fired` event:
 
 ```js
 tenon.events.on("automation.fired", (event) => {
-  if (event.id === "tick") refresh()
+  if (event.scheduleId === "tick") refresh()
 })
 ```
 
@@ -85,7 +85,7 @@ See [Automations](/plugins/automations).
 ## Lifetime
 
 Subscriptions belong to the generation. When it retires — a reload, a disable, a
-removal — they are cancelled with it, and the host cannot call back into a
+removal — they are canceled with it, and the host cannot call back into a
 destroyed context.
 
 You may still unsubscribe by hand for logic reasons. You do not have to for

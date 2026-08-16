@@ -1,7 +1,7 @@
 # The manifest
 
-`manifest.json` is everything the host must know **before** it evaluates a line
-of your JavaScript. That ordering is the whole point: permissions, intent
+`manifest.json` is everything the host must know **before** it evaluates your
+plugin code. That ordering is the whole point: permissions, intent
 declarations, settings, schedules and presentation are validated, authorized and
 projected before your code can run.
 
@@ -156,13 +156,13 @@ Wall-clock cadences, fired back as the owner-scoped `automation.fired` event:
 }
 ```
 
-This is the exact shape the bundled `clock` plugin uses. See
+This is the exact schedule shape the bundled `clock` plugin uses. See
 [Automations](/plugins/automations).
 
 ## A worked example
 
-The bundled `hello-palette` plugin, complete — two provisions projected into the
-palette, no permissions beyond terminal reads:
+The first provision from the bundled `hello-palette` plugin, projected into the
+palette with no permissions beyond terminal reads:
 
 ```json
 {
@@ -205,8 +205,8 @@ palette, no permissions beyond terminal reads:
 }
 ```
 
-Its entire `main.js` is fourteen lines. That ratio is normal and intended: the
-manifest carries the contract, the code carries the behaviour.
+The implementation stays small: the manifest carries the contract, and the code
+carries the behavior.
 
 ## Full field reference
 

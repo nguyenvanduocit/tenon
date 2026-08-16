@@ -54,7 +54,7 @@ await tenon.intents.send("agent.command.v1", {
 })
 ```
 
-The agent that recorded a session resumes it its own way. **Any other agent is
+The agent that recorded a session resumes it in its own way. **Any other agent is
 handed a prompt naming the transcript**, so it reads the content itself rather
 than pretending to inherit state it never had. The result's `handoff` field says
 which happened.
@@ -93,7 +93,7 @@ Declare all four before calling it:
 
 It follows the same sender rule as anything else that sends. Pass the invoking
 `call` and the whole run is scoped to that invocation's pane, capped at that
-intent's deadline, and cancelled with it.
+intent's deadline, and canceled with it.
 
 ::: tip Omit the sender for a long run
 A supervised run started from a short-deadline palette command should **omit**

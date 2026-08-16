@@ -24,13 +24,12 @@ are not available. One file, top-level functions.
 Be direct about this in your README, because it is the truth:
 
 ::: danger Enabling a plugin grants in-process code execution
-JavaScriptCore isolation is **not a hard process sandbox**. Enabling a plugin is
-a decision to run its JavaScript inside Tenon's process — not merely to grant it
-a list of capabilities.
+JavaScriptCore isolation is **not a hard process sandbox**. Enabling a plugin
+runs its JavaScript inside Tenon's process. Intent declarations and permission
+checks still fail closed, but they are policy rather than a process boundary.
 
-Intent declarations, permission checks, scopes and consent still limit which
-host operations it can invoke, and they fail closed. But they are policy, not a
-process boundary.
+Read [Managing plugins](/guide/managing-plugins#two-inventories-two-levels-of-trust)
+for the full trust warning.
 :::
 
 A user-inventory plugin therefore arrives **disabled**, with no standing
@@ -38,7 +37,8 @@ consent, and stays that way until someone reads it and decides.
 
 ## Earning that decision
 
-Your manifest is the thing they read. Make it easy to say yes to.
+Users read your manifest before enabling the plugin. Document each permission so
+they can evaluate it.
 
 - **Declare the fewest permissions that work.** Every extra one is a reason to
   hesitate. `filesystem.write` on a plugin that only reads is not a rounding
@@ -78,8 +78,9 @@ TENON_TRUST_PLUGIN_INVENTORY=1 \
 
 Then test the paths people actually hit:
 
-1. **A fresh install.** Delete your `tenon.storage` state and run again — a
-   plugin that only works with state it wrote last week is broken on arrival.
+1. **A fresh install.** Move the exact `tenon.storage` state aside as a backup and
+   run again — a plugin that only works with state it wrote last week is broken on
+   arrival.
 2. **A failed reload.** Break the file on purpose and confirm the error you get
    is one you could diagnose from the logs.
 3. **A denied permission.** Remove one from the manifest and confirm you fail
@@ -97,5 +98,5 @@ The bundled plugins live in
 repository, and `ShippedPluginsTests` exercises the real shipped JavaScript —
 including an on-disk edit that must propagate through FSEvents into host state.
 
-If you are changing plugin-host behaviour, extend those tests rather than
+If you are changing plugin-host behavior, extend those tests rather than
 relying on a manual app run.

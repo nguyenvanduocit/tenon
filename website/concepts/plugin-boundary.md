@@ -1,8 +1,9 @@
 # The plugin boundary
 
-A plugin is a directory with a stable reverse-DNS `id`, a `manifest.json`, and a
-`main.js`. It runs in its own isolated JavaScriptCore context, and it sees
-exactly one thing from the host.
+A JavaScript plugin is a directory with a stable reverse-DNS `id`, a
+`manifest.json`, and a `main.js`. It runs in its own isolated JavaScriptCore
+context and sees exactly one thing from the host. Bundled Swift implementations
+keep the same manifest and public boundary but run as compiled app code.
 
 ## Plugins see only `tenon`
 
@@ -55,8 +56,7 @@ If staging fails — a syntax error, a bad manifest, a schema that will not
 validate, a handler bound twice — **the last good generation stays active**.
 
 So a broken plugin is logged, marked failed, and reloads itself when you fix it.
-It does not take the host down, and that is enforced by a test named for the
-behaviour rather than left to luck.
+It does not take the host down; a test covers that behavior.
 
 The developer-facing consequence is worth internalizing: a failed reload looks
 like nothing happening, because the working version is still running. Check the
@@ -76,29 +76,15 @@ for the life of the app.
 
 ## Isolation is not a sandbox
 
-This is the honest limit, and it is worth stating in the same breath as
-everything above.
-
 **JavaScriptCore isolation is not a hard process sandbox.** Enabling a plugin
-grants in-process code execution inside Tenon, not merely a list of
-capabilities. The intent declarations, permission checks, scopes and consent
-records are real and they fail closed — but they are policy, not a process
-boundary.
+runs its JavaScript inside Tenon. Intent declarations, permission checks, scopes
+and consent still fail closed, but they are policy rather than a process boundary.
+Read the manifest and source of anything you did not write; see [Managing plugins](/guide/managing-plugins#two-inventories-two-levels-of-trust)
+for the full trust warning.
 
-A hard isolation boundary for untrusted plugin JavaScript is open work. Until it
-lands, read the manifest and the source of anything you did not write before
-enabling it.
+## Why plugins matter
 
-## Why extensibility is load-bearing
-
-The plugin platform is not a nice-to-have. It exists because **agent tooling
-changes faster than a host can be revised**.
-
-Adapters for new harnesses, supervision experiments, provenance, evidence
-sources — these need to evolve without private host paths or a second copy of
-the domain semantics. So the public contract is the *only* contract, and Tenon's
-own built-in surfaces call typed Swift services directly rather than pretending
-to be plugins.
-
-The customer value is not "you can write plugins". It is faster, safer human
-judgment across CLI-agent tools that keep changing.
+Plugins let new harness adapters, supervision experiments, provenance and
+evidence sources evolve without private host paths or duplicated domain logic.
+The public contract is the only plugin contract; Tenon's built-in surfaces call
+typed Swift services directly.

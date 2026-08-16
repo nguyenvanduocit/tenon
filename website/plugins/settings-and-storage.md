@@ -60,7 +60,7 @@ enables your plugin.
 tenon.log("index rebuilt", count, "entries")
 ```
 
-Per-plugin attributed. This is why the bootstrap **deletes `console`**: a plugin
+Logs are attributed per plugin. This is why the bootstrap **deletes `console`**: a plugin
 logging through `console` would reach the system log unattributed, going around
 that attribution.
 

@@ -41,7 +41,7 @@ features:
     details: >
       A 12 × 12 grid per tab. Split, drag to swap, resize any shared edge, press
       Escape to undo the whole gesture. A pane keeps its process through every
-      move, tab switch and relaunch.
+      move and tab switch; relaunching starts a fresh shell.
     link: /guide/workspaces-tabs-panes
     linkText: Workspaces, tabs, panes
 
@@ -63,9 +63,9 @@ features:
 
   - title: Extensible without a private door
     details: >
-      Plugins are a directory with a manifest and a main.js, hot-reloaded on
-      save. They see exactly one global. Bundled plugins get the same surface
-      third-party ones do.
+      Plugins declare a manifest and share one public boundary. JavaScript
+      plugins use a main.js that hot-reloads on save; bundled implementations
+      get the same surface as third-party ones.
     link: /plugins/
     linkText: Writing a plugin
 ---

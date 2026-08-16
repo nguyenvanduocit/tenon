@@ -3,6 +3,30 @@
 A schedule is a **wall-clock cadence declared in the manifest**. The host fires
 it back to you as the owner-scoped `automation.fired` event.
 
+## Dynamic workflows
+
+**Create Workflow** is the flexible user path for work that does not need a wall-clock trigger.
+It opens Claude Code in the active workspace with a task-specific dynamic-workflow brief. The
+agent chooses the smallest useful harness — direct execution, classify-and-act,
+fan-out-and-synthesize, adversarial verification, filtering, tournament, or a bounded loop — and
+keeps worker output visible.
+
+A one-off workflow does not create a plugin. When the user asks to save or resume it, the agent
+uses the Tenon skill and leaves this project-local artifact:
+
+```text
+.tenon/workflows/<workflow-id>/
+  workflow.md
+  state.json
+  evidence/
+  harness/       # optional
+```
+
+Wall-clock or event-driven work is a different, explicit choice. Durable JavaScript belongs in
+`~/Library/Application Support/Tenon/user-plugins/` and follows the manifest, consent, intent,
+hot-reload, and `automation.fired` contract documented below. Create Workflow never writes a
+plugin as a side effect of a one-off request.
+
 ```json
 {
   "automation": {
@@ -49,15 +73,13 @@ distinction stops meaning anything.
 `daily` resolves against the machine's calendar at computation time. There is
 deliberately no stored timezone field.
 
-The reasoning is worth repeating because it generalizes: a competing tool stores
-one and then evaluates everything in host-local time anyway. **Dead metadata
-that promises what the code does not do is worse than honestly documented local
-time.**
+The manifest does not store a separate timezone. `daily` uses the machine's
+current calendar timezone when it computes the next occurrence.
 
 ## Firing semantics
 
-The scheduler holds a `nextDue` per (plugin, schedule). A tick fires every
-schedule whose `nextDue` has passed — with three rules that matter:
+The scheduler holds a `nextDue` per (plugin, schedule). A tick fires each schedule
+whose `nextDue` has passed — with three rules that matter:
 
 - **At most the latest missed occurrence.** A laptop asleep for six hours does
   not wake up and fire six times.

@@ -106,4 +106,4 @@ independent state that a blanket delete throws away.
 
 - [Troubleshooting](/guide/troubleshooting) — a plugin that does not run.
 - [Permissions](/reference/permissions) — what each one actually grants.
-- [Quickstart](/plugins/quickstart) — write one in about ten minutes.
+- [Quickstart](/plugins/quickstart) — write a complete working plugin.

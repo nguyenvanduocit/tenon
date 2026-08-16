@@ -17,7 +17,7 @@ is measured from a live pane, not inferred:
 | `TENON_AGENT_SURFACE_TOKEN` | this terminal-surface incarnation's token |
 
 `TENON_PANE_ID` and `TENON_SOCKET_PATH` are the two you use directly — they are
-what make `tenon-cli` work with no arguments inside a pane.
+what makes `tenon-cli` work with no arguments inside a pane.
 
 ::: warning Tab and workspace IDs are a snapshot
 `TENON_TAB_ID` and `TENON_WORKSPACE_ID` are captured when the shell starts. Move
@@ -103,7 +103,7 @@ TENON_VIEW_SNAPSHOT_WORKSPACE="$PWD" swift run tenon
 ```
 
 The Timeline form takes `TENON_TIMELINE_SNAPSHOT_STATE`
-(`idle|running|ready|failed|insufficient`), `TENON_TIMELINE_SNAPSHOT_SIZE=WxH`
+(`idle|running|ready|failed|insufficient|question|work`), `TENON_TIMELINE_SNAPSHOT_SIZE=WxH`
 for the narrow-pane reflow, and `TENON_TIMELINE_SNAPSHOT_EVIDENCE=1` to open
 every milestone's anchors. The sidebar form takes
 `TENON_SIDEBAR_SNAPSHOT_SIZE=WxH`.

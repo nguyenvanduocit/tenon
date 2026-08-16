@@ -41,9 +41,8 @@ This list is as much the product as the feature list is.
 | Replace the transcript with a summary | A summary that cannot be checked is a rumour |
 | Run in a browser or over a network | It is a local, native macOS app |
 
-If you want a tool that starts agents and coordinates them, Tenon is not it, and
-will not become it. It assumes you already have one and are drowning in the
-output.
+Use your existing harness to start and coordinate agents; Tenon focuses on
+supervising their output.
 
 ## What it is made of
 
@@ -69,9 +68,9 @@ Around that sit four things worth knowing about early:
   command system.
 - **[`tenon-cli`](/guide/cli)** is in every terminal Tenon opens, so a shell — or
   an agent inside a pane — can inspect and drive the workspace it is sitting in.
-- **[Plugins](/plugins/)** are a directory with a `manifest.json` and a
-  `main.js`, hot-reloaded when you save. They extend the workspace through one
-  public boundary that bundled and third-party plugins share.
+- **[Plugins](/plugins/)** declare a `manifest.json` and share one public
+  boundary. JavaScript plugins use a `main.js` that hot-reloads when you save;
+  bundled implementations use the same boundary.
 
 ## Who it is for
 

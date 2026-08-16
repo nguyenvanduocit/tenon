@@ -6,19 +6,9 @@ makes more sense once you accept it.
 
 ## The argument
 
-Agents scale execution. You can start five right now, and ten next year for the
-same effort. Nothing about that is hard any more.
-
-What has not scaled is the person who decides whether their output is correct.
-Every additional workstream costs the same scarce thing: attention to notice it
-needs you, and reorientation time to re-enter it after looking away.
-
-So the useful limit on parallel agent work is not *how many agents can execute*.
-It is **how many workstreams one person can supervise and then accurately
-re-enter**. A tool that adds orchestration adds capacity to the side that is
-already abundant.
-
-Tenon aims at the other side.
+The scarce resource is operator attention. Each additional workstream adds time
+to notice that it needs you and to re-enter it after looking away. Tenon targets
+that supervision cost rather than adding another orchestration layer.
 
 ## What that rules out
 
@@ -50,18 +40,10 @@ tomorrow.
 The operator's situation awareness, and the return path from a claim to the
 thing that actually happened.
 
-Concretely, five questions it should answer without you reopening every
-transcript:
-
-1. What materially changed since I last looked?
-2. What requires my judgment now?
-3. What is the agent claiming, and what evidence supports it?
-4. Which work is blocked, drifting, stale, or in conflict?
-5. What can I safely ignore for now?
-
-Question 5 is the one people skip and the one that pays most. A supervision
-surface that surfaces everything has not reduced your load; it has moved the
-sorting problem into a new window.
+It should answer the five operator questions listed in [What Tenon is](/guide/what-is-tenon#the-problem-it-is-shaped-around)
+without making you reopen every transcript. The fifth question — what can safely
+wait — keeps the surface from becoming another inbox: showing everything does not
+remove the sorting work.
 
 ## How success is measured
 

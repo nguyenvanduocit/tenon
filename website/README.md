@@ -1,12 +1,9 @@
 # Tenon documentation site
 
-The public documentation at
-[tenon-docs.pages.dev](https://tenon-docs.pages.dev). VitePress 1.6.4, built
-with Bun, deployed to Cloudflare Pages.
+The public documentation at [tenon.aiocean.io](https://tenon.aiocean.io).
+VitePress 1.6.4, built with Bun, deployed to Cloudflare Pages.
 
-Set `SITE_URL` at build time when a custom domain lands — it is what the
-sitemap names, and a sitemap pointing at a host nobody serves is worse than
-none.
+Set `SITE_URL` at build time for a preview host — it is what the sitemap names.
 
 ```sh
 bun install
@@ -70,7 +67,7 @@ bun scripts/shoot.mjs /tmp/shots dark  390x844   /reference/intents/ /reference/
 bun scripts/shoot.mjs /tmp/shots light 1440x1100 / /guide/install
 ```
 
-`shoot.mjs` emulates the colour scheme and viewport, then **measures** horizontal
+`shoot.mjs` emulates the color scheme and viewport, then **measures** horizontal
 overflow and console errors rather than leaving them to be spotted in a picture
 — a screenshot is cropped to the viewport, so a table overflowing off the right
 edge is exactly the defect a screenshot cannot show you.

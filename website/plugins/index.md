@@ -14,8 +14,8 @@ the same surface — there is no private door.
 
 ## Start here
 
-- **[Quickstart](/plugins/quickstart)** — a plugin that runs, in about ten
-  minutes.
+- **[Quickstart](/plugins/quickstart)** — a complete working plugin that adds a
+  palette action and runs a real command.
 - **[The manifest](/plugins/manifest)** — everything declared before your
   JavaScript is evaluated, and why.
 - **[Choosing a mechanism](/plugins/choosing-a-mechanism)** — the decision order
@@ -23,8 +23,8 @@ the same surface — there is no private door.
 
 ## The whole public surface
 
-Thirty members, and this is all of them. A test pins this exact list, so it
-cannot drift underneath you.
+Thirty callable members, plus the `apiVersion` metadata member. A test pins this
+exact list, so it cannot drift underneath you.
 
 | Group | Members | What it is |
 |---|---|---|
@@ -49,8 +49,8 @@ handwritten helpers.
 ## What plugins cannot see
 
 `require`, `setTimeout` and `fetch` were never in scope. `console` is deleted by
-the bootstrap — logging through it would reach the system log unattributed,
-around `tenon.log`'s per-plugin attribution.
+the bootstrap — logging through it would reach the system log without per-plugin
+attribution.
 
 A second test pins `Object.getOwnPropertyNames(globalThis)` to exactly the
 closed set, so a new global from a future JavaScriptCore fails the suite instead
@@ -73,40 +73,9 @@ use(result.value)
 No callbacks-or-promises duality, no throwing-or-returning duality. Load-time
 errors offer suggestions rather than leaving you with a silent `undefined`.
 
-This is deliberate and has a stated reason: **a language model should be able to
-read these docs and write a working plugin on the first try.** A large share of
-the people extending an agent-supervision tool are agents.
-
-## The sender rule
-
-One convention runs through everything, and getting it right is most of writing
-a correct plugin:
-
-> A function that sends takes the sender as its **last** parameter, defaulting
-> to `tenon.intents`, and always calls `await call.send(name, input, options)`.
-> A handler passes its own `call` into every function it calls that sends.
-
-```js
-async function greet(name, call = tenon.intents) {
-  return await call.send("ui.toast.v1", { message: `Hello, ${name}`, kind: "success" })
-}
-
-tenon.intents.handle("dev.example.greeter.greet.v1", (input, call) => {
-  call.throwIfCancelled()
-  return greet(input.name, call)          // pass `call` through
-})
-```
-
-Passing `call` keeps that invocation's workspace and pane targeting, clamps the
-work to the parent deadline, joins the causal chain used for cycle and depth
-accounting, and cancels it with the invoking command.
-
-Omitting it sends under the ambient focused workspace and pane, as a fresh root
-request with its own budget — which is what a long supervised run started from a
-short-deadline command actually wants.
-
-Either way the request runs under **your plugin's** declared authority. Caller
-authority is never inherited.
+The single async shape and explicit load-time errors keep plugin code predictable.
+For the sender convention — including when to pass a handler's `call` through —
+see [Sending intents](/plugins/sending-intents#the-sender-rule).
 
 ## Building blocks
 

@@ -7,11 +7,11 @@ extracted with `unzip`.
 
 The archive stores extended attributes that Tenon's signature seals over.
 Info-ZIP's `unzip` cannot restore them, so it writes them out as 735 stray `._*`
-files inside the bundle, and Gatekeeper rejects the result. Delete what you
-extracted and use Finder or `ditto`:
+files inside the bundle, and Gatekeeper rejects the result. Move the failed
+extraction aside and use Finder or `ditto`:
 
 ```sh
-rm -rf Tenon.app
+mv Tenon.app Tenon.app.failed-extraction
 ditto -x -k Tenon-*-macos.zip .
 spctl --assess -vv Tenon.app     # expect: accepted, source=Notarized Developer ID
 ```
@@ -68,7 +68,7 @@ tenon-cli intent describe <intent-id>     # effects, audience, schema
 - **It expired waiting for you.** Policy-confirmed operations need a live
   interactive confirmation. CLI and agent callers receive no standing consent,
   so an unattended one expires instead of silently escalating. That is
-  fail-closed behaviour working, not a bug.
+  fail-closed behavior working, not a bug.
 - **The deadline is too short — or you are misusing it.** A deadline covers
   admission, confirmation, provider execution and settlement. Raising it can
   diagnose slow work, but it must not be used to turn a stream into a held

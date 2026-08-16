@@ -47,7 +47,7 @@ Some deliberate choices in how it condenses:
   and a test run Tenon watched happen are not the same claim, and Session does
   not flatten them into one.
 
-A narrow pane reflows Markdown tables into labelled fields rather than making
+A narrow pane reflows Markdown tables into labeled fields rather than making
 you scroll sideways — a supervision surface that needs horizontal scrolling is
 not doing its job.
 
@@ -61,9 +61,8 @@ same keystroke you would have typed, delivered to the same process.
 ## Clicking a file the agent cited
 
 When an agent writes a path in its prose, that path is resolved and clickable:
-the click opens the file in a pane beside it. This is the shortest version of
-the product's whole argument — the claim and its evidence in the same window,
-one click apart.
+the click opens the file in a pane beside it. The claim and its cited file stay
+in the same window, one click apart.
 
 ## When it cannot bind a session
 

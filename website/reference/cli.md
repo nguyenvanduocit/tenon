@@ -1,10 +1,11 @@
 # `tenon-cli`
 
 A Foundation/POSIX client for the running app's local control socket. It ships
-inside the app bundle:
+inside the app bundle. Install the current copy from **Settings ▸ CLI ▸ Install**
+in Tenon, then verify it with:
 
 ```sh
-ln -s /Applications/Tenon.app/Contents/MacOS/tenon-cli ~/.local/bin/tenon-cli
+tenon-cli ping
 ```
 
 ## Usage
@@ -26,7 +27,7 @@ Everything else is an alias. The complete control surface is:
 | `intent describe` | discovery |
 | `intent send` | everything else |
 
-Single-instance activation and focus are the only direct control-plane
+`ping`, single-instance activation and focus are the direct control-plane
 operations. There is no CLI-only capability: every domain verb compiles to
 `intent send` with an explicit input and scope object.
 
@@ -179,7 +180,7 @@ install has its own socket under its own identity.
 
 ## Transport
 
-Wire v2 over a Unix domain socket, with per-channel single instance. The accept
+Wire v3 over a Unix domain socket, with per-channel single instance. The accept
 and read loop runs on a dedicated blocking thread; framing and bounded JSON
 decode happen off the main actor; UI effects hop to the main actor only for the
 minimal native operation.

@@ -9,8 +9,7 @@ Get the newest build from
 [Releases](https://github.com/nguyenvanduocit/tenon/releases).
 
 ::: danger Extract in Finder or with `ditto`, never with `unzip`
-This is the single most common way a good download turns into an app macOS
-refuses to open.
+Extracting with `unzip` can produce an app macOS refuses to open.
 
 The archive stores the extended attributes that Tenon's code signature seals
 over. Finder restores them, and so does `ditto`. Info-ZIP's `unzip` cannot, so
@@ -45,9 +44,16 @@ before upgrading a setup you rely on.
 
 ## Homebrew
 
-A cask is generated with every release. `brew install --cask` starts working
-once the repository is reachable without credentials, since Homebrew fetches
-anonymously.
+A cask is generated with every release in Tenon's own tap. Once the release
+repository is public, install it with:
+
+```sh
+brew tap nguyenvanduocit/tap
+brew install --cask tenon
+```
+
+Homebrew fetches release assets anonymously, so a private release repository
+cannot be used by the cask.
 
 ## Build from source
 
@@ -82,8 +88,9 @@ first or they will not find the framework.
 `tenon-cli` is how a shell — or an agent sitting in a pane — talks to the
 running app. It ships inside the app bundle:
 
+Open **Settings ▸ CLI ▸ Install** in the running production app, then run:
+
 ```sh
-ln -s /Applications/Tenon.app/Contents/MacOS/tenon-cli ~/.local/bin/tenon-cli
 tenon-cli ping
 ```
 
@@ -103,6 +110,9 @@ A healthy answer names the running instance and its wire version:
 Inside a Tenon terminal you do not have to point it anywhere: every pane exports
 `TENON_SOCKET_PATH` and `TENON_PANE_ID`, and the CLI defaults to them. See
 [Driving Tenon from a terminal](/guide/cli).
+
+The installer places the binary in `~/.local/bin`; add that directory to your
+`PATH` if your shell cannot find `tenon-cli`.
 
 ## First launch
 

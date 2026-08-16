@@ -1,7 +1,7 @@
 # Choosing a mechanism
 
 Read this once before you add your second feature. Most plugin bugs that survive
-review are a mechanism chosen wrong, not code written wrong.
+review come from choosing the wrong mechanism, not from writing the wrong code.
 
 ## The decision order
 
@@ -59,7 +59,7 @@ The one apparent exception proves the rule: `terminal.wait.v1` can take 30
 seconds, and is still an intent. Elapsed time is not what makes something a
 resource — the caller gets exactly one result and no handle survives
 settlement. The provider's observer is an internal implementation detail owned
-and cancelled with the request.
+and canceled with the request.
 
 ## Deciding is not optional
 

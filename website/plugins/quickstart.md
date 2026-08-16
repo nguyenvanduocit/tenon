@@ -1,7 +1,7 @@
 # Quickstart
 
-A working plugin, from nothing, in about ten minutes. It will put a row in the
-command palette, run a real command, and show the result.
+A complete working plugin, from nothing. It puts a row in the command palette,
+runs a real command, and shows the result.
 
 ## 1. Make the directory
 
@@ -81,7 +81,7 @@ tenon.views.register(VIEW, { title: "Git Status", instanced: false })
 //
 // `workspace.state.v1` pages, so walk every page: the node you want can be past
 // the first one, and stopping early returns the WRONG workspace rather than an
-// error. Sixteen pages of 256 reaches 4096 nodes, past any real tree.
+// error. Sixteen pages of 256 reach 4,096 nodes, past any real tree.
 async function workspacePath(call = tenon.intents) {
   let cursor = null
   for (let page = 0; page < 16; page++) {
@@ -221,10 +221,8 @@ activates it, and drains the old one.
 Now break it on purpose — delete a closing brace and save.
 
 **Nothing happens.** The old generation is still running, because a staged
-generation that fails to load never replaces the working one. This is the single
-most confusing thing about developing a Tenon plugin, and now you have seen it
-deliberately rather than at 2am. Check the plugin error and the attributed log
-output, not the symptom.
+generation that fails to load never replaces the working one. Check the plugin
+error and the attributed log output to see why the reload failed.
 
 ## What to read next
 

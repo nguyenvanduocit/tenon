@@ -88,7 +88,7 @@ tenon.intents.handle("dev.example.files.refresh.v1", (input, call) => {
 - the invocation's workspace and pane targeting is kept;
 - the work is clamped to the **parent deadline**;
 - it joins the causal chain used for cycle and depth accounting;
-- it is **cancelled with the invoking command**.
+- it is **canceled with the invoking command**.
 
 ### When to omit it deliberately
 
