@@ -846,6 +846,27 @@ final class CoreIntentCatalogTests: XCTestCase {
         )
     }
 
+    func testUnmediatedExternalPluginWritesCarryCapabilityBindings() throws {
+        let definitions = try CoreIntentCatalog.definitions()
+        let unmediatedExternalPluginWrites = definitions.filter { definition in
+            definition.declaration.audiences == [.plugin]
+                && definition.declaration.effects.kind.rawValue == "write"
+                && definition.declaration.effects.external
+        }
+
+        XCTAssertTrue(
+            unmediatedExternalPluginWrites.contains {
+                $0.declaration.name.rawValue == "clipboard.write.v1"
+            }
+        )
+        XCTAssertTrue(
+            unmediatedExternalPluginWrites.allSatisfy {
+                !$0.dispatchRule.capabilityBindings.isEmpty
+            },
+            "an external plugin write must not silently bypass capability policy"
+        )
+    }
+
     func testAudienceExposureProviderAndResourcePoliciesAreCoherent() throws {
         let definitions = try CoreIntentCatalog.definitions()
         let trustedProvider = try CoreIntentCatalog.trustedProviderID()
@@ -1384,7 +1405,7 @@ private extension CoreIntentCatalogTests {
             .fileReveal: ["shell.open"],
             .fileOpen: ["shell.open"],
             .urlOpen: ["shell.open"],
-            .clipboardWrite: [],
+            .clipboardWrite: ["clipboard.write"],
             .processExec: ["process.exec"],
             .terminalWrite: ["terminal.write"],
             .terminalRun: ["terminal.write"],

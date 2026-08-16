@@ -10,7 +10,8 @@
     "filesystem.write",
     "terminal.write",
     "workspace.control",
-    "shell.open"
+    "shell.open",
+    "clipboard.write"
   ],
   "intents": {
     "uses": [

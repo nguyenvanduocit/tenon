@@ -216,6 +216,23 @@ final class PluginHostTests: XCTestCase {
         )
     }
 
+    func testClipboardWritePermissionProducesAHostGrant() throws {
+        let manifest = try PluginManifest(
+            id: "dev.test.clipboard-policy",
+            name: "Clipboard policy",
+            version: "1",
+            permissions: ["clipboard.write"]
+        )
+
+        let grants = try PluginHost.capabilityGrants(for: manifest)
+        let clipboardGrant = try XCTUnwrap(
+            grants.first { $0.capability.rawValue == "clipboard.write" }
+        )
+
+        XCTAssertEqual(clipboardGrant.scope.filesystem, .none)
+        XCTAssertEqual(clipboardGrant.scope.network, .none)
+    }
+
     @MainActor
     func testDuplicatePluginIDIsRejectedBeforeRuntimeConstruction() async throws {
         let root = try makeTemporaryRoot()

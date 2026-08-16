@@ -293,6 +293,14 @@ source/test evidence; hard isolation and descendant containment remain pending; 
 low-friction installation policy, not repeated ceremony, and extra interruption requires concrete
 risk proportional to the action.
 
+T-164 (2026-08-14) resolves the clipboard exception: `clipboard.write.v1` is an external,
+non-user-mediated write, so it now requires the dedicated `clipboard.write` manifest capability.
+The grant is reviewed at installation or enablement and is standing for the installation; the
+intent keeps `confirmation: never` so trusted bundled plugins do not turn ordinary copy actions
+into repeated prompts. This is deliberately different from `ui.*`, whose visible user decision
+is the authority, and from host-local copy controls, which remain DIRECT. The catalog fitness
+test pins that every unmediated external plugin write has a capability binding.
+
 Two decisions taken 2026-08-11 (T-130) correct claims this document had been making. First,
 consent was described as persisted from the beginning — `CallerConsentKey` omits the session
 revision precisely to say consent belongs to an installation — while the engine in fact held

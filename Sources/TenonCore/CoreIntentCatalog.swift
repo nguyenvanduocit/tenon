@@ -563,6 +563,9 @@ private extension CoreIntentCatalog {
             capability: "shell.open",
             networkURLs: ["/url"]
         )
+        let clipboardWrite = try CoreIntentRuleData.binding(
+            capability: "clipboard.write"
+        )
         // `process.exec` is intentionally one unsandboxed local-process authority. A child
         // can access the invoking user's files and network through argv or its own syscalls,
         // so filesystem path bindings would imply confinement the host does not enforce.
@@ -974,6 +977,7 @@ private extension CoreIntentCatalog {
                     external: true
                 ),
                 errors: ["dev.tenon.core.clipboard-unavailable"],
+                bindings: [clipboardWrite],
                 admission: .interactive,
                 timeout: .seconds(5),
                 trustedProviderID: trustedProviderID

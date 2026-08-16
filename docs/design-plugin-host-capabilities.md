@@ -56,6 +56,7 @@ Current sensitive bindings:
 | `filesystem.read` | directory list, file read, path exists, filesystem watch |
 | `filesystem.write` | file write/create, directory create, path move/trash |
 | `shell.open` | file reveal/open |
+| `clipboard.write` | `clipboard.write.v1` |
 | `process.exec` | collected process intent and streaming process resource |
 | `terminal.write` | terminal write/run |
 | `terminal.read` | terminal facts, viewport read, terminal wait as policy requires |
@@ -64,8 +65,12 @@ Current sensitive bindings:
 | `network` + manifest host allowlist | network fetch |
 | `secrets` | secret get/set/delete |
 
-Clipboard write and in-app UI intents are plugin-only contracts with host policy but do not
-currently require a sensitive capability grant. Clipboard read does not exist.
+Clipboard write is a plugin-only contract with a `clipboard.write` capability grant. The
+grant is installation/enablement-scoped standing authority, so trusted bundled plugins do
+not prompt on every copy, while a plugin that has not declared the permission cannot replace
+the system clipboard. The intent remains bounded and has no per-call confirmation because the
+grant is the policy boundary; in-app UI intents remain user-mediated and need no capability.
+Clipboard read does not exist.
 
 ## Filesystem semantics
 

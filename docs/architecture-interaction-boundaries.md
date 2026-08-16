@@ -604,6 +604,12 @@ Core intents have exactly two audience profiles:
 - **programmatic:** `{plugin, cli, agent}`;
 - **plugin-only:** `{plugin}`.
 
+`clipboard.write.v1` is the plugin-only external-write exception that carries the
+`clipboard.write` capability binding. Manifest declaration names the operation but does not
+grant it; installation/enablement policy must provide the standing grant before the bounded
+system-pasteboard write can run. The user-mediated `ui.*` contracts remain unbound because
+their visible interaction is the authority.
+
 No core intent is exposed directly to the palette. Palette/registered-product-keybinding
 rows come from plugin-owned intent contracts with presentation metadata. No core intent is
 exposed to a generic app audience. No contract grants a `core` caller extra authority.

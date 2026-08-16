@@ -107,12 +107,14 @@ public struct PluginManifest: Sendable, Equatable, Codable {
     /// to events — statusBar, commands, generic events, and log are the free tier.
     /// Permissions exist only for sensitive capabilities: reading terminal state
     /// (`terminal.*` event topics), writing into the terminal, reading and writing
-    /// the filesystem, spawning processes, and driving the workspace.
+    /// the filesystem, writing the system clipboard, spawning processes, and driving
+    /// the workspace.
     public static let knownPermissions: Set<String> = [
         "terminal.read",
         "terminal.write",
         "filesystem.read",
         "filesystem.write",
+        "clipboard.write",
         "process.exec",
         "workspace.control",
         "web.view",
