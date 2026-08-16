@@ -340,6 +340,17 @@ Feature: Control the correct local Tenon instance through canonical intents
       Then unsupported_version names the current version
       And the app does not reinterpret the old shape
 
+    @req-cli-nfr-005 @version-skew
+    Scenario: Protocol skew is rejected in both directions
+      Given an older v2 client contacts the current v3 app
+      When the request is decoded
+      Then unsupported_version names v3
+      And the old request is not reinterpreted
+      Given a current v3 client contacts an older v2 app
+      When the request is decoded
+      Then unsupported_version names v2
+      And the newer request is not reinterpreted
+
     @req-cli-nfr-007 @observability
     Scenario: Diagnostics distinguish control degradation from a stopped app
       Given Tenon remains visible but its socket could not bind

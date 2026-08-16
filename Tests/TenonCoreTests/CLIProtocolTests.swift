@@ -1,5 +1,5 @@
 import XCTest
-import TenonIntentCore
+@testable import TenonIntentCore
 @testable import TenonCore
 
 final class CLIProtocolTests: XCTestCase {
@@ -47,6 +47,34 @@ final class CLIProtocolTests: XCTestCase {
         guard case .rejected(.failure(let id, let error)) = CLIWireCodec.decodeRequest(line(#"{"v":99,"id":"keep","action":"ping"}"#)) else { return XCTFail() }
         XCTAssertEqual(id, "keep")
         XCTAssertEqual(error.code, .unsupportedVersion)
+    }
+
+    func testVersionSkewIsRejectedInBothDirections() throws {
+        let oldVersion = CLIProtocol.version - 1
+        let oldClientRequest = try CLIWireCodec.encodeRequest(
+            CLIRequest(v: oldVersion, id: "old-client", action: "ping")
+        )
+        guard case let .rejected(.failure(oldID, oldError)) = CLIWireCodec.decodeRequest(
+            oldClientRequest
+        ) else {
+            return XCTFail("the current host must reject an older client")
+        }
+        XCTAssertEqual(oldID, "old-client")
+        XCTAssertEqual(oldError.code, .unsupportedVersion)
+        XCTAssertTrue(oldError.message.contains("speaks \(CLIProtocol.version)"))
+
+        let currentClientRequest = try CLIWireCodec.encodeRequest(
+            CLIRequest(v: CLIProtocol.version, id: "new-client", action: "ping")
+        )
+        guard case let .rejected(.failure(newID, newError)) = CLIWireCodec.decodeRequest(
+            currentClientRequest,
+            supportedVersion: oldVersion
+        ) else {
+            return XCTFail("an older host fixture must reject a newer client")
+        }
+        XCTAssertEqual(newID, "new-client")
+        XCTAssertEqual(newError.code, .unsupportedVersion)
+        XCTAssertTrue(newError.message.contains("speaks \(oldVersion)"))
     }
 
     func testRejectsMissingActionButKeepsID() {

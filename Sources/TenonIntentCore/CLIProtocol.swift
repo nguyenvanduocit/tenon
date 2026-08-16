@@ -179,6 +179,15 @@ public enum CLIWireCodec {
     }
 
     public static func decodeRequest(_ data: Data) -> CLIRequestDecoding {
+        decodeRequest(data, supportedVersion: CLIProtocol.version)
+    }
+
+    /// Decodes a request against an explicitly selected protocol version for compatibility
+    /// fixtures. Production callers use `decodeRequest(_:)`, which is pinned to the current wire.
+    static func decodeRequest(
+        _ data: Data,
+        supportedVersion: Int
+    ) -> CLIRequestDecoding {
         guard validate(payloadSize: data.count) == nil else {
             return .rejected(.failure(
                 id: nil,
@@ -217,11 +226,11 @@ public enum CLIWireCodec {
         else {
             return rejected(id, .malformedJSON, "missing integer field 'v'")
         }
-        guard version == CLIProtocol.version else {
+        guard version == supportedVersion else {
             return rejected(
                 id,
                 .unsupportedVersion,
-                "protocol version \(version) is unsupported; this app speaks \(CLIProtocol.version)"
+                "protocol version \(version) is unsupported; this app speaks \(supportedVersion)"
             )
         }
         guard let id, !id.isEmpty, id.utf8.count <= 128 else {
