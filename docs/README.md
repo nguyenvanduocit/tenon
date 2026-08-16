@@ -74,7 +74,9 @@ layers. It does not claim the current dirty worktree is green; use command recei
 | [`research-human-agent-supervision.md`](research-human-agent-supervision.md) | Attention Inbox hypothesis and falsifiable metrics | research, not implementation |
 | [`research-plugin-runtimes.md`](research-plugin-runtimes.md) | runtime/sandbox evidence gathered under the former Tessera name | historical, non-normative |
 | [`research-reference-terminals.md`](research-reference-terminals.md) | engineering lessons from kero and muxy | historical, non-normative |
+| [`research-intent-design-principles.md`](research-intent-design-principles.md) | what Linux, Android, and Orca teach about intent design; the legible boundary principle | research, non-normative |
 | [`reports/2026-08-11-cli-capability-survey.html`](reports/2026-08-11-cli-capability-survey.html) | 379-row matrix of `tenon-cli` against orca and herdr, with the refute verdict behind every gap | dated evidence; never revised to stay current |
+| [`reports/2026-08-14-core-intent-catalog-evaluation.md`](reports/2026-08-14-core-intent-catalog-evaluation.md) | all 51 core intents scored against the legible boundary principle; findings routed to tasks | dated evidence; never revised to stay current |
 | [`naming.md`](naming.md) | naming decision and namespace evidence | historical decision record |
 | [`superpowers/specs/2026-07-30-process-resource-monitor-design.md`](superpowers/specs/2026-07-30-process-resource-monitor-design.md) | process-resource monitor exploration | design snapshot; reclassify before implementation |
 
