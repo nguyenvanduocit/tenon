@@ -617,6 +617,9 @@ Authoring does not require hand-maintaining four copies:
 Same-major evolution permits only changes that do not alter executable acceptance,
 output shape, effects, or meaning:
 
+Re-mapping an existing condition to a different error code is breaking, even when both codes
+remain declared; callers may branch on that condition, so the contract requires `.v2`.
+
 | change | same major? |
 | --- | --- |
 | Clarify title, description, examples, or deprecation metadata | yes |
@@ -1065,6 +1068,9 @@ same-owner code typed and keeping facilities, streams, facts, and contributions 
 18. Core intent audiences are exactly the two profiles in the normative boundary law;
     built-in app UI has no generic intent principal.
 19. The bus is runtime-independent; it does not import JavaScriptCore.
+20. A shipped condition-to-error-code mapping is frozen. This records the LKML 2012-12-23
+    `EINVAL`→`ENOENT` compatibility incident: changing the failure code for an existing
+    condition is a breaking contract change and requires a new major.
 
 The runtime choice (in-process JSC, QuickJS, XPC/helper process) is intentionally outside
 this ADR. The provider adapter makes it changeable without changing contracts.
