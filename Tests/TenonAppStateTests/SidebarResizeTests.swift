@@ -12,6 +12,26 @@ final class SidebarResizeTests: XCTestCase {
         XCTAssertLessThan(SidebarResize.collapsedWidth, SidebarResize.minWidth)
     }
 
+    /// A collapsed workspace is a mark and nothing else, so the shape its fill draws is the
+    /// row itself. The rail leaves it `collapsedRowWidth` of width; giving it any other
+    /// height makes a selected or hovered workspace read as a stripe rather than a tile.
+    /// Derived rather than agreed by literal: widen the rail or its inset and the mark stays
+    /// square.
+    func testACollapsedWorkspaceRowIsSquare() {
+        XCTAssertEqual(
+            WorkspaceSidebarLayout.rowHeight,
+            WorkspaceSidebarLayout.collapsedRowWidth
+        )
+    }
+
+    /// The same height serves the expanded row, which is `designs.md`'s two-line utility row
+    /// — a name over a tab count — and is contracted there at 36–40 pt. This is what stops
+    /// the rail's geometry from silently dragging the expanded list out of the design band.
+    func testTheWorkspaceRowKeepsTheTwoLineUtilityRowBand() {
+        XCTAssertGreaterThanOrEqual(WorkspaceSidebarLayout.rowHeight, 36)
+        XCTAssertLessThanOrEqual(WorkspaceSidebarLayout.rowHeight, 40)
+    }
+
     func testExpandedSidebarKeepsItsStoredWidth() {
         XCTAssertEqual(
             SidebarResize.renderedWidth(isExpanded: true, expandedWidth: 300),

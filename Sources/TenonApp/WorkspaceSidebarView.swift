@@ -6,13 +6,17 @@ import TenonCore
 enum WorkspaceSidebarLayout {
     static let expandedHorizontalInset: CGFloat = 7
     static let collapsedHorizontalInset: CGFloat = 5
-    static let rowHeight: CGFloat = 46
     static let reorderThreshold: CGFloat = 6
     static let reorderAnimation: Animation = .easeInOut(duration: 0.12)
 
     static var collapsedRowWidth: CGFloat {
         SidebarResize.collapsedWidth - collapsedHorizontalInset * 2
     }
+
+    /// The width the collapsed rail leaves a mark, so the row it fills is a square there
+    /// rather than a stripe. The expanded row takes the same height, where it is
+    /// `designs.md`'s two-line utility row — a name over a tab count, contracted at 36–40 pt.
+    static var rowHeight: CGFloat { collapsedRowWidth }
 }
 
 /// The left navigation column: one row per workspace and a contextual recent-workspace

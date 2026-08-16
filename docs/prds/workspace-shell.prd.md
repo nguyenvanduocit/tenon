@@ -516,6 +516,7 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | 2026-08-14 | A failed generation says so on the title for a bounded linger and then withdraws itself; retry is the menu item that started it. | with no dialog there is nothing to dismiss, so a failure that waited for a gesture would sit on a pane's header indefinitely and read as the pane's name. The linger is long enough to be read and short enough that the pane returns to saying what it IS; the provider's sentence rides the tooltip because a 34-point strip is not where a CLI error is read | a persistent failure state with an inline Try Again control on the strip |
 | 2026-08-14 | The generating state is a static glyph and a word, not an animated spinner. | an animated glyph writes `stringValue` on an `NSTextField` ten times a second, and every write invalidates its intrinsic size and re-solves the header strip on the main thread. That is the exact churn T-091 and T-141 were opened for in this tree, and `Naming…` already says the pane is working | an `NSProgressIndicator` or a braille-frame timer in the header |
 | 2026-08-10 | The derived palette is ten hues spaced by eye, not twelve spaced evenly. | an even wheel puts three hues in the greens where discrimination is weakest; the snapshot showed them reading as one colour while every count- and contrast-based test passed. ΔE 25.1 against 16.7, for about a third of a workspace more collisions | evenly spaced twelve-hue wheel |
+| 2026-08-16 | The workspace row is as tall as the collapsed rail leaves it wide — `WorkspaceSidebarLayout.rowHeight` derives from `collapsedRowWidth` (38 pt) instead of naming its own number. | collapsed, a workspace is a mark and nothing else, so the row *is* the shape its fill draws: at 46 pt over 38 pt of width the selected and hovered rail read as stripes. The same height also returns the expanded row to `designs.md`'s two-line utility row band (36–40 pt), which 46 sat outside of, and derivation means widening the rail or its inset keeps the mark square rather than quietly making it a rectangle again | a 46 pt row height carried as a literal |
 
 ## 13. Verification receipts
 
@@ -577,6 +578,15 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   assertion while drawing three greens that read as one colour.
 - `SidebarFooterTests` and sidebar snapshots cover destinations, geometry, accessible names,
   minimum width, and removal of version from the sidebar.
+- 2026-08-16, T-168: `SidebarResizeTests` **8 / 0**, red first at both new assertions
+  (`46.0` against the 36–40 pt band, and against the rail's 38 pt). The picture is the
+  evidence the test cannot give: in the 48 pt rail snapshot the selected row's fill measures
+  **38.0 pt tall by 38.0 pt wide** — read off the PNG, not judged by eye — and the 232 pt and
+  110 pt shots show the mark, name, and tab count uncut at the shorter height. Full suite
+  **2291 tests, 8 failures**, all eight in another session's in-flight Agent Lens work
+  (`AgentCLIRetryTests`, `AgentReadingOptionsTests`, `AgentSessionTimelineTests` over their
+  modified `AgentSessionTimeline.swift` / `AgentTimelineSynthesis.swift`); both sidebar
+  suites passed inside that same run.
 - `MainWindowSingletonTests`, interaction/direct-inventory fitness tests, and native window
   XCUITests guard the scene/boundary/titlebar contracts.
 - 2026-08-12, T-138: `WorkspaceFolderDropTests` **9 / 0**, red first at 7 of 9 against a
