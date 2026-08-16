@@ -291,9 +291,13 @@ and idempotent hook installation that preserves unrelated user hooks.
 fact loss, typed plan/change/context replacement, subagent task grouping, and raw-fact-to-fold
 anchor return paths. Decoder tests pin Codex plan, diff, token usage, item turn identity, and
 file-read approval method shapes.
-`InteractionBoundaryFitnessTests` asserts that hook ingress remains EVENT, transcript
-tailing remains RESOURCE/STREAM, and Agent Lens stays on typed DIRECT calls without
-opening a public intent dispatch path.
+`InteractionBoundaryFitnessTests` asserts that Agent Lens stays on typed DIRECT calls
+without opening a public intent dispatch path — the one claim about this surface that only a
+sweep can make. The bounds themselves are proved by running them:
+`testNativeProtocolBoundedWriterTerminatesOnConsumerOverflow` drives a consumer past the
+buffer and takes the overflow termination, and `testTranscriptTailerReadsExistingLineAndCancellationFinishes`
+reads a real transcript and cancels the stream, so RESOURCE/STREAM is a measured behaviour
+rather than a declaration matched in source text.
 
 `AgentSessionTimelineTests` covers the Timeline account: what the digest carries and drops,
 grouping, host-written anchor labels and spans, the invented and shared anchor refusals, the
