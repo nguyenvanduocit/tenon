@@ -623,14 +623,14 @@ private struct AutomationDashboardHeader: View {
 
     private var createButton: some View {
         Button(action: create) {
-            Label("New Automation", systemImage: "plus")
+            Label("Create Workflow", systemImage: "plus")
         }
         .controlSize(.small)
         .frame(height: AutomationPaneMetrics.controlHeight)
         .fixedSize(horizontal: true, vertical: false)
-        .accessibilityLabel("New Automation")
+        .accessibilityLabel("Create Workflow")
         .accessibilityIdentifier("tenon.automation.create")
-        .help("Create an automation with an agent in a new terminal")
+        .help("Describe a dynamic workflow to an agent in a new terminal")
     }
 
     private var narrowHeader: some View {
@@ -659,9 +659,9 @@ private struct AutomationDashboardHeader: View {
             .buttonStyle(.bordered)
             .controlSize(.small)
             .frame(width: AutomationPaneMetrics.controlHeight)
-            .accessibilityLabel("New Automation")
+            .accessibilityLabel("Create Workflow")
             .accessibilityIdentifier("tenon.automation.create.compact")
-            .help("Create an automation with an agent in a new terminal")
+            .help("Describe a dynamic workflow to an agent in a new terminal")
         }
         .padding(.horizontal, AutomationPaneMetrics.contentInset)
         .frame(height: AutomationPaneMetrics.headerHeight)
@@ -1238,15 +1238,15 @@ private struct AutomationEmptyDetail: View {
             Text(
                 hasSchedules
                     ? "Choose a schedule or change the current filter."
-                    : "Create a plugin automation to schedule work and inspect its delivery evidence here."
+                    : "Describe a workflow to an agent, then supervise its work in a visible terminal."
             )
             .font(TenonTheme.interfaceFont(size: 11))
             .foregroundStyle(TenonTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
             if !hasSchedules {
-                Button("New Automation…", action: create)
+                Button("Create Workflow…", action: create)
                     .controlSize(.small)
-                    .accessibilityLabel("New Automation")
+                    .accessibilityLabel("Create Workflow")
             }
         }
         .padding(24)

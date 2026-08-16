@@ -4,7 +4,35 @@
 **Classification authority:** `docs/architecture-interaction-boundaries.md` (the law
 selected every mechanism below; this document records the walk, not a new rule).
 
-## The unit of automation is plugin JavaScript
+## Two user-facing workflow layers
+
+Tenon has two different jobs that should not be forced into one artifact:
+
+1. A **dynamic workflow** is a user brief handled by the agent harness in a visible terminal.
+   The agent writes a task-specific orchestration script only when the task benefits from it,
+   chooses the appropriate model/isolation, saves checkpoints, and can resume after interruption.
+   A saved workflow uses the project-local artifact contract
+   `.tenon/workflows/<workflow-id>/{workflow.md,state.json,evidence/,harness/}`; the harness
+   directory is optional when direct execution is enough.
+   A one-off workflow does not create a Tenon plugin or receive host automation authority.
+2. A **durable host automation** is a registered wall-clock/event source that must keep running
+   after the authoring pane is gone. It still uses the existing manifest-backed plugin path until
+   Tenon has a separate persisted user-workflow registration and task runtime.
+
+The Canvas action is intentionally named **Create Workflow**, not New Plugin. It opens the active
+workspace and gives Claude a dynamic-workflow brief. This makes the common user path flexible
+without inventing a rigid YAML graph or pretending that a one-off agent run is a durable schedule.
+
+Claude Code's principle is the important part: the model creates a custom harness for the actual
+task, rather than executing a static workflow that has to cover every edge case. The useful
+patterns are classify-and-act, fan-out-and-synthesize, adversarial verification,
+generate-and-filter/tournament, and loop-until-done with an explicit bounded stop condition.
+Independent context, structured evidence, verification, and resumable checkpoints protect against
+goal drift, self-preferential verification, and the agent stopping after partial work. These are
+agent-harness responsibilities; Tenon contributes visible panes, attention state, and exact raw
+evidence.
+
+## The unit of durable automation is plugin JavaScript
 
 The studied prior art (Orca's Automations, `references/orca/`) fixes its unit of work
 as *one prompt string pasted into one TUI-agent PTY on a schedule*, guarded by at most
@@ -368,21 +396,20 @@ Tenon started with *no* plugins; a duplicate directory name did worse and trappe
 process, since the reload index is keyed by that name and was built assuming it was
 unique.
 
-## Creating one with an agent (T-061)
+## Creating a dynamic workflow with an agent
 
-Automation Canvas ▸ **Create with AI…** opens a fresh terminal tab whose shell
-starts in the writable user inventory and types one command: `claude` with a
-host-authored guide as a single POSIX-quoted argument (`AutomationAuthoring`, pure and
-pinned headless).
-The guide teaches exactly what this document specifies — the `/* tenon-manifest`
-opener, cadence syntax and bounds, the `automation.fired` payload, the real writable
-path plus why `Tenon.app` is never it, `tenon-cli intent list`/`describe` for
-discovery — and ends with
-the T-060 verification loop: save, watch the schedule appear, press Run Now, read the
-run's outcome, expect the consent prompt on the first privileged call.
+Automation Canvas ▸ **Create Workflow** opens a fresh terminal tab whose shell starts in
+the active workspace and types one command: `claude` with a host-authored dynamic-workflow
+brief as a single POSIX-quoted argument (`AutomationAuthoring`, pure and pinned headless).
+The brief teaches the agent to interview the user briefly, choose the smallest suitable
+harness, use classify/fan-out/synthesize/adversarial verification/bounded loops when earned,
+preserve progress, and report raw evidence plus a resume point. For saved work, it writes
+`.tenon/workflows/<workflow-id>/workflow.md`, `state.json`, `evidence/`, and an optional
+`harness/` directory in the active workspace. It explicitly does not create a plugin or manifest
+for a one-off workflow.
 
-The host grants nothing here. The pane holds ordinary shell authority; the script the
-agent writes earns its authority the ordinary way (manifest declaration, one policy
-path, consent). The button is the same typed services `terminal.open.v1` adapts,
-called DIRECT as the host's own gesture — the flow adds no intent, no capability, and
-no `tenon` member.
+If the user asks for a durable wall-clock automation, the agent must explain that this is a
+different setup and ask before entering the manifest-backed plugin path. The host grants nothing
+from the Create Workflow gesture; the pane holds ordinary shell authority and remains visible
+for supervision. The button is the same typed services `terminal.open.v1` adapts, called DIRECT
+as the host's own gesture — the flow adds no intent, no capability, and no `tenon` member.

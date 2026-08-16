@@ -350,13 +350,10 @@ final class AppStatePathsTests: XCTestCase {
         )
     }
 
-    /// The incident in one assertion. "Create with AI…" opens a terminal whose shell
-    /// starts wherever this line says, and the agent writes its plugin into that
-    /// directory — so this is the line that put `git-auto-update.js` inside
-    /// `Tenon.app` and broke its signature. Everything else in this task is the
-    /// machinery that lets this line have a correct answer to give.
+    /// A user workflow starts in the active workspace. It does not need the plugin inventory
+    /// because the dynamic harness is owned by the agent session, not a Tenon plugin.
     @MainActor
-    func testCreateWithAIStartsTheAgentOutsideTheAppBundle() async throws {
+    func testCreateWorkflowStartsTheAgentInTheActiveWorkspace() async throws {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent(UUID().uuidString, isDirectory: true)
         let bundledRoot = root
@@ -388,11 +385,8 @@ final class AppStatePathsTests: XCTestCase {
         let startsIn = try XCTUnwrap(
             composition.terminalSurfaces.paneDirectory(for: paneID)?.cwd
         )
-        XCTAssertEqual(
-            startsIn.standardizedFileURL,
-            paths.userPluginInventoryRoot.standardizedFileURL,
-            "the agent must be started in the writable inventory"
-        )
+        let workspacePath = try XCTUnwrap(composition.store.catalog.activeWorkspace?.path)
+        XCTAssertEqual(startsIn.standardizedFileURL, workspacePath.standardizedFileURL)
         XCTAssertFalse(
             startsIn.path.contains(".app/"),
             "no path inside an app bundle may ever be handed to the authoring agent"

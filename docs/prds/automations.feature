@@ -5,6 +5,39 @@ Feature: Author, schedule, inspect, and supervise bounded JavaScript automations
   Operators need durable workflows that retain plugin authority and visible evidence.
   PRD: automations.prd.md
 
+  Rule: A user can start a dynamic workflow without authoring a plugin
+
+    @req-au-fr-030
+    Scenario: Create Workflow starts in the active workspace
+      Given the person is viewing the Automation Canvas
+      When the person chooses Create Workflow
+      Then Tenon opens a fresh visible terminal in the active workspace
+      And the agent receives a dynamic-workflow brief
+      And no plugin manifest is required for the one-off run
+
+    @req-au-fr-031
+    Scenario: The agent chooses workflow structure for the task
+      Given the person describes a workflow in natural language
+      When the agent plans the run
+      Then it may choose classify-and-act, fan-out-and-synthesize, adversarial verification, filtering, a tournament, or a bounded loop
+      And it uses the smallest harness that earns its coordination cost
+      And Tenon keeps the worker panes and raw evidence visible
+
+    @req-au-fr-032
+    Scenario: Repeatability is explicit
+      Given the person asks to repeat a workflow
+      When the agent clarifies the request
+      Then it distinguishes a one-off run, a saved template, and a durable wall-clock automation
+      And a one-off request does not silently create plugin code or a host schedule
+
+    @req-au-fr-033
+    Scenario: A saved workflow leaves a resumable project artifact
+      Given the person chooses to save the workflow
+      When the agent starts execution in the active workspace
+      Then it creates `.tenon/workflows/<workflow-id>/workflow.md` and `state.json`
+      And it records raw results under `evidence/`
+      And it updates the resume cursor after each meaningful boundary
+
   Rule: An automation is an ordinary plugin plus a declarative wall-clock schedule
 
     @req-au-fr-001 @req-au-fr-002 @req-au-nfr-007
@@ -172,16 +205,16 @@ Feature: Author, schedule, inspect, and supervise bounded JavaScript automations
       And its location alone grants no consent
 
     @req-au-fr-019 @authoring
-    Scenario: Create with AI moves focus from Settings to one authoring pane
-      Given Settings shows Automation in an empty or populated state
-      When the person chooses Create with AI
+    Scenario: Explicit durable plugin authoring uses the writable inventory
+      Given the person explicitly asks for a durable plugin automation
+      When the legacy plugin authoring guide is used
       Then a fresh terminal tab opens at the real writable plugin root
-      And Settings closes and the terminal receives focus
+      And the active terminal receives focus
 
     @req-au-fr-020 @guide
-    Scenario: The guide teaches a verifiable minimal contract
+    Scenario: Durable plugin authoring teaches its verifiable contract
       Given the host knows the real writable inventory path
-      When it builds the authoring prompt
+      When the explicit plugin authoring prompt is used
       Then the prompt includes that path, leading header, schedule grammar, firing payload, CLI discovery, consent warning, interview-first instruction, and Run Now verification
 
     @req-au-fr-021 @security
@@ -256,7 +289,8 @@ Feature: Author, schedule, inspect, and supervise bounded JavaScript automations
       Examples:
         | flow |
         | watch Canvas due state, Run Now, and a manual history row |
-        | Create with AI and produce a working hot-reloaded script |
+        | Create Workflow and complete a dynamic workflow with raw evidence |
+        | explicitly author a durable plugin and produce a working hot-reloaded script |
         | run a command fast enough to finish near the open-to-wait boundary |
 
     @req-au-nfr-004 @policy-epoch

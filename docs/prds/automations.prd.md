@@ -22,13 +22,25 @@ permissions, intents, isolation, hot reload, and consent as every plugin; the ho
 only durable-in-generation schedule computation and owner-scoped firing facts.
 
 The Automation Canvas makes declarations, next due, pause state, Run Now, and bounded delivery
-history visible. A single `.js` file can carry its manifest at the top. “Create with AI” opens a
-fresh terminal tab at the real user-plugin root with a safely quoted guide. `tenon.agents.run`
-composes visible terminal panes, finite waits, and paged scrollback for supervised fleets.
+history visible. A single `.js` file can carry its manifest at the top. **Create Workflow** opens
+a fresh terminal tab at the active workspace with a safely quoted dynamic-workflow brief;
+explicit plugin authoring remains a separate escalation. `tenon.agents.run` composes visible
+terminal panes, finite waits, and paged scrollback for supervised fleets.
 
 Current scheduling and UI are shipped, but this PRD remains partial until the installed Canvas/
 authoring workflow and the true-provider fast-command wait race are observed. Cross-restart
 catch-up and unattended implicit terminal scope are explicit non-goals, not hidden claims.
+
+## Dynamic workflow authoring
+
+The user-facing authoring path is distinct from durable plugin automation. **Create Workflow**
+starts a visible agent session in the active workspace with a dynamic-workflow brief. The agent
+decides whether the request needs a quick direct pass, classification, fan-out/synthesis,
+adversarial verification, or a bounded loop. A saved workflow persists
+`.tenon/workflows/<workflow-id>/workflow.md`, `state.json`, `evidence/`, and an optional
+`harness/` directory in the active workspace so it can resume without guessing. A one-off user
+workflow does not create a Tenon plugin. Durable host-wide schedules remain on the manifest path
+until a separately designed persisted user-workflow task runtime exists.
 
 ## 2. Discovery, users, and jobs
 
@@ -63,6 +75,8 @@ ordinary provider timing but may need a contract-level start gate for very fast 
 - `AU-G-002` — Wall-clock schedules are deterministic across tick/reload/pause behavior.
 - `AU-G-003` — Operators can inspect, run, pause, and verify delivery in workspace context.
 - `AU-G-004` — AI authoring and agent fleets remain safely quoted, bounded composition.
+- `AU-G-005` — A user can start a dynamic workflow from a natural-language brief without
+  first authoring a plugin or manifest.
 
 Targets: zero duplicate firing at one instant; zero authority from schedule declaration; zero
 manual runs shifting phase; history capacity exactly 128 newest-first; at most 8 schedules per
@@ -70,10 +84,10 @@ plugin; cadence 1 minute…7 days; 256 outbound intents per generation; agent wa
 55 seconds under an overall default 10-minute budget; scrollback invalidation may restart once.
 
 In scope: manifest schedules, scheduler/event/reconcile, global/per-schedule pause, Canvas,
-history/Run Now, single-file plugins, user inventory, AI authoring, `tenon.agents.run`, fleet
-example. Non-goals: host business-success inference, cross-restart catch-up, silent headless
-terminal selection, log deep link before a log product exists, built-in prompt DSL, installing
-the fleet demo by default.
+history/Run Now, single-file plugins, dynamic workflow authoring, user inventory, AI authoring,
+`tenon.agents.run`, fleet example. Non-goals: host business-success inference, cross-restart
+catch-up, silent headless terminal selection, log deep link before a log product exists, built-in
+prompt DSL, a persisted user-workflow task runtime, installing the fleet demo by default.
 
 ## 4. User experience
 
@@ -84,11 +98,13 @@ cadence, due, grace, availability, and recent delivery. Global enablement pauses
 delivery only. Per-row Pause advances occurrences without replay. Run Now remains available and
 does not alter nextDue.
 
-Create with AI closes Settings and focuses a new terminal tab rooted at the writable user-plugin
-inventory. Claude receives one POSIX-quoted prompt teaching the exact leading manifest header,
-schedule/event schema, real path, intent discovery, consent, and Run Now verification. Saved
-scripts hot reload. Fleet scripts use `Promise.all(tenon.agents.run(...))`; each agent remains a
-visible pane and returns bounded transcript evidence.
+Create Workflow focuses a new terminal tab rooted at the active workspace. Claude receives one
+POSIX-quoted prompt teaching dynamic harness selection, classify/fan-out/synthesize,
+adversarial verification, bounded loops, structured evidence, interruption/resume, and the
+distinction between a one-off workflow, a saved template, and a durable wall-clock automation.
+It does not write a plugin by default. Durable plugin authoring remains available as an explicit
+escalation. Fleet scripts use `Promise.all(tenon.agents.run(...))`; each agent remains a visible
+pane and returns bounded transcript evidence.
 
 ## 5. Requirements
 
@@ -114,8 +130,8 @@ visible pane and returns bounded transcript evidence.
 | `AU-FR-016` | A top-level `.js` with a valid opening manifest header **MUST** load/reload/retire exactly like a directory plugin through the same decoder. | shipped | `@req-au-fr-016` |
 | `AU-FR-017` | Malformed claimed headers **MUST** fail with file diagnostics; plain `.js` without a header **MUST** be ignored; mixed identity rules **MUST** remain exact. | shipped | `@req-au-fr-017` |
 | `AU-FR-018` | Authored automations **MUST** live in the writable user inventory; bundle inventory **MUST** remain sealed and win identity clashes without granting trust to user code. | shipped | `@req-au-fr-018` |
-| `AU-FR-019` | Create with AI **MUST** open/focus a fresh terminal tab at the real writable inventory and close the obscuring Settings window. | shipped/headless | `@req-au-fr-019` |
-| `AU-FR-020` | The guide **MUST** teach the exact header, schedule/event grammar, real root, CLI discovery, consent, smallest-script interview, and Run Now verification. | shipped | `@req-au-fr-020` |
+| `AU-FR-019` | Explicit durable plugin authoring **MUST** open/focus a fresh terminal tab at the real writable inventory; Create Workflow **MUST** use the active workspace instead. | shipped/headless | `@req-au-fr-019` |
+| `AU-FR-020` | The explicit plugin guide **MUST** teach the exact header, schedule/event grammar, real root, CLI discovery, consent, smallest-script interview, and Run Now verification. | shipped | `@req-au-fr-020` |
 | `AU-FR-021` | Claude plus the complete guide **MUST** cross the shell as one POSIX-quoted argument resistant to quotes, substitutions, backticks, spaces, and newlines. | shipped | `@req-au-fr-021` |
 | `AU-FR-022` | `tenon.agents.run` **MUST** be caller-local JavaScript composition over terminal open, wait, and scrollback intents with no broker authority. | shipped | `@req-au-fr-022` |
 | `AU-FR-023` | Agent command/arguments **MUST** be quoted per token and run in a visible pane; success **MUST** return pane ID and transcript. | shipped | `@req-au-fr-023` |
@@ -123,8 +139,12 @@ visible pane and returns bounded transcript evidence.
 | `AU-FR-025` | Scrollback **MUST** page to completion; one invalidation **MUST** restart cleanly and a second **MUST** fail typed without mixed transcript. | shipped | `@req-au-fr-025` |
 | `AU-FR-026` | `Promise.all`, pipelines, loops, conditions, and retries **MUST** remain ordinary JS under generation outbound-intent bounds. | shipped | `@req-au-fr-026` |
 | `AU-FR-027` | The fleet-review example **MUST** remain opt-in, executable in tests, launch three supervised panes, aggregate transcripts, and publish one verdict. | shipped/headless | `@req-au-fr-027` |
-| `AU-FR-028` | Installed verification **MUST** cover Canvas pixels, Run Now/history, AI-authored working script, and a true-provider command that may finish before wait arms. | planned verification | `@req-au-fr-028` |
+| `AU-FR-028` | Installed verification **MUST** cover Canvas pixels, Run Now/history, a completed Create Workflow run with raw evidence, explicit durable plugin authoring, and a true-provider command that may finish before wait arms. | planned verification | `@req-au-fr-028` |
 | `AU-FR-029` | A run in Canvas recent activity **MUST** lead to its owning plugin's own registered shared view, placed through typed workspace services DIRECT on that selection alone; a run whose plugin registers no shared view **MUST** present as evidence rather than as a control. | shipped | `@req-au-fr-029` |
+| `AU-FR-030` | Create Workflow **MUST** open the active workspace and start an agent with a dynamic-workflow brief; it **MUST NOT** require a plugin manifest for a one-off run. | shipped | `@req-au-fr-030` |
+| `AU-FR-031` | The dynamic-workflow brief **MUST** let the agent choose the smallest suitable harness and compose classify, fan-out, synthesis, verification, filtering, tournament, and bounded-loop patterns when warranted. | shipped/headless | `@req-au-fr-031` |
+| `AU-FR-032` | The brief **MUST** distinguish one-off, saved-template, and durable wall-clock workflows; durable scheduling **MUST NOT** be silently created as a side effect of a one-off request. | shipped | `@req-au-fr-032` |
+| `AU-FR-033` | A saved workflow **MUST** persist its brief, lifecycle cursor, raw evidence, and optional harness under `.tenon/workflows/<workflow-id>/` in the active workspace. | shipped/headless | `@req-au-fr-033` |
 
 ### Non-functional requirements
 

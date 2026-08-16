@@ -883,26 +883,24 @@ final class AppLifecycleDelegate: NSObject, NSApplicationDelegate {
 }
 
 extension AppComposition {
-    /// T-061: Create with AI. Opens a fresh terminal tab whose shell starts in the
-    /// writable inventory and types the `claude <guide>` command into it — the same typed
-    /// services `terminal.open.v1`'s provider adapts, called DIRECT because this is
-    /// the host's own gesture (invariant 6; the intent stays the public adapter).
+    /// Opens a fresh terminal tab for a user-authored dynamic workflow. The shell starts in
+    /// the active workspace, not the plugin inventory: a one-off workflow is not a plugin.
+    /// Claude Code owns the task-specific harness; Tenon only provides the visible supervised
+    /// pane. This is DIRECT host composition for the accepted in-window gesture.
     ///
     /// Reachable from the test target rather than fileprivate like its neighbours below,
-    /// because the directory this hands over is the whole of T-062: an agent started in
-    /// the app bundle writes into a signed bundle and breaks it, which is not a hazard a
-    /// comment can be trusted with alone.
+    /// because the workspace handoff and command seed are the user-visible contract.
     func openAutomationAuthoringPane() {
         store.newTab(content: .terminal)
         guard let paneID = store.catalog.activeSlotID,
               store.catalog.slot(id: paneID)?.content == .terminal
         else { return }
-        // The writable inventory, never the sealed bundle: an agent writing into
-        // `Tenon.app` breaks its code signature and the file dies at the next install.
-        guard let root = host.writableInventoryRoot else { return }
-        terminalSurfaces.seedSpawnDirectory(root, for: paneID)
+        guard let workingDirectory = store.catalog.activeWorkspace?.path else { return }
+        terminalSurfaces.seedSpawnDirectory(workingDirectory, for: paneID)
         terminalSurfaces.sendTextWhenReady(
-            AutomationAuthoring.command(pluginsRoot: root.path) + "\n",
+            AutomationAuthoring.dynamicWorkflowCommand(
+                workingDirectory: workingDirectory.path
+            ) + "\n",
             to: paneID
         )
     }

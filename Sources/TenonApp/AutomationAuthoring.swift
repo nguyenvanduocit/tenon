@@ -1,14 +1,14 @@
 // @domain: automation
 import Foundation
 
-/// T-061: the seed for pane-based pair-authoring of automations.
+/// T-061: pure prompt and command seeds for durable plugin authoring and dynamic workflows.
 ///
 /// One pure type owns everything that crosses into the agent's PTY: the guide prompt
 /// (the single-file manifest contract, schedule syntax, the `automation.fired` shape,
 /// the REAL plugins-root path, and the Run Now verification loop) and the command that
 /// delivers that prompt to `claude` as ONE POSIX-quoted argument. Pure on purpose —
-/// every rule here is assertable headless, and the UI's only job is to type
-/// `command(pluginsRoot:)` into a fresh pane.
+/// every rule here is assertable headless, and the UI's only job is to type one of the
+/// quoted commands into a fresh pane.
 enum AutomationAuthoring {
     /// The guide the agent reads before touching anything. Parameterized by the real
     /// plugins root so the agent never guesses a path.
@@ -84,6 +84,77 @@ enum AutomationAuthoring {
     /// `claude` plus the whole prompt as one quoted argument, ready for a shell.
     static func command(pluginsRoot: String) -> String {
         "claude " + posixQuoted(prompt(pluginsRoot: pluginsRoot))
+    }
+
+    /// The user-facing workflow path. Unlike `prompt(pluginsRoot:)`, this does not ask
+    /// Claude to author a Tenon plugin. Claude Code owns the dynamic harness: it chooses
+    /// whether the brief needs one agent, a classifier, fan-out and synthesis, adversarial
+    /// verification, or a bounded loop, then runs that harness in the user's workspace.
+    ///
+    /// A recurring wall-clock schedule is deliberately an explicit escalation. A dynamic
+    /// workflow is not silently turned into a plugin or granted host automation authority.
+    static func dynamicWorkflowPrompt(workingDirectory: String) -> String {
+        """
+        You are helping the user run a Tenon dynamic workflow in this workspace:
+        \(workingDirectory)
+
+        Start by understanding the user's outcome, constraints, and what evidence would make
+        the result trustworthy. Ask at most two focused questions when the brief is ambiguous.
+        Do not create a Tenon plugin, manifest, or automation schedule unless the user explicitly
+        asks for a durable host-wide trigger.
+
+        Use the smallest harness that earns its coordination cost. For a small task, act directly
+        or use a quick workflow. For a larger or higher-risk task, write a task-specific workflow
+        that can combine these patterns:
+
+        - classify-and-act when the correct route depends on what you discover;
+        - fan-out-and-synthesize for independent units of work, with a barrier before merging;
+        - adversarial verification when a wrong result would be costly;
+        - generate-and-filter or a tournament when alternatives need comparison;
+        - loop-until-done only with a concrete stop condition and a bounded budget.
+
+        Keep the orchestration outside one giant conversation so context drift is reduced. Give
+        each worker a narrow objective and return structured evidence. Never treat an agent's
+        claim of completion as proof: run the relevant checks and show the user the raw evidence.
+        Preserve progress so an interrupted workflow can resume instead of restarting from zero.
+        Keep work visible in the current Tenon workspace and make destructive or external actions
+        explicit before running them.
+
+        If the work should be saved or resumed, use the Tenon workflow skill when available:
+        .claude/skills/tenon-dynamic-workflow/SKILL.md. Create the project-local artifact at:
+
+          .tenon/workflows/<workflow-id>/
+            workflow.md
+            state.json
+            evidence/
+            harness/ (only when a task-specific harness is needed)
+
+        Keep state.json updated at every meaningful boundary with status, pattern, currentStep,
+        resumeFrom, timestamps, and bounded budget. One-off work may remain session-only, but a
+        workflow expected to be reused or resumed must leave enough raw evidence for another run
+        to continue without guessing.
+
+        Prefer the installed Claude Code dynamic-workflow harness when available. The keyword
+        "ultracode" may be used when the user wants Claude to decide whether a workflow is worth
+        the extra coordination. Do not invent a Tenon API; discover host actions with:
+
+          tenon-cli intent list
+          tenon-cli intent describe <intent-id>
+
+        If the user asks for a repeatable workflow, first clarify its scope: a saved workflow
+        template, a session loop, or a durable wall-clock automation are different things. A
+        durable wall-clock automation must be shown to the user as a separate, permissioned
+        setup under ~/Library/Application Support/Tenon/user-plugins/; never write it into
+        Tenon.app and do not silently write plugin code as a side effect of a one-off request.
+
+        Work from the user's brief now. Keep the final response short: outcome, evidence, what
+        remains, and the exact resume point if the run was interrupted.
+        """
+    }
+
+    /// `claude` plus the dynamic-workflow brief as one POSIX-quoted argument.
+    static func dynamicWorkflowCommand(workingDirectory: String) -> String {
+        "claude " + posixQuoted(dynamicWorkflowPrompt(workingDirectory: workingDirectory))
     }
 
     /// Single-quote POSIX quoting: the only bytes the shell interprets in the result

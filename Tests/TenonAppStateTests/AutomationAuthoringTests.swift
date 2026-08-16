@@ -81,6 +81,48 @@ final class AutomationAuthoringTests: XCTestCase {
         XCTAssertTrue(command.hasPrefix("claude '"))
     }
 
+    func testDynamicWorkflowPromptDoesNotDefaultToPluginAuthoring() {
+        let workingDirectory = "/tmp/tenon project"
+        let prompt = AutomationAuthoring.dynamicWorkflowPrompt(
+            workingDirectory: workingDirectory
+        )
+
+        XCTAssertTrue(prompt.contains(workingDirectory))
+        XCTAssertTrue(prompt.contains("classify-and-act"))
+        XCTAssertTrue(prompt.contains("fan-out-and-synthesize"))
+        XCTAssertTrue(prompt.contains("adversarial verification"))
+        XCTAssertTrue(prompt.contains("loop-until-done"))
+        XCTAssertTrue(prompt.contains("Preserve progress"))
+        XCTAssertTrue(prompt.contains("Do not create a Tenon plugin"))
+        XCTAssertTrue(prompt.contains("durable wall-clock automation"))
+        XCTAssertTrue(prompt.contains(".claude/skills/tenon-dynamic-workflow/SKILL.md"))
+        XCTAssertTrue(prompt.contains(".tenon/workflows/<workflow-id>/"))
+        XCTAssertTrue(prompt.contains("state.json"))
+        XCTAssertTrue(prompt.contains("resumeFrom"))
+        XCTAssertTrue(prompt.contains("~/Library/Application Support/Tenon/user-plugins/"))
+        XCTAssertTrue(prompt.contains("never write it into"))
+        XCTAssertFalse(
+            prompt.contains("/* tenon-manifest"),
+            "a one-off user workflow must not start in plugin authoring mode"
+        )
+    }
+
+    func testDynamicWorkflowCommandQuotesTheCompleteBriefAsOneArgument() {
+        let workingDirectory = "/tmp/tenon workflow's project"
+        let command = AutomationAuthoring.dynamicWorkflowCommand(
+            workingDirectory: workingDirectory
+        )
+
+        XCTAssertEqual(
+            command,
+            "claude " + AutomationAuthoring.posixQuoted(
+                AutomationAuthoring.dynamicWorkflowPrompt(
+                    workingDirectory: workingDirectory
+                )
+            )
+        )
+    }
+
     func testPosixQuotingNeutralizesHostileBytes() {
         XCTAssertEqual(
             AutomationAuthoring.posixQuoted("a'b"),
