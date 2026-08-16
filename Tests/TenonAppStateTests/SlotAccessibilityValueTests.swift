@@ -10,20 +10,25 @@ import XCTest
 /// moved to the accessibility identifier, which is never spoken.
 @MainActor
 final class SlotAccessibilityValueTests: XCTestCase {
-    func testTheSpokenValueDescribesWhereThePaneIs() {
-        let value = SpatialSlotCardView.spokenPosition(
-            of: GridRect(x: 1, y: 0, width: 1, height: 1)
-        )
-
-        XCTAssertEqual(value, "Column 2, row 1")
-    }
-
-    func testASpanningPaneSaysHowMuchOfTheGridItCovers() {
-        let value = SpatialSlotCardView.spokenPosition(
-            of: GridRect(x: 0, y: 2, width: 2, height: 3)
-        )
-
-        XCTAssertEqual(value, "Column 1, row 3, 2 by 3 cells")
+    /// One rule at two inputs: the spoken value names the one-based cell, and adds the span
+    /// only when the pane covers more than one cell.
+    func testTheSpokenValueDescribesWhereThePaneIsAndHowMuchItCovers() {
+        for (rect, expected, why) in [
+            (
+                GridRect(x: 1, y: 0, width: 1, height: 1), "Column 2, row 1",
+                "a single cell says where it is and stops"
+            ),
+            (
+                GridRect(x: 0, y: 2, width: 2, height: 3), "Column 1, row 3, 2 by 3 cells",
+                "a spanning pane says how much of the grid it covers"
+            ),
+        ] {
+            XCTAssertEqual(
+                SpatialSlotCardView.spokenPosition(of: rect),
+                expected,
+                why
+            )
+        }
     }
 
     /// The regression this guards: no identifier, no raw geometry, nothing a person would have

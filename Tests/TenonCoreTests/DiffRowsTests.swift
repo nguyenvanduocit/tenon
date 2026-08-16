@@ -75,29 +75,34 @@ final class DiffRowsTests: XCTestCase {
         XCTAssertEqual(pairs[1].right?.text, "Y")
     }
 
-    func testSplitLeavesAGapWhenTheRemovedSideIsLonger() {
-        // Three lines out, one line in: two rows have nothing on the right.
-        let hunks = LineDiff.hunks(old: "A\nB\nC\n", new: "X\n")
-        let pairs = DiffRows.split(hunks).compactMap(\.pairContent)
+    /// One rule at three shapes: the two sides stay aligned row by row, and the shorter side
+    /// is padded with a gap rather than pulling the longer one up.
+    func testSplitAlignsTheTwoSidesAndPadsTheShorterOneWithAGap() {
+        let cases: [(old: String, new: String, left: [String?], right: [String?], why: String)] = [
+            (
+                "A\nB\nC\n", "X\n",
+                ["A", "B", "C"], ["X", nil, nil],
+                "three lines out, one line in: two rows have nothing on the right"
+            ),
+            (
+                "A\n", "X\nY\nZ\n",
+                ["A", nil, nil], ["X", "Y", "Z"],
+                "one line out, three in: the gap is on the left"
+            ),
+            (
+                "a\n", "a\nb\n",
+                ["a", nil], ["a", "b"],
+                "a pure addition sits on the right only"
+            ),
+        ]
 
-        XCTAssertEqual(pairs.map { $0.left?.text }, ["A", "B", "C"])
-        XCTAssertEqual(pairs.map { $0.right?.text }, ["X", nil, nil])
-    }
+        for (old, new, left, right, why) in cases {
+            let pairs = DiffRows.split(LineDiff.hunks(old: old, new: new))
+                .compactMap(\.pairContent)
 
-    func testSplitLeavesAGapWhenTheAddedSideIsLonger() {
-        let hunks = LineDiff.hunks(old: "A\n", new: "X\nY\nZ\n")
-        let pairs = DiffRows.split(hunks).compactMap(\.pairContent)
-
-        XCTAssertEqual(pairs.map { $0.left?.text }, ["A", nil, nil])
-        XCTAssertEqual(pairs.map { $0.right?.text }, ["X", "Y", "Z"])
-    }
-
-    func testSplitPutsAPureAdditionOnTheRightOnly() {
-        let hunks = LineDiff.hunks(old: "a\n", new: "a\nb\n")
-        let pairs = DiffRows.split(hunks).compactMap(\.pairContent)
-
-        XCTAssertEqual(pairs.map { $0.left?.text }, ["a", nil])
-        XCTAssertEqual(pairs.map { $0.right?.text }, ["a", "b"])
+            XCTAssertEqual(pairs.map { $0.left?.text }, left, why)
+            XCTAssertEqual(pairs.map { $0.right?.text }, right, why)
+        }
     }
 
     func testSplitKeepsTheHunkHeader() {

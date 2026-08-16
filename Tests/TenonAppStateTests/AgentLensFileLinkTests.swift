@@ -13,18 +13,25 @@ final class AgentLensFileLinkTests: XCTestCase {
         )
     }
 
-    func testALineSuffixPointsIntoTheFileTheReferenceNames() {
-        XCTAssertEqual(
-            AgentFileReferenceRule.reference(in: "AgentLensView.swift:1023"),
-            AgentFileReference(path: "AgentLensView.swift", line: 1_023)
-        )
-    }
-
-    func testALineAndColumnSuffixKeepsTheLine() {
-        XCTAssertEqual(
-            AgentFileReferenceRule.reference(in: "Sources/App/View.swift:42:9"),
-            AgentFileReference(path: "Sources/App/View.swift", line: 42)
-        )
+    /// A suffix points into the file the reference names, and a column beyond the line is
+    /// read but not carried — the pane opens at a line, not at a character.
+    func testASuffixPointsIntoTheFileAndOnlyTheLineIsCarried() {
+        for (reference, expected) in [
+            (
+                "AgentLensView.swift:1023",
+                AgentFileReference(path: "AgentLensView.swift", line: 1_023)
+            ),
+            (
+                "Sources/App/View.swift:42:9",
+                AgentFileReference(path: "Sources/App/View.swift", line: 42)
+            ),
+        ] {
+            XCTAssertEqual(
+                AgentFileReferenceRule.reference(in: reference),
+                expected,
+                reference
+            )
+        }
     }
 
     func testRelativeAndHomePathsAreReferences() {
@@ -131,36 +138,27 @@ final class AgentLensFileLinkTests: XCTestCase {
 
     // MARK: - How a resolved file renders
 
-    func testACitedPathInBackticksBecomesAFileLink() {
+    /// However an agent spells a path that resolves, it renders as a link to that file: in a
+    /// code span, with a line suffix, or as the destination of a written link. One rule at
+    /// three spellings.
+    func testEverySpellingOfAResolvingPathBecomesAFileLink() {
         let links = AgentFileLinks(root: URL(fileURLWithPath: "/workspace")) {
             $0 == "/workspace/Sources/App.swift"
         }
 
-        let attributed = AgentMarkdownInline.attributed(
-            "I changed `Sources/App.swift` today.",
-            fileLinks: links
-        )
+        for (markdown, spelling) in [
+            ("I changed `Sources/App.swift` today.", "a cited path in backticks"),
+            ("See `Sources/App.swift:42`.", "a cited path with a line"),
+            ("See [the view](Sources/App.swift).", "a written link to a resolving path"),
+        ] {
+            let attributed = AgentMarkdownInline.attributed(markdown, fileLinks: links)
 
-        XCTAssertEqual(
-            Self.links(in: attributed),
-            [URL(fileURLWithPath: "/workspace/Sources/App.swift")]
-        )
-    }
-
-    func testACitedPathWithALineStillLinksTheFile() {
-        let links = AgentFileLinks(root: URL(fileURLWithPath: "/workspace")) {
-            $0 == "/workspace/Sources/App.swift"
+            XCTAssertEqual(
+                Self.links(in: attributed),
+                [URL(fileURLWithPath: "/workspace/Sources/App.swift")],
+                "\(spelling) must render as a file link"
+            )
         }
-
-        let attributed = AgentMarkdownInline.attributed(
-            "See `Sources/App.swift:42`.",
-            fileLinks: links
-        )
-
-        XCTAssertEqual(
-            Self.links(in: attributed),
-            [URL(fileURLWithPath: "/workspace/Sources/App.swift")]
-        )
     }
 
     func testACommandInBackticksStaysPlainText() {
@@ -181,22 +179,6 @@ final class AgentLensFileLinkTests: XCTestCase {
 
         XCTAssertTrue(Self.links(in: attributed).isEmpty)
         XCTAssertTrue(String(attributed.characters).contains("the view"))
-    }
-
-    func testAWrittenLinkToAResolvingPathBecomesAFileLink() {
-        let links = AgentFileLinks(root: URL(fileURLWithPath: "/workspace")) {
-            $0 == "/workspace/Sources/App.swift"
-        }
-
-        let attributed = AgentMarkdownInline.attributed(
-            "See [the view](Sources/App.swift).",
-            fileLinks: links
-        )
-
-        XCTAssertEqual(
-            Self.links(in: attributed),
-            [URL(fileURLWithPath: "/workspace/Sources/App.swift")]
-        )
     }
 
     func testARemoteLinkKeepsItsOwnDestination() {

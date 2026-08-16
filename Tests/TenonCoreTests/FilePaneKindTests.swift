@@ -3,39 +3,32 @@ import XCTest
 
 /// T-038: which renderer a file pane gets, asserted without a window.
 final class FilePaneKindTests: XCTestCase {
-    func testImagesRenderAsPictures() {
-        for path in [
-            "/repo/logo.png",
-            "/repo/shot.JPG",
-            "/repo/anim.gif",
-            "/repo/hero.webp",
-            "/repo/mark.svg",
-            "/repo/photo.HEIC",
-            "/repo/scan.tiff",
+    /// The extension decides the renderer, case-insensitively, and anything unclaimed keeps
+    /// the editor. One rule, so one table — the parsing rules that decide *what the
+    /// extension is* get their own tests below.
+    func testTheExtensionDecidesTheRendererAndTheEditorTakesTheRest() {
+        for (path, expected) in [
+            ("/repo/logo.png", FilePaneKind.image),
+            ("/repo/shot.JPG", .image),
+            ("/repo/anim.gif", .image),
+            ("/repo/hero.webp", .image),
+            ("/repo/mark.svg", .image),
+            ("/repo/photo.HEIC", .image),
+            ("/repo/scan.tiff", .image),
+            ("/repo/index.html", .web),
+            ("/repo/page.HTM", .web),
+            ("/repo/doc.xhtml", .web),
+            ("/repo/main.swift", .text),
+            ("/repo/README.md", .text),
+            ("/repo/data.json", .text),
+            ("/repo/Makefile", .text),
+            ("/repo/archive.tar.gz", .text),
         ] {
             XCTAssertEqual(
                 FilePaneKind.kind(forPath: path),
-                .image,
-                "\(path) should render as a picture"
+                expected,
+                "\(path) should render as \(expected)"
             )
-        }
-    }
-
-    func testHTMLRendersAsAPage() {
-        for path in ["/repo/index.html", "/repo/page.HTM", "/repo/doc.xhtml"] {
-            XCTAssertEqual(FilePaneKind.kind(forPath: path), .web, path)
-        }
-    }
-
-    func testEverythingElseKeepsTheEditor() {
-        for path in [
-            "/repo/main.swift",
-            "/repo/README.md",
-            "/repo/data.json",
-            "/repo/Makefile",
-            "/repo/archive.tar.gz",
-        ] {
-            XCTAssertEqual(FilePaneKind.kind(forPath: path), .text, path)
         }
     }
 

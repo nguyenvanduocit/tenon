@@ -74,10 +74,17 @@ final class AgentLensMarkdownTests: XCTestCase {
         )
     }
 
-    func testSoftWrappedLinesStayInOneParagraph() {
-        let blocks = AgentMarkdown.parse("first line\nsecond line")
-
-        XCTAssertEqual(blocks, [.paragraph("first line\nsecond line")])
+    /// Two ways a paragraph is nearly mistaken for structure: a single newline is a soft
+    /// wrap and not a block break, and a line opening with `**` is emphasis and not a
+    /// bullet. Both must come back as one paragraph carrying its own text verbatim.
+    func testTextThatOnlyLooksLikeStructureStaysOneParagraph() {
+        for source in ["first line\nsecond line", "**fast and terse** wins"] {
+            XCTAssertEqual(
+                AgentMarkdown.parse(source),
+                [.paragraph(source)],
+                source
+            )
+        }
     }
 
     func testHeadingsCarryTheirLevelWithoutTheirPunctuation() {
@@ -139,12 +146,6 @@ final class AgentLensMarkdownTests: XCTestCase {
                 ]),
             ]
         )
-    }
-
-    func testEmphasisAtTheStartOfALineIsNotABulletMarker() {
-        let blocks = AgentMarkdown.parse("**fast and terse** wins")
-
-        XCTAssertEqual(blocks, [.paragraph("**fast and terse** wins")])
     }
 
     func testFencedCodeKeepsItsLanguageAndItsOwnBlankLines() {
