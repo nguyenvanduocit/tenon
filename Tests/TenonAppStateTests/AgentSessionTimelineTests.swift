@@ -137,9 +137,21 @@ final class AgentSessionTimelineTests: XCTestCase {
         for outcome in AgentMilestoneOutcome.allCases {
             XCTAssertTrue(prompt.contains(outcome.rawValue), "the prompt omits \(outcome.rawValue)")
         }
-        for fact in digest.facts {
-            XCTAssertTrue(prompt.contains("[\(fact.id)]"), "\(fact.id) is not citable from the prompt")
+        for number in 1...digest.facts.count {
+            XCTAssertTrue(prompt.contains("[\(number)]"), "fact \(number) is not citable from the prompt")
         }
+        XCTAssertFalse(
+            prompt.contains(digest.facts[0].id),
+            """
+            A reading names a stretch of the session, not identifiers. Putting the ids back in \
+            the prompt is what invited the model to transcribe them, and one bad transcription \
+            is what discarded a whole 277 s reading on 2026-08-16.
+            """
+        )
+        XCTAssertTrue(
+            prompt.contains("\(AgentTimelineBounds.minimumFactsPerMilestone) facts"),
+            "the compression bar the validator holds is not stated to the model"
+        )
         XCTAssertTrue(
             prompt.contains("OPEN"),
             "a still-running fact must be marked, or the model cannot avoid the one claim the host refuses"
@@ -151,7 +163,6 @@ final class AgentSessionTimelineTests: XCTestCase {
     func testAGroupedReadingValidatesAndKeepsItsEvidence() throws {
         let snapshot = Fixture.session()
         let digest = try XCTUnwrap(Fixture.digest(snapshot))
-        let ids = digest.facts.map(\.id)
 
         let draft = AgentTimelineDraft(milestones: [
             .init(
@@ -159,14 +170,16 @@ final class AgentSessionTimelineTests: XCTestCase {
                 whatChanged: "The pane's focus loop was reproduced from a cold start.",
                 whyItMattered: "Until then the report was a description, not a repro.",
                 outcome: "settled",
-                anchors: Array(ids.prefix(3))
+                from: 1,
+                through: 3
             ),
             .init(
                 title: "Changed the ownership rule",
                 whatChanged: "One routing type now owns both focus edges.",
                 whyItMattered: "Two writers with no fixed point was the defect itself.",
                 outcome: "settled",
-                anchors: Array(ids.dropFirst(3).prefix(3))
+                from: 4,
+                through: 6
             ),
         ])
 
@@ -188,13 +201,14 @@ final class AgentSessionTimelineTests: XCTestCase {
     func testATranscriptRenderedAsARawEventListIsNotATimeline() throws {
         let digest = try XCTUnwrap(Fixture.digest(Fixture.session(userTurns: 8, toolRuns: 8)))
         let draft = AgentTimelineDraft(
-            milestones: digest.facts.map { fact in
+            milestones: zip(1..., digest.facts).map { number, fact in
                 .init(
-                    title: "Step \(fact.id)",
+                    title: "Step \(number)",
                     whatChanged: fact.title,
                     whyItMattered: "It happened.",
                     outcome: "settled",
-                    anchors: [fact.id]
+                    from: number,
+                    through: number
                 )
             }
         )
@@ -208,47 +222,119 @@ final class AgentSessionTimelineTests: XCTestCase {
         )
 
         // And the same shape at a length the milestone ceiling alone would let through: the
-        // compression ratio is what makes the rule hold for a session of any size.
+        // compression bar is what makes the rule hold for a session of any size. It is stated per
+        // milestone now, because a span carries its own size and a ratio over the whole reading
+        // could be met by one wide milestone paying for eight narrow ones.
         let narrow = AgentTimelineDraft(
-            milestones: digest.facts.prefix(9).map { fact in
+            milestones: zip(1..., digest.facts.prefix(9)).map { number, fact in
                 .init(
-                    title: "Step \(fact.id)",
+                    title: "Step \(number)",
                     whatChanged: fact.title,
                     whyItMattered: "It happened.",
                     outcome: "settled",
-                    anchors: [fact.id]
+                    from: number,
+                    through: number
                 )
             }
         )
-        guard case .notCompression = try XCTUnwrap(Fixture.rejection(narrow, digest)) else {
-            return XCTFail("one row per fact passed the compression gate")
-        }
+        XCTAssertEqual(
+            Fixture.rejection(narrow, digest),
+            .notCompression(milestone: "Step 1", facts: 1),
+            "one row per fact passed the compression gate"
+        )
     }
 
     /// Grouping is a partition. Two milestones claiming the same run is double counting, and it
     /// is how a "reading" quietly grows back to the length of the transcript.
     func testOneFactBelongsToOneMilestone() throws {
         let digest = try XCTUnwrap(Fixture.digest(Fixture.session()))
-        let ids = digest.facts.map(\.id)
         let draft = AgentTimelineDraft(milestones: [
-            Fixture.milestone(title: "First pass", anchors: Array(ids.prefix(3))),
-            Fixture.milestone(title: "Second pass", anchors: Array(ids.prefix(3))),
-        ])
-
-        XCTAssertEqual(Fixture.rejection(draft, digest), .sharedAnchor(factID: ids[0]))
-    }
-
-    /// A title that is one fact's own opening words is a relabelled row, whatever else it cites.
-    func testATitleThatRestatesItsOneFactIsRefused() throws {
-        let digest = try XCTUnwrap(Fixture.digest(Fixture.session()))
-        let fact = try XCTUnwrap(digest.facts.first { $0.kind == .userMessage })
-        let draft = AgentTimelineDraft(milestones: [
-            Fixture.milestone(title: fact.body, anchors: [fact.id]),
+            Fixture.milestone(title: "First pass", from: 1, through: 3),
+            Fixture.milestone(title: "Second pass", from: 1, through: 3),
         ])
 
         XCTAssertEqual(
             Fixture.rejection(draft, digest),
-            .echoesOneFact(milestone: fact.body)
+            .sharedAnchor(factID: digest.facts[0].id)
+        )
+    }
+
+    /// The bound a real session actually runs into.
+    ///
+    /// Measured 2026-08-16 on three real transcripts of 215 to 320 facts: the phases a reading
+    /// picked out covered **28 to 43 facts each**, 13–15% of the digest. The old ceiling of 24 was
+    /// sized for how many CITATIONS a person can read in one disclosure, and a span is not a
+    /// citation list — so every one of those three readings was refused for describing the session
+    /// accurately. What the bound is really protecting is that a reading is more than one
+    /// milestone, and that is what it says now.
+    func testAMilestoneMayCoverAWholePhaseButNeverHalfTheSession() throws {
+        let digest = try XCTUnwrap(Fixture.digest(Fixture.session(userTurns: 40, toolRuns: 40)))
+        let half = digest.facts.count / 2
+
+        let phase = AgentTimelineDraft(milestones: [
+            Fixture.milestone(title: "Wrote the site", from: 1, through: 30),
+            Fixture.milestone(title: "Verified it rendered", from: 31, through: 60),
+        ])
+        XCTAssertEqual(
+            try Fixture.validated(phase, digest).milestones.count,
+            2,
+            "a thirty-fact phase is what real work looks like, not a section"
+        )
+
+        let wholeSession = AgentTimelineDraft(milestones: [
+            Fixture.milestone(title: "The session", from: 1, through: half + 1),
+        ])
+        XCTAssertEqual(
+            Fixture.rejection(wholeSession, digest),
+            .oversizedSpan(milestone: "The session", facts: half + 1, limit: half),
+            "one milestone over more than half the evidence is the whole session wearing a heading"
+        )
+    }
+
+    /// Overlap is refused wherever it falls, including a span that merely reaches back into the
+    /// one before it — the partition is what stops a milestone borrowing its neighbour's evidence
+    /// to look better supported than it is.
+    func testASpanThatReachesIntoItsNeighbourIsRefused() throws {
+        let digest = try XCTUnwrap(Fixture.digest(Fixture.session(userTurns: 5, toolRuns: 5)))
+        let draft = AgentTimelineDraft(milestones: [
+            Fixture.milestone(title: "First pass", from: 1, through: 4),
+            Fixture.milestone(title: "Second pass", from: 4, through: 7),
+        ])
+
+        XCTAssertEqual(
+            Fixture.rejection(draft, digest),
+            .sharedAnchor(factID: digest.facts[3].id)
+        )
+    }
+
+    /// Milestones written out of order are read in the order they happened rather than refused.
+    /// The writing order carries no claim, so refusing it would throw away a correct reading over
+    /// presentation — and the partition is still checked, in time order, afterwards.
+    func testMilestonesWrittenOutOfOrderAreReadOldestFirst() throws {
+        let digest = try XCTUnwrap(Fixture.digest(Fixture.session(userTurns: 5, toolRuns: 5)))
+        let draft = AgentTimelineDraft(milestones: [
+            Fixture.milestone(title: "Later work", from: 5, through: 8),
+            Fixture.milestone(title: "Earlier work", from: 1, through: 4),
+        ])
+
+        let timeline = try Fixture.validated(draft, digest)
+        XCTAssertEqual(timeline.milestones.map(\.title), ["Earlier work", "Later work"])
+    }
+
+    /// A milestone standing on one row used to be caught by a title check — the title being that
+    /// row's own opening words. A span of at least three facts cannot be one row at all, so the
+    /// rule is now a property of the shape rather than a refusal the reading has to survive.
+    func testAMilestoneCannotStandOnASingleRow() throws {
+        let digest = try XCTUnwrap(Fixture.digest(Fixture.session()))
+        let fact = try XCTUnwrap(digest.facts.first { $0.kind == .userMessage })
+        let index = try XCTUnwrap(digest.facts.firstIndex(where: { $0.id == fact.id })) + 1
+        let draft = AgentTimelineDraft(milestones: [
+            Fixture.milestone(title: fact.body, from: index, through: index),
+        ])
+
+        XCTAssertEqual(
+            Fixture.rejection(draft, digest),
+            .notCompression(milestone: fact.body, facts: 1)
         )
     }
 
@@ -264,7 +350,7 @@ final class AgentSessionTimelineTests: XCTestCase {
         // whole session would then be indistinguishable from a correct one.
         let anchored = Array(digest.facts.dropFirst(3).prefix(4))
         let draft = AgentTimelineDraft(milestones: [
-            Fixture.milestone(title: "Landed the rule", anchors: anchored.map(\.id)),
+            Fixture.milestone(title: "Landed the rule", from: 4, through: 7),
         ])
 
         let milestone = try XCTUnwrap(Fixture.validated(draft, digest).milestones.first)
@@ -283,17 +369,33 @@ final class AgentSessionTimelineTests: XCTestCase {
         XCTAssertLessThan(milestone.endedAt, digest.lastFactAt)
     }
 
-    /// A cited fact that is not in this session is the most dangerous output this feature can
-    /// produce: a return path that goes nowhere reads exactly like one that goes somewhere.
-    func testAnInventedAnchorIsRefused() throws {
+    /// A citation that goes nowhere is the most dangerous output this feature can produce: a
+    /// return path to nothing reads exactly like one that goes somewhere. It used to be refused;
+    /// it is now unspeakable, and this is the test that keeps it that way.
+    ///
+    /// Measured 2026-08-16, against the reading this change was opened on: a model asked to copy
+    /// ~90 forty-four-character ids returned `message-c9f48eda-83a9-4b4d-b8f9-none`, a true
+    /// prefix with an invented tail, and 277 seconds of otherwise usable work were thrown away.
+    /// A number outside the evidence is held inside it instead, because unlike a misspelt id, a
+    /// clamped index still names a fact this session contains.
+    func testASpanOutsideTheEvidenceIsHeldInsideItRatherThanInventingAFact() throws {
         let digest = try XCTUnwrap(Fixture.digest(Fixture.session()))
+        let last = digest.facts.count
         let draft = AgentTimelineDraft(milestones: [
-            Fixture.milestone(title: "Fixed it", anchors: ["message-does-not-exist"]),
+            Fixture.milestone(title: "Started before the session did", from: -400, through: 4),
+            Fixture.milestone(title: "Ran past the end of it", from: last - 3, through: 9_000),
         ])
 
+        let milestones = try Fixture.validated(draft, digest).milestones
         XCTAssertEqual(
-            Fixture.rejection(draft, digest),
-            .inventedAnchor(milestone: "Fixed it", factID: "message-does-not-exist")
+            milestones.first?.anchors.map(\.factID),
+            digest.facts.prefix(4).map(\.id),
+            "a span reaching back before the evidence has to start at its first fact"
+        )
+        XCTAssertEqual(
+            milestones.last?.anchors.map(\.factID),
+            digest.facts.suffix(4).map(\.id),
+            "a span reaching past the evidence has to stop at its last fact"
         )
     }
 
@@ -306,7 +408,8 @@ final class AgentSessionTimelineTests: XCTestCase {
         let draft = AgentTimelineDraft(milestones: [
             Fixture.milestone(
                 title: "Read the tree and changed it",
-                anchors: digest.facts.prefix(4).map(\.id)
+                from: 1,
+                through: 4
             ),
         ])
         let timeline = try Fixture.validated(draft, digest)
@@ -329,13 +432,16 @@ final class AgentSessionTimelineTests: XCTestCase {
     /// over a tool that is still running or a question still waiting — the pane can see both.
     func testAMilestoneCannotSettleWorkTheHostSeesIsStillOpen() throws {
         let digest = try XCTUnwrap(Fixture.digest(Fixture.session(runningTool: true)))
-        let open = try XCTUnwrap(digest.facts.first { $0.isUnsettled })
-        let others = digest.facts.filter { $0.id != open.id }.prefix(2).map(\.id)
+        let openIndex = try XCTUnwrap(digest.facts.firstIndex(where: \.isUnsettled))
+        let open = digest.facts[openIndex]
+        // A span reaching the open fact from far enough back to clear the compression bar, so the
+        // refusal is about the claim rather than about the milestone being too small.
+        let from = max(1, openIndex + 1 - 2)
 
         XCTAssertEqual(
             Fixture.rejection(
                 AgentTimelineDraft(milestones: [
-                    Fixture.milestone(title: "All done", anchors: others + [open.id]),
+                    Fixture.milestone(title: "All done", from: from, through: openIndex + 1),
                 ]),
                 digest
             ),
@@ -347,7 +453,8 @@ final class AgentSessionTimelineTests: XCTestCase {
         let honest = AgentTimelineDraft(milestones: [
             Fixture.milestone(
                 title: "Still working the failure",
-                anchors: others + [open.id],
+                from: from,
+                through: openIndex + 1,
                 outcome: "inProgress"
             ),
         ])
@@ -392,7 +499,7 @@ final class AgentSessionTimelineTests: XCTestCase {
         ) else {
             return XCTFail("a milestone missing required keys was accepted")
         }
-        XCTAssertTrue(missing.contains("outcome") || missing.contains("anchors"), missing)
+        XCTAssertTrue(missing.contains("outcome") || missing.contains("from"), missing)
     }
 
     /// A fence or a sentence before the JSON is a formatting habit, not a wrong reading, and
@@ -401,7 +508,7 @@ final class AgentSessionTimelineTests: XCTestCase {
         let fenced = """
         Here is the reading:
         ```json
-        {"milestones":[{"title":"t","whatChanged":"w","whyItMattered":"y","outcome":"settled","anchors":["a"]}]}
+        {"milestones":[{"title":"t","whatChanged":"w","whyItMattered":"y","outcome":"settled","from":1,"through":3}]}
         ```
         """
         let draft = try AgentTimelineDraftDecoder.decode(fenced).get()
@@ -410,7 +517,6 @@ final class AgentSessionTimelineTests: XCTestCase {
 
     func testFieldBoundsAreEnforcedPerMilestone() throws {
         let digest = try XCTUnwrap(Fixture.digest(Fixture.session()))
-        let ids = digest.facts.prefix(3).map(\.id)
 
         XCTAssertEqual(
             Fixture.rejection(
@@ -420,7 +526,8 @@ final class AgentSessionTimelineTests: XCTestCase {
                         whatChanged: "w",
                         whyItMattered: "y",
                         outcome: "settled",
-                        anchors: Array(ids)
+                        from: 1,
+                        through: 3
                     ),
                 ]),
                 digest
@@ -436,7 +543,8 @@ final class AgentSessionTimelineTests: XCTestCase {
                         whatChanged: "   ",
                         whyItMattered: "y",
                         outcome: "settled",
-                        anchors: Array(ids)
+                        from: 1,
+                        through: 3
                     ),
                 ]),
                 digest
@@ -452,7 +560,8 @@ final class AgentSessionTimelineTests: XCTestCase {
                         whatChanged: "w",
                         whyItMattered: "y",
                         outcome: "finished",
-                        anchors: Array(ids)
+                        from: 1,
+                        through: 3
                     ),
                 ]),
                 digest
@@ -643,15 +752,13 @@ final class AgentSessionTimelineTests: XCTestCase {
     @MainActor
     func testThePaneLandsAValidatedReading() async throws {
         let snapshot = Fixture.session()
-        let digest = try XCTUnwrap(Fixture.digest(snapshot))
-        let ids = digest.facts.map(\.id)
         let model = Fixture.model(
             snapshot: snapshot,
             synthesizer: Fixture.ScriptedSynthesizer(
                 reply: Fixture.json(
                     milestones: [
-                        (title: "Reproduced it", anchors: Array(ids.prefix(3))),
-                        (title: "Fixed the rule", anchors: Array(ids.dropFirst(3).prefix(3))),
+                        (title: "Reproduced it", from: 1, through: 3),
+                        (title: "Fixed the rule", from: 4, through: 6),
                     ]
                 )
             )
@@ -676,8 +783,8 @@ final class AgentSessionTimelineTests: XCTestCase {
             snapshot: snapshot,
             synthesizer: Fixture.ScriptedSynthesizer(
                 reply: Fixture.json(
-                    milestones: digest.facts.map {
-                        (title: "Step \($0.id)", anchors: [$0.id])
+                    milestones: (1...digest.facts.count).map {
+                        (title: "Step \($0)", from: $0, through: $0)
                     }
                 )
             )
@@ -713,12 +820,11 @@ final class AgentSessionTimelineTests: XCTestCase {
     @MainActor
     func testCancellingLeavesAReadingNobodyIsWaitingOnUnrendered() async throws {
         let snapshot = Fixture.session()
-        let digest = try XCTUnwrap(Fixture.digest(snapshot))
         // A reading that WOULD be accepted if it were still wanted. A reply the validator
         // rejects anyway would let this pass without the rule it is here to prove.
         let synthesizer = Fixture.BlockingSynthesizer(
             reply: Fixture.json(
-                milestones: [(title: "Would have landed", anchors: digest.facts.prefix(3).map(\.id))]
+                milestones: [(title: "Would have landed", from: 1, through: 3)]
             )
         )
         let model = Fixture.model(snapshot: snapshot, synthesizer: synthesizer)
@@ -748,12 +854,10 @@ final class AgentSessionTimelineTests: XCTestCase {
     @MainActor
     func testANewFactMakesTheReadingStaleWithoutReplacingIt() async throws {
         var snapshot = Fixture.session()
-        let digest = try XCTUnwrap(Fixture.digest(snapshot))
-        let ids = digest.facts.map(\.id)
         let model = Fixture.model(
             snapshot: snapshot,
             synthesizer: Fixture.ScriptedSynthesizer(
-                reply: Fixture.json(milestones: [(title: "Read it", anchors: Array(ids.prefix(3)))])
+                reply: Fixture.json(milestones: [(title: "Read it", from: 1, through: 3)])
             )
         )
 
@@ -850,7 +954,8 @@ private enum Fixture {
 
     static func milestone(
         title: String,
-        anchors: [String],
+        from: Int,
+        through: Int,
         outcome: String = "settled"
     ) -> AgentTimelineDraft.Milestone {
         .init(
@@ -858,7 +963,8 @@ private enum Fixture {
             whatChanged: "Something concrete changed.",
             whyItMattered: "It moved the session forward.",
             outcome: outcome,
-            anchors: anchors
+            from: from,
+            through: through
         )
     }
 
@@ -880,12 +986,12 @@ private enum Fixture {
             .failure
     }
 
-    static func json(milestones: [(title: String, anchors: [String])]) -> String {
+    static func json(milestones: [(title: String, from: Int, through: Int)]) -> String {
         let body = milestones.map { milestone in
-            let anchors = milestone.anchors.map { "\"\($0)\"" }.joined(separator: ",")
-            return """
+            """
             {"title":"\(milestone.title)","whatChanged":"It changed.",\
-            "whyItMattered":"It mattered.","outcome":"settled","anchors":[\(anchors)]}
+            "whyItMattered":"It mattered.","outcome":"settled",\
+            "from":\(milestone.from),"through":\(milestone.through)}
             """
         }
         return "{\"milestones\":[\(body.joined(separator: ","))]}"
@@ -1102,12 +1208,12 @@ final class AgentReadingOptionsTests: XCTestCase {
                 "every lens carries the identical rules block, byte for byte"
             )
             XCTAssertTrue(
-                prompt.contains("A fact belongs to at most ONE milestone"),
+                prompt.contains("Milestones do not overlap"),
                 "the partition rule cannot be a property of one lens"
             )
             XCTAssertTrue(
-                prompt.contains("copied EXACTLY"),
-                "anchors stay the digest's own ids under every lens"
+                prompt.contains("`from` and `through` are fact numbers"),
+                "every lens names the same numbered evidence, and never an id to transcribe"
             )
         }
         XCTAssertEqual(

@@ -390,46 +390,48 @@ enum AgentTimelineSnapshot {
             // Work that has not finished is held out and given to the one milestone that says
             // so. The first version of this fixture sliced blindly and put the still-running
             // `swift test` inside a `settled` milestone — the validator refused the whole
-            // reading, which is how this comment came to exist.
-            let open = digest.facts.filter(\.isUnsettled).map(\.id)
-            let ids = digest.facts.filter { !$0.isUnsettled }.map(\.id)
-            let groups: [(String, String, String, String, ArraySlice<String>)] = [
+            // reading, which is how this comment came to exist. Under spans the same care is
+            // spent on where the settled stretch ends rather than on which ids to skip.
+            let facts = digest.facts
+            let settledCount = facts.firstIndex(where: \.isUnsettled) ?? facts.count
+            let step = max(AgentTimelineBounds.minimumFactsPerMilestone, settledCount / 3)
+            let groups: [(String, String, String, String, Int, Int)] = [
                 (
                     "Reproduced the focus oscillation",
                     "The loop was driven from a cold start in a headless test instead of from a screen recording.",
                     "Until it reproduced, the report was a description of a symptom rather than something a fix could be measured against.",
                     "settled",
-                    ids.prefix(4)
+                    1, step
                 ),
                 (
                     "Found the two competing focus writers",
                     "The model→responder and responder→model edges were each correct alone and formed a cycle with no fixed point together.",
                     "This is why every earlier patch moved the oscillation instead of ending it.",
                     "settled",
-                    ids.dropFirst(4).prefix(3)
+                    step + 1, 2 * step
                 ),
                 (
                     "Moved ownership into one routing type",
                     "PaneFocusRouting now owns both edges, and each of its three rules was proved load-bearing by mutation.",
                     "A single owner is what gives the cycle a fixed point; the mutation pass is what stops the rules rotting.",
                     "settled",
-                    ids.dropFirst(7)
+                    2 * step + 1, settledCount
                 ),
                 (
                     "Verifying the whole suite",
                     "A full run is in flight after the focused suites went green.",
                     "The focused suites prove the rule; only the full run proves nothing else depended on the old behaviour.",
                     "inProgress",
-                    open[...]
+                    settledCount + 1, facts.count
                 ),
             ]
             let body = groups
-                .filter { !$0.4.isEmpty }
+                .filter { $0.5 - $0.4 + 1 >= AgentTimelineBounds.minimumFactsPerMilestone }
                 .map { group in
-                    let anchors = group.4.map { "\"\($0)\"" }.joined(separator: ",")
-                    return """
+                    """
                     {"title":"\(group.0)","whatChanged":"\(group.1)",\
-                    "whyItMattered":"\(group.2)","outcome":"\(group.3)","anchors":[\(anchors)]}
+                    "whyItMattered":"\(group.2)","outcome":"\(group.3)",\
+                    "from":\(group.4),"through":\(group.5)}
                     """
                 }
             return "{\"milestones\":[\(body.joined(separator: ","))]}"

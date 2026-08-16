@@ -78,8 +78,6 @@ final class AgentReadingSilenceTests: XCTestCase {
     func testARequestInFlightAccountsForTheQuietUntilTheReplyArrives() {
         let clock = AgentRunActivity()
 
-        XCTAssertFalse(clock.silenceIsExplained, "nothing has explained anything yet")
-
         clock.awaitsReply()
 
         XCTAssertTrue(
@@ -126,6 +124,57 @@ final class AgentReadingSilenceTests: XCTestCase {
         clock.awaitsReply()
 
         XCTAssertTrue(clock.silenceIsExplained)
+    }
+
+    // MARK: - Startup, the window the CLI cannot speak in
+
+    /// T-169. The budget used to be armed from `process.run()`, which asks a program to prove it is
+    /// alive before it has been started.
+    ///
+    /// Measured 2026-08-16 against the installed CLI 2.1.233, with the arguments this host builds
+    /// and a real 320-fact digest: the first frame arrives **15.7 s** into an idle run and
+    /// **25.3 s** into one of eight concurrent readings — 56% of the 45 s budget spent before the
+    /// CLI has said a word. Two things fill that window, and both grow with load. Node cold start
+    /// is one. The other is structural: the macOS pipe buffer measures 65 536 bytes against a
+    /// 48.8–82.6 KB prompt, so the host's own `write` blocks for 2.2–11.0 s handing over a prompt
+    /// the CLI must finish reading before it can answer.
+    ///
+    /// The rule that settles it is the one this file already applies to the other quiet window:
+    /// where the CLI publishes no heartbeat, silence is not evidence. Startup publishes none.
+    func testStartupQuietIsNotEvidenceBecauseTheCliCannotSpeakDuringIt() {
+        let clock = AgentRunActivity()
+
+        XCTAssertNil(
+            clock.expiry(silenceBudget: 0, ceilingSeconds: 600),
+            """
+            Nothing has been read yet because nothing has been written yet. A run has to be given \
+            its prompt and load its own binary before its first frame can exist, and killing it \
+            for not having spoken during that is killing it for being started.
+            """
+        )
+    }
+
+    /// And the excuse startup carries is the same one a request in flight carries: it ends where a
+    /// heartbeat begins, never earlier.
+    func testStartupQuietStopsBeingExcusedOnceTheReplyIsArriving() {
+        let clock = AgentRunActivity()
+
+        clock.replyStarted()
+
+        XCTAssertEqual(
+            clock.expiry(silenceBudget: 0, ceilingSeconds: 600),
+            .silence,
+            "from the first frame of the reply the CLI heartbeats, so quiet is evidence again"
+        )
+    }
+
+    /// What is left holding a CLI that starts and then hangs forever. One bound rather than two,
+    /// and the honest one: a number the host invented for a phase it observes nothing in is the
+    /// guess `silenceSeconds(for: .codex)` already refuses to make.
+    func testARunThatNeverSpeaksAtAllIsStillStoppedByTheCeiling() {
+        let clock = AgentRunActivity()
+
+        XCTAssertEqual(clock.expiry(silenceBudget: 45, ceilingSeconds: 0), .ceiling)
     }
 
     // MARK: - The watchdog rule itself

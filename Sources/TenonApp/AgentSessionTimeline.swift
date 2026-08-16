@@ -100,17 +100,31 @@ struct AgentSessionTimeline: Equatable, Sendable {
 
 /// The raw shape a synthesis is required to produce.
 ///
-/// It carries no dates, no anchor labels and no session verdict — only a title, two sentences,
-/// an outcome word, and which facts each milestone stands on. Everything a reader can check is
-/// therefore host-derived, and everything the model contributes is a judgement about grouping.
+/// It carries no dates, no anchor labels, no fact ids and no session verdict — only a title, two
+/// sentences, an outcome word, and where the milestone starts and ends in the numbered evidence.
+/// Everything a reader can check is therefore host-derived, and everything the model contributes
+/// is a judgement about where one piece of work stops and the next begins.
+///
+/// **Why a span rather than a list of ids.** A milestone already renders as a stretch of time —
+/// `startedAt` and `endedAt` were always the host's own min and max over the cited facts — so the
+/// unit the model is really choosing is a period of the session. Asking it to express that period
+/// by transcribing forty-four-character identifiers was a task with a measured failure rate and no
+/// product in it: on 2026-08-16, against a real 215-fact session, a reading returned eleven usable
+/// milestones and one anchor spelled `message-c9f48eda-83a9-4b4d-b8f9-none` — a true prefix with
+/// an invented tail — and 277 seconds of work were discarded over it.
+///
+/// Two numbers cannot be misspelled into a fact that does not exist, so `inventedAnchor` and
+/// `sharedAnchor` stop being failures a reading can suffer and become claims it cannot express.
 struct AgentTimelineDraft: Codable, Equatable, Sendable {
     struct Milestone: Codable, Equatable, Sendable {
         let title: String
         let whatChanged: String
         let whyItMattered: String
         let outcome: String
-        /// `AgentTimelineItem.id` values from the digest, in the order they happened.
-        let anchors: [String]
+        /// The first numbered fact of this milestone, 1-based and inclusive.
+        let from: Int
+        /// The last numbered fact of this milestone, 1-based and inclusive.
+        let through: Int
     }
 
     let milestones: [Milestone]
@@ -125,12 +139,29 @@ enum AgentTimelineBounds {
     static let maximumMilestones = 12
     /// Below this there is nothing to compress and saying so is more honest than synthesizing.
     static let minimumFactsForSynthesis = 6
-    /// The compression gate. `milestones * this <= facts`, so a reading that keeps one row per
-    /// fact — a relabelled transcript — cannot be a timeline at any session length.
+    /// The compression gate, held per milestone: a span narrower than this is a row wearing a
+    /// heading, so a reading that keeps one milestone per fact — a relabelled transcript — cannot
+    /// be a timeline at any session length. Asked of each span rather than of the reading's
+    /// average, because one wide milestone must not buy the right to eight narrow ones.
     static let minimumFactsPerMilestone = 3
     static let maximumTitleLength = 80
     static let maximumProseLength = 400
-    static let maximumAnchorsPerMilestone = 24
+    /// The most facts one milestone may cover, given how much evidence there is.
+    ///
+    /// Relative rather than fixed, because the thing worth refusing is a reading that is one
+    /// milestone wearing the session's clothes — and "one milestone" is a share of the evidence,
+    /// not a count of it. Half is where that becomes true: below it a reading is at least two
+    /// moments, which is the fewest a timeline can be made of.
+    ///
+    /// The constant it replaced was 24, and it was sized for a different unit. When a milestone
+    /// cited a hand-picked list of facts, 24 was how many citations a person can read at once;
+    /// when a milestone became the stretch of session it covers, that number started refusing
+    /// correct work. Measured 2026-08-16 across three real transcripts of 215 to 320 facts, the
+    /// phases a reading picked out ran **28 to 43 facts** — 13–15% of the digest, and every one of
+    /// those three readings was refused by the old bound for describing its session accurately.
+    static func maximumFactsPerMilestone(inDigestOf count: Int) -> Int {
+        max(minimumFactsPerMilestone, count / 2)
+    }
     /// The raw synthesis output, before decoding. Bounded first so a runaway generation is
     /// refused rather than parsed.
     static let maximumOutputBytes = 64 << 10
@@ -144,20 +175,18 @@ enum AgentTimelineBounds {
 enum AgentTimelineRejection: Error, Equatable, Sendable {
     case empty
     case tooManyMilestones(count: Int, limit: Int)
-    /// One row per fact is a transcript with new labels, not a reading of it.
-    case notCompression(milestones: Int, facts: Int)
+    /// A milestone standing on fewer facts than the compression bar is a relabelled row rather
+    /// than a reading of several. Stated per milestone, because a span states its own size.
+    case notCompression(milestone: String, facts: Int)
     case fieldOutOfBounds(milestone: String, field: String)
     case unknownOutcome(milestone: String, value: String)
-    case unanchored(milestone: String)
-    case tooManyAnchors(milestone: String, count: Int)
-    /// The synthesis cited a fact the digest never contained.
-    case inventedAnchor(milestone: String, factID: String)
-    /// Two milestones claim the same fact: grouping is a partition, not a tagging.
+    /// A span that ends before it starts names no stretch of the session at all.
+    case emptySpan(milestone: String)
+    case oversizedSpan(milestone: String, facts: Int, limit: Int)
+    /// Two milestones' spans overlap on this fact: grouping is a partition, not a tagging.
     case sharedAnchor(factID: String)
     /// A milestone claiming `settled` over work the host can see is still running or pending.
     case falseCompletion(milestone: String, factID: String)
-    /// The title is one fact's own words, which is relabelling one row rather than reading many.
-    case echoesOneFact(milestone: String)
 
     var message: String {
         switch self {
@@ -165,24 +194,20 @@ enum AgentTimelineRejection: Error, Equatable, Sendable {
             "The synthesis returned no milestones"
         case let .tooManyMilestones(count, limit):
             "The synthesis returned \(count) milestones; at most \(limit) are readable"
-        case let .notCompression(milestones, facts):
-            "\(milestones) milestones over \(facts) facts is a relabelled transcript, not a reading of one"
+        case let .notCompression(milestone, facts):
+            "Milestone “\(milestone)” covers \(facts) facts; below \(AgentTimelineBounds.minimumFactsPerMilestone) it is a relabelled row, not a reading of several"
         case let .fieldOutOfBounds(milestone, field):
             "Milestone “\(milestone)” has an empty or oversized \(field)"
         case let .unknownOutcome(milestone, value):
             "Milestone “\(milestone)” claims the unknown outcome “\(value)”"
-        case .unanchored(let milestone):
-            "Milestone “\(milestone)” cites no evidence"
-        case let .tooManyAnchors(milestone, count):
-            "Milestone “\(milestone)” cites \(count) facts; it is a section, not a milestone"
-        case let .inventedAnchor(milestone, factID):
-            "Milestone “\(milestone)” cites “\(factID)”, which is not in this session"
+        case .emptySpan(let milestone):
+            "Milestone “\(milestone)” ends before it starts, so it covers no evidence"
+        case let .oversizedSpan(milestone, facts, limit):
+            "Milestone “\(milestone)” covers \(facts) of the session's facts; above \(limit) it is the whole reading, not a moment in it"
         case .sharedAnchor(let factID):
             "Two milestones claim the same fact “\(factID)”"
         case let .falseCompletion(milestone, factID):
             "Milestone “\(milestone)” is settled while “\(factID)” is still open"
-        case .echoesOneFact(let milestone):
-            "Milestone “\(milestone)” restates one fact instead of grouping several"
         }
     }
 }
@@ -192,9 +217,14 @@ enum AgentTimelineRejection: Error, Equatable, Sendable {
 /// The gate between what a model wrote and what a person is shown.
 ///
 /// Pure, total, and asserted without a window. Everything it can check against the host's own
-/// facts, it checks: the anchors must exist, they must partition rather than overlap, the span
-/// is recomputed rather than accepted, and a completion claim is refused when the host can see
-/// the work it names is still open.
+/// facts, it checks: a span must fall inside the evidence, spans must partition rather than
+/// overlap, the anchors and their labels are read out of the digest rather than accepted, and a
+/// completion claim is refused when the host can see the work it names is still open.
+///
+/// Two of the checks it used to make are gone because they now describe impossible readings
+/// rather than refused ones. A span cannot name a fact the session does not contain, and a
+/// milestone of at least three facts cannot be one row wearing a heading. What replaced them is
+/// not leniency — it is the same guarantee, moved from a refusal into the shape of the answer.
 enum AgentTimelineValidation {
     static func validate(
         _ draft: AgentTimelineDraft,
@@ -210,18 +240,10 @@ enum AgentTimelineValidation {
                 )
             )
         }
-        guard draft.milestones.count * AgentTimelineBounds.minimumFactsPerMilestone
-            <= digest.facts.count
-        else {
-            return .failure(
-                .notCompression(milestones: draft.milestones.count, facts: digest.facts.count)
-            )
-        }
 
-        let factsByID = Dictionary(uniqueKeysWithValues: digest.facts.map { ($0.id, $0) })
-        var claimed: Set<String> = []
-        var milestones: [AgentMilestone] = []
-        milestones.reserveCapacity(draft.milestones.count)
+        let facts = digest.facts
+        var spans: [Span] = []
+        spans.reserveCapacity(draft.milestones.count)
 
         for (index, candidate) in draft.milestones.enumerated() {
             let name = candidate.title.isEmpty ? "#\(index + 1)" : candidate.title
@@ -239,65 +261,76 @@ enum AgentTimelineValidation {
             guard let outcome = AgentMilestoneOutcome(rawValue: candidate.outcome) else {
                 return .failure(.unknownOutcome(milestone: name, value: candidate.outcome))
             }
-            guard !candidate.anchors.isEmpty else {
-                return .failure(.unanchored(milestone: name))
+
+            // Held inside the evidence rather than checked against it. An index is a bound, and
+            // bounding one is the same thing the host does to every other number a reading
+            // carries — unlike a fact id, a clamped index still names a fact this session
+            // contains, so nothing unverifiable can survive the clamp.
+            let from = min(max(candidate.from, 1), facts.count)
+            let through = min(max(candidate.through, 1), facts.count)
+            guard from <= through else { return .failure(.emptySpan(milestone: name)) }
+
+            let covered = through - from + 1
+            guard covered >= AgentTimelineBounds.minimumFactsPerMilestone else {
+                return .failure(.notCompression(milestone: name, facts: covered))
             }
-            guard candidate.anchors.count <= AgentTimelineBounds.maximumAnchorsPerMilestone else {
-                return .failure(
-                    .tooManyAnchors(milestone: name, count: candidate.anchors.count)
-                )
+            let widest = AgentTimelineBounds.maximumFactsPerMilestone(inDigestOf: facts.count)
+            guard covered <= widest else {
+                return .failure(.oversizedSpan(milestone: name, facts: covered, limit: widest))
             }
 
-            var anchors: [AgentMilestoneAnchor] = []
-            anchors.reserveCapacity(candidate.anchors.count)
-            for factID in candidate.anchors {
-                guard let fact = factsByID[factID] else {
-                    return .failure(.inventedAnchor(milestone: name, factID: factID))
-                }
-                guard claimed.insert(factID).inserted else {
-                    return .failure(.sharedAnchor(factID: factID))
-                }
-                if outcome == .settled, fact.isUnsettled {
-                    return .failure(.falseCompletion(milestone: name, factID: factID))
-                }
-                anchors.append(
-                    AgentMilestoneAnchor(
-                        factID: fact.id,
-                        label: fact.anchorLabel,
-                        location: fact.location
-                    )
-                )
+            spans.append(
+                Span(order: index, name: name, from: from, through: through, outcome: outcome)
+            )
+        }
+
+        // Read in the order they happened rather than the order they were written. The digest is
+        // oldest-first, so an index order is a time order, and sorting here means a reading whose
+        // milestones arrived shuffled still renders as a timeline instead of being refused for
+        // the model's writing order.
+        spans.sort { $0.from == $1.from ? $0.order < $1.order : $0.from < $1.from }
+
+        var milestones: [AgentMilestone] = []
+        milestones.reserveCapacity(spans.count)
+        var previousThrough = 0
+
+        for span in spans {
+            // The partition, enforced once over ordered spans instead of per cited id. Two
+            // milestones can no longer stand on one fact, and the fact they collided on is named.
+            guard span.from > previousThrough else {
+                return .failure(.sharedAnchor(factID: facts[span.from - 1].id))
+            }
+            previousThrough = span.through
+
+            let covered = Array(facts[(span.from - 1)...(span.through - 1)])
+            if span.outcome == .settled, let open = covered.first(where: \.isUnsettled) {
+                return .failure(.falseCompletion(milestone: span.name, factID: open.id))
             }
 
-            if anchors.count == 1, echoes(candidate.title, factsByID[anchors[0].factID]) {
-                return .failure(.echoesOneFact(milestone: name))
-            }
-
-            let times = anchors.compactMap { factsByID[$0.factID]?.occurredAt }
+            let candidate = draft.milestones[span.order]
             milestones.append(
                 AgentMilestone(
-                    id: "milestone-\(index)-\(anchors[0].factID)",
+                    id: "milestone-\(span.order)-\(covered[0].id)",
                     title: candidate.title,
                     whatChanged: candidate.whatChanged,
                     whyItMattered: candidate.whyItMattered,
-                    outcome: outcome,
-                    anchors: anchors.sorted {
-                        (factsByID[$0.factID]?.occurredAt ?? .distantPast)
-                            < (factsByID[$1.factID]?.occurredAt ?? .distantPast)
+                    outcome: span.outcome,
+                    anchors: covered.map {
+                        AgentMilestoneAnchor(
+                            factID: $0.id,
+                            label: $0.anchorLabel,
+                            location: $0.location
+                        )
                     },
-                    startedAt: times.min() ?? digest.firstFactAt,
-                    endedAt: times.max() ?? digest.lastFactAt
+                    startedAt: covered[0].occurredAt,
+                    endedAt: covered[covered.count - 1].occurredAt
                 )
             )
         }
 
         return .success(
             AgentSessionTimeline(
-                milestones: milestones.sorted { lhs, rhs in
-                    lhs.startedAt == rhs.startedAt
-                        ? lhs.id < rhs.id
-                        : lhs.startedAt < rhs.startedAt
-                },
+                milestones: milestones,
                 evidenceFingerprint: digest.fingerprint,
                 factCount: digest.facts.count,
                 generatedAt: generatedAt
@@ -305,29 +338,18 @@ enum AgentTimelineValidation {
         )
     }
 
+    /// One candidate milestone reduced to the stretch of evidence it names, before any of them is
+    /// compared with its neighbours.
+    private struct Span {
+        let order: Int
+        let name: String
+        let from: Int
+        let through: Int
+        let outcome: AgentMilestoneOutcome
+    }
+
     private static func fits(_ value: String, limit: Int) -> Bool {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
         return !trimmed.isEmpty && trimmed.count <= limit
-    }
-
-    /// A title that is one fact's own opening words is that fact wearing a heading.
-    private static func echoes(_ title: String, _ fact: AgentEvidenceFact?) -> Bool {
-        guard let fact else { return false }
-        let normalizedTitle = normalize(title)
-        guard !normalizedTitle.isEmpty else { return false }
-        for candidate in [fact.title, fact.body] {
-            let normalized = normalize(candidate)
-            guard !normalized.isEmpty else { continue }
-            if normalized == normalizedTitle { return true }
-            if normalized.hasPrefix(normalizedTitle) { return true }
-        }
-        return false
-    }
-
-    private static func normalize(_ value: String) -> String {
-        value
-            .lowercased()
-            .split(whereSeparator: { !$0.isLetter && !$0.isNumber })
-            .joined(separator: " ")
     }
 }

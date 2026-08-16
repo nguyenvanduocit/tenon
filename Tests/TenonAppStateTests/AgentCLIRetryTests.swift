@@ -74,8 +74,10 @@ final class AgentCLIRetryTests: XCTestCase {
     /// speaks again.
     func testAnAnnouncedRetryExplainsTheSilenceThatFollowsIt() {
         let clock = AgentRunActivity()
-
-        XCTAssertFalse(clock.silenceIsExplained, "nothing has explained anything yet")
+        // Past startup, whose own quiet is accounted for, so what is asserted below is the
+        // retry's account rather than the one every run begins with.
+        clock.replyStarted()
+        XCTAssertFalse(clock.silenceIsExplained, "a run mid-reply has nothing to hide behind")
 
         clock.explain(forSeconds: 8)
 

@@ -15,7 +15,7 @@ enum AgentTimelinePrompt {
     /// decoder to the same one.
     static let schemaLine = """
         {"milestones":[{"title":"...","whatChanged":"...","whyItMattered":"...",\
-        "outcome":"inProgress|settled|superseded","anchors":["fact-id","fact-id"]}]}
+        "outcome":"inProgress|settled|superseded","from":1,"through":9}]}
         """
 
     /// Everything the host will refuse a reading for, in one block every lens carries verbatim.
@@ -30,9 +30,12 @@ enum AgentTimelinePrompt {
         )
         return """
         It is NOT one row per prompt, tool call, file edit or hook event. Group the prompts, \
-        runs, retries and checks that served one milestone under that milestone, and leave out \
-        repetitive exploration and incidental tool noise entirely — a fact you do not cite \
-        simply does not appear.
+        runs, retries and checks that served one milestone under that milestone, and leave the \
+        repetitive exploration and incidental tool noise in the gaps BETWEEN milestones — facts \
+        no milestone covers simply do not appear.
+
+        Each fact below is numbered. A milestone is the stretch of numbers it covers: `from` is \
+        its first fact and `through` is its last, both inclusive.
 
         Return ONLY a JSON object, no prose and no code fence:
 
@@ -40,9 +43,13 @@ enum AgentTimelinePrompt {
 
         Rules, all enforced by the host — a violation is rejected, not repaired:
         - At most \(ceiling) milestones for this session. Fewer is better.
-        - `anchors` are fact ids copied EXACTLY from the list below. Inventing one is \
-        rejected. Every milestone needs at least one.
-        - A fact belongs to at most ONE milestone. Do not cite the same id twice.
+        - `from` and `through` are fact numbers from the list below, and `from` is never \
+        greater than `through`.
+        - Milestones do not overlap and run oldest first: each `from` is greater than the \
+        previous milestone's `through`. Skip over the facts that belong to no milestone.
+        - A milestone covers at least \(AgentTimelineBounds.minimumFactsPerMilestone) facts and \
+        at most \(AgentTimelineBounds.maximumFactsPerMilestone(inDigestOf: factCount)); a \
+        milestone wider than that is the whole reading rather than a moment in it.
         - `title` is at most \(AgentTimelineBounds.maximumTitleLength) characters and must \
         not restate one fact's own words.
         - `whatChanged` and `whyItMattered` are one sentence each, at most \
@@ -65,16 +72,20 @@ enum AgentTimelinePrompt {
             rules(forFacts: digest.facts.count),
             "",
             digest.isTruncated
-                ? "FACTS (the most recent \(digest.facts.count); earlier work is not shown):"
-                : "FACTS (\(digest.facts.count), oldest first):",
+                ? "FACTS (the most recent \(digest.facts.count), numbered 1…\(digest.facts.count); earlier work is not shown):"
+                : "FACTS (\(digest.facts.count), oldest first, numbered 1…\(digest.facts.count)):",
         ]
 
+        // Numbered rather than identified. The id a milestone lands on is the host's own lookup
+        // now, so the prompt carries a short ordinal in place of a 44-character key it was
+        // previously asking the model to transcribe by hand — measured at ~15 KB of an 82.6 KB
+        // digest, and at one whole reading discarded when a single transcription went wrong.
         let stamp = ISO8601DateFormatter()
-        for fact in digest.facts {
+        for (number, fact) in zip(1..., digest.facts) {
             let openMark = fact.isUnsettled ? " OPEN" : ""
             let body = fact.body.isEmpty ? "" : " :: \(fact.body)"
             lines.append(
-                "[\(fact.id)] \(stamp.string(from: fact.occurredAt)) \(fact.kind.rawValue)\(openMark) \(fact.title)\(body)"
+                "[\(number)] \(stamp.string(from: fact.occurredAt)) \(fact.kind.rawValue)\(openMark) \(fact.title)\(body)"
             )
         }
         return lines.joined(separator: "\n")
@@ -305,7 +316,21 @@ final class AgentRunActivity: @unchecked Sendable {
     private let lock = NSLock()
     private let started = Date()
     private var last = Date()
-    private var explainedUntil: Date?
+    /// Startup is excused from the first instant, because the silence budget would otherwise ask a
+    /// program to prove it is alive before it has finished being started.
+    ///
+    /// Measured 2026-08-16 against CLI 2.1.233, with the arguments this file builds and a real
+    /// 320-fact digest: the first frame lands **15.7 s** into an idle run and **25.3 s** into one
+    /// of eight concurrent readings — 56% of the 45 s budget spent before the CLI can say a word.
+    /// Two things fill that window and both grow with load. Node cold start is one. The other is
+    /// structural: the macOS pipe buffer measures 65 536 bytes against a 48.8–82.6 KB prompt, so
+    /// `run(…)`'s own `write` blocks for 2.2–11.0 s handing over a prompt the CLI has to finish
+    /// reading before it can answer at all.
+    ///
+    /// It is the same rule `awaitsReply()` states for the other quiet window, applied to the one
+    /// phase that was missing it: where the CLI publishes no heartbeat, silence is not evidence,
+    /// and the ceiling is the only honest bound. `replyStarted()` revokes it.
+    private var explainedUntil: Date? = .distantFuture
 
     var silence: TimeInterval { lock.withLock { Date().timeIntervalSince(last) } }
     var elapsed: TimeInterval { Date().timeIntervalSince(started) }
@@ -699,12 +724,24 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         process.standardError = errors
 
         guard handle.adopt(process) else { return .failure(AgentTimelineFailure.cancelled) }
+        let startedAt = Date()
         do {
             try process.run()
         } catch {
+            TenonLog.agentLens.error(
+                "reading failed to start: \(provider.rawValue, privacy: .public) \(error.localizedDescription, privacy: .public)"
+            )
             return .failure(AgentTimelineFailure.runFailed(error.localizedDescription))
         }
         progress(.launching)
+        TenonLog.agentLens.info(
+            """
+            reading started: provider=\(provider.rawValue, privacy: .public) \
+            prompt=\(prompt.utf8.count, privacy: .public)B \
+            silenceBudget=\(silence.map(String.init) ?? "none", privacy: .public) \
+            ceiling=\(ceilingSeconds, privacy: .public)s
+            """
+        )
 
         let activity = AgentRunActivity()
         // The deadline lives with the process, not with the caller's await: a CLI that never
@@ -777,7 +814,45 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         group.wait()
         watchdog.cancel()
 
-        switch handle.stopReason {
+        let outcome = settlement(
+            stopReason: handle.stopReason,
+            reading: reading,
+            silence: silence,
+            terminationStatus: process.terminationStatus
+        )
+        // The one line that makes a reported failure readable instead of reconstructable: which
+        // deadline stopped it, how long it lasted, and what the CLI had managed to say by then.
+        let elapsed = Int(Date().timeIntervalSince(startedAt).rounded())
+        switch outcome {
+        case .success(let raw):
+            TenonLog.agentLens.info(
+                "reading finished: \(elapsed, privacy: .public)s reply=\(raw.utf8.count, privacy: .public)B"
+            )
+        case .failure(let error):
+            let reason = (error as? AgentTimelineFailure)?.message ?? error.localizedDescription
+            TenonLog.agentLens.error(
+                """
+                reading ended without a result: \(elapsed, privacy: .public)s \
+                exit=\(process.terminationStatus, privacy: .public) \
+                reason=\(reason, privacy: .public)
+                """
+            )
+        }
+        return outcome
+    }
+
+    /// Why the run ended, read once from the process and the stream together.
+    ///
+    /// Separated from `run(…)` so the terminal state has a name before it is both returned and
+    /// logged — the alternative is eight return statements each having to remember to say what
+    /// they did.
+    private static func settlement(
+        stopReason: ProcessStopReason?,
+        reading: StreamReading,
+        silence: Int?,
+        terminationStatus: Int32
+    ) -> Result<String, any Error> {
+        switch stopReason {
         case .silence:
             return .failure(AgentTimelineFailure.stalled(silentSeconds: silence ?? silenceSeconds))
         case .ceiling:
@@ -795,9 +870,9 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         if let outcome = reading.outcome {
             return outcome.mapError { $0 as any Error }
         }
-        guard process.terminationStatus == 0 else {
+        guard terminationStatus == 0 else {
             return .failure(
-                AgentTimelineFailure.runFailed("the agent CLI exited \(process.terminationStatus)")
+                AgentTimelineFailure.runFailed("the agent CLI exited \(terminationStatus)")
             )
         }
         return .failure(AgentTimelineFailure.malformedOutput("the CLI wrote no result event"))

@@ -309,6 +309,19 @@ Feature: Supervise agent sessions through bounded checkable evidence
       But a run that never answers at all is still stopped at the ceiling
 
     @req-al-fr-049 @req-al-fr-038 @timeline
+    Scenario: A reading is not killed for the time it takes to start
+      Given a reading whose CLI has not yet emitted its first frame
+      When that startup lasts longer than the silence bound
+      Then the run is not stopped for silence, because the CLI is still being handed its prompt
+      But a run that never speaks at all is still stopped at the ceiling
+
+    @req-al-fr-054 @timeline
+    Scenario: A reading says what happened to it
+      Given a reading that ends in any of its terminal states
+      When it settles
+      Then the host log carries its provider, prompt size, deadlines, elapsed time and reason
+
+    @req-al-fr-049 @req-al-fr-038 @timeline
     Scenario: Once the reply is arriving the deadline is in charge again
       Given a reading has received the first frame of its reply
       When it then goes quiet for the silence bound with nothing accounting for it
@@ -443,14 +456,22 @@ Feature: Supervise agent sessions through bounded checkable evidence
 
     @req-al-fr-027 @anchors
     Scenario Outline: Checkable milestone metadata comes from the host
-      Given a draft milestone cites <anchors>
-      When validation succeeds
+      Given a draft milestone names <range> of the numbered evidence
+      When the host reads it
       Then <outcome>
 
       Examples:
-        | anchors | outcome |
-        | existing digest IDs | labels and time span are derived from those facts |
-        | an invented ID | the whole reading is refused |
+        | range | outcome |
+        | a range inside the digest | anchors, labels and time span are derived from the facts it covers |
+        | a range reaching past either end | it is held inside the digest, so every anchor is still a fact of this session |
+        | a range that ends before it starts | the reading is refused for covering no evidence |
+
+    @req-al-fr-027 @anchors
+    Scenario: The reading is never asked to transcribe an identifier
+      Given a digest of any length
+      When the instruction is built
+      Then the facts are numbered and no fact ID appears in it
+      And a milestone can therefore not cite evidence this session does not contain
 
     @req-al-fr-028 @truth
     Scenario Outline: Milestones cannot double-count or falsely settle work
@@ -460,11 +481,17 @@ Feature: Supervise agent sessions through bounded checkable evidence
 
       Examples:
         | defect |
-        | shares one anchor between milestones |
+        | overlaps the range of another milestone |
         | uses fewer than three facts per milestone |
         | claims settled over a still-running tool |
         | claims settled over a pending question |
         | adds a session-level completion verdict |
+
+    @req-al-fr-028 @truth
+    Scenario: Milestones written out of order are read, not refused
+      Given a draft whose milestones arrive newest first
+      When the host validates it
+      Then they are read oldest first and the partition is checked in that order
 
     @req-al-fr-029 @states
     Scenario Outline: Timeline state never takes Chat away

@@ -22,4 +22,12 @@ enum TenonLog {
     static let cli = Logger(subsystem: subsystem, category: "cli")
     /// The app's judgement about its own health.
     static let diagnostics = Logger(subsystem: subsystem, category: "diagnostics")
+    /// Readings of an agent session: the CLI a synthesis ran, and how that run ended.
+    ///
+    /// A reading is the longest-running thing this host asks for — measured 2026-08-16 at 247 to
+    /// 379 seconds over real sessions — and it can end six different ways. Until T-169 it wrote
+    /// nothing at all, so an operator reporting "it timed out" left no record saying which
+    /// deadline, on which provider, over how much evidence, and the failure had to be
+    /// reconstructed by re-running the pipeline outside the app.
+    static let agentLens = Logger(subsystem: subsystem, category: "agent-lens")
 }
