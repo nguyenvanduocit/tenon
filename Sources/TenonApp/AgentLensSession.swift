@@ -313,6 +313,8 @@ final class AgentLensViewModel {
     @ObservationIgnored private var consecutiveMisses = 0
     @ObservationIgnored private var didAnnounceHookCapabilities = false
     @ObservationIgnored private let resolveTimelineSynthesizer: AgentTimelineSynthesizerResolver
+    @ObservationIgnored private let detectReaders: AgentReadingReaderDetector
+    @ObservationIgnored private var readersTask: Task<Void, Never>?
     @ObservationIgnored private var timelineTask: Task<Void, Never>?
     @ObservationIgnored private var timelineLedger = AgentTimelineRunLedger()
     /// How many facts the reading on screen was made from. Comparing counts is O(1) and moves
@@ -338,7 +340,8 @@ final class AgentLensViewModel {
         attachment: AgentLensAttachment = .live,
         questions: AgentAskStore = AgentAskStore(),
         resolveTimelineSynthesizer: @escaping AgentTimelineSynthesizerResolver =
-            AgentLensViewModel.installedTimelineSynthesizer
+            AgentLensViewModel.installedTimelineSynthesizer,
+        detectReaders: @escaping AgentReadingReaderDetector = AgentLensViewModel.installedReaders
     ) {
         self.slotID = slotID
         self.terminalPool = terminalPool
@@ -346,6 +349,7 @@ final class AgentLensViewModel {
         self.attachment = attachment
         self.questions = questions
         self.resolveTimelineSynthesizer = resolveTimelineSynthesizer
+        self.detectReaders = detectReaders
         self.diagnosticsPaneOrdinal = DiagnosticsRuntimeSignals.shared.registerAgentLensPane()
         // A live pane opens on its terminal because someone is typing into it. A recorded one
         // opens on its reading, because the reading is the entire reason the pane exists.
@@ -373,11 +377,13 @@ final class AgentLensViewModel {
     ///
     /// An empty answer leaves the choice alone rather than emptying it: a scan that found nothing
     /// says the reader picker has nothing to offer, and the invitation already reports a missing
-    /// CLI honestly through `noSynthesizer` when someone asks for a reading anyway.
-    func loadAvailableReaders(
-        using detect: AgentReadingReaderDetector = AgentLensViewModel.installedReaders
-    ) async {
-        let readers = await detect()
+    /// CLI honestly through `noSynthesizer` when someone asks for a reading anyway. It is also
+    /// the one answer worth asking for twice — a CLI installed while the app is open should
+    /// become a reader, and re-asking costs a directory probe — so the answer that is kept is a
+    /// found one, and the pane asks again until it has one.
+    func loadAvailableReaders() async {
+        guard availableReaders.isEmpty else { return }
+        let readers = await detectReaders()
         availableReaders = readers
         guard let first = readers.first, !readers.contains(readingOptions.provider) else { return }
         readingOptions.select(provider: first)
@@ -395,6 +401,7 @@ final class AgentLensViewModel {
     func start() {
         guard discoveryTask == nil else { return }
         observeDeclaredQuestions()
+        askWhichReadersExist()
         // A recorded session is attached once, from the reference the pane was opened with.
         // There is no process to poll for, and polling would report the session as ended.
         guard attachment.startsDiscovery else {
@@ -417,12 +424,27 @@ final class AgentLensViewModel {
         streamTask = nil
         questionTask?.cancel()
         questionTask = nil
+        readersTask?.cancel()
+        readersTask = nil
         if let coordinator { Task { await coordinator.stop() } }
         if let inputQueue { Task { await inputQueue.stop() } }
         coordinator = nil
         inputQueue = nil
         optionSubmissionGate.reconcile(pendingRequestID: nil)
         discardTimeline()
+    }
+
+    /// Asked by the pane rather than by the view that shows the answer.
+    ///
+    /// Timeline is opened minutes after a pane is, so asking here means the reader choice is
+    /// already on hand when the invitation draws its first frame. Asked from the view instead,
+    /// the answer cannot arrive before that frame, and the picker is prepended into a row that
+    /// is already on screen — which is exactly the sideways jump T-175 was reported for.
+    private func askWhichReadersExist() {
+        guard readersTask == nil else { return }
+        readersTask = Task { [weak self] in
+            await self?.loadAvailableReaders()
+        }
     }
 
     /// The pane-owned declared channel outranks provider extraction. A separate stream is

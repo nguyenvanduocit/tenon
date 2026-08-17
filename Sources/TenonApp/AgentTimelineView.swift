@@ -49,8 +49,10 @@ struct AgentSessionTimelineView: View {
         .tenonScrollbarStyle()
         .background(TenonTheme.ink)
         .accessibilityIdentifier("tenon.agentLens.timeline")
-        // Which CLIs this machine has is a filesystem answer, so it is asked off MainActor and
-        // only once the account is actually on screen.
+        // The pane already asked when it opened, and the answer is kept, so this is a no-op on
+        // every visit but the first. It stays for the composition that mounts this view without
+        // a started pane — the offscreen snapshot writer — and because a machine that had no
+        // reader when the pane opened may have one now.
         .task { await model.loadAvailableReaders() }
     }
 

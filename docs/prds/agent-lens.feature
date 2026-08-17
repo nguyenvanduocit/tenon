@@ -321,6 +321,27 @@ Feature: Supervise agent sessions through bounded checkable evidence
       When it settles
       Then the host log carries its provider, prompt size, deadlines, elapsed time and reason
 
+    @req-al-fr-055 @req-al-fr-041 @timeline
+    Scenario: The reader choice is on hand before Timeline is opened
+      Given a pane that has started
+      When Timeline is opened for the first time
+      Then the readers this machine has are already known
+      And re-opening Timeline does not ask the machine again
+
+    @req-al-fr-055 @timeline
+    Scenario: Which readers exist is a question about directories
+      Given a machine whose shell history names agent invocations
+      When the pane decides which readers to offer
+      Then only executable directories are read
+      And the answer is the CLIs those directories hold
+
+    @req-al-fr-055 @timeline
+    Scenario: A scan that found nothing is the one answer worth asking for twice
+      Given a pane whose first scan found no agent CLI
+      When Timeline is opened again
+      Then the machine is asked again
+      And a CLI installed since then is offered as a reader
+
     @req-al-fr-049 @req-al-fr-038 @timeline
     Scenario: Once the reply is arriving the deadline is in charge again
       Given a reading has received the first frame of its reply

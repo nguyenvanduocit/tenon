@@ -1013,7 +1013,8 @@ private enum Fixture {
     @MainActor
     static func model(
         snapshot: AgentLensSnapshot? = nil,
-        synthesizer: (any AgentTimelineSynthesizer)? = ScriptedSynthesizer(reply: "{}")
+        synthesizer: (any AgentTimelineSynthesizer)? = ScriptedSynthesizer(reply: "{}"),
+        readers: @escaping AgentReadingReaderDetector = { [] }
     ) -> AgentLensViewModel {
         // The reading never touches the terminal — the pool is here only because a pane has one.
         let model = AgentLensViewModel(
@@ -1022,10 +1023,41 @@ private enum Fixture {
                 StubTerminalSurface()
             },
             discovery: AgentLensDiscovery(),
-            resolveTimelineSynthesizer: { _ in synthesizer }
+            resolveTimelineSynthesizer: { _ in synthesizer },
+            detectReaders: readers
         )
         if let snapshot { model.receive(snapshot) }
         return model
+    }
+
+    /// A directory holding executable files named after the CLIs it should stand in for.
+    static func binDirectory(holding names: [String]) throws -> URL {
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("tenon-readers-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        for name in names {
+            let executable = directory.appendingPathComponent(name)
+            try Data("#!/bin/sh\n".utf8).write(to: executable)
+            try FileManager.default.setAttributes(
+                [.posixPermissions: 0o755],
+                ofItemAtPath: executable.path
+            )
+        }
+        return directory
+    }
+
+    /// Waits for the pane's own reader scan to land, the same way `settle` waits for a reading:
+    /// on the state it is waiting for, not on a duration someone guessed.
+    @MainActor
+    static func settle(
+        untilReadersAreKnownIn model: AgentLensViewModel,
+        within: Duration = .seconds(5)
+    ) async throws {
+        let deadline = ContinuousClock.now + within
+        while model.availableReaders.isEmpty, ContinuousClock.now < deadline {
+            try await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertFalse(model.availableReaders.isEmpty, "the pane never asked which readers exist")
     }
 
     /// Waits for the pane's generation to leave `running` without pinning a wall-clock duration
@@ -1357,10 +1389,13 @@ final class AgentReadingOptionsTests: XCTestCase {
 
     @MainActor
     func testTheReaderChoiceIsOnlyTheCLIsThisMachineHas() async {
-        let model = Fixture.model(snapshot: Fixture.session(userTurns: 6, toolRuns: 6))
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            readers: { [.codex] }
+        )
         XCTAssertEqual(model.availableReaders, [], "nothing is offered before the scan answers")
 
-        await model.loadAvailableReaders(using: { [.codex] })
+        await model.loadAvailableReaders()
 
         XCTAssertEqual(model.availableReaders, [.codex])
         XCTAssertEqual(
@@ -1372,8 +1407,11 @@ final class AgentReadingOptionsTests: XCTestCase {
 
     @MainActor
     func testAScanThatFoundNothingLeavesTheReadingItsDefaultReader() async {
-        let model = Fixture.model(snapshot: Fixture.session(userTurns: 6, toolRuns: 6))
-        await model.loadAvailableReaders(using: { [] })
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            readers: { [] }
+        )
+        await model.loadAvailableReaders()
 
         XCTAssertEqual(model.availableReaders, [])
         XCTAssertEqual(
@@ -1381,6 +1419,108 @@ final class AgentReadingOptionsTests: XCTestCase {
             .claude,
             "an empty scan is not a reason to leave the pane with no reader at all"
         )
+    }
+
+    /// Re-opening Timeline is not a new question about the machine.
+    ///
+    /// The account switch destroys and rebuilds the view, so the `.task` that asks runs again on
+    /// every visit. Which CLIs are installed is a filesystem answer that does not change while a
+    /// person clicks between two tabs, and paying for it per visit is how a control that should
+    /// already be there arrives late.
+    @MainActor
+    func testTheReaderScanIsAskedOncePerPane() async {
+        let scans = ScanCounter()
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            readers: { await scans.record([.codex, .claude]) }
+        )
+
+        await model.loadAvailableReaders()
+        await model.loadAvailableReaders()
+        await model.loadAvailableReaders()
+
+        let asked = await scans.count
+        XCTAssertEqual(asked, 1, "the machine was asked once, not once per visit")
+        XCTAssertEqual(model.availableReaders, [.codex, .claude])
+    }
+
+    /// A scan that found nothing is not an answer worth keeping.
+    ///
+    /// It is the one case where asking again is right: a CLI installed while the app is open
+    /// should become a reader, and re-asking costs a directory probe.
+    @MainActor
+    func testAScanThatFoundNothingIsAskedAgain() async {
+        let scans = ScanCounter()
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            readers: { await scans.record([]) }
+        )
+
+        await model.loadAvailableReaders()
+        await model.loadAvailableReaders()
+
+        let asked = await scans.count
+        XCTAssertEqual(asked, 2, "nothing found is not an answer to cache")
+    }
+
+    /// The pane asks, not the view that shows the answer.
+    ///
+    /// Started from the view, the scan cannot land before the invitation's first frame, so the
+    /// reader picker is prepended into a row that is already drawn and pushes it sideways. The
+    /// pane opens long before anyone clicks Timeline, which is the head start that removes it.
+    @MainActor
+    func testThePaneAsksWhichReadersExistBeforeTimelineIsEverOpened() async throws {
+        let scans = ScanCounter()
+        let model = Fixture.model(
+            snapshot: Fixture.session(userTurns: 6, toolRuns: 6),
+            readers: { await scans.record([.codex, .claude]) }
+        )
+
+        model.start()
+        defer { model.stop() }
+        try await Fixture.settle(untilReadersAreKnownIn: model)
+
+        XCTAssertEqual(
+            model.availableReaders,
+            [.codex, .claude],
+            "the answer is there for Timeline's first frame, not a moment after it"
+        )
+        let asked = await scans.count
+        XCTAssertEqual(asked, 1)
+    }
+
+    /// Which readers exist is a question about directories, and directories are all it may read.
+    ///
+    /// Green from the start on purpose: the list this returns is unchanged. What changed is what
+    /// it costs — the detector it used to ask reads and parses shell history to guess preferred
+    /// arguments, and this path discards them. The measurement is in T-175; this pins the answer
+    /// so the cheap route cannot quietly return a different one.
+    func testWhichReadersExistIsAnsweredFromDirectoriesAlone() throws {
+        let directory = try Fixture.binDirectory(holding: ["claude", "codex"])
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let readers = AgentCLITimelineSynthesizer.installedProviders(
+            locator: AgentExecutableLocator(executableDirectories: [directory])
+        )
+
+        XCTAssertEqual(readers, [.codex, .claude], "offered in the order AgentCLI declares them")
+        XCTAssertEqual(
+            AgentCLITimelineSynthesizer.installed(
+                provider: .claude,
+                locator: AgentExecutableLocator(executableDirectories: [directory])
+            )?.provider,
+            .claude,
+            "the list a person picks from and the binary their run finds stay one question"
+        )
+    }
+
+    func testAReaderWithNoBinaryIsNotOffered() throws {
+        let directory = try Fixture.binDirectory(holding: ["codex"])
+        defer { try? FileManager.default.removeItem(at: directory) }
+
+        let locator = AgentExecutableLocator(executableDirectories: [directory])
+        XCTAssertEqual(AgentCLITimelineSynthesizer.installedProviders(locator: locator), [.codex])
+        XCTAssertNil(AgentCLITimelineSynthesizer.installed(provider: .claude, locator: locator))
     }
 
     func testAFinishedReadingNamesEveryChoiceThatIsNotTheDefault() {
@@ -1418,6 +1558,16 @@ final class AgentReadingOptionsTests: XCTestCase {
             AgentReadingSpan.recentWork.maximumFacts,
             "the span bounds the evidence before a model ever sees it"
         )
+    }
+}
+
+/// Counts how many times the machine was asked which agent CLIs it has.
+private actor ScanCounter {
+    private(set) var count = 0
+
+    func record(_ readers: [AgentCLI]) -> [AgentCLI] {
+        count += 1
+        return readers
     }
 }
 

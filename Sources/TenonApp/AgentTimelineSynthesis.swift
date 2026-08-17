@@ -591,15 +591,18 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
     /// The installed agent CLI this host would use, or nil when that one is not on the person's
     /// PATH.
     ///
-    /// Reuses `AgentLaunchDetector` rather than probing again: where the agent binaries are is
-    /// already one question with one answer in this app.
+    /// Asks `AgentExecutableLocator`, which is where the agent binaries are and nothing else.
+    /// `AgentLaunchDetector` answers a larger question — where the binaries are *and* which
+    /// arguments this person habitually passes them — by reading and parsing up to 512 KB of
+    /// every shell history file it can find. A reading names its own arguments, so that work was
+    /// bought and discarded on the path that launches the CLI: measured on one developer machine
+    /// (T-175), 98.1 ms of history parsing against 0.5 ms of directory probing.
     static func installed(
         provider: AgentCLI = .claude,
-        detector: AgentLaunchDetector = AgentLaunchDetector()
+        locator: AgentExecutableLocator = AgentExecutableLocator()
     ) -> Self? {
-        let suggestions = detector.scan()
-        guard let match = suggestions.first(where: { $0.agent == provider }) else { return nil }
-        return Self(executableURL: match.executableURL, provider: provider)
+        guard let executableURL = locator.scan()[provider] else { return nil }
+        return Self(executableURL: executableURL, provider: provider)
     }
 
     func synthesize(
@@ -693,13 +696,13 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
 
     /// The readers this machine actually has, in the order `AgentCLI` declares them.
     ///
-    /// Answered from the same detector `installed(provider:)` uses, so the list a person picks
+    /// Answered from the same locator `installed(provider:)` uses, so the list a person picks
     /// from and the binary their run finds can never be two different questions.
     static func installedProviders(
-        detector: AgentLaunchDetector = AgentLaunchDetector()
+        locator: AgentExecutableLocator = AgentExecutableLocator()
     ) -> [AgentCLI] {
-        let found = Set(detector.scan().map(\.agent))
-        return AgentCLI.allCases.filter(found.contains)
+        let found = locator.scan()
+        return AgentCLI.allCases.filter { found[$0] != nil }
     }
 
     private static func run(
