@@ -345,6 +345,8 @@ struct ShellTitleBar: View {
         .background(WindowDragArea(color: TenonTheme.chromeNS))
     }
 
+    // MARK: - The identity zone  @domain: workspace-model
+
     private var leftZone: some View {
         HStack(spacing: 8) {
             // Reserved for the OS traffic-light buttons, which overlay this corner.
@@ -354,15 +356,54 @@ struct ShellTitleBar: View {
             // Drop the wordmark first when the sidebar column is too narrow to hold
             // the full identity + toggle without the title crowding into the divider.
             // ViewThatFits keeps the last (title-less) candidate once nothing fits.
-            ViewThatFits(in: .horizontal) {
+            //
+            // A workspace name goes through neither branch: it is the only place that name
+            // appears while the rail is collapsed, so it shrinks and truncates rather than
+            // being dropped — the zone's width is fixed at 232 pt there anyway.
+            if label.namesWorkspace {
                 identityRow(showTitle: true)
-                identityRow(showTitle: false)
+            } else {
+                ViewThatFits(in: .horizontal) {
+                    identityRow(showTitle: true)
+                    identityRow(showTitle: false)
+                }
             }
         }
         .padding(.trailing, 8)
     }
 
-    /// Icon + optional "Tenon" wordmark, with the sidebar toggle pinned to the right.
+    /// What the zone says beside the mark: the active workspace's name while the sidebar is
+    /// collapsed, and the app's wordmark otherwise.
+    private var label: ShellIdentityLabel {
+        ShellIdentityLabel.resolve(
+            sidebarVisible: sidebarVisible,
+            workspaceName: activeWorkspace?.name
+        )
+    }
+
+    /// The label itself. A workspace name is content and takes the tail truncation content
+    /// gets, plus the tooltip that gives the cut-off part back; the wordmark is chrome, and
+    /// `fixedSize` is what lets `ViewThatFits` see it stop fitting rather than watch it
+    /// shorten to "Ten…".
+    @ViewBuilder
+    private var identityLabel: some View {
+        let text = Text(label.text)
+            .font(TenonTheme.interfaceFont(size: 13, weight: .bold))
+            .foregroundStyle(TenonTheme.text)
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .accessibilityIdentifier("tenon.identityLabel")
+
+        if label.namesWorkspace {
+            text
+                .help(label.text)
+                .accessibilityLabel("Workspace \(label.text)")
+        } else {
+            text.fixedSize()
+        }
+    }
+
+    /// Icon + optional label, with the sidebar toggle pinned to the right.
     private func identityRow(showTitle: Bool) -> some View {
         HStack(spacing: 8) {
             (AppMark.image.map { Image(nsImage: $0) } ?? Image(systemName: "terminal.fill"))
@@ -373,11 +414,7 @@ struct ShellTitleBar: View {
                 .accessibilityHidden(true)
 
             if showTitle {
-                Text("Tenon")
-                    .font(TenonTheme.interfaceFont(size: 13, weight: .bold))
-                    .foregroundStyle(TenonTheme.text)
-                    .lineLimit(1)
-                    .fixedSize()
+                identityLabel
             }
 
             Spacer(minLength: 6)

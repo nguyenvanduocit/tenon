@@ -23,6 +23,7 @@ struct TenonApp: App {
         PluginViewSnapshot.renderIfRequested()
         AgentTimelineSnapshot.renderIfRequested()
         SidebarSnapshot.renderIfRequested()
+        TitleBarSnapshot.renderIfRequested()
         PaneRenameSnapshot.renderIfRequested()
         CompanionSettingsSnapshot.renderIfRequested()
     }

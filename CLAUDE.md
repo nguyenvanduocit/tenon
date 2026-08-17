@@ -280,7 +280,13 @@ TENON_DIFF_SNAPSHOT=/tmp/diff.png swift run tenon        # the diff view
 TENON_CHANGES_SNAPSHOT=/tmp/changes.png swift run tenon  # the changes panel
 TENON_TIMELINE_SNAPSHOT=/tmp/timeline.png swift run tenon # Agent Lens' Timeline account
 TENON_SIDEBAR_SNAPSHOT=/tmp/sidebar.png swift run tenon  # the workspace sidebar and its footer
+TENON_TITLEBAR_SNAPSHOT=/tmp/titlebar.png swift run tenon # the title bar, identity zone included
 ```
+
+The title-bar form takes `TENON_TITLEBAR_SNAPSHOT_SIDEBAR=collapsed|expanded` (collapsed by
+default, since that is the state where the identity zone carries a workspace name),
+`TENON_TITLEBAR_SNAPSHOT_WORKSPACE=<name>` — a name longer than the zone's ~90 pt is the case
+worth photographing — and `TENON_TITLEBAR_SNAPSHOT_SIZE=WxH`.
 
 The Timeline form takes `TENON_TIMELINE_SNAPSHOT_STATE=idle|running|ready|failed|insufficient`,
 `TENON_TIMELINE_SNAPSHOT_SIZE=WxH` for the narrow-pane reflow, and

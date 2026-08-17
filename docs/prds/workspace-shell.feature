@@ -22,6 +22,14 @@ Feature: Resume work in a stable native workspace shell
       Then the system moves the window without taking input from a titlebar control
       And a double click on that gap follows the configured system titlebar action
 
+    @req-ws-fr-034 @titlebar
+    Scenario: The identity zone names the workspace exactly while nothing else does
+      Given the sidebar is collapsed to its icon rail, where a workspace name appears only in a tooltip
+      When the operator reads the title bar's identity zone
+      Then the zone shows the active workspace's name in place of the Tenon wordmark
+      And a name too long for the zone is truncated at its tail with the whole name in its tooltip
+      And expanding the sidebar returns the zone to the wordmark, because the workspace list names the active workspace
+
     @req-ws-fr-003 @req-ws-nfr-009 @catalog
     Scenario: A valid catalog keeps every identity and selection internally consistent
       Given a catalog contains one or more workspaces
