@@ -517,6 +517,7 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | 2026-08-14 | The generating state is a static glyph and a word, not an animated spinner. | an animated glyph writes `stringValue` on an `NSTextField` ten times a second, and every write invalidates its intrinsic size and re-solves the header strip on the main thread. That is the exact churn T-091 and T-141 were opened for in this tree, and `Naming…` already says the pane is working | an `NSProgressIndicator` or a braille-frame timer in the header |
 | 2026-08-10 | The derived palette is ten hues spaced by eye, not twelve spaced evenly. | an even wheel puts three hues in the greens where discrimination is weakest; the snapshot showed them reading as one colour while every count- and contrast-based test passed. ΔE 25.1 against 16.7, for about a third of a workspace more collisions | evenly spaced twelve-hue wheel |
 | 2026-08-16 | The workspace row is as tall as the collapsed rail leaves it wide — `WorkspaceSidebarLayout.rowHeight` derives from `collapsedRowWidth` (38 pt) instead of naming its own number. | collapsed, a workspace is a mark and nothing else, so the row *is* the shape its fill draws: at 46 pt over 38 pt of width the selected and hovered rail read as stripes. The same height also returns the expanded row to `designs.md`'s two-line utility row band (36–40 pt), which 46 sat outside of, and derivation means widening the rail or its inset keeps the mark square rather than quietly making it a rectangle again | a 46 pt row height carried as a literal |
+| 2026-08-16 | A row of swatches spans the popover's content width, with the leftover width spread between the marks as `WorkspaceIdentityFormMetrics.columnSpacing(for:)`; marks and tints share one grid builder, and Upload Custom Icon spans the same width. | fixed columns occupied only what they contained — 266 pt of 292 under the marks, 232 pt under the tints — so 60 pt piled against the right inset and the tint row read as having stopped early, which is what the operator photographed. Deriving the gap keeps the deliberate column counts (8 marks over 3 even rows, 13 tints over 2 balanced rows) while making the width the row is laid out from the width it gives back | a wider popover, a stub last row of tints, or per-grid spacing constants |
 
 ## 13. Verification receipts
 
@@ -526,6 +527,12 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   translation, horizontal cancellation, and spoken position. `WorkspaceOrderTests` pins
   real/no-op store publication, active workspace/tab/pane preservation, and persistence of
   the chosen order. The shipping SwiftUI gesture remains an installed-app pointer check.
+- 2026-08-16, `WS-NFR-006`, `WS-NFR-010`: `WorkspaceIdentityFormTests` reads back the
+  pixels the popover drew and requires a swatch row to leave the same space before its
+  first mark as after its last, and less than a swatch of either. Red first at 7 pt against
+  67 pt, green after. Two metrics assertions that only forbade overflow were replaced by
+  the density floor they were standing in for. Suite 2279 / 0; snapshots taken through
+  `TENON_IDENTITY_SNAPSHOT` on both sides of the change.
 - `WorkspaceCatalogPersistenceTests` covers schema round-trip, launch precedence, bounded
   durable writes, coalescing, flush, and the fail-soft matrix.
 - `WorkspaceCatalogRelaunchTests` exercises the real composition root across stop/relaunch.

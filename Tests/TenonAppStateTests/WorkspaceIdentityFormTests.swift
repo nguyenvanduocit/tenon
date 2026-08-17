@@ -31,18 +31,21 @@ final class WorkspaceIdentityFormTests: XCTestCase {
     }
 
     /// The grid is computed from the popover's width, so this pins what that computation
-    /// owes: every mark has a place, no row overflows the content box, and the rows are
-    /// even — filling each row to the width instead gives 8 marks then a stub row of 4.
-    func testTheMarkGridIsEvenAndFitsInsideThePopoversContentWidth() {
+    /// owes: every mark has a place, the rows are even — filling each row to the width
+    /// instead gives 8 marks then a stub row of 4 — and a row never asks for more columns
+    /// than the width can carry at the density the rest of the form is drawn at.
+    func testTheMarkGridIsEvenAndKeepsItsDensityAcrossThePopoversWidth() {
         let metrics = WorkspaceIdentityFormMetrics.self
         let columns = metrics.columns
         let rows = metrics.markRows
         let count = WorkspaceSymbol.allCases.count
-        let occupied = CGFloat(columns) * metrics.swatch
-            + CGFloat(columns - 1) * metrics.swatchSpacing
 
         XCTAssertGreaterThan(columns, 1)
-        XCTAssertLessThanOrEqual(occupied, metrics.width - metrics.inset * 2)
+        XCTAssertGreaterThanOrEqual(
+            metrics.columnSpacing(for: columns),
+            metrics.swatchSpacing,
+            "\(columns) columns pack the marks tighter than a row of them is ever drawn"
+        )
         XCTAssertGreaterThanOrEqual(
             rows * columns,
             count,
@@ -63,14 +66,16 @@ final class WorkspaceIdentityFormTests: XCTestCase {
         XCTAssertTrue(AccentColor.allCases.allSatisfy { !$0.label.isEmpty })
     }
 
-    func testTheExpandedTintGridIsBalancedAndFitsThePopover() {
+    func testTheExpandedTintGridIsBalancedAndKeepsItsDensity() {
         let metrics = WorkspaceIdentityFormMetrics.self
         let count = AccentColor.allCases.count + 1
-        let occupied = CGFloat(metrics.tintColumns) * metrics.swatch
-            + CGFloat(metrics.tintColumns - 1) * metrics.swatchSpacing
 
         XCTAssertEqual(metrics.tintRows, 2)
-        XCTAssertLessThanOrEqual(occupied, metrics.width - metrics.inset * 2)
+        XCTAssertGreaterThanOrEqual(
+            metrics.columnSpacing(for: metrics.tintColumns),
+            metrics.swatchSpacing,
+            "the tints are packed tighter than a row of swatches is ever drawn"
+        )
         XCTAssertGreaterThanOrEqual(metrics.tintRows * metrics.tintColumns, count)
         XCTAssertLessThan(metrics.tintRows * metrics.tintColumns - count, metrics.tintRows)
     }
@@ -301,5 +306,167 @@ final class WorkspaceIdentityFormTests: XCTestCase {
         store.renameWorkspace(store.catalog.activeWorkspaceID, to: "Payments")
 
         XCTAssertEqual(try XCTUnwrap(store.catalog.activeWorkspace).customName, "Payments")
+    }
+
+    /// A row of swatches is laid out from the popover's width, so it owes that width back:
+    /// the space before the first swatch and the space after the last are the same, and
+    /// neither is wide enough to have held another swatch. Columns that cannot grow break
+    /// exactly this and nothing else — the tints ended 60 pt short of their own edge while
+    /// every metrics assertion stayed green, because those only forbid overflow.
+    ///
+    /// This measures the drawn pixels rather than recomputing the layout from the metrics
+    /// the view lays out from, which would agree with any mistake it makes. The tints are
+    /// the one place in the form where saturated marks repeat across a row, which is what
+    /// makes the row findable without pinning where it sits.
+    func testASwatchRowIsSpreadEvenlyAcrossThePopoversContentWidth() throws {
+        let form = try renderIdentityForm()
+        let row = try XCTUnwrap(
+            form.widestRowOfRepeatedSwatches(),
+            "no row of tint swatches was found in the rendered form"
+        )
+        let inset = WorkspaceIdentityFormMetrics.inset
+        let contentRight = WorkspaceIdentityFormMetrics.width - inset
+        let leading = row.first - inset
+        let trailing = contentRight - row.last
+
+        XCTAssertEqual(
+            trailing,
+            leading,
+            accuracy: 1.5,
+            """
+            the row is not centred in its own width: it starts \(leading) pt after the \
+            content edge and stops \(trailing) pt before it
+            """
+        )
+        XCTAssertLessThanOrEqual(
+            trailing,
+            WorkspaceIdentityFormMetrics.swatch,
+            """
+            \(trailing) pt is left after the last swatch — room enough for another one, \
+            so the row stopped short of the width it was laid out from
+            """
+        )
+    }
+
+    /// One rendered form, as pixels in the form's own points. The route is the offscreen
+    /// `NSHostingView` + `cacheDisplay` one `PaneViewSnapshotWriter` uses: no window, no
+    /// screen-recording grant.
+    private func renderIdentityForm() throws -> RenderedIdentityForm {
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(path: projectPath))
+        store.setWorkspaceAppearance(
+            store.catalog.activeWorkspaceID,
+            to: WorkspaceAppearance(symbol: .metrics, accent: .green)
+        )
+        let workspace = try XCTUnwrap(store.catalog.activeWorkspace)
+        let hosting = NSHostingView(
+            rootView: WorkspaceIdentityForm(
+                workspace: workspace,
+                store: store,
+                dismiss: {}
+            )
+        )
+        hosting.frame = NSRect(
+            origin: .zero,
+            size: NSSize(
+                width: WorkspaceIdentityFormMetrics.width,
+                height: hosting.fittingSize.height
+            )
+        )
+        hosting.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.3))
+        hosting.layoutSubtreeIfNeeded()
+
+        let rep = try XCTUnwrap(hosting.bitmapImageRepForCachingDisplay(in: hosting.bounds))
+        hosting.cacheDisplay(in: hosting.bounds, to: rep)
+        let image = try XCTUnwrap(rep.cgImage)
+        let width = image.width
+        let height = image.height
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let context = try XCTUnwrap(
+            CGContext(
+                data: &pixels,
+                width: width,
+                height: height,
+                bitsPerComponent: 8,
+                bytesPerRow: width * 4,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )
+        )
+        context.draw(image, in: CGRect(x: 0, y: 0, width: width, height: height))
+
+        return RenderedIdentityForm(
+            pixels: pixels,
+            width: width,
+            height: height,
+            scale: CGFloat(width) / WorkspaceIdentityFormMetrics.width
+        )
+    }
+}
+
+/// The pixels one rendered identity form drew, read back in the form's own points.
+private struct RenderedIdentityForm {
+    let pixels: [UInt8]
+    let width: Int
+    let height: Int
+    let scale: CGFloat
+
+    /// The horizontal extent of the swatch row that reaches furthest right. A swatch row is
+    /// recognised by shape alone: at least six saturated marks, each about the size of a
+    /// swatch, standing at least a third of a swatch apart. That is what separates it from
+    /// the two other saturated things the form draws — the selection ring, whose hairlines
+    /// are far too thin, and the amber Done button, whose black lettering cuts its fill into
+    /// pieces that sit almost touching.
+    func widestRowOfRepeatedSwatches() -> (first: CGFloat, last: CGFloat)? {
+        var widest: (first: CGFloat, last: CGFloat)?
+        for y in 0..<height {
+            guard let runs = swatchRuns(inRow: y), runs.count >= 6 else { continue }
+            guard let first = runs.first, let last = runs.last else { continue }
+            let extent = (
+                first: CGFloat(first.lowerBound) / scale,
+                last: CGFloat(last.upperBound + 1) / scale
+            )
+            if widest == nil || extent.last > widest!.last { widest = extent }
+        }
+        return widest
+    }
+
+    /// The runs of saturated pixels in one row when every one of them is swatch-shaped and
+    /// swatch-spaced, and nothing when any is not — a row is read whole, so one stray mark
+    /// disqualifies it rather than quietly passing the rest through.
+    private func swatchRuns(inRow y: Int) -> [ClosedRange<Int>]? {
+        var runs: [ClosedRange<Int>] = []
+        var start: Int?
+        for x in 0..<width {
+            if isSaturated(x: x, y: y) {
+                if start == nil { start = x }
+            } else if let began = start {
+                runs.append(began...(x - 1))
+                start = nil
+            }
+        }
+        if let began = start { runs.append(began...(width - 1)) }
+
+        let swatch = WorkspaceIdentityFormMetrics.swatch * scale
+        let separation = swatch / 3
+        guard runs.allSatisfy({ CGFloat($0.count) >= separation && CGFloat($0.count) <= swatch })
+        else { return nil }
+        for (left, right) in zip(runs, runs.dropFirst())
+        where CGFloat(right.lowerBound - left.upperBound) < separation {
+            return nil
+        }
+        return runs
+    }
+
+    /// A pixel carrying real hue: the chrome, the panel fills and every grey the form draws
+    /// are near-neutral, so a wide gap between the strongest and weakest channel is a mark.
+    private func isSaturated(x: Int, y: Int) -> Bool {
+        let offset = (y * width + x) * 4
+        let red = Int(pixels[offset])
+        let green = Int(pixels[offset + 1])
+        let blue = Int(pixels[offset + 2])
+        let highest = max(red, green, blue)
+        let lowest = min(red, green, blue)
+        return highest > 100 && highest - lowest > 60
     }
 }

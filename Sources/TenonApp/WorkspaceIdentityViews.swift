@@ -20,9 +20,23 @@ enum WorkspaceIdentityFormMetrics {
     static let controlRadius: CGFloat = 6
     /// Marks and tints are square targets on the same 28 pt grid the sidebar footer uses.
     static let swatch: CGFloat = 28
+    /// What separates one row of swatches from the next, and the tightest a row may ever be
+    /// packed — which is what decides how many swatches a row can hold.
     static let swatchSpacing: CGFloat = 6
     static let inset: CGFloat = 14
     static let sectionSpacing: CGFloat = 12
+
+    /// The content box a section is laid out inside.
+    static var content: CGFloat { width - inset * 2 }
+
+    /// What stands between two swatches in a row of `columns`. A row is laid out from the
+    /// popover's width, so it owes that width back: whatever a column count leaves over is
+    /// spread between the marks, where it reads as the rhythm of the row, rather than
+    /// collected against the right inset, where it reads as the row having stopped early.
+    static func columnSpacing(for columns: Int) -> CGFloat {
+        guard columns > 1 else { return 0 }
+        return (content - CGFloat(columns) * swatch) / CGFloat(columns - 1)
+    }
 
     /// The mark grid's shape: the fewest rows the vocabulary fits in, spread evenly across
     /// them. Filling each row to the popover's width instead would leave the last row a
@@ -35,7 +49,6 @@ enum WorkspaceIdentityFormMetrics {
 
     /// The rows the mark grid occupies — what the popover's height is budgeted from.
     static var markRows: Int {
-        let content = width - inset * 2
         let fitted = max(1, Int((content + swatchSpacing) / (swatch + swatchSpacing)))
         return max(
             1,
@@ -257,17 +270,7 @@ struct WorkspaceIdentityForm: View {
     private var marks: some View {
         section("Icon") {
             VStack(alignment: .leading, spacing: 6) {
-                LazyVGrid(
-                    columns: Array(
-                        repeating: GridItem(
-                            .fixed(WorkspaceIdentityFormMetrics.swatch),
-                            spacing: WorkspaceIdentityFormMetrics.swatchSpacing
-                        ),
-                        count: WorkspaceIdentityFormMetrics.columns
-                    ),
-                    alignment: .leading,
-                    spacing: WorkspaceIdentityFormMetrics.swatchSpacing
-                ) {
+                swatchGrid(columns: WorkspaceIdentityFormMetrics.columns) {
                     ForEach(WorkspaceSymbol.allCases, id: \.self) { symbol in
                         let isChosen = workspace.appearance.customIcon == nil
                             && symbol == workspace.appearance.symbol
@@ -324,7 +327,13 @@ struct WorkspaceIdentityForm: View {
                 .foregroundStyle(TenonTheme.text)
             }
             .padding(.horizontal, 9)
-            .frame(height: WorkspaceIdentityFormMetrics.controlHeight)
+            // The grid above it spans the content width, so this does too: the section is
+            // one block of choices, and a button sized to its own label reads as a stray.
+            .frame(
+                maxWidth: .infinity,
+                minHeight: WorkspaceIdentityFormMetrics.controlHeight,
+                maxHeight: WorkspaceIdentityFormMetrics.controlHeight
+            )
             .background(
                 workspace.appearance.customIcon == nil
                     ? TenonTheme.panel
@@ -359,23 +368,34 @@ struct WorkspaceIdentityForm: View {
 
     private var tints: some View {
         section("Colour") {
-            LazyVGrid(
-                columns: Array(
-                    repeating: GridItem(
-                        .fixed(WorkspaceIdentityFormMetrics.swatch),
-                        spacing: WorkspaceIdentityFormMetrics.swatchSpacing
-                    ),
-                    count: WorkspaceIdentityFormMetrics.tintColumns
-                ),
-                alignment: .leading,
-                spacing: WorkspaceIdentityFormMetrics.swatchSpacing
-            ) {
+            swatchGrid(columns: WorkspaceIdentityFormMetrics.tintColumns) {
                 ForEach([AccentColor?.none] + AccentColor.allCases.map(Optional.some), id: \.self) {
                     accent in
                     tintButton(accent, label: accent?.label ?? "Automatic")
                 }
             }
         }
+    }
+
+    /// Marks and tints differ in how many columns they want and in nothing else, so the row
+    /// they are both laid out as is written once. One layout is also what lets one rendered
+    /// measurement stand for both grids — there is a single thing here to get wrong.
+    private func swatchGrid(
+        columns: Int,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        LazyVGrid(
+            columns: Array(
+                repeating: GridItem(
+                    .fixed(WorkspaceIdentityFormMetrics.swatch),
+                    spacing: WorkspaceIdentityFormMetrics.columnSpacing(for: columns)
+                ),
+                count: columns
+            ),
+            alignment: .leading,
+            spacing: WorkspaceIdentityFormMetrics.swatchSpacing,
+            content: content
+        )
     }
 
     /// A tint is never announced or distinguished by colour alone: the chosen one carries a
