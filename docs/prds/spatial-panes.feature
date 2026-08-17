@@ -115,6 +115,34 @@ Feature: Arrange live panes without losing identity, focus, or attention
       Then the neighbor keeps its committed width
       And any declined columns remain empty canvas
 
+    @req-sp-fr-004 @req-sp-fr-006 @sizing @cross-tab
+    Scenario: A pane dragged to another tab leaves the same width behind as closing it
+      Given a neighboring pane is narrower than the configured maximum
+      When the pane beside it is dragged out to another tab
+      Then the neighbor grows into the released region only up to the configured maximum
+      And it stands exactly where closing that pane would have left it
+
+    @req-sp-fr-004 @req-sp-fr-014 @sizing @cross-tab
+    Scenario: A pane released on the tab bar opens at the configured maximum
+      Given the operator carries a pane over the tab bar
+      When the operator releases it onto a new tab
+      Then the pane fills that tab only up to the configured maximum
+      And any declined columns remain empty canvas
+
+    @req-sp-fr-004 @req-sp-fr-014 @sizing @cross-tab
+    Scenario: A pane released on a tab chip takes free canvas bounded by the maximum
+      Given the target tab has an empty region wider than the configured maximum
+      When the operator releases the carried pane on that tab's chip
+      Then the pane takes the empty region only up to the configured maximum
+
+    @req-sp-fr-004 @req-sp-fr-014 @sizing @cross-tab @empty-grid
+    Scenario: A pane released on a highlighted region adopts that region whole
+      Given the target tab has an empty region wider than the configured maximum
+      And the drop highlight promises that region's committed pane frame
+      When the operator releases the carried pane inside that region
+      Then the pane occupies exactly the promised frame
+      And the configured maximum does not narrow it
+
     @req-sp-fr-005 @split @targeting
     Scenario Outline: Split and Stack target the clicked pane rather than the active pane
       Given pane Alpha is active and pane Beta is selected through its header menu

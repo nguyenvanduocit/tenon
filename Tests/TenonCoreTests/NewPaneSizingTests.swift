@@ -404,4 +404,131 @@ final class NewPaneSizingTests: XCTestCase {
             "the maximum bounds automatic layout only; the border is the person's"
         )
     }
+
+    // MARK: - A pane that moves to another tab
+
+    func testDraggingAPaneOutLeavesTheNeighborExactlyWhereClosingItWould() throws {
+        let stayingID = UUID()
+        let movingID = UUID()
+        let store = store(
+            slots: [
+                WorkspaceSlot(
+                    id: stayingID,
+                    rect: GridRect(x: 0, y: 0, width: 3, height: 12),
+                    content: .terminal
+                ),
+                WorkspaceSlot(
+                    id: movingID,
+                    rect: GridRect(x: 3, y: 0, width: 9, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: movingID,
+            maximumWidth: .oneThird
+        )
+
+        store.moveSlotToNewTab(movingID)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: stayingID)).rect,
+            GridRect(x: 0, y: 0, width: 4, height: 12),
+            "the tab the pane left reflows on the same rule as a close, not a wider one"
+        )
+    }
+
+    func testAPaneDroppedOnTheTabBarOpensAtTheConfiguredMaximum() throws {
+        let stayingID = UUID()
+        let movingID = UUID()
+        let store = store(
+            slots: [
+                WorkspaceSlot(
+                    id: stayingID,
+                    rect: GridRect(x: 0, y: 0, width: 3, height: 12),
+                    content: .terminal
+                ),
+                WorkspaceSlot(
+                    id: movingID,
+                    rect: GridRect(x: 3, y: 0, width: 9, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: movingID,
+            maximumWidth: .oneThird
+        )
+
+        store.moveSlotToNewTab(movingID)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: movingID)).rect,
+            GridRect(x: 0, y: 0, width: 4, height: 12),
+            "nobody named a frame for the new tab, so automatic layout obeys the maximum"
+        )
+    }
+
+    func testAPaneDroppedOnATabChipTakesFreeCanvasBoundedByTheMaximum() throws {
+        let movingID = UUID()
+        let store = twoTabStore(movingSlotID: movingID, maximumWidth: .oneThird)
+        let targetTabID = try XCTUnwrap(store.catalog.activeWorkspace?.tabs[1].id)
+
+        store.moveSlot(movingID, toTab: targetTabID)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: movingID)).rect,
+            GridRect(x: 6, y: 0, width: 4, height: 12),
+            "a chip drop names a tab, not a frame: placement is automatic and capped"
+        )
+    }
+
+    func testAPaneDroppedOnAHighlightedRegionStillAdoptsThatRegionExactly() throws {
+        let movingID = UUID()
+        let store = twoTabStore(movingSlotID: movingID, maximumWidth: .oneThird)
+        let targetTabID = try XCTUnwrap(store.catalog.activeWorkspace?.tabs[1].id)
+        let chosen = GridRect(x: 6, y: 0, width: 6, height: 12)
+
+        store.moveSlot(movingID, toTab: targetTabID, at: chosen)
+
+        XCTAssertEqual(
+            try XCTUnwrap(store.catalog.slot(id: movingID)).rect, chosen,
+            "the drop highlight promised this frame; the maximum bounds automatic layout only"
+        )
+    }
+
+    /// Two tabs in one workspace: the source holds the pane about to move beside a 3-column
+    /// neighbor, and the target holds one 6-column pane, leaving columns 6…11 free.
+    private func twoTabStore(
+        movingSlotID: UUID,
+        maximumWidth: SpatialExtentFraction
+    ) -> WorkspaceStore {
+        let source = Tab(
+            slots: [
+                WorkspaceSlot(
+                    rect: GridRect(x: 0, y: 0, width: 3, height: 12),
+                    content: .terminal
+                ),
+                WorkspaceSlot(
+                    id: movingSlotID,
+                    rect: GridRect(x: 3, y: 0, width: 9, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: movingSlotID
+        )
+        let occupant = WorkspaceSlot(
+            rect: GridRect(x: 0, y: 0, width: 6, height: 12),
+            content: .terminal
+        )
+        let target = Tab(slots: [occupant], activeSlotID: occupant.id)
+        let workspace = Workspace(
+            name: "w",
+            path: Self.path,
+            tabs: [source, target],
+            activeTabID: source.id
+        )
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        ))
+        store.newPaneSizingProvider = { NewPaneSizing(maximumWidth: maximumWidth) }
+        return store
+    }
 }

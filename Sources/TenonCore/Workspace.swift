@@ -955,46 +955,16 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     ) -> [WorkspaceEvent] {
         guard let location = activeTabLocation else { return [] }
         let tab = workspaces[location.workspace].tabs[location.tab]
-        guard let removedIndex = tab.slots.firstIndex(where: { $0.id == id }),
-              let transaction = SpatialLayout.close(
-                  tab.spatialSlots,
-                  slotID: id,
-                  maximumAbsorbedWidth: sizing.maximumColumns
-              )
-        else { return [] }
+        guard let removal = removeSlot(id, at: location, sizing: sizing) else { return [] }
 
-        let remainingByID = Dictionary(
-            uniqueKeysWithValues: tab.slots
-                .filter { $0.id != id }
-                .map { ($0.id, $0) }
-        )
-        let slots = transaction.proposal.map { spatial -> WorkspaceSlot in
-            var slot = remainingByID[spatial.id]!
-            slot.rect = spatial.rect
-            return slot
-        }
-        var activeSlotID = tab.activeSlotID
-        if activeSlotID == id {
-            if let absorbingSlotID = transaction.absorbedSlotIDs.first(
-                where: { absorbedID in slots.contains { $0.id == absorbedID } }
-            ) {
-                activeSlotID = absorbingSlotID
-            } else if slots.isEmpty {
-                activeSlotID = nil
-            } else {
-                activeSlotID = slots[max(0, min(removedIndex - 1, slots.count - 1))].id
-            }
-        }
-
-        workspaces[location.workspace].tabs[location.tab].slots = slots
-        workspaces[location.workspace].tabs[location.tab].activeSlotID = activeSlotID
+        let activeSlotID = removal.activeSlotID
         let workspaceID = workspaces[location.workspace].id
         var events: [WorkspaceEvent] = [
             .slotClosed(slot: id, tab: tab.id, workspace: workspaceID),
         ]
-        if !transaction.absorbedSlotIDs.isEmpty {
+        if !removal.resized.isEmpty {
             events.append(.slotsResized(
-                slots: transaction.absorbedSlotIDs,
+                slots: removal.resized,
                 detached: false,
                 tab: tab.id,
                 workspace: workspaceID
@@ -1110,16 +1080,22 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     /// reflows exactly like `closeSlot`; moving a tab's only slot closes that empty
     /// source tab after the new tab exists. The new tab becomes active and the moved
     /// slot focused.
+    ///
+    /// Nobody names a frame for the new tab, so the pane arrives at whatever automatic
+    /// layout gives a tab's first pane — the whole canvas, bounded by `sizing`.
     @discardableResult
-    public mutating func moveSlotToNewTab(_ slotID: UUID) -> [WorkspaceEvent] {
+    public mutating func moveSlotToNewTab(
+        _ slotID: UUID,
+        sizing: NewPaneSizing = .unlimited
+    ) -> [WorkspaceEvent] {
         guard let source = location(ofSlot: slotID) else { return [] }
         let sourceTabID = workspaces[source.workspace].tabs[source.tab].id
         let workspaceID = workspaces[source.workspace].id
-        guard let detached = detachSlot(slotID, at: source) else { return [] }
+        guard let detached = removeSlot(slotID, at: source, sizing: sizing) else { return [] }
 
         let movedSlot = WorkspaceSlot(
             id: detached.slot.id,
-            rect: fullGridRect,
+            rect: sizing.fitting(fullGridRect),
             content: detached.slot.content,
             customTitle: detached.slot.customTitle
         )
@@ -1162,10 +1138,14 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     /// The slot keeps its identity + content; the source tab reflows like `closeSlot`.
     /// The target tab becomes active and the moved slot focused. No-op when the slot
     /// or target is unknown, or the target is the slot's own tab.
+    ///
+    /// Releasing on a tab chip names a tab, not a region on it, so the placement is
+    /// automatic layout and answers to `sizing` the way `addSlot` does.
     @discardableResult
     public mutating func moveSlot(
         _ slotID: UUID,
-        toTab targetTabID: UUID
+        toTab targetTabID: UUID,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
         guard let source = location(ofSlot: slotID),
               let targetIndex = workspaces[source.workspace].tabs.firstIndex(
@@ -1185,9 +1165,10 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         guard let placement = placement(
             forSlot: slotID,
             content: content,
-            in: workspaces[source.workspace].tabs[targetIndex]
+            in: workspaces[source.workspace].tabs[targetIndex],
+            sizing: sizing
         ) else { return [] }
-        guard let detached = detachSlot(slotID, at: source) else { return [] }
+        guard let detached = removeSlot(slotID, at: source, sizing: sizing) else { return [] }
 
         workspaces[source.workspace].tabs[targetIndex].slots = placement.slots
         if let movedIndex = workspaces[source.workspace].tabs[targetIndex].slots
@@ -1237,11 +1218,16 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     /// Move a slot into an existing tab at the exact empty region chosen on that tab's
     /// visible canvas. The destination layout is resolved before the source is
     /// detached, so an occupied or stale region leaves both tabs unchanged.
+    ///
+    /// The pane adopts the region exactly: the drop highlight promised that frame, and
+    /// `sizing` bounds automatic layout rather than a frame a person pointed at. It still
+    /// bounds the reflow of the tab the pane left, where nobody pointed at anything.
     @discardableResult
     public mutating func moveSlot(
         _ slotID: UUID,
         toTab targetTabID: UUID,
-        at rect: GridRect
+        at rect: GridRect,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
         guard let source = location(ofSlot: slotID),
               let targetIndex = workspaces[source.workspace].tabs.firstIndex(
@@ -1260,19 +1246,24 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             slotID,
             from: source,
             intoTabAt: targetIndex,
-            proposal: insertion.proposal
+            proposal: insertion.proposal,
+            sizing: sizing
         )
     }
 
     /// Move a slot into an existing tab at the edge selected on that tab's visible
     /// canvas. The destination layout is resolved before the source is detached, so an
     /// invalid or stale target leaves both tabs unchanged.
+    ///
+    /// The chosen edge names the frame, so the landing is uncapped for the same reason
+    /// `moveSlot(_:toTab:at:)` is; `sizing` still bounds the source tab's reflow.
     @discardableResult
     public mutating func moveSlot(
         _ slotID: UUID,
         toTab targetTabID: UUID,
         beside targetSlotID: UUID,
-        edge: SpatialDropEdge
+        edge: SpatialDropEdge,
+        sizing: NewPaneSizing = .unlimited
     ) -> [WorkspaceEvent] {
         guard let source = location(ofSlot: slotID),
               let targetIndex = workspaces[source.workspace].tabs.firstIndex(
@@ -1292,19 +1283,22 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             slotID,
             from: source,
             intoTabAt: targetIndex,
-            proposal: insertion.proposal
+            proposal: insertion.proposal,
+            sizing: sizing
         )
     }
 
-    /// Detaches `slotID` from `source` and installs the pre-resolved destination
-    /// `proposal` into the target tab, emitting the shared cross-tab move event
-    /// sequence. Callers resolve the destination layout before detaching, so a
-    /// refused admission leaves both tabs untouched.
+    /// Removes `slotID` from `source` — reflowing that tab under `sizing` — and installs
+    /// the pre-resolved destination `proposal` into the target tab, emitting the shared
+    /// cross-tab move event sequence. Callers resolve the destination layout before the
+    /// removal, so a refused admission leaves both tabs untouched, and the proposal they
+    /// hand over is already the frame the drop highlight promised.
     private mutating func admitMovedSlot(
         _ slotID: UUID,
         from source: (workspace: Int, tab: Int),
         intoTabAt targetIndex: Int,
-        proposal: [SpatialSlot]
+        proposal: [SpatialSlot],
+        sizing: NewPaneSizing
     ) -> [WorkspaceEvent] {
         let workspaceID = workspaces[source.workspace].id
         let sourceTabID = workspaces[source.workspace].tabs[source.tab].id
@@ -1323,7 +1317,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             return spatial.id
         }
 
-        guard let detached = detachSlot(slotID, at: source) else { return [] }
+        guard let detached = removeSlot(slotID, at: source, sizing: sizing) else { return [] }
 
         workspaces[source.workspace].tabs[targetIndex].slots = proposal.map {
             spatial in
@@ -1601,18 +1595,29 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         return nil
     }
 
-    /// Remove a slot from its tab and reflow the survivors with the same structural
-    /// absorption as `closeSlot`, but without the close-only configured width cap. Returns
-    /// the removed slot (identity + content intact for reparenting) and the ids of any slots
-    /// that grew to absorb the freed space.
-    private mutating func detachSlot(
+    /// Take a slot out of its tab and reflow the survivors: a neighbour absorbs the freed
+    /// space, bounded horizontally by `sizing`, and the tab picks a valid active slot when
+    /// the departing one held focus. Returns the removed slot with its identity and content
+    /// intact — so a cross-tab move can reparent it — the ids of the slots that grew, and
+    /// the tab's active slot afterwards.
+    ///
+    /// This is the one place a pane leaves a tab. Close and cross-tab move differ in what
+    /// they do with the removed slot and which events they publish, never in how the tab
+    /// they emptied reflows: the same automatic growth answers to the same maximum either
+    /// way, because from the tab's side both are the same fact.
+    private mutating func removeSlot(
         _ slotID: UUID,
-        at location: (workspace: Int, tab: Int)
-    ) -> (slot: WorkspaceSlot, resized: [UUID])? {
+        at location: (workspace: Int, tab: Int),
+        sizing: NewPaneSizing
+    ) -> (slot: WorkspaceSlot, resized: [UUID], activeSlotID: UUID?)? {
         let tab = workspaces[location.workspace].tabs[location.tab]
         guard let removed = tab.slots.first(where: { $0.id == slotID }),
               let removedIndex = tab.slots.firstIndex(where: { $0.id == slotID }),
-              let transaction = SpatialLayout.close(tab.spatialSlots, slotID: slotID)
+              let transaction = SpatialLayout.close(
+                  tab.spatialSlots,
+                  slotID: slotID,
+                  maximumAbsorbedWidth: sizing.maximumColumns
+              )
         else { return nil }
 
         let remainingByID = Dictionary(
@@ -1640,20 +1645,25 @@ public struct WorkspaceCatalog: Equatable, Sendable {
 
         workspaces[location.workspace].tabs[location.tab].slots = slots
         workspaces[location.workspace].tabs[location.tab].activeSlotID = activeSlotID
-        return (removed, transaction.absorbedSlotIDs)
+        return (removed, transaction.absorbedSlotIDs, activeSlotID)
     }
 
     /// The target tab's slot array after admitting a moved slot, mirroring `addSlot`'s
     /// placement: fill an empty tab, else the largest empty rect, else split the
-    /// target's active slot. `changed` lists existing slots whose rect the placement
+    /// target's active slot — each bounded by `sizing`, exactly as `openSlot` bounds the
+    /// same three answers. `changed` lists existing slots whose rect the placement
     /// shrank. Returns nil when the slot cannot be placed (leaving the catalog untouched).
     private func placement(
         forSlot id: UUID,
         content: SlotContent,
-        in tab: Tab
+        in tab: Tab,
+        sizing: NewPaneSizing
     ) -> (slots: [WorkspaceSlot], changed: [UUID])? {
         if tab.slots.isEmpty {
-            return ([WorkspaceSlot(id: id, rect: fullGridRect, content: content)], [])
+            return (
+                [WorkspaceSlot(id: id, rect: sizing.fitting(fullGridRect), content: content)],
+                []
+            )
         }
 
         if let rect = SpatialLayout.bestEmptyRect(
@@ -1661,7 +1671,9 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             near: tab.activeSlotID
         ) {
             var slots = tab.slots
-            slots.append(WorkspaceSlot(id: id, rect: rect, content: content))
+            slots.append(
+                WorkspaceSlot(id: id, rect: sizing.fitting(rect), content: content)
+            )
             return (slots, [])
         }
 
@@ -1675,7 +1687,8 @@ public struct WorkspaceCatalog: Equatable, Sendable {
             tab.spatialSlots,
             slotID: active.id,
             newSlotID: id,
-            axis: axis
+            axis: axis,
+            newSlotMaximumWidth: sizing.maximumColumns
         ) else { return nil }
 
         let rects = Dictionary(

@@ -284,15 +284,15 @@ public final class WorkspaceStore {
     }
 
     public func moveSlotToNewTab(_ id: UUID) {
-        apply { $0.moveSlotToNewTab(id) }
+        apply { $0.moveSlotToNewTab(id, sizing: newPaneSizing) }
     }
 
     public func moveSlot(_ id: UUID, toTab targetTabID: UUID) {
-        apply { $0.moveSlot(id, toTab: targetTabID) }
+        apply { $0.moveSlot(id, toTab: targetTabID, sizing: newPaneSizing) }
     }
 
     public func moveSlot(_ id: UUID, toTab targetTabID: UUID, at rect: GridRect) {
-        apply { $0.moveSlot(id, toTab: targetTabID, at: rect) }
+        apply { $0.moveSlot(id, toTab: targetTabID, at: rect, sizing: newPaneSizing) }
     }
 
     public func moveSlot(
@@ -306,7 +306,8 @@ public final class WorkspaceStore {
                 id,
                 toTab: targetTabID,
                 beside: targetSlotID,
-                edge: edge
+                edge: edge,
+                sizing: newPaneSizing
             )
         }
     }
