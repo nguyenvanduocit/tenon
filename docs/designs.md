@@ -99,6 +99,7 @@ state.
 | --- | --- |
 | title bar | 36 pt |
 | status bar | 24 pt |
+| foot row holding the tab strip | 34 pt — `SidebarFooterLayout.height`, so its rule and the sidebar footer's are collinear |
 | slot header | 34 pt |
 | compact control | 28–32 pt |
 | compact menu row | 28 pt |

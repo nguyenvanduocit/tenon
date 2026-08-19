@@ -388,3 +388,19 @@ Feature: Personalize Tenon and configure plugins from one native Settings window
     Given the briefing names environment variables and intent ids
     Then every variable it names is one a Tenon terminal exports
     And every intent id it prints is in the shipping catalog
+
+  @req-set-fr-035 @chrome-order
+  Scenario: One control chooses which edge the tabs sit at
+    Given the General settings page is open
+    When the operator reads the Appearance section
+    Then a Tab strip position control offers exactly Top and Bottom
+    And it carries a spoken name and a hint naming what moves in exchange
+    When the operator chooses Bottom
+    Then the open window redraws with the tabs in the foot row without a relaunch
+
+  @req-set-fr-035 @chrome-order @persistence
+  Scenario: A preferences blob written before the choice existed keeps today's layout
+    Given a stored app.preferences document with no chrome order key
+    When preferences are decoded
+    Then the chrome order is tabs in the title bar
+    And a chrome order this build cannot name costs that key alone, leaving the rest intact

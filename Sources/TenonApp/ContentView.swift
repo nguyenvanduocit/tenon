@@ -16,6 +16,9 @@ struct ContentView: View {
     var closeCoordinator: ShellCloseCoordinator
     var paneRenamer: PaneRenameCoordinator
     var agentLens: AgentLensPool
+    /// T-178: which panes hold an agent, for the sidebar's tagline. Optional so an offscreen
+    /// renderer can mount the shell without a hook server behind it.
+    var agentPanes: AgentPaneRoster?
     var webPool: PluginWebSurfacePool
     var intentRuntime: AppIntentRuntime
     var router: DragRouter
@@ -25,6 +28,10 @@ struct ContentView: View {
     var automation: AutomationScheduler
     /// T-100's read-only process monitor, drawn in the title bar.
     var resourceMonitor: ResourceMonitorModel?
+    /// Which chrome row holds the tabs and which holds the plugin status items. Passed in
+    /// rather than read from the shared store inside the body, so an offscreen renderer can
+    /// photograph either order without writing anybody's persisted preferences.
+    let chromeOrder: ShellChromeOrder
     let automationSchedulesEnabled: Bool
     let automationActions: AutomationPaneActions
 
@@ -55,22 +62,18 @@ struct ContentView: View {
     var body: some View {
         VStack(spacing: 0) {
             ShellTitleBar(
-                host: host,
                 store: store,
                 pool: pool,
-                closeCoordinator: closeCoordinator,
-                intentRuntime: intentRuntime,
-                router: router,
-                palette: palette,
-                quickCommands: quickCommands,
-                agentSuggestions: agentSuggestions,
                 resourceMonitor: resourceMonitor,
+                quickCommands: quickCommands,
                 sidebarVisible: sidebarVisible,
                 sidebarWidth: sidebarWidth,
                 onToggleSidebar: {
                     setSidebarVisible(!sidebarVisible)
                 }
-            )
+            ) {
+                chromeOccupant(chromeOrder.titleBarStrip, edge: .top)
+            }
             .frame(height: TenonTheme.titleBarHeight)
 
             Rectangle()
@@ -82,6 +85,7 @@ struct ContentView: View {
                     store: store,
                     pool: pool,
                     closeCoordinator: closeCoordinator,
+                    agentPanes: agentPanes,
                     isCollapsed: !sidebarVisible
                 )
                 .frame(
@@ -115,8 +119,15 @@ struct ContentView: View {
                         .fill(TenonTheme.line)
                         .frame(height: 1)
 
-                    WorkspaceStatusBar(host: host)
-                        .frame(height: TenonTheme.statusBarHeight)
+                    // Inside the content column, never spanning the window: the sidebar's
+                    // resize edge below is a full-height grab strip drawn over everything at
+                    // `sidebarWidth`, and a full-width foot row would have an 8-pt dead band
+                    // cut through whatever it is holding.
+                    ShellFootBar(
+                        height: TenonTheme.footHeight(for: chromeOrder.footStrip)
+                    ) {
+                        chromeOccupant(chromeOrder.footStrip, edge: .bottom)
+                    }
                 }
             }
         }
@@ -152,7 +163,12 @@ struct ContentView: View {
         }
         // Host presentation for plugin-only `ui.pick/prompt/confirm/toast.v1`
         // intents. Renders nothing until an authorized request arrives.
-        .overlay { PluginUIOverlay(state: pluginUI) }
+        .overlay {
+            PluginUIOverlay(
+                state: pluginUI,
+                bottomInset: TenonTheme.footHeight(for: chromeOrder.footStrip) + 16
+            )
+        }
         // A plugin view's modal, over the whole shell. Renders nothing until a view
         // publishes one, and dismissing routes back to that view rather than clearing
         // it here — the plugin owns the state.
@@ -164,6 +180,25 @@ struct ContentView: View {
         // re-reads TenonTheme.amber. Reading the shared store here registers the
         // observation; terminal surfaces persist in the pool across the rebuild.
         .id(AppPreferencesStore.shared.preferences.accent)
+    }
+
+    /// This shell's occupant for one chrome row, wired to this shell's live objects.
+    private func chromeOccupant(
+        _ strip: ShellChromeStrip,
+        edge: ShellChromeEdge
+    ) -> ShellChromeOccupant {
+        ShellChromeOccupant(
+            strip: strip,
+            edge: edge,
+            host: host,
+            store: store,
+            pool: pool,
+            closeCoordinator: closeCoordinator,
+            intentRuntime: intentRuntime,
+            router: router,
+            palette: palette,
+            agentSuggestions: agentSuggestions
+        )
     }
 
     /// The sidebar's right edge: a 1-pt line centred inside an invisible grab strip,

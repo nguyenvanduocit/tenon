@@ -281,12 +281,22 @@ TENON_CHANGES_SNAPSHOT=/tmp/changes.png swift run tenon  # the changes panel
 TENON_TIMELINE_SNAPSHOT=/tmp/timeline.png swift run tenon # Agent Lens' Timeline account
 TENON_SIDEBAR_SNAPSHOT=/tmp/sidebar.png swift run tenon  # the workspace sidebar and its footer
 TENON_TITLEBAR_SNAPSHOT=/tmp/titlebar.png swift run tenon # the title bar, identity zone included
+TENON_CHROME_SNAPSHOT=/tmp/chrome.png swift run tenon    # the whole shell, both chrome rows at once
 ```
 
 The title-bar form takes `TENON_TITLEBAR_SNAPSHOT_SIDEBAR=collapsed|expanded` (collapsed by
 default, since that is the state where the identity zone carries a workspace name),
 `TENON_TITLEBAR_SNAPSHOT_WORKSPACE=<name>` — a name longer than the zone's ~90 pt is the case
-worth photographing — and `TENON_TITLEBAR_SNAPSHOT_SIZE=WxH`.
+worth photographing — `TENON_TITLEBAR_SNAPSHOT_ORDER=tabsOnTop|tabsOnBottom` to pick which
+strip its content zone is holding, and `TENON_TITLEBAR_SNAPSHOT_SIZE=WxH`.
+
+The chrome form is the one to reach for when a change moves a strip between rows. It mounts
+the real `ContentView`, so it photographs both chrome rows together — which a crop of one row
+cannot do, and a swap is a claim about both. It takes
+`TENON_CHROME_SNAPSHOT_ORDER=tabsOnTop|tabsOnBottom`, `_SIDEBAR=collapsed|expanded`, and
+`_SIZE=WxH` (default 1100×620). Each renderer exits when it is done, so two orders are two
+runs, and the picture is not byte-stable across machines — `ContentView` scans for live agent
+launches — so compare rows and geometry, never bytes.
 
 The Timeline form takes `TENON_TIMELINE_SNAPSHOT_STATE=idle|running|ready|failed|insufficient`,
 `TENON_TIMELINE_SNAPSHOT_SIZE=WxH` for the narrow-pane reflow, and
@@ -302,10 +312,11 @@ around it, since the sidebar is not a pane.
 
 The plugin form boots the real host over the real inventory and mounts the same `PluginSlotView` a pane mounts, so the picture is what the pane shows. `docs/design-plugin-views.md` has the worked example. Reach for it when a change moves layout: T-055 shipped a board that passed 24 tests and rendered as scattered cards floating at different heights, and the adversarial review panel that read the diff found none of it.
 
-There is one behaviour the suite provably cannot reach, and it has its own probe:
+Two behaviours the suite provably cannot reach have their own probes, one per window edge:
 
 ```bash
-swift scripts/internal/drag-region-probe.swift   # the title bar's drag region, on-screen, exit 0 = rule holds
+swift scripts/internal/drag-region-probe.swift      # the title bar's drag region, on-screen, exit 0 = rule holds
+swift scripts/internal/foot-strip-edge-probe.swift  # the bottom resize gutter, exit 0 = a foot chip clears it
 ```
 
 The window server takes a press in the title-bar band from a **drag region** AppKit uploads
@@ -314,6 +325,15 @@ press-drag-release successfully while a hardware drag still moves the window. Th
 T-101 three shipped fixes. `TabStripReorderTests` closes it by reading the region back for the
 real bar — a chip's centre must be outside it, the empty chrome inside — and the probe isolates
 the AppKit rule underneath. When a change touches what owns the pointer up there, run both.
+
+The bottom edge has the mirror-image hazard, and the tab strip can be drawn there
+(`WS-FR-035`). The window's lowest points hit-test to `NSThemeFrame`, not to any app view —
+that is what makes a window resizable by its edge — and a suite that aims presses at chip
+centres is green whether or not the bottom of every chip is a resize handle. Measured
+2026-08-17: the gutter is **3.1 pt** and a 26 pt chip centred in the 34 pt foot row clears it
+by **0.9 pt**. That margin is thin on purpose — 34 pt is `SidebarFooterLayout.height`, so the
+two rules across the bottom of the window are collinear — so run the probe whenever the foot
+row's geometry moves, or on a new macOS.
 
 ## PRD first — the spec is read before the code is touched
 

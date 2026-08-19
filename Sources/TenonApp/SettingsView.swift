@@ -626,11 +626,24 @@ private struct GeneralSettingsDetail: View {
                         .tag(accent)
                     }
                 }
+
+                Picker("Tab strip position", selection: $prefs.preferences.chromeOrder) {
+                    ForEach(ShellChromeOrder.allCases, id: \.self) { order in
+                        Text(order.label).tag(order)
+                    }
+                }
+                .accessibilityLabel("Tab strip position")
+                .accessibilityHint(
+                    "Chooses which edge of the window the tabs sit at. "
+                        + "The plugin status items take the other one."
+                )
             } header: {
                 Text("Appearance")
             } footer: {
-                Text("Applies to Tenon's chrome — tab selection, active-pane borders, "
-                    + "focus marks. Terminal colours come from ghostty.")
+                Text("Colour applies to Tenon's chrome — tab selection, active-pane borders, "
+                    + "focus marks; terminal colours come from ghostty. Tabs at the bottom put "
+                    + "them beside the newest agent output, which is where you are already "
+                    + "looking, and sends the status items up to the title bar in exchange.")
             }
 
             // Where a person goes to ask what they are running. The workspace list is not

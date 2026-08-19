@@ -2,9 +2,15 @@
 import SwiftUI
 import TenonCore
 
-/// The bottom utility strip. Everything shown here is contributed by plugins via
-/// `tenon.statusBar` — the shell adds nothing of its own. An empty strip (no plugin
-/// items) is a valid state.
+/// The utility strip. Everything shown here is contributed by plugins via
+/// `tenon.statusBar` — the shell adds nothing of its own, and no host control may sit inside
+/// it. An empty strip (no plugin items) is a valid state.
+///
+/// It is drawn in whichever chrome row the order gives it, so it owns its own type and
+/// nothing about the row: the inset and the chrome fill belong to `ShellTitleBar` and
+/// `ShellFootBar`, which have to agree about them across the whole window. What it does own
+/// is a fixed 24-pt box, so the items read identically in a 24-pt foot row and in the 36-pt
+/// title bar rather than re-centring against a different row height.
 struct WorkspaceStatusBar: View {
     var host: PluginHost
 
@@ -19,7 +25,6 @@ struct WorkspaceStatusBar: View {
         .font(TenonTheme.utilityFont(size: 8, weight: .medium))
         .tracking(0.35)
         .foregroundStyle(TenonTheme.muted)
-        .padding(.horizontal, 10)
-        .background(TenonTheme.chrome)
+        .frame(height: TenonTheme.statusBarHeight)
     }
 }

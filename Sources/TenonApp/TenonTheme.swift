@@ -50,6 +50,22 @@ enum TenonTheme {
     // to a stub the pointer has to hunt for; the title's own cap keeps the ceiling.
     static let tabMinWidth: CGFloat = 140
     static let statusBarHeight: CGFloat = 24
+    // The foot row when it is holding the tab strip rather than the status items. 34 is
+    // `SidebarFooterLayout.height`, so the rule above the foot row and the rule above the
+    // sidebar footer are one straight line across the window instead of a 2-pt kink. It
+    // also leaves a 26-pt chip about 4 points of clearance above the window's own resize
+    // gutter, which hit-tests to `NSThemeFrame` and would otherwise eat the chip's lowest
+    // pixels — `scripts/internal/foot-strip-edge-probe.swift` is what measures that, since
+    // no headless test can see it.
+    static let footTabStripHeight: CGFloat = 34
+
+    /// How tall the foot row is, which depends only on what it is holding.
+    static func footHeight(for strip: ShellChromeStrip) -> CGFloat {
+        switch strip {
+        case .tabs: return footTabStripHeight
+        case .status: return statusBarHeight
+        }
+    }
     // The one chrome header every pane draws. 34 leaves 24 points inside the header's
     // 5-point insets — enough for a `.controlSize(.small)` segmented picker to sit clear
     // of the 6-point north resize edge, which is what lets a pane's controls live here

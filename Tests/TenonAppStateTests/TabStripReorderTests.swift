@@ -234,7 +234,18 @@ final class TabStripReorderTests: XCTestCase {
         let store: WorkspaceStore
     }
 
+    /// The shipped bar in the default order — tabs in the title bar. Kept as the name every
+    /// earlier assertion here already reads, since that is the order they were written about.
     private func titleBar() throws -> MountedBar {
+        try strip(order: .tabsOnTop)
+    }
+
+    /// The real container for one chrome order, with the real strip inside it.
+    ///
+    /// It mounts a whole row rather than the strip alone, because most of what these tests
+    /// assert is about the row: what the drag region covers, and where the chips sit relative
+    /// to the chrome around them.
+    private func strip(order: ShellChromeOrder) throws -> MountedBar {
         let root = FileManager.default.temporaryDirectory
             .appendingPathComponent("tab-strip-\(UUID().uuidString)")
         let plugins = root.appendingPathComponent("plugins")
@@ -269,26 +280,44 @@ final class TabStripReorderTests: XCTestCase {
             authorization: .bundledInventory
         )
 
-        let bar = ShellTitleBar(
-            host: host,
-            store: store,
-            pool: pool,
-            closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
-            intentRuntime: runtime,
-            router: DragRouter(),
-            palette: CommandPaletteState(
-                storeURL: stateRoot.appendingPathComponent("frecency.json")
-            ),
-            quickCommands: QuickCommandStore(
-                defaults: UserDefaults(suiteName: "tab-strip-\(UUID().uuidString)")!,
-                storageKey: "quick"
-            ),
-            agentSuggestions: [],
-            sidebarVisible: false,
-            sidebarWidth: 0,
-            onToggleSidebar: {}
-        )
-        return MountedBar(view: AnyView(bar), store: store)
+        let occupant = { (strip: ShellChromeStrip, edge: ShellChromeEdge) in
+            ShellChromeOccupant(
+                strip: strip,
+                edge: edge,
+                host: host,
+                store: store,
+                pool: pool,
+                closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
+                intentRuntime: runtime,
+                router: DragRouter(),
+                palette: CommandPaletteState(
+                    storeURL: stateRoot.appendingPathComponent("frecency.json")
+                )
+            )
+        }
+
+        switch order {
+        case .tabsOnTop:
+            let bar = ShellTitleBar(
+                store: store,
+                pool: pool,
+                quickCommands: QuickCommandStore(
+                    defaults: UserDefaults(suiteName: "tab-strip-\(UUID().uuidString)")!,
+                    storageKey: "quick"
+                ),
+                sidebarVisible: false,
+                sidebarWidth: 0,
+                onToggleSidebar: {}
+            ) {
+                occupant(.tabs, .top)
+            }
+            return MountedBar(view: AnyView(bar), store: store)
+        case .tabsOnBottom:
+            let bar = ShellFootBar(height: TenonTheme.footHeight(for: .tabs)) {
+                occupant(.tabs, .bottom)
+            }
+            return MountedBar(view: AnyView(bar), store: store)
+        }
     }
 
     /// The whole gesture, on the shipped bar, driven by the events AppKit itself dispatches.
@@ -602,6 +631,185 @@ final class TabStripReorderTests: XCTestCase {
         // band and shows the region covering one and skipping the other.
     }
 
+    // MARK: - The strip at the other edge  @domain: workspace-model
+
+    /// The same gesture, on the same strip, in the row at the bottom of the window.
+    ///
+    /// One gesture and not eleven, deliberately: the whole point of the design is that there
+    /// is one strip, so re-running every reorder assertion against a second mount would be
+    /// asserting the opposite — that there are two things to keep in step. This is the
+    /// question a second mount can genuinely answer that the first cannot: does a press
+    /// *arrive* down here, where none of the title-bar band machinery applies.
+    ///
+    /// The short drag is the one chosen for the same reason it was chosen upstairs: it
+    /// crosses exactly one midpoint, so it cannot pass by only ever landing at the far end.
+    func testAShortDragPastOneNeighbourSwapsThatPairAtTheFoot() throws {
+        let bar = try strip(order: .tabsOnBottom)
+        let store = bar.store
+        let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
+
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300), edge: .bottom)
+        defer { window.orderOut(nil) }
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview)),
+            "the foot row draws no TabStripSurface, so nothing owns the chips' pointer there"
+        )
+
+        let width = surface.bounds.width
+        let start = surface.convert(NSPoint(x: 12, y: surface.bounds.midY), to: nil)
+        let end = surface.convert(NSPoint(x: width * 0.55, y: surface.bounds.midY), to: nil)
+
+        send(.leftMouseDown, at: start, in: window)
+        for step in stride(from: 0.2, through: 1.0, by: 0.2) {
+            send(
+                .leftMouseDragged,
+                at: NSPoint(x: start.x + (end.x - start.x) * step, y: start.y),
+                in: window
+            )
+        }
+        send(.leftMouseUp, at: end, in: window)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            [ids[1], ids[0], ids[2]],
+            "a reorder at the foot must move the same tab the same way it does in the title bar"
+        )
+    }
+
+    /// A press that does not travel still selects the chip under it, at the foot.
+    ///
+    /// The strip took the primary-button stream away from the window server so that a drag in
+    /// the title bar could mean "reorder"; the click had to be re-implemented as a
+    /// consequence. That re-implementation is what runs at both edges, so it is worth one
+    /// assertion that it still resolves a chip down here.
+    func testAPressThatDoesNotTravelSelectsTheChipUnderItAtTheFoot() throws {
+        let bar = try strip(order: .tabsOnBottom)
+        let store = bar.store
+        let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
+        store.selectTab(ids[0])
+
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300), edge: .bottom)
+        defer { window.orderOut(nil) }
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview))
+        )
+
+        // The middle chip of three, aimed at its leading half so the ✕ is nowhere near it.
+        let point = surface.convert(
+            NSPoint(x: surface.bounds.width * 0.4, y: surface.bounds.midY),
+            to: nil
+        )
+        send(.leftMouseDown, at: point, in: window)
+        send(.leftMouseUp, at: point, in: window)
+        RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.activeTabID,
+            ids[1],
+            "a click at the foot must select the chip it landed on"
+        )
+    }
+
+    /// The drag region, read back for the order that moved the tabs out of the band.
+    ///
+    /// Two halves, and both matter. The chips must be clear of the region — which at the foot
+    /// they are for a reason that has nothing to do with the carve-out, so on its own it
+    /// proves nothing. The half that does prove something is the title bar: it is now holding
+    /// the status strip, which is ordinary SwiftUI content, and it must still hand its drag to
+    /// the window server. A swap that quietly cost the window its own drag band would look
+    /// exactly like a passing reorder suite.
+    func testTheEmptiedTitleBarStillHandsItsDragToTheWindowServer() throws {
+        let bar = try strip(order: .tabsOnBottom)
+        let window = mount(bar.view, size: CGSize(width: 900, height: 300), edge: .bottom)
+        defer { window.orderOut(nil) }
+
+        let describe = NSSelectorFromString("_lastDragRegionDataDescription")
+        try XCTSkipUnless(
+            window.responds(to: describe),
+            "this macOS no longer exposes the drag region; the rule it guards still holds"
+        )
+        let description = (window.perform(describe)?.takeUnretainedValue() as? NSString) as String?
+        let region = Self.rects(in: description ?? "")
+
+        let bandY = window.frame.height - 16
+        XCTAssertTrue(
+            region.contains { $0.contains(NSPoint(x: window.frame.width - 60, y: bandY)) },
+            """
+            the title-bar band stopped being draggable with the tabs moved out of it — \
+            the region is \(region)
+            """
+        )
+
+        let surface = try XCTUnwrap(
+            Self.findSurface(in: try XCTUnwrap(window.contentView?.superview))
+        )
+        let chips = surface.convert(surface.bounds, to: nil)
+        XCTAssertFalse(
+            region.contains { $0.intersects(chips) },
+            "the window server must not move the window from the foot chips: \(chips) vs \(region)"
+        )
+    }
+
+    /// The same place in the strip means the same tab, whichever row the strip is drawn in.
+    ///
+    /// This is criterion 4 of T-177 stated as an experiment rather than as a promise, and it
+    /// is the one failure the other assertions here cannot see. A press resolves through two
+    /// numbers — the extent each chip reports in the strip's own coordinate space, and the
+    /// pointer the surface converts into that space. Moving the strip into a different
+    /// container is exactly the change that could shift one and not the other, and a uniform
+    /// shift still lands a press on *a* chip: just not the one under the pointer, and never
+    /// at the ends where anybody would notice.
+    ///
+    /// So it presses the same three fractions in both orders and demands the same answers.
+    func testTheSamePlaceInTheStripSelectsTheSameTabAtEitherEdge() throws {
+        var selectedByOrder: [ShellChromeOrder: [Int]] = [:]
+
+        for order in ShellChromeOrder.allCases {
+            var chosen: [Int] = []
+            // A fresh mount per press: selecting a tab is the thing being measured, so each
+            // reading has to start from the same place rather than from the last answer.
+            for fraction in [0.15, 0.5, 0.85] {
+                let bar = try strip(order: order)
+                let store = bar.store
+                let ids = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.map(\.id))
+                let window = mount(
+                    bar.view,
+                    size: CGSize(width: 900, height: 300),
+                    edge: order.tabStripEdge
+                )
+                defer { window.orderOut(nil) }
+
+                let surface = try XCTUnwrap(
+                    Self.findSurface(in: try XCTUnwrap(window.contentView?.superview)),
+                    "no TabStripSurface in \(order)"
+                )
+                let point = surface.convert(
+                    NSPoint(x: surface.bounds.width * fraction, y: surface.bounds.midY),
+                    to: nil
+                )
+                send(.leftMouseDown, at: point, in: window)
+                send(.leftMouseUp, at: point, in: window)
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+
+                let active = try XCTUnwrap(store.catalog.activeWorkspace?.activeTabID)
+                chosen.append(try XCTUnwrap(ids.firstIndex(of: active)))
+            }
+            selectedByOrder[order] = chosen
+        }
+
+        XCTAssertEqual(
+            selectedByOrder[.tabsOnTop],
+            [0, 1, 2],
+            "three even chips: the strip's leading, middle and trailing thirds are tabs 1, 2, 3"
+        )
+        XCTAssertEqual(
+            selectedByOrder[.tabsOnBottom],
+            selectedByOrder[.tabsOnTop],
+            "the strip resolves a press differently depending on which row it is drawn in"
+        )
+    }
+
     private static func rects(in description: String) -> [NSRect] {
         let pattern = #"\{\{\s*([-\d.]+),\s*([-\d.]+)\s*\},\s*\{\s*([-\d.]+),\s*([-\d.]+)\s*\}\}"#
         guard let expression = try? NSRegularExpression(pattern: pattern) else { return [] }
@@ -868,7 +1076,12 @@ final class TabStripReorderTests: XCTestCase {
     /// onto whatever screen exists, so on a desktop this lands in a corner rather than
     /// nowhere. `onScreen: false` leaves it unordered, which is the state a machine with no
     /// display session leaves every window in.
-    private func mount(_ view: some View, size: CGSize, onScreen: Bool = true) -> NSWindow {
+    private func mount(
+        _ view: some View,
+        size: CGSize,
+        edge: ShellChromeEdge = .top,
+        onScreen: Bool = true
+    ) -> NSWindow {
         _ = NSApplication.shared
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: size),
@@ -891,15 +1104,22 @@ final class TabStripReorderTests: XCTestCase {
         // band was answered about empty content below it, and the region test could not fail
         // for two consecutive reports. Placing the row explicitly removes the safe area from
         // the question; the band oracle in the region test refuses to let it drift back.
+        //
+        // A row asked for at `.bottom` is placed flush with the window's foot instead, at the
+        // height `ContentView` gives that row — which is where the foot strip genuinely is,
+        // and the only place a question about it can be answered.
         let content = NSView(frame: NSRect(origin: .zero, size: size))
         let hosting = NSHostingView(rootView: AnyView(view))
+        let rowHeight = edge == .top
+            ? TenonTheme.titleBarHeight
+            : TenonTheme.footHeight(for: .tabs)
         hosting.frame = NSRect(
             x: 0,
-            y: size.height - TenonTheme.titleBarHeight,
+            y: edge == .top ? size.height - rowHeight : 0,
             width: size.width,
-            height: TenonTheme.titleBarHeight
+            height: rowHeight
         )
-        hosting.autoresizingMask = [.width, .minYMargin]
+        hosting.autoresizingMask = edge == .top ? [.width, .minYMargin] : [.width, .maxYMargin]
         content.addSubview(hosting)
         window.contentView = content
         window.setFrameOrigin(NSPoint(x: -8_000, y: -8_000))

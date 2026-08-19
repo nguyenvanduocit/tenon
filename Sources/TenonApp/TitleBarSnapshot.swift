@@ -11,11 +11,16 @@ import TenonIntentCore
 ///     TENON_TITLEBAR_SNAPSHOT_SIDEBAR=expanded TENON_TITLEBAR_SNAPSHOT=/tmp/expanded.png swift run tenon
 ///     TENON_TITLEBAR_SNAPSHOT_WORKSPACE=interviewassistant TENON_TITLEBAR_SNAPSHOT=/tmp/long.png swift run tenon
 ///
+///     TENON_TITLEBAR_SNAPSHOT_ORDER=tabsOnBottom TENON_TITLEBAR_SNAPSHOT=/tmp/status.png swift run tenon
+///
 /// `TENON_TITLEBAR_SNAPSHOT_SIZE=WxH` changes the row (default 900 × `TenonTheme.titleBarHeight`),
 /// and `TENON_TITLEBAR_SNAPSHOT_SIDEBAR` picks which state the zone is photographed in —
 /// collapsed by default, since that is the state where the zone carries a workspace name.
+/// `TENON_TITLEBAR_SNAPSHOT_ORDER` picks which strip the row's content zone is holding, so the
+/// swap can be seen from both sides; it defaults to the shipped order, tabs in the title bar.
 /// What is mounted is `ShellTitleBar` itself over a real `WorkspaceStore` and a real host, so
-/// the picture is the row the shell draws.
+/// the picture is the row the shell draws. For both rows at once — which is the only way to
+/// see a swap — use `ShellChromeSnapshot`.
 enum TitleBarSnapshot {
     @MainActor
     static func renderIfRequested() {
@@ -26,6 +31,9 @@ enum TitleBarSnapshot {
                 to: path,
                 size: size(environment["TENON_TITLEBAR_SNAPSHOT_SIZE"]),
                 sidebarVisible: environment["TENON_TITLEBAR_SNAPSHOT_SIDEBAR"] == "expanded",
+                order: environment["TENON_TITLEBAR_SNAPSHOT_ORDER"] == "tabsOnBottom"
+                    ? .tabsOnBottom
+                    : .tabsOnTop,
                 workspaceName: environment["TENON_TITLEBAR_SNAPSHOT_WORKSPACE"]
                     ?? "supervision-experiments"
             )
@@ -40,6 +48,7 @@ enum TitleBarSnapshot {
         to path: String,
         size: CGSize,
         sidebarVisible: Bool,
+        order: ShellChromeOrder,
         workspaceName: String
     ) throws -> Never {
         _ = NSApplication.shared
@@ -81,28 +90,37 @@ enum TitleBarSnapshot {
             authorization: .bundledInventory
         )
 
+        let router = DragRouter()
+        let palette = CommandPaletteState(
+            storeURL: stateRoot.appendingPathComponent("frecency.json")
+        )
+
         PaneViewSnapshotWriter.write(
             bare: ShellTitleBar(
-                host: host,
                 store: store,
                 pool: pool,
-                closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
-                intentRuntime: runtime,
-                router: DragRouter(),
-                palette: CommandPaletteState(
-                    storeURL: stateRoot.appendingPathComponent("frecency.json")
-                ),
                 quickCommands: QuickCommandStore(
                     defaults: UserDefaults(
                         suiteName: "titlebar-snapshot-\(UUID().uuidString)"
                     )!,
                     storageKey: "quick"
                 ),
-                agentSuggestions: [],
                 sidebarVisible: sidebarVisible,
                 sidebarWidth: TenonTheme.sidebarWidth,
                 onToggleSidebar: {}
-            )
+            ) {
+                ShellChromeOccupant(
+                    strip: order.titleBarStrip,
+                    edge: .top,
+                    host: host,
+                    store: store,
+                    pool: pool,
+                    closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
+                    intentRuntime: runtime,
+                    router: router,
+                    palette: palette
+                )
+            }
             .frame(width: size.width, height: size.height),
             size: size,
             to: path

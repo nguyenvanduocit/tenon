@@ -531,6 +531,10 @@ private extension UserInteractionIntentProvider {
 /// Renders the presented interactive intent plus any live toasts.
 struct PluginUIOverlay: View {
     @Bindable var state: PluginUIState
+    /// How far above the window's bottom edge a toast must sit so it clears the foot row.
+    /// Supplied rather than assumed, because that row is as tall as whichever strip the
+    /// chrome order gave it — 24 pt of status text, or a 34 pt row of tab chips.
+    let bottomInset: CGFloat
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var inputFocused: Bool
 
@@ -1053,10 +1057,7 @@ struct PluginUIOverlay: View {
             }
         }
         .padding(.trailing, 16)
-        .padding(
-            .bottom,
-            TenonTheme.statusBarHeight + 16
-        )
+        .padding(.bottom, bottomInset)
         .animation(reduceMotion ? nil : .easeOut(duration: 0.18), value: state.toasts)
     }
 

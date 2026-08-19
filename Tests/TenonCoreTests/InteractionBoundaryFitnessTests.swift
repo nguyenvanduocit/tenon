@@ -699,18 +699,22 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
     /// are the properties the region builder reads; `scripts/internal/drag-region-probe.swift`
     /// checks the consequence on-screen.
     func testTheTabStripStaysOutOfTheWindowDragRegion() throws {
-        let titleBar = try source("TenonApp/ShellTitleBar.swift")
+        // The strip, wherever it is drawn. These assertions follow it into `ShellTabStrip`
+        // rather than staying on the row it used to live in: a negative left behind on an
+        // emptied file passes for the wrong reason and reads as a rule while permitting
+        // exactly what the rule prevents.
+        let strip = try source("TenonApp/ShellTabStrip.swift")
 
         XCTAssertTrue(
-            titleBar.contains("override var mouseDownCanMoveWindow: Bool { false }"),
+            strip.contains("override var mouseDownCanMoveWindow: Bool { false }"),
             "a tab drag must stay in the app instead of becoming a window move"
         )
         XCTAssertTrue(
-            titleBar.contains("final class SurfaceView: NSControl"),
+            strip.contains("final class SurfaceView: NSControl"),
             "only an NSControl descendant is honoured by the window's drag-region builder"
         )
         XCTAssertFalse(
-            titleBar.contains("override var acceptsFirstResponder"),
+            strip.contains("override var acceptsFirstResponder"),
             """
             answering acceptsFirstResponder at all puts the chips back inside the drag \
             region; the keyboard is kept by never calling super in the mouse path, and \
@@ -718,27 +722,45 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
             """
         )
         XCTAssertTrue(
-            titleBar.contains("override var canBecomeKeyView: Bool { false }"),
+            strip.contains("override var canBecomeKeyView: Bool { false }"),
             "the strip still stays out of the Tab key-view loop, which the region tolerates"
         )
         // A surface that claims the point only sometimes leaves the window server holding it
         // the rest of the time, which is how the first fix for this failed.
         XCTAssertFalse(
-            titleBar.contains("NSApplication.shared.currentEvent")
-                || titleBar.contains("claimsPointer"),
+            strip.contains("NSApplication.shared.currentEvent")
+                || strip.contains("claimsPointer"),
             "the strip's surface must claim its region unconditionally, not per event"
         )
+        // …and the carve-out is unconditional in the other sense too: the strip must not
+        // decide whether to take the pointer from the edge its row happens to be at. It is
+        // one behaviour at both ends, or it is two behaviours to keep in step.
+        XCTAssertFalse(
+            strip.contains("edge == .top ? TabStripSurface")
+                || strip.contains("if edge == .top {\n            TabStripSurface"),
+            "the strip owns its pointer at both edges, not only in the title-bar band"
+        )
+
+        let windowChrome = try source("TenonApp/WindowChrome.swift")
+        let titleBar = try source("TenonApp/ShellTitleBar.swift")
         XCTAssertTrue(
-            try source("TenonApp/WindowChrome.swift").contains("isMovableByWindowBackground = false")
+            windowChrome.contains("isMovableByWindowBackground = false")
                 && titleBar.contains("WindowDragArea(color: TenonTheme.chromeNS)"),
-            "only the empty title bar asks for a window drag, and it asks explicitly"
+            "only the title-bar row asks for a window drag, and it asks explicitly"
+        )
+        XCTAssertFalse(
+            try source("TenonApp/ShellFootBar.swift").contains("WindowDragArea("),
+            """
+            the foot row is not the title-bar band: a drag there would move the window from \
+            the bottom edge and run a double-click handler about title bars
+            """
         )
 
         // The right-click observer must never enter hit-testing or steal a tab drag.
         let tabChip = try sourceSlice(
-            titleBar,
+            strip,
             from: "struct TabChip: View",
-            before: "struct TabStripSurface"
+            before: "struct RightClickCatcher"
         )
         XCTAssertFalse(
             tabChip.contains("NSApp.currentEvent"),
@@ -754,9 +776,9 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
     /// place made a working reorder invisible — the chips swapped and the labels swapped
     /// back — so the strip is held to reading the number off the tab.
     func testATabChipIsNamedAfterTheTabRatherThanItsPosition() throws {
-        let titleBar = try source("TenonApp/ShellTitleBar.swift")
+        let strip = try source("TenonApp/ShellTabStrip.swift")
         XCTAssertFalse(
-            titleBar.contains("index + 1"),
+            strip.contains("index + 1"),
             "numbering a tab by its position renames it every time the strip is reordered"
         )
     }

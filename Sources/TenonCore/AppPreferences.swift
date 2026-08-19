@@ -112,6 +112,10 @@ public struct AppPreferences: Equatable, Sendable, Codable {
     public var sidebarVisibleOnLaunch: Bool
     public var sidebarWidth: Double
     public var accent: AccentColor
+    /// Which of the shell's two chrome rows holds the tab strip, and which holds the plugin
+    /// status items. Changing it redraws the open window; nothing about the workspace, its
+    /// tabs, or a live terminal is disturbed by the move.
+    public var chromeOrder: ShellChromeOrder
     /// Global host preference for scheduled automation delivery. Disabling it pauses
     /// wall-clock firings without disabling or unloading the plugins that declared them.
     public var automationSchedulesEnabled: Bool
@@ -140,6 +144,7 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         sidebarVisibleOnLaunch: Bool = true,
         sidebarWidth: Double = 232,
         accent: AccentColor = .amber,
+        chromeOrder: ShellChromeOrder = .tabsOnTop,
         automationSchedulesEnabled: Bool = true,
         pausedAutomationSchedules: Set<AutomationScheduleKey> = [],
         bypassAllPermissionPrompts: Bool = true,
@@ -152,6 +157,7 @@ public struct AppPreferences: Equatable, Sendable, Codable {
         self.sidebarVisibleOnLaunch = sidebarVisibleOnLaunch
         self.sidebarWidth = sidebarWidth
         self.accent = accent
+        self.chromeOrder = chromeOrder
         self.automationSchedulesEnabled = automationSchedulesEnabled
         self.pausedAutomationSchedules = pausedAutomationSchedules
         self.bypassAllPermissionPrompts = bypassAllPermissionPrompts
@@ -184,6 +190,12 @@ public struct AppPreferences: Equatable, Sendable, Codable {
             ?? defaults.sidebarWidth
         accent = try container.decodeIfPresent(AccentColor.self, forKey: .accent)
             ?? defaults.accent
+        // A chrome order this build cannot name costs that key alone, for the same reason a
+        // pane content does: the person's sidebar width, accent and paused schedules are not
+        // worth losing to one unreadable word. A document written before the choice existed
+        // has no key at all, and opens on the layout its author was looking at.
+        chromeOrder = (try? container.decode(ShellChromeOrder.self, forKey: .chromeOrder))
+            ?? defaults.chromeOrder
         automationSchedulesEnabled = try container.decodeIfPresent(
             Bool.self,
             forKey: .automationSchedulesEnabled

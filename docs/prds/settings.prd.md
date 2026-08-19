@@ -121,7 +121,7 @@ the previous value and exposes an error. Removing the selected plugin falls back
 - `SET-FR-008` — App preferences MUST persist as one JSON blob under `app.preferences` and fall back completely to defaults if the blob is unreadable.
 - `SET-FR-009` — Missing fields in an older blob MUST decode to current defaults; an unknown pane-width value MUST degrade to no maximum without failing other fields.
 - `SET-FR-010` — Settings navigation MUST contain General, Companion, manifest-declared plugin pages, Automation, Permissions, CLI, and Extensions in one flat source list.
-- `SET-FR-011` — General MUST present new-pane defaults/width, sidebar startup/width, host accent, and selectable current app version.
+- `SET-FR-011` — General MUST present new-pane defaults/width, sidebar startup/width, host accent, chrome order (tab-strip position), and selectable current app version.
 - `SET-FR-012` — Browser configuration MUST be rendered from the browser plugin manifest, not a hardcoded Browser route.
 - `SET-FR-013` — A plugin page MUST group specs by first-seen optional group while preserving manifest order.
 - `SET-FR-014` — Generic controls MUST support string, boolean, number, and select; select MUST persist only a declared option.
@@ -145,6 +145,7 @@ the previous value and exposes an error. Removing the selected plugin falls back
 - `SET-FR-032` — Installing when every target already carries the current briefing MUST change no file; the page MUST distinguish absent, current, and outdated and MUST name the exact paths it writes before the operator presses anything.
 - `SET-FR-033` — The page MUST offer removal beside installation, and removal MUST take only Tenon's own block and its own skill file.
 - `SET-FR-034` — Every environment variable and every intent id the briefing prints MUST exist in the shipping build: variables in `TerminalPaneEnvironment`, intent ids in `CoreIntentCatalog`.
+- `SET-FR-035` — One `Codable` chrome-order value MUST name which chrome row holds the tab strip and which holds the plugin status items. It MUST default to tabs in the title bar, MUST decode to that default from a blob written before it existed, and an unreadable value MUST cost that key alone. It MUST persist in the same `app.preferences` blob, MUST be offered as a keyboard-reachable General control with exactly Top and Bottom, and MUST redraw the open window without a relaunch — deliberately unlike `SET-FR-005`, whose sidebar keys MAY diverge until next launch, because a layout choice a person cannot see the result of is a choice they cannot make.
 
 ### Non-functional requirements
 
