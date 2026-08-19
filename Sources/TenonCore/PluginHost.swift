@@ -6,6 +6,7 @@
 // here is the part that has to happen in an order.
 import Foundation
 import Observation
+import os
 import TenonIntentCore
 
 // MARK: - Host state  @domain: plugin-host
@@ -2044,11 +2045,24 @@ public final class PluginHost {
 
     // MARK: - Diagnostics  @domain: plugin-host
 
+    /// `TenonCore` cannot reach `TenonApp.TenonLog` (wrong import direction), so this is its
+    /// own logger under the same subsystem — `log show`/Console filtering by
+    /// `dev.tenon.app` still catches it. Before this, every line here (mailbox overflow, a
+    /// failed callback handler, a rejected watcher/timer) lived only in the in-memory `log`
+    /// array below, which nothing reads: T-182's "Plugin view unavailable" root cause
+    /// (`compiled callback mailbox exceeded 256 entries`) was invisible on a real install —
+    /// diagnosing it took a purpose-built test harness capturing this exact sink.
+    private static let diagnosticsLogger = Logger(
+        subsystem: "dev.tenon.app",
+        category: "plugin-host"
+    )
+
     public func appendLog(_ line: String) {
         log.append(line)
         if log.count > maxLogLines {
             log.removeFirst(log.count - maxLogLines)
         }
+        Self.diagnosticsLogger.notice("\(line, privacy: .public)")
     }
 
     public func sessionIdentity(
