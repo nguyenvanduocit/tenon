@@ -116,9 +116,13 @@ final class DomainTagFitnessTests: XCTestCase {
     /// `agent-lens` while sharing code with an `agent-lens` file, and no structural check
     /// can see that the *concern* was wrong. It is a floor under the obvious cases, not a
     /// substitute for reading the file against the vocabulary. Several entries in today's
-    /// budget are leaf utilities that genuinely touch nothing in their own domain, and one
-    /// — `EmptyStateCard` — is isolated because it is a second launcher implementation
-    /// sharing no code with `LauncherMenu`, which is a finding about the code, not the tag.
+    /// budget are leaf utilities that genuinely touch nothing in their own domain — reading
+    /// each one against `docs/domains.md` is still the only thing that settles whether that
+    /// is a wrong tag or a true finding about the code. `EmptyStateCard` left this set once
+    /// `LauncherMenu`'s grouped layout started drawing its row types (`SectionLabel`,
+    /// `RecentRow`, `AgentLaunchCardRow`, `EmptyStateActionButton`), which is the isolation
+    /// check doing exactly what it is for: two launcher implementations that used to share
+    /// no code now do.
     private static let isolatedTagBudget = 8
 
     /// Long files the MARK rule cannot see. Ratchets to zero.

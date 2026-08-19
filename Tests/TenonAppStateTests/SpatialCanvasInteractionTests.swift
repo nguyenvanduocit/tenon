@@ -1626,6 +1626,34 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
     }
 
+    /// `AgentSessionResumeView`'s offer is precomputed from `agentSuggestions`
+    /// (`AgentSessionResume.offer`), read the same way an empty pane's launcher reads it.
+    /// Detection is a ~2s async scan (T-175), so a recorded-session pane's first `configure`
+    /// often carries `[]`; the résumé invitation must not freeze that "not installed" answer
+    /// once detection actually resolves. SP-FR-030.
+    func testAgentSessionContentRebuildsWhenAgentDetectionResolves() throws {
+        let slotID = UUID()
+        let ref = try agentRef()
+        let fixture = try makeCanvasFixture(
+            slots: [
+                workspaceSlot(slotID, x: 0, y: 0, width: 12, height: 12, content: .agentSession(ref)),
+            ],
+            activeSlotID: slotID
+        )
+        defer { fixture.window.orderOut(nil) }
+        let card = try XCTUnwrap(fixture.card(for: slotID))
+        let mountedKey = card.contentKey
+        XCTAssertFalse(mountedKey.isEmpty, "the pane must have mounted a résumé invitation")
+
+        fixture.reconfigure(agentSuggestions: [claudeInstall()])
+
+        XCTAssertNotEqual(
+            card.contentKey,
+            mountedKey,
+            "agent detection resolving must rebuild the résumé invitation, not freeze it"
+        )
+    }
+
     /// The canvas's backstop sweep must not write to the store from inside the view update
     /// that asked for it. `configure` is reached only from `SpatialCanvasView.updateNSView`,
     /// so an `@Observable` write here is a "Modifying state during view update" — and the
@@ -3057,7 +3085,10 @@ private struct CanvasFixture {
     }
 
     @MainActor
-    func reconfigure(automationSchedulesEnabled: Bool = true) {
+    func reconfigure(
+        automationSchedulesEnabled: Bool = true,
+        agentSuggestions: [AgentLaunchSuggestion] = []
+    ) {
         guard let tab = store.catalog.activeTab else { return }
         canvas.configure(
             tab: tab,
@@ -3074,7 +3105,7 @@ private struct CanvasFixture {
             host: host,
             intentRuntime: intentRuntime,
             palette: palette,
-            agentSuggestions: [],
+            agentSuggestions: agentSuggestions,
             editorStates: editorStates,
             pluginSnapshots: [],
             pluginViewSections: [],

@@ -109,15 +109,21 @@ private struct EmptyTabCallToAction: View {
 
     var body: some View {
         EmptyStateCard(
-            title: "This tab is empty",
-            subtitle: "No terminal running yet",
             recents: store.recent?.recent(for: workspaceID) ?? [],
             agentSuggestions: agentSuggestions,
-            isDefaultAction: true,
+            isActive: true,
             onLaunch: { store.addSlot(content: $0) },
             onLaunchAgent: { suggestion in
                 _ = AgentLaunchExecutor.run(
                     suggestion,
+                    placement: .emptyTab,
+                    workspaceStore: store,
+                    terminalPool: pool
+                )
+            },
+            onRunCommand: { commandLine in
+                _ = TerminalCommandLaunch.run(
+                    commandLine: commandLine,
                     placement: .emptyTab,
                     workspaceStore: store,
                     terminalPool: pool

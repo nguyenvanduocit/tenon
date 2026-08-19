@@ -279,3 +279,90 @@ Feature: Discover commands and arrange tabs without losing context
       Given macOS has a configured titlebar double-click action
       When the operator double-clicks empty titlebar chrome
       Then the window performs that configured action
+
+  Rule: An empty tab or pane is searched, not read
+
+    @req-cmd-fr-020 @empty-pane
+    Scenario: The card opens on a search field rather than a poster
+      Given a pane holds no content
+      When the operator looks at it
+      Then the first element in the card is a search field
+      And no icon badge, title or subtitle sits above it
+      And the terminal action, detected agents, views and recents are presented in groups
+
+    @req-cmd-fr-020 @empty-pane
+    Scenario: Typing replaces the groups with one ranked list
+      Given the empty pane's card is showing its grouped offerings
+      When the operator types a word that names one of them
+      Then the groups are replaced by a single list ordered by how well each row matches
+      And the characters the query matched are emphasised in each row's title
+      And the down and up arrows move the selection through that list
+      And Enter runs the selected row against this exact pane
+
+    @req-cmd-fr-020 @empty-pane
+    Scenario: No row drawn by the list is a dead end
+      Given the empty pane's card is showing ranked results
+      When any row is selected and run
+      Then it resolves to a terminal, a detected agent, a view, a recent item, or a command
+
+    @req-cmd-fr-021 @empty-pane @run-command
+    Scenario: A typed command line leads the list and runs in this pane
+      Given a pane holds no content
+      When the operator types a query carrying inner whitespace or a shell-shaped character
+      Then the first row offers to run that exact query in a new terminal
+      And Enter fills this pane with a terminal in the workspace's directory
+      And the query is delivered to that shell verbatim, without its surrounding whitespace
+
+    @req-cmd-fr-021 @empty-pane @run-command
+    Scenario: A plain word finds what is named that before offering to run it
+      Given a pane holds no content
+      When the operator types a single word carrying no whitespace or shell-shaped character
+      Then the rows whose names carry that word come first
+      And the offer to run the word follows them
+
+    @req-cmd-fr-021 @empty-pane @run-command
+    Scenario: A pane that filled itself refuses the command aimed at it
+      Given the operator typed a command into an empty pane's search field
+      And that pane received content before Enter was pressed
+      When Enter is pressed
+      Then nothing is delivered to the shell that took its place
+      And the pane's content is left as it is
+
+  Rule: The tab-strip launcher's grouped layout and run-command parity match the empty-pane card
+
+    @req-cmd-fr-022
+    Scenario: Commands that can fill a pane draw as one tile grid, not one section each
+      Given the tab-strip `+` launcher is showing its grouped layout
+      And several ranked commands can fill a pane
+      When the operator looks at the "Open a view" section
+      Then every one of those commands is a tile in one two-column grid
+      And no plugin's own category label draws its own section header there
+
+    @req-cmd-fr-022
+    Scenario: A launcher command that cannot fill a pane folds into "Pane"
+      Given the tab-strip `+` launcher is showing its grouped layout
+      And a ranked command such as New Tab or Split Right cannot fill a pane
+      When the operator looks at the popover
+      Then that command is a row inside the "Pane" section
+      And it does not draw a section header of its own
+
+    @req-cmd-fr-023 @run-command
+    Scenario: A command-shaped query offers to run in every launcher anchor
+      Given the operator opens the tab-strip `+`, a tab's right-click, or the empty-grid launcher
+      When the operator types a query carrying inner whitespace or a shell-shaped character
+      Then the first row offers to run that exact query in a new terminal
+      And choosing it delivers the query verbatim, without surrounding whitespace, to a fresh
+        terminal placed the same way that anchor places every other launcher choice
+
+    @req-cmd-fr-023 @run-command
+    Scenario: A plain word still offers to run it, trailing the rows it named
+      Given any launcher anchor's typed-query list
+      When the operator types a single word carrying no whitespace or shell-shaped character
+      Then the rows whose names carry that word come first
+      And the offer to run the word follows them
+
+    @req-cmd-fr-023 @run-command
+    Scenario: Nothing typed never offers to run anything
+      Given any launcher anchor
+      When the query is empty
+      Then no run-command row is drawn, whether the layout is grouped or flat

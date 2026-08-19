@@ -374,8 +374,19 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     /// right-click. Membership, ranking, grouping, icons, invocation, failure display,
     /// and frecency therefore remain one implementation in `LauncherMenu`.
     private func presentEmptyGridLauncher(relativeTo anchor: NSRect, targetRect: GridRect) {
-        guard let store, let pool, let host, let intentRuntime, let palette, window != nil
+        guard let store, let pool, let host, let intentRuntime, let palette, let window
         else { return }
+
+        // Unlike the tab strip or the title-bar `+`, this anchor has no fixed position — a
+        // right-click can land one row from the canvas's top or one row from its bottom, and
+        // only the click knows which. `opening` asks the room itself, so the list's height
+        // ceiling and the popover's actual placement below always agree on which side that is.
+        let anchorRectInScreen = window.convertToScreen(convert(anchor, to: nil))
+        let screen = NSScreen.screens.first(where: { $0.frame.intersects(anchorRectInScreen) })
+            ?? NSScreen.main
+        let opening = screen.map {
+            LauncherListHeight.opening(for: anchorRectInScreen, in: $0.visibleFrame)
+        } ?? .below
 
         launcherPopover?.performClose(nil)
         let popover = NSPopover()
@@ -407,7 +418,17 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
                     )
                 }
             },
+            runCommand: { commandLine in
+                TerminalCommandLaunch.run(
+                    commandLine: commandLine,
+                    placement: .emptyGrid(targetRect),
+                    workspaceStore: store,
+                    terminalPool: pool
+                )
+            },
             purpose: .fillEmptyGrid,
+            anchorRectInScreen: anchorRectInScreen,
+            opening: opening,
             dismiss: { [weak self, weak popover] in
                 popover?.performClose(nil)
                 if self?.launcherPopover === popover {
@@ -420,7 +441,16 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
         // change in between was caused by presenting or dismissing it. None of them is a
         // person choosing a pane, and the launcher is about to create one (T-088).
         pool.isOverlayOwningFocus = true
-        popover.show(relativeTo: anchor, of: self, preferredEdge: .minY)
+        // `self` reports `isFlipped == true` (top-left origin), and NSPopover does not read
+        // that flag when it turns `preferredEdge` into a screen position — it always resolves
+        // the edge as if the positioning view had AppKit's default bottom-left origin. So on
+        // this view `.maxY` is what opens the popover below the anchor and `.minY` is what
+        // opens it above; measured with `scripts/internal/popover-flip-probe.swift`, kept for
+        // the next time someone re-derives this from the misleading Apple doc wording. This
+        // picks whichever `opening` the room check above already chose, so a click low on the
+        // canvas asks AppKit to open upward instead of asking it to open into space that is
+        // not there.
+        popover.show(relativeTo: anchor, of: self, preferredEdge: opening == .below ? .maxY : .minY)
     }
 
     func popoverDidClose(_ notification: Notification) {
