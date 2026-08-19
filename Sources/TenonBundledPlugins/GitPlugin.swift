@@ -38,6 +38,9 @@ enum GitPlugin {
                 "workspace.slot-focused",
                 "workspace.slot-closed",
             ],
+            // T-182: `"workspace.changed"` only triggers an ownership recheck here and never
+            // reads the payload, so a burst of firings needs at most one pending.
+            coalescableEvents: ["workspace.changed"],
             providedIntents: [
                 refreshIntent,
                 switchBranchIntent,

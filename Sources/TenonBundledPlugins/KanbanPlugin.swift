@@ -31,6 +31,9 @@ enum KanbanPlugin {
         return BundledPluginProgram(
             id: id,
             subscribedEvents: ["workspace.changed"],
+            // T-182: `receiveEvent` discards the payload for this event, so a burst of
+            // firings needs at most one pending.
+            coalescableEvents: ["workspace.changed"],
             providedIntents: [openIntent],
             viewCallbacks: [
                 viewID: BundledPluginViewCallbacks(

@@ -29,6 +29,12 @@ struct BundledPluginProgram {
 
     let id: PluginID
     let subscribedEvents: Set<String>
+    /// Subscribed events whose payload this program never needs more than the newest firing
+    /// of: a burst of these arriving faster than the pump drains collapses into the one
+    /// instance already waiting instead of each taking its own mailbox slot (T-182). An event
+    /// name here must be safe to observe fewer times than it fires — a plugin that reads
+    /// per-firing payload data (a specific pane id, a specific path) must not list it.
+    let coalescableEvents: Set<String>
     let providedIntents: Set<IntentID>
     /// Owner-scoped view callbacks, keyed by the view id the program publishes.
     ///
@@ -44,6 +50,7 @@ struct BundledPluginProgram {
     init(
         id: PluginID,
         subscribedEvents: Set<String>,
+        coalescableEvents: Set<String> = [],
         providedIntents: Set<IntentID>,
         viewCallbacks: [String: BundledPluginViewCallbacks] = [:],
         activate: @escaping Activate,
@@ -52,6 +59,7 @@ struct BundledPluginProgram {
     ) {
         self.id = id
         self.subscribedEvents = subscribedEvents
+        self.coalescableEvents = coalescableEvents
         self.providedIntents = providedIntents
         self.viewCallbacks = viewCallbacks
         self.activate = activate
@@ -65,6 +73,7 @@ struct BundledPluginProgram {
     init(
         id: PluginID,
         subscribedEvents: Set<String>,
+        coalescableEvents: Set<String> = [],
         providedIntents: Set<IntentID>,
         viewCallbacks: [String: BundledPluginViewCallbacks] = [:],
         activate: @escaping Activate,
@@ -74,6 +83,7 @@ struct BundledPluginProgram {
         self.init(
             id: id,
             subscribedEvents: subscribedEvents,
+            coalescableEvents: coalescableEvents,
             providedIntents: providedIntents,
             viewCallbacks: viewCallbacks,
             activate: activate,

@@ -239,6 +239,38 @@ enum SlotPresentation {
 
 // MARK: - Plugins  @domain: plugin-contributions
 
+/// Whether a pane's plugin view has a section to render yet — and if not, whether that is
+/// ordinary activation latency or a genuine failure.
+///
+/// Before this, `PluginSlotView` had exactly one signal: whether `host.pluginViews` already
+/// contained this pane's section. A plugin mid-activation (`isLoaded`, no error, no section
+/// published yet) and a plugin whose generation had permanently failed looked identical —
+/// both showed the same "Plugin view unavailable" error UI, so an operator watching an
+/// ordinary load had no way to tell it apart from watching a stuck failure (T-182). Pulled
+/// into a pure function, testable without mounting any view.
+enum PluginViewAvailability: Equatable {
+    case ready
+    case activating
+    case unavailable(reason: String?)
+
+    static func resolve(
+        pluginID: PluginID,
+        hasSection: Bool,
+        plugins: [PluginSnapshot]
+    ) -> PluginViewAvailability {
+        if hasSection {
+            return .ready
+        }
+        guard let snapshot = plugins.first(where: { $0.id == pluginID }) else {
+            return .unavailable(reason: nil)
+        }
+        guard snapshot.isEnabled, snapshot.isLoaded, snapshot.error == nil else {
+            return .unavailable(reason: snapshot.error)
+        }
+        return .activating
+    }
+}
+
 /// Renders a plugin's declarative rows (`TreeRowItem`) as an indented tree. The
 /// disclosure chevron, container-accented icon, and dotfile dimming are all driven
 /// off the row's own fields — no knowledge of any specific plugin (VISION §6).
@@ -360,17 +392,40 @@ struct PluginSlotView: View {
                 )
             }
         } else {
-            VStack(spacing: 7) {
-                Image(systemName: "puzzlepiece.extension")
-                    .font(.title2)
-                Text("Plugin view unavailable")
-                    .font(TenonTheme.interfaceFont(size: 11, weight: .medium))
-                Text("\(pluginID.rawValue) · \(viewID)")
-                    .font(TenonTheme.utilityFont(size: 9))
+            switch PluginViewAvailability.resolve(
+                pluginID: pluginID,
+                hasSection: false,
+                plugins: host.plugins
+            ) {
+            case .ready:
+                // Unreachable: `hasSection: false` is passed above because the `if let
+                // section` branch already handles the `true` case. Kept exhaustive.
+                EmptyView()
+            case .activating:
+                VStack(spacing: 7) {
+                    ProgressView()
+                        .controlSize(.small)
+                    Text("\(pluginID.rawValue) · \(viewID)")
+                        .font(TenonTheme.utilityFont(size: 9))
+                }
+                .foregroundStyle(TenonTheme.muted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(TenonTheme.panel)
+            case let .unavailable(reason):
+                VStack(spacing: 7) {
+                    Image(systemName: "puzzlepiece.extension")
+                        .font(.title2)
+                    Text("Plugin view unavailable")
+                        .font(TenonTheme.interfaceFont(size: 11, weight: .medium))
+                    Text(reason ?? "\(pluginID.rawValue) · \(viewID)")
+                        .font(TenonTheme.utilityFont(size: 9))
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 12)
+                }
+                .foregroundStyle(TenonTheme.muted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .background(TenonTheme.panel)
             }
-            .foregroundStyle(TenonTheme.muted)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(TenonTheme.panel)
         }
     }
 
@@ -766,16 +821,23 @@ struct EmptySlotView: View {
 
     var body: some View {
         EmptyStateCard(
-            title: "This panel is empty",
-            subtitle: "No terminal running yet",
             recents: store?.recent?.recent(for: workspaceID) ?? [],
             agentSuggestions: agentSuggestions,
-            isDefaultAction: isActive,
+            isActive: isActive,
             onLaunch: { store?.setSlotContent(slotID, $0) },
             onLaunchAgent: { suggestion in
                 guard let store else { return }
                 _ = AgentLaunchExecutor.run(
                     suggestion,
+                    placement: .emptySlot(slotID),
+                    workspaceStore: store,
+                    terminalPool: pool
+                )
+            },
+            onRunCommand: { commandLine in
+                guard let store else { return }
+                _ = TerminalCommandLaunch.run(
+                    commandLine: commandLine,
                     placement: .emptySlot(slotID),
                     workspaceStore: store,
                     terminalPool: pool

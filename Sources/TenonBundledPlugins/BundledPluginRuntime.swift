@@ -116,14 +116,23 @@ private struct BundledPluginWatchResource {
 private final class BundledPluginCallbackMailbox: Sendable {
     enum EnqueueResult {
         case enqueued
+        case coalesced
         case overflow
         case closed
     }
 
     let stream: AsyncStream<BundledPluginCallback>
     private let continuation: AsyncStream<BundledPluginCallback>.Continuation
+    private let coalescableEventNames: Set<String>
+    /// Event names from `coalescableEventNames` currently occupying a slot, from the moment
+    /// they enqueue until the pump finishes consuming them — same shape as
+    /// `PluginRuntimeCallbackMailbox.queuedTimerHandles` (`PluginRuntimeBridge.swift`), widened
+    /// from one handle to a name because a compiled program's coalescable events are declared
+    /// by name, not by resource handle.
+    private let pendingCoalescedEventNames = OSAllocatedUnfairLock(initialState: Set<String>())
 
-    init(capacity: Int = 256) {
+    init(capacity: Int = 256, coalescableEventNames: Set<String> = []) {
+        self.coalescableEventNames = coalescableEventNames
         let pair = AsyncStream.makeStream(
             of: BundledPluginCallback.self,
             bufferingPolicy: .bufferingOldest(capacity)
@@ -132,7 +141,18 @@ private final class BundledPluginCallbackMailbox: Sendable {
         continuation = pair.continuation
     }
 
+    /// A coalescable event already occupying a slot absorbs every repeat firing until the pump
+    /// finishes consuming it — a burst of `N` costs one slot, not `N` (T-182). Every other
+    /// callback enters the mailbox or makes overflow explicit, unchanged.
     func enqueue(_ callback: BundledPluginCallback) -> EnqueueResult {
+        if case let .event(name, _) = callback, coalescableEventNames.contains(name) {
+            let coalesced = pendingCoalescedEventNames.withLock { pending in
+                !pending.insert(name).inserted
+            }
+            if coalesced {
+                return .coalesced
+            }
+        }
         switch continuation.yield(callback) {
         case .enqueued:
             return .enqueued
@@ -142,6 +162,17 @@ private final class BundledPluginCallbackMailbox: Sendable {
             return .closed
         @unknown default:
             return .closed
+        }
+    }
+
+    /// Releases a coalescable event's slot once the pump finishes consuming it, so its next
+    /// firing enqueues fresh instead of coalescing against work that already finished.
+    func markConsumed(_ callback: BundledPluginCallback) {
+        guard case let .event(name, _) = callback, coalescableEventNames.contains(name) else {
+            return
+        }
+        pendingCoalescedEventNames.withLock { pending in
+            _ = pending.remove(name)
         }
     }
 
@@ -173,7 +204,7 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
     private static let maximumWatchers = 64
 
     private nonisolated let subscribedEvents: Set<String>
-    private nonisolated let mailbox = BundledPluginCallbackMailbox()
+    private nonisolated let mailbox: BundledPluginCallbackMailbox
     private nonisolated let pumpCompletion = BundledPluginPumpCompletion()
     private nonisolated let localState: BundledPluginLocalState
     private let configuration: PluginRuntimeConfiguration
@@ -241,6 +272,7 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
         manifest = configuration.manifest
         directory = configuration.directory
         subscribedEvents = program.subscribedEvents
+        mailbox = BundledPluginCallbackMailbox(coalescableEventNames: program.coalescableEvents)
         self.configuration = configuration
         self.program = program
         self.watcherStart = watcherStart
@@ -281,11 +313,12 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
             contribution = try await activateWithinTimeout()
             phase = .active
             eventPump = Task {
-                [weak self, stream = mailbox.stream, pumpCompletion] in
+                [weak self, stream = mailbox.stream, pumpCompletion, mailbox] in
                 defer { pumpCompletion.finish() }
                 for await callback in stream {
                     guard !Task.isCancelled else { return }
                     await self?.consume(callback)
+                    mailbox.markConsumed(callback)
                 }
             }
             revision &+= 1
@@ -373,7 +406,7 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
 
     nonisolated func acceptEvent(event: String, payload: IntentValue) -> Bool {
         switch mailbox.enqueue(.event(name: event, payload: payload)) {
-        case .enqueued:
+        case .enqueued, .coalesced:
             return true
         case .overflow:
             mailbox.finish()
@@ -416,7 +449,7 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
 
     private func enqueueCallback(_ callback: BundledPluginCallback) async -> Bool {
         switch mailbox.enqueue(callback) {
-        case .enqueued:
+        case .enqueued, .coalesced:
             return true
         case .overflow:
             mailbox.finish()
@@ -625,9 +658,10 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
         let _: BundledPluginContribution? = try await withCheckedThrowingContinuation { continuation in
             let reply = BundledPluginCallbackReply(continuation)
             switch mailbox.enqueue(makeCallback(reply)) {
-            case .enqueued:
+            case .enqueued, .coalesced:
+                // Lifecycle callbacks (`viewOpened`/`viewClosed`) are never `.event`, so
+                // `.coalesced` cannot actually occur here — kept exhaustive, not reachable.
                 pendingLifecycleReplies[ObjectIdentifier(reply)] = reply
-                break
             case .overflow:
                 reply.resume(
                     with: .failure(
