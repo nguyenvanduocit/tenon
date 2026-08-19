@@ -670,7 +670,16 @@ final class SpatialSlotCardView: NSView, NSTextFieldDelegate {
         // so fold active state into the cache key for empties only — other
         // content ignores it and keeps its live surface across focus changes.
         let activeSuffix = slot.content == .empty ? "|active=\(isActive)" : ""
-        let agentSuffix = slot.content == .empty
+        // Both an empty pane's launcher and a recorded session's résumé invitation read
+        // `agentSuggestions` (`AgentSessionResume.offer`); neither holds a live PTY/WebView
+        // to protect, so both must fold it into the key rather than freeze whatever
+        // detection had answered — often nothing — at the pane's first render.
+        let readsAgentSuggestions: Bool
+        switch slot.content {
+        case .empty, .agentSession: readsAgentSuggestions = true
+        default: readsAgentSuggestions = false
+        }
+        let agentSuffix = readsAgentSuggestions
             ? "|agents=" + agentSuggestions.map {
                 $0.agent.rawValue + ":" + $0.arguments.joined(separator: ",")
             }.joined(separator: ";")

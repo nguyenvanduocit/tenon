@@ -255,6 +255,12 @@ Feature: Arrange live panes without losing identity, focus, or attention
       Then Fork Session and Copy Resume Command are visible but disabled
       And each item states, where the item is, that the provider is not installed
 
+    @req-sp-fr-030 @agent-session @recorded-pane
+    Scenario: A recorded session's résumé invitation catches up once agent detection resolves
+      Given a recorded-session pane's résumé invitation was drawn before agent detection finished
+      When agent detection later reports the provider CLI is installed here
+      Then the pane's résumé invitation offers Resume instead of stating the provider is missing
+
     @req-sp-fr-010 @fill-width
     Scenario: Double-clicking bare header fills available width only
       Given a pane has horizontal free space before its nearest blocking neighbors
