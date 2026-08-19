@@ -235,7 +235,9 @@ Sources/
     SpatialLayout.swift    pure grid operations and transactions
     Workspace.swift        catalog/workspace/tab/slot state and events
     WorkspaceStore.swift   observable mutation shell and plugin event bridge
-    CoreIntentCatalog.swift closed core intent inventory and lane map
+    CoreIntentModel.swift   catalog actor, compiled result, and payload bounds
+    CoreIntentName.swift   closed core intent inventory, audience profile, and lane map
+    CoreIntentRules.swift   per-intent contract declarations and installation
     PluginRuntime.swift    JavaScriptCore adapter and resource boundary
     PluginHost.swift       inventories, installation lifecycle, hot reload
   TenonApp/

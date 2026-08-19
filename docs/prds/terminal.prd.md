@@ -56,7 +56,7 @@ from regressing pending-text delivery, process ownership, or read coherence.
 |---|---|---|
 | [`TerminalSurface.swift`](../../Sources/TenonApp/TerminalSurface.swift), [`SurfacePool.swift`](../../Sources/TenonApp/SurfacePool.swift) | high | backend seam, lazy keyed lifetime, queued input, observations, explicit close teardown |
 | [`GhosttySurface.swift`](../../Sources/TenonApp/GhosttySurface.swift) | high | runtime/config, rendering/input/clipboard, OSC facts, foreground PID, backend termination |
-| [`TerminalIntentProvider.swift`](../../Sources/TenonApp/TerminalIntentProvider.swift), [`CoreIntentCatalog.swift`](../../Sources/TenonCore/CoreIntentCatalog.swift) | high | six current contracts, targeting, schemas, bounds, capabilities, lanes |
+| [`TerminalIntentProvider.swift`](../../Sources/TenonApp/TerminalIntentProvider.swift), [`CoreIntentName.swift`](../../Sources/TenonCore/CoreIntentName.swift), [`CoreIntentRules.swift`](../../Sources/TenonCore/CoreIntentRules.swift) | high | six current contracts, targeting, schemas, bounds, capabilities, lanes |
 | [`ScrollbackPaging.swift`](../../Sources/TenonCore/ScrollbackPaging.swift), [`IdleDetector.swift`](../../Sources/TenonCore/IdleDetector.swift) | high | pure paging/coherence and TUI-idle rules |
 | [`TerminalJobTermination.swift`](../../Sources/TenonCore/TerminalJobTermination.swift), [`ShellTitleBar.swift`](../../Sources/TenonApp/ShellTitleBar.swift) | high | close inspection, tty ownership, signal ordering/escalation, fail-safe confirmation |
 | [`TenonApp.swift`](../../Sources/TenonApp/TenonApp.swift) | high | current quit sequence omits `terminalSurfaces.retainOnly([])` |

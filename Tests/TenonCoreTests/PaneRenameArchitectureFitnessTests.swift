@@ -5,7 +5,7 @@ final class PaneRenameArchitectureFitnessTests: XCTestCase {
     func testPaneRenameKeepsOneTypedMutationAndOneIDOnlyEvent() throws {
         let model = try source("TenonCore/Workspace.swift")
         let store = try source("TenonCore/WorkspaceStore.swift")
-        let intents = try source("TenonCore/CoreIntentCatalog.swift")
+        let intents = try source("TenonCore/CoreIntentName.swift")
 
         XCTAssertTrue(model.contains("public mutating func renameSlot("))
         XCTAssertTrue(store.contains("apply { $0.renameSlot(id, to: typed) }"))

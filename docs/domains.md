@@ -33,9 +33,9 @@ A file longer than **400 lines** additionally tags every `// MARK:` section, on 
 which is the only reason a block-level tag can be checked at all. The tag rides on the MARK
 line rather than below it so one `rg` result carries both the section name and its domain.
 
-Enumerability is also the rule's limit, and it is a wide one. Of the 65 files over 400 lines,
-**49 declare no MARK at all** — 41,879 lines, more than half the source tree, including the
-five longest files in it (`CoreIntentCatalog.swift` at 2,482 lines, `IntentDispatcher.swift`,
+Enumerability is also the rule's limit, and it is a wide one. Of the 79 files over 400 lines,
+**47 declare no MARK at all** — 41,005 lines, about 40% of the source tree, including the
+five longest files in it (`IntentDispatcher.swift` at 2,098 lines, `AgentLensView.swift`,
 `Workspace.swift`, `IntentPolicy.swift`, `FilesystemIntentProvider.swift`). The assertion
 passes on every one of them without checking anything, because there is nothing to enumerate.
 So a green suite means *no tagged MARK is missing a domain*; it never means a long file is

@@ -76,7 +76,7 @@ bundled manifests and must be specified even though they have no standalone task
 | bundled View Gallery native vocabulary example | PRD-005 | `plugins/view-gallery` and snapshot/view tests |
 | bundled Workspace Status contribution | PRD-001/005 | `plugins/workspace-status` and contribution tests |
 | current `SlotContent` inventory after the retirement of the redundant docs pane: terminal, changes, automation, file, plugin view, diff, empty; saved state naming a retired kind degrades fail-soft | PRD-003/008/009/013 | `Sources/TenonCore/Workspace.swift`; T-103 shipped 2026-08-09 |
-| all versioned core intents in `CoreIntentName` | PRD-006…011 as semantically owned; exhaustive inventory remains PRD-011 | `Sources/TenonCore/CoreIntentCatalog.swift` and catalog fitness tests |
+| all versioned core intents in `CoreIntentName` | PRD-006…011 as semantically owned; exhaustive inventory remains PRD-011 | `Sources/TenonCore/CoreIntentName.swift` and catalog fitness tests |
 | Herdr-informed semantic agent control gap: list/get/start/rename/prompt/respond/wait with progressive standing trust | PRD-017, with full rich-evidence history retained by PRD-012 and schedule/fleet composition retained by PRD-013 | `references/herdr` source audit; Tenon implementation is planned |
 
 ## Legacy documentation ownership

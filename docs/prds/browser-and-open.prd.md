@@ -53,7 +53,7 @@ work cannot mistake a helper type or passing unit test for a completed user outc
 | browser manifest/runtime | [`plugins/browser`](../../plugins/browser) | high | plugin ownership, pane toolbar, settings, private open action |
 | native surface | [`PluginWebSurfacePool.swift`](../../Sources/TenonApp/PluginWebSurfacePool.swift), [`WebUserAgent.swift`](../../Sources/TenonApp/WebUserAgent.swift) | high | WKWebView ownership, navigation rules, profile lifetime, UA |
 | link rendering | [`AgentLensMarkdown.swift`](../../Sources/TenonApp/AgentLensMarkdown.swift), [`AgentLensView.swift`](../../Sources/TenonApp/AgentLensView.swift) | high | link recognition ships; HTTP(S) activation still delegates to system action |
-| open contracts | [`CoreIntentCatalog.swift`](../../Sources/TenonCore/CoreIntentCatalog.swift), [`SystemIntentProvider.swift`](../../Sources/TenonApp/SystemIntentProvider.swift) | high | typed URL contract and trusted system provider |
+| open contracts | [`CoreIntentRules.swift`](../../Sources/TenonCore/CoreIntentRules.swift), [`SystemIntentProvider.swift`](../../Sources/TenonApp/SystemIntentProvider.swift) | high | typed URL contract and trusted system provider |
 | resolver/approval | [`ProviderRegistry.swift`](../../Sources/TenonIntentCore/ProviderRegistry.swift), [`OpenHandlerApprovals.swift`](../../Sources/TenonCore/OpenHandlerApprovals.swift), [`TenonApp.swift`](../../Sources/TenonApp/TenonApp.swift) | high | query-only decision, defaults, real persisted approval gate |
 | accepted design/tasks | [`design-open-handlers.md`](../design-open-handlers.md), T-005/T-070…T-077 | medium | intended full user flow; some implementation statements have drifted |
 
