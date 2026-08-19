@@ -24,8 +24,10 @@ struct TenonApp: App {
         AgentTimelineSnapshot.renderIfRequested()
         SidebarSnapshot.renderIfRequested()
         TitleBarSnapshot.renderIfRequested()
+        ShellChromeSnapshot.renderIfRequested()
         PaneRenameSnapshot.renderIfRequested()
         CompanionSettingsSnapshot.renderIfRequested()
+        EmptyPaneSnapshot.renderIfRequested()
     }
 
     var body: some Scene {
@@ -45,6 +47,7 @@ struct TenonApp: App {
                     closeCoordinator: composition.shellCloseCoordinator,
                     paneRenamer: composition.paneRenamer,
                     agentLens: composition.agentLens,
+                    agentPanes: composition.agentPaneRoster,
                     webPool: composition.webSurfaces,
                     intentRuntime: composition.intentRuntime,
                     router: composition.router,
@@ -53,6 +56,7 @@ struct TenonApp: App {
                     pluginUI: composition.userInterface,
                     automation: composition.automationScheduler,
                     resourceMonitor: composition.resourceMonitor,
+                    chromeOrder: composition.prefs.preferences.chromeOrder,
                     automationSchedulesEnabled:
                         composition.prefs.preferences.automationSchedulesEnabled,
                     automationActions: AutomationPaneActions(
@@ -180,6 +184,7 @@ private struct AppStartupPreparation: Sendable {
     let agentHookScriptURL: URL
     let codexHookInstallResult: AgentHookInstallResult
     let claudeHookInstallResult: AgentHookInstallResult
+    let opencodeHookInstallResult: AgentHookInstallResult
     let launch: RestoredWorkspaceCatalog
     let recentViews: [WorkspaceRecentViews]
     let recentWorkspaces: [RecentWorkspaceStore.Entry]
@@ -224,10 +229,15 @@ private struct AppStartupPreparation: Sendable {
             ?? FileManager.default.homeDirectoryForCurrentUser
                 .appendingPathComponent(".claude", isDirectory: true).path
         let claudeHomeURL = URL(fileURLWithPath: claudeHomePath, isDirectory: true)
+        let opencodeConfigURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".config/opencode", isDirectory: true)
+        let opencodeDataURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/share/opencode", isDirectory: true)
         let agentSessionRegistry = AgentSessionRegistry(
             allowedTranscriptRoots: [
                 codexHomeURL.appendingPathComponent("sessions", isDirectory: true),
                 claudeHomeURL.appendingPathComponent("projects", isDirectory: true),
+                opencodeDataURL,
             ]
         )
         let agentHookServer = AgentHookServer(enabled: !underTest) { event in
@@ -254,12 +264,22 @@ private struct AppStartupPreparation: Sendable {
                 scriptURL: agentHookScriptURL,
                 hooksURL: claudeHomeURL.appendingPathComponent("settings.json")
             )
+        let opencodeHookInstallResult: AgentHookInstallResult = underTest
+            ? .alreadyInstalled
+            : AgentOpenCodeHookInstaller.install(
+                pluginURL: opencodeConfigURL
+                    .appendingPathComponent("plugins", isDirectory: true)
+                    .appendingPathComponent(AgentOpenCodeHookInstaller.pluginFileName)
+            )
         if !underTest {
             // The install can lose a race against whatever else writes these files. Record
             // the outcome and how to repeat it, so a pane can say so and offer the retry
             // instead of leaving the Session view mysteriously empty.
             let claudeSettingsURL = claudeHomeURL.appendingPathComponent("settings.json")
             let codexHooksURL = codexHomeURL.appendingPathComponent("hooks.json")
+            let opencodePluginURL = opencodeConfigURL
+                .appendingPathComponent("plugins", isDirectory: true)
+                .appendingPathComponent(AgentOpenCodeHookInstaller.pluginFileName)
             await AgentHookInstallStatus.shared.register(
                 provider: .claude,
                 result: claudeHookInstallResult
@@ -279,6 +299,12 @@ private struct AppStartupPreparation: Sendable {
                     scriptURL: agentHookScriptURL,
                     hooksURL: codexHooksURL
                 )
+            }
+            await AgentHookInstallStatus.shared.register(
+                provider: .opencode,
+                result: opencodeHookInstallResult
+            ) {
+                AgentOpenCodeHookInstaller.install(pluginURL: opencodePluginURL)
             }
         }
 
@@ -347,6 +373,7 @@ private struct AppStartupPreparation: Sendable {
             agentHookScriptURL: agentHookScriptURL,
             codexHookInstallResult: codexHookInstallResult,
             claudeHookInstallResult: claudeHookInstallResult,
+            opencodeHookInstallResult: opencodeHookInstallResult,
             launch: launch,
             recentViews: recentViews,
             recentWorkspaces: recentWorkspaces,
@@ -374,6 +401,10 @@ final class AppComposition {
     /// Held so shutdown can cancel sampling demand and wait for quiescence.
     @ObservationIgnored let telemetryCoordinator: ProcessTelemetryCoordinator
     let agentLens: AgentLensPool
+    /// Which panes an agent occupies, synchronously and for every workspace (T-178). The
+    /// lens pool answers the same question only for a pane whose model is mounted, which is
+    /// the one set a sidebar row drawing a background workspace can never be.
+    let agentPaneRoster: AgentPaneRoster
     /// Held beside the pool because the catalog save asks it exactly what a live pane asks:
     /// which session is running in this terminal right now (T-145). One resolver, so what a
     /// restart claims about a pane can never disagree with what the pane was showing.
@@ -382,6 +413,7 @@ final class AppComposition {
     let agentHookServer: AgentHookServer
     let codexHookInstallResult: AgentHookInstallResult
     let claudeHookInstallResult: AgentHookInstallResult
+    let opencodeHookInstallResult: AgentHookInstallResult
     let webSurfaces: PluginWebSurfacePool
     let intentRuntime: AppIntentRuntime
     let cliServer: CLISocketServer
@@ -550,12 +582,24 @@ final class AppComposition {
             claudeHookDegradation: Self.agentHookDegradation(
                 server: prepared.agentHookServer,
                 installResult: prepared.claudeHookInstallResult
+            ),
+            opencodeHookDegradation: Self.agentHookDegradation(
+                server: prepared.agentHookServer,
+                installResult: prepared.opencodeHookInstallResult
             )
         )
         let agentLens = AgentLensPool(
             discovery: agentLensDiscovery,
             questions: agentQuestions
         )
+        // The second reader of the hook stream. Attached here rather than inside its own
+        // init, so the one bus has both of its sinks wired from the one place that owns
+        // composition, and neither sink can quietly attach itself twice.
+        let agentPaneRoster = AgentPaneRoster()
+        AgentHookLensBus.attach(agentPaneRoster)
+        // The third sink: a `Stop` on this bus is a turn boundary OSC 133 cannot see for a
+        // long-running agent REPL, so the pane's own attention state needs it fed straight in.
+        AgentHookLensBus.attach(terminalSurfaces)
         let intentRuntime = try AppIntentRuntime(
             kernel: prepared.kernel,
             workspaceStore: store,
@@ -670,11 +714,13 @@ final class AppComposition {
         self.resourceMonitor = monitor
         self.telemetryCoordinator = telemetryCoordinator
         self.agentLens = agentLens
+        self.agentPaneRoster = agentPaneRoster
         self.agentLensDiscovery = agentLensDiscovery
         self.agentSessionRegistry = prepared.agentSessionRegistry
         self.agentHookServer = prepared.agentHookServer
         self.codexHookInstallResult = prepared.codexHookInstallResult
         self.claudeHookInstallResult = prepared.claudeHookInstallResult
+        self.opencodeHookInstallResult = prepared.opencodeHookInstallResult
         self.webSurfaces = webSurfaces
         self.intentRuntime = intentRuntime
         self.cliServer = prepared.cliServer
@@ -1151,6 +1197,27 @@ private extension AppComposition {
         automation: AutomationScheduler,
         paneRenamer: PaneRenameCoordinator
     ) {
+        // T-182: one FIFO consumer for every workspace-event broadcast this wiring produces,
+        // so a burst of `onEvents` firings cannot fan out into overlapping `host.emit` calls —
+        // that overlap was what let concurrent broadcasts race synchronous mailbox writes into
+        // every subscribed plugin at once and overflow one. Captured strongly by `onEvents`
+        // below — its lifetime is `store`'s.
+        //
+        // `reconcileViewInstances` deliberately does NOT run through this same queue.
+        // `openViewInstance` awaits a lifecycle reply from the target plugin's own pump, which
+        // can take real time — queuing it behind every other pending broadcast would have made
+        // a newly opened pane's view wait out that queue's backlog before it could even start
+        // opening, reproducing this task's "Plugin view unavailable" symptom as a plain latency
+        // bug instead of the concurrency bug this queue exists to fix. It does not need the
+        // same protection `emit` does: `reconcileViewInstances` already coalesces concurrent
+        // callers itself (`isReconcilingViews`/`needsViewReconcile`, `PluginHost.swift`) — an
+        // overlapping call folds into the one already running and catches up to the latest
+        // catalog, rather than racing writes the way `emit`'s reentrant internal `await` did.
+        let broadcastPump = WorkspaceEventBroadcastPump { [weak host] item in
+            guard let host else { return }
+            await host.emit(workspaceEvents: item.events, in: item.snapshot)
+        }
+
         host.onPluginLifecycleChanged = {
             [weak host, weak store, weak webSurfaces] plugins in
             guard let host, let store else { return }
@@ -1158,6 +1225,18 @@ private extension AppComposition {
             // T-046: the lifecycle channel is the scheduler's reconcile trigger —
             // load, hot reload, enable/disable, and uninstall all pass through here.
             automation.reconcile(plugins, now: Date())
+            // T-182: a plugin that finishes activating after `performStart`'s one startup
+            // reconcile already ran (observed live: `host: open view failed for
+            // dev.tenon.claude-sessions: plugin runtime is stopped`, thrown because
+            // `openViewInstance` raced a generation still `.staging`) had nothing to retry
+            // its restored pane's view — `reconcileViewInstances` otherwise only runs from
+            // workspace mutations, and a plugin activating late fires none. This channel
+            // fires on every phase transition `PluginHost.publish()` observes (`isLoaded`
+            // flipping true is one), so it is the retry signal that was missing.
+            Task { @MainActor [weak host, weak store] in
+                guard let host, let store else { return }
+                await host.reconcileViewInstances(from: store.catalog)
+            }
         }
 
         store.onEvents = {
@@ -1187,18 +1266,15 @@ private extension AppComposition {
             if let host {
                 webSurfaces?.reconcile(catalog: snapshot, host: host)
             }
+            broadcastPump.enqueue(.init(events: events, snapshot: snapshot))
             Task { @MainActor [weak host, weak store] in
-                guard let host else { return }
-                await host.emit(
-                    workspaceEvents: events,
-                    in: snapshot
-                )
-                // Event delivery can suspend, and sibling mutation tasks are not
-                // ordered. Reconcile from live state so a late task cannot restore
-                // the captured catalog that preceded a plugin pane assignment.
-                if let store {
-                    await host.reconcileViewInstances(from: store.catalog)
-                }
+                guard let host, let store else { return }
+                // Event delivery can suspend, and sibling reconcile tasks are not ordered —
+                // safe here (unlike `emit`) because `reconcileViewInstances` folds a late
+                // caller into the pass already running instead of racing it. Reconcile from
+                // live state so a late task cannot restore the catalog that preceded a plugin
+                // pane assignment.
+                await host.reconcileViewInstances(from: store.catalog)
             }
             for event in events {
                 if case let .slotFocused(slotID, _, _) = event,
