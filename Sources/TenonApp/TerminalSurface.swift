@@ -28,6 +28,11 @@ protocol TerminalSurface: AnyObject {
     /// where it was. A backend keeps the discard default below unless it declares storage.
     var onFocusGained: (() -> Void)? { get set }
 
+    /// A row dragged out of Files (or any other file-URL drag source) was dropped on this
+    /// pane's real surface. `SurfacePool` turns it into quoted path text delivered through
+    /// `sendText`, so a backend with no drop target of its own keeps the discard default below.
+    var onFileDrop: (([URL]) -> Void)? { get set }
+
     /// The SwiftUI view for this surface.
     func makeView() -> AnyView
 
@@ -78,6 +83,15 @@ protocol TerminalSurface: AnyObject {
     /// How many shell commands have finished (OSC 133) — feeds `pane.wait --for command-finished`.
     var commandFinishedCount: Int { get }
 
+    /// One more finish, reported from outside the terminal stream: a running agent's own
+    /// `Stop` hook fired (`AgentHookLensBus`, T-178's own test names `Stop` "a turn boundary,
+    /// not a session ending"). OSC 133 marks a *shell* command's foreground process exiting,
+    /// which never happens between turns of a REPL agent — `claude`, `codex`, `opencode` all
+    /// stay the shell's one foreground command for the whole session, so `commandFinishedCount`
+    /// alone leaves every turn but the first indistinguishable from a prompt sitting idle. A
+    /// backend with no notion of commands finishing keeps the no-op default below.
+    func noteAgentTurnFinished()
+
     /// Foreground process-group leader when the backend can identify it. Host-internal
     /// agent presentation uses this to prove a composer still targets the same TUI before
     /// writing; it is not projected onto the public terminal intent surface.
@@ -108,6 +122,12 @@ extension TerminalSurface {
         set {}
     }
 
+    /// A backend with no real drop target of its own, on the same opt-in terms.
+    var onFileDrop: (([URL]) -> Void)? {
+        get { nil }
+        set {}
+    }
+
     func focus() {}
     func sendText(_ text: String) {}
     func terminate() {}
@@ -118,6 +138,7 @@ extension TerminalSurface {
     var scrollbackLines: [String] { [] }
     var processExited: Bool { false }
     var commandFinishedCount: Int { 0 }
+    func noteAgentTurnFinished() {}
     var foregroundPID: UInt64? { nil }
     var ttyName: String? { nil }
 }
@@ -138,6 +159,9 @@ final class StubTerminalSurface: TerminalSurface {
     /// model→surface→model focus cycle reproducible without a window (T-088): a stub that
     /// swallowed the callback would let the cycle pass a headless test it cannot survive.
     var onFocusGained: (() -> Void)?
+    /// The stub has no real drop target, but it carries the hook so `SurfacePool`'s
+    /// quote-and-deliver wiring is assertable without a window (T-181, `FC-FR-040`).
+    var onFileDrop: (([URL]) -> Void)?
     private(set) var focusCount = 0
     /// Everything delivered to the (nonexistent) PTY, in order — the lifecycle tests
     /// assert the first frame after materialization loses nothing that was queued.
@@ -148,6 +172,29 @@ final class StubTerminalSurface: TerminalSurface {
     /// Mutable process identity makes close protection assertable without a real PTY.
     var processExited = false
     var foregroundPID: UInt64?
+    /// The observations `PaneActivity` is fed, made settable for the same reason
+    /// `processExited` is: every attention state becomes reachable without a PTY, so a
+    /// headless run and an offscreen render drive the real machine instead of describing it.
+    var commandFinishedCount = 0
+    /// The screen the idle detector fingerprints. A held value goes stable after enough
+    /// polls, which is `idle`.
+    var heldScreenFingerprint = 0
+    /// Shares `commandFinishedCount` with real OSC 133 finishes on purpose: `PaneActivity`
+    /// treats a rise in that counter as one fact, whichever seam reported it (T-178).
+    func noteAgentTurnFinished() {
+        commandFinishedCount += 1
+    }
+    /// A screen that is never the same twice — which is what `working` means, and what a held
+    /// value cannot express. Measured the hard way: an offscreen render spends hundreds of
+    /// milliseconds in layout, the activity poll runs through it, and a fixture that had set
+    /// one fixed fingerprint went stable mid-render and photographed as `idle`.
+    var screenKeepsChanging = false
+
+    var screenFingerprint: Int {
+        guard screenKeepsChanging else { return heldScreenFingerprint }
+        heldScreenFingerprint += 1
+        return heldScreenFingerprint
+    }
 
     func terminate() {
         terminateCount += 1

@@ -7,9 +7,9 @@
 | Owner | editor-and-diff, row-list, repository-read, workspace-model, intent-bus, and plugin-host domains |
 | Reviewers | product, native UI, accessibility, filesystem security, plugin runtime, performance, test |
 | Created | 2026-08-09 |
-| Last reviewed | 2026-08-09 |
-| Related work | T-010, T-014, T-016, T-024, T-028, T-030, T-038, T-054, T-081, T-083, T-085, T-086, T-103 |
-| Existing designs | [`design-plugin-host-capabilities.md`](../design-plugin-host-capabilities.md), [`design-intent-bus.md`](../design-intent-bus.md), [`design-pane-header.md`](../design-pane-header.md) |
+| Last reviewed | 2026-08-18 |
+| Related work | T-010, T-014, T-016, T-024, T-028, T-030, T-038, T-054, T-081, T-083, T-085, T-086, T-103; agent entry points sourced from an undated Files context-menu feature request (screenshot), captured 2026-08-18, no task filed yet |
+| Existing designs | [`design-plugin-host-capabilities.md`](../design-plugin-host-capabilities.md), [`design-intent-bus.md`](../design-intent-bus.md), [`design-pane-header.md`](../design-pane-header.md), [`agent-control.prd.md`](agent-control.prd.md) for the agent contracts FC-FR-037/038 consume |
 | Acceptance specification | [`files-and-content.feature`](files-and-content.feature) |
 
 ## 1. Executive summary
@@ -18,9 +18,9 @@
 
 Tenon lets a person browse a project, edit files, inspect repository changes, and move
 between these surfaces without turning every action into another tab. Ownership is split
-deliberately: Files and Git are replaceable JavaScript plugins, while file, image, HTML,
-Changes, and diff panes are host-native. The historical record now contradicts the live
-tree in two important places. T-030 claims a manual project-root pin that current source
+deliberately: Files and Git are replaceable plugins — bundled-swift since T-167, no longer
+JavaScript — while file, image, HTML, Changes, and diff panes are host-native. The historical
+record now contradicts the live tree in two important places. T-030 claims a manual project-root pin that current source
 does not contain. T-083 rules that staged write must become `.v2`, while current source
 still widens the closed `filesystem.file.write.v1` schema with `cursor` and `commit`.
 
@@ -64,8 +64,13 @@ and Gherkin are the context boundary required before more content work continues
 | rows | [`PluginRuntimeModels.swift`](../../Sources/TenonCore/PluginRuntimeModels.swift), [`TreeRowsView.swift`](../../Sources/TenonApp/TreeRowsView.swift), [`ChangesPanelView.swift`](../../Sources/TenonApp/ChangesPanelView.swift) | high | one declarative row schema/renderer |
 | cwd/root | [`ProjectRoot.swift`](../../Sources/TenonCore/ProjectRoot.swift), [`SurfacePool.swift`](../../Sources/TenonApp/SurfacePool.swift), [`PluginHost.swift`](../../Sources/TenonCore/PluginHost.swift) | high | automatic resolution and `pane.cwd-changed` |
 | persistence | [`WorkspaceCatalogStore.swift`](../../Sources/TenonCore/WorkspaceCatalogStore.swift), [`TenonApp.swift`](../../Sources/TenonApp/TenonApp.swift) | high | cwd seeds a fresh shell; no current pin field or replay |
-| filesystem | [`IntentPolicy.swift`](../../Sources/TenonIntentCore/IntentPolicy.swift), [`FilesystemIntentProvider.swift`](../../Sources/TenonCore/FilesystemIntentProvider.swift), [`CoreIntentCatalog.swift`](../../Sources/TenonCore/CoreIntentCatalog.swift) | high | missing-ancestor binding, directory v2, staged write and current v1 name |
+| filesystem | [`IntentPolicy.swift`](../../Sources/TenonIntentCore/IntentPolicy.swift), [`FilesystemIntentProvider.swift`](../../Sources/TenonCore/FilesystemIntentProvider.swift), [`CoreIntentName.swift`](../../Sources/TenonCore/CoreIntentName.swift) | high | missing-ancestor binding, directory v2, staged write and current v1 name |
 | task archive | T-010, T-014, T-016, T-024, T-028, T-030, T-038, T-054, T-081, T-083, T-085, T-086, T-103 | medium/high | intent/receipts; live source supersedes drift; user-directed Docs-pane removal is in progress |
+| row menus are flat, per-instance | [`FileExplorerPlugin.swift:396-446`](../../Sources/TenonBundledPlugins/FileExplorerPlugin.swift) (`runMenu`), [`:751-772`](../../Sources/TenonBundledPlugins/FileExplorerPlugin.swift) (`fileMenu`/`directoryMenu`), [`PluginRuntimeModels.swift:17-29`](../../Sources/TenonCore/PluginRuntimeModels.swift) (`RowMenuItem`) | high | `cd Here` already writes composed text into a terminal via `terminal.write.v1`; `RowMenuItem` has no submenu vocabulary, so a new agent entry is a set of dynamically generated flat items, not a nested menu |
+| agent composition already public | [`AgentIntentProvider.swift`](../../Sources/TenonApp/AgentIntentProvider.swift), [`AgentLaunchCommand.swift:62`](../../Sources/TenonApp/AgentLaunchCommand.swift) (`AgentLaunchComposer`), [`agent-control.prd.md` AC-FR-031…036](agent-control.prd.md) | high | `agent.inventory.v1` and `agent.command.v1` are shipped and compose a quoted command line without starting anything; a plugin MUST reach composition only through the intent per invariant 9, never by calling `AgentLaunchComposer` itself |
+| terminal pane creation accepts an explicit cwd | [`TerminalIntentProvider.swift:166-210`](../../Sources/TenonApp/TerminalIntentProvider.swift) (`terminal.open.v1`) | high | `workingDirectory` is validated to exist and be a directory before any shell starts there; `command` is optional and delivered the same way `terminal.write.v1` delivers text |
+| live agent inventory is not yet public | [`agent-control.prd.md` §9](agent-control.prd.md), rows for `agent.list.v1`/`agent.get.v1` | high | those two contracts remain `planned`, not `shipped`; no public intent today lets a plugin discover which panes currently run a live agent |
+| drag-out ships for Finder/sidebar, not for a Tenon terminal | [`TreeRowsView.swift:289-301`](../../Sources/TenonApp/TreeRowsView.swift) (`RowDragModifier`, `onDrag` with a plain `NSItemProvider(object: URL...)`), [`WorkspaceFolderDropAdapter.swift:22-33`](../../Sources/TenonApp/WorkspaceFolderDropAdapter.swift) (the only `registerForDraggedTypes` call in `Sources/TenonApp`), [`GhosttySurface.swift:552`](../../Sources/TenonApp/GhosttySurface.swift) (`GhosttyNSView`, no dragging-destination registration), [`SurfacePool.swift:286`](../../Sources/TenonApp/SurfacePool.swift) (`sendTextWhenReady`, the DIRECT delivery service both `terminal.write.v1` and a future drop target would call) | high; confirmed live by the operator during this PRD's drafting, 2026-08-18 | a row's drag payload is a standard file URL, so it already lands in Finder, other macOS apps, and Tenon's own sidebar; a `grep` across the app tree finds exactly one drop target registered anywhere, and it is not the terminal surface, so a row dropped on a Tenon terminal pane today does nothing |
 
 ### Context questions
 
@@ -85,6 +90,8 @@ and Gherkin are the context boundary required before more content work continues
 | `FC-A-002` | Nearest ancestor with `.git` is the right automatic anchor. | fixtures and live worktree observation | headlessly proven; live owed |
 | `FC-A-003` | Manual project-root pin remains desired. | product decision | unresolved; absent from source |
 | `FC-A-004` | Diff bounds fit ordinary review. | fixtures and real large-diff observation | pure bounds proven; live owed |
+| `FC-A-005` | A flat, dynamically-generated list of installed/live agents is sufficient; a nested submenu is not required. | operator confirmation once shipped; `RowMenuItem` has no submenu vocabulary today | shipped-pattern-consistent; unresolved |
+| `FC-A-006` | Dropping a row onto a Tenon terminal should insert quoted path text, not submit it — mirroring what `cd Here` already does rather than sending an unreviewed Enter. | operator confirmation once shipped | unresolved, see `FC-OQ-005` |
 
 ## 3. Users and jobs
 
@@ -130,6 +137,9 @@ unexpectedly, or re-rooting tools on every `cd`.
 - `FC-G-003` — Files/repository panels share facts without duplicating ownership.
 - `FC-G-004` — Filesystem operations are scoped, atomic where promised, and race-safe.
 - `FC-G-005` — Public versions and lifecycle classifications match actual shape.
+- `FC-G-006` — Files' own context menu is a same-click way to start or hand work to a coding
+  agent, and a dragged row reaches every native destination a dragged Finder file would,
+  including Tenon's own terminal panes.
 
 ### Success metrics
 
@@ -141,6 +151,8 @@ unexpectedly, or re-rooting tools on every `cd`.
 | `FC-M-004` | Files/Git reroots inside one repo | zero | root/pool/plugin tests |
 | `FC-M-005` | successful operation escaping grant | zero | policy/provider race tests |
 | `FC-M-006` | closed schema widened within a major | zero | catalog fitness test |
+| `FC-M-007` | manual steps between "right-click a folder" and an agent running there | one selection, zero typed commands | menu/provider composition tests |
+| `FC-M-008` | a row dropped on a Tenon terminal pane failing to deliver its path | zero once `FC-FR-040` ships | hosted drop-target tests |
 
 ### Guardrail metrics
 
@@ -166,6 +178,10 @@ unexpectedly, or re-rooting tools on every `cd`.
 - Scoped list/read/exists/write/create/move/trash, metadata, and staged writes.
 - Known contract gaps and remaining human verification.
 - Removal of the redundant `Open Docs` command and `.docs` content kind, with fail-soft legacy decode.
+- A directory-menu entry that opens any installed supported agent at that folder.
+- A file-menu entry that delivers a path to a live agent already running in the workspace,
+  once that agent is publicly discoverable.
+- A Tenon terminal pane accepting a dragged row's file URL the way Finder already does.
 
 ### Non-goals
 
@@ -176,12 +192,24 @@ unexpectedly, or re-rooting tools on every `cd`.
 - Public intents for same-owner SwiftUI file/editor mutations.
 - Converting Git's form into rows solely for visual uniformity (T-086 is closed).
 - Retaining a separate hard-coded Docs pane when the file explorer and file renderers own that job.
+- Reimplementing agent discovery, command composition, or lifecycle inside Files; it consumes
+  `agent.inventory.v1`, `agent.command.v1`, and (once shipped) `agent.list.v1`/`agent.get.v1`
+  exactly as PRD-017 defines them, and never assembles a command line or shell quoting itself
+  (invariant 9; `AC-FR-036`).
+- Submitting a prompt on the agent's behalf; `FC-FR-038` inserts text into an existing PTY the
+  same way `cd Here` already does, it does not press Enter for the operator.
+- A generic "send this file to any pane" command; the file menu only ever targets a pane a
+  public contract can show is actually running a supported agent.
+- A drop target on non-terminal panes (editor, diff, plugin views); `FC-FR-040` is
+  terminal-pane only.
 
 ### Later possibilities
 
 - Bulk binary transfer under a separately designed resource contract.
 - Linear-space diff after measurement.
 - Editor-buffer recovery across app relaunch.
+- Once PRD-017 ships `agent.prompt.v1`, an explicit "Send and Run" variant of `FC-FR-038` that
+  atomically submits and waits rather than only inserting text.
 
 ## 6. User experience
 
@@ -229,12 +257,38 @@ resolved path, and opt-in nullable metadata. Single-page writes atomically repla
 multi-page write owns a bounded staging file/registry until commit, expiry, or failure and
 publishes only by atomic rename.
 
+### Agent entry points and native drag delivery
+
+A directory row's menu gains one item per supported agent this machine actually has installed
+(read from `agent.inventory.v1`, the same list the Launcher already offers, so an agent neither
+installed nor habitually run never appears). Selecting one composes that agent's command line
+through `agent.command.v1` — no prompt, no session, options as this person habitually passes
+them — then opens it with `terminal.open.v1`, `workingDirectory` set to the folder and
+`command` set to the composed line; a fresh pane starts there rather than borrowing whatever
+pane the operator was last looking at.
+
+A file row's menu gains a "Send to Agent" group only when the workspace has at least one live
+agent pane a public contract can name; each entry identifies its pane by alias or provider plus
+location. Choosing one delivers the row's absolute, shell-quoted path into that exact pane the
+same way `cd Here` already delivers a path — inserted as text, not submitted, so the operator
+keeps the choice of what runs.
+
+Every row still carries its existing file-URL drag payload. Dropping it on Finder, another
+macOS application, or Tenon's own sidebar already works today, unchanged. Dropping it on a
+Tenon terminal pane inserts that same shell-quoted path into the pane's PTY as text, without
+moving focus into that pane or submitting anything on the operator's behalf.
+
 ### Accessibility and input parity
 
 - Rows expose native selection, disclosure, menu, editing, file-URL drag, and readable text.
 - Enter/blur commits once; Escape cancels. Every drag result also has a menu/click path.
 - Diff text is selectable and added/removed meaning uses signs/text as well as color.
 - Menu-less row space does not swallow pane-level context menus.
+- Dropping a row on a Tenon terminal is pointer-only, but it changes nothing a keyboard route
+  cannot already reach: the same row's context menu already offers "Copy Path", and pasting
+  that into a focused terminal reaches the identical text.
+- "Open in Agent" and "Send to Agent" are ordinary context-menu items, reachable the same way
+  every other row menu item already is — keyboard menu invocation, VoiceOver rotor, and click.
 
 ## 7. Requirements
 
@@ -276,6 +330,10 @@ publishes only by atomic rename.
 - `FC-FR-034` — Staged write MUST bind provider/target/token/offset and end only by atomic commit, expiry, failure, or invalidation.
 - `FC-FR-035` — Manual root pin MUST be fully restored/persisted if retained, or explicitly retired with T-030 corrected.
 - `FC-FR-036` — The host MUST remove `Open Docs`, `.docs` slot/default content, and its dedicated renderer; a saved docs slot MUST restore empty, unknown docs preferences MUST preserve the rest of the document, and docs recents MUST be dropped.
+- `FC-FR-037` — A directory's context menu MUST offer one "Open in `<agent>`" item per agent `agent.inventory.v1` reports installed, MUST compose that agent's command line only through `agent.command.v1`, and MUST start it with `terminal.open.v1` set to that folder's absolute path and the composed command; zero installed agents MUST omit the group rather than show a disabled or empty entry.
+- `FC-FR-038` — A file's context menu MUST offer one "Send to `<agent>`" item per live agent pane a public contract can name in the current workspace, and MUST deliver the file's absolute, shell-quoted path into that exact pane through `terminal.write.v1` without submitting it; the group MUST be absent, not disabled, when no live agent pane is discoverable.
+- `FC-FR-039` — A row declaring a `path` MUST remain draggable as a plain file-URL `NSItemProvider`, landing unchanged in Finder, other macOS applications, and Tenon's own sidebar folder-open target.
+- `FC-FR-040` — A Tenon terminal pane's native surface MUST accept a dropped row's file-URL drag and insert its absolute, shell-quoted path into that pane's PTY as text, without changing focus or submitting the line.
 
 ### Non-functional requirements
 
@@ -291,6 +349,7 @@ publishes only by atomic rename.
 - `FC-NFR-010` — Pointer-only row/edit/menu/drag outcomes MUST have keyboard/accessibility alternatives; status MUST not rely on color.
 - `FC-NFR-011` — Watches, records, tasks, instances, and staged resources MUST end or remain bounded with their owner lifecycle.
 - `FC-NFR-012` — Files/Changes MAY share row semantics; Git form MUST remain excluded unless its interactions actually become row-like.
+- `FC-NFR-013` — Every path text this PRD delivers into a PTY — composed agent launch, sent file path, or dropped row — MUST be quoted through the same posix-quoting path `agent.command.v1` already uses (`AutomationAuthoring.posixQuoted`), never hand-assembled per call site, and MUST refuse a path containing a control character before any byte reaches the PTY.
 
 ## 8. Acceptance specification
 
@@ -314,6 +373,9 @@ state migration.
 | read/list paging | RESOURCE/STREAM body | multi-result pull body |
 | staged write | RESOURCE | host state outlives initial reply |
 | `tenon.path.*` | DIRECT JavaScript | pure local calculation |
+| `agent.inventory.v1`, `agent.command.v1` (Files' consumption of them) | INTENT (shipped, PRD-017) | bounded cross-owner reply; Files is a plugin and MUST NOT assemble a command line itself (invariant 9) |
+| `agent.list.v1`/`agent.get.v1` (Files' consumption of them) | INTENT (planned, PRD-017) | same reason; `FC-FR-038` has no visible menu group until PRD-017 ships these |
+| Terminal pane accepts a dropped row | native UI → `SurfacePool.sendTextWhenReady` | DIRECT | same owner as `terminal.write.v1`'s own host-side delivery; no new public inventory entry, mirrors `WorkspaceFolderDropAdapter`'s existing sidebar drop target |
 
 Core audiences remain `{plugin, cli, agent}` or `{plugin}`. Palette/user projection is
 plugin-owned metadata, not a generic app principal.
@@ -332,7 +394,8 @@ placeholders/scrollbars, and non-color status. No second file/diff toolbar.
 | repository reads | `repository-read` |
 | placement/cwd/root | `workspace-model` |
 | filesystem contracts | `intent-bus` |
-| Files/Git implementation | plugin-local JavaScript |
+| Files/Git implementation | `dev.tenon.file-explorer`/`dev.tenon.git`, `bundled-swift` runtime since T-167; no longer plugin-local JavaScript |
+| terminal drop target (`FC-FR-040`) | `terminal-surface`, same domain `TerminalIntentProvider.swift`/`GhosttySurface.swift` already carry |
 
 ### Data, lifecycle, security
 
@@ -364,13 +427,29 @@ placeholders/scrollbars, and non-color status. No second file/diff toolbar.
 | cwd/root FC-FR-024…026,035 | automatic/restore shipped; pin unresolved | root/pool/relaunch + decision/live check |
 | Changes/Git/diff FC-FR-027…031 | shipped; live look owed | parse/row/diff tests + observation |
 | filesystem FC-FR-032…034, NFR-005…009 | behavior shipped; write major invalid | provider/policy/catalog + v2 migration |
+| drag-out to Finder/other apps/sidebar FC-FR-039 | shipped | `RowDragModifier` + operator-confirmed live behavior, 2026-08-18; no new automated test added this session — still resting on code inspection and the operator's live observation, not a headless assertion |
+| Open in Agent FC-FR-037 | shipped, T-181 2026-08-18 | `FileExplorerPlugin.swift` menu/composition/open tests |
+| Send to Agent FC-FR-038 | planned; blocked on PRD-017 `agent.list.v1`/`agent.get.v1` shipping | menu/provider tests once unblocked |
+| terminal drop target FC-FR-040 | shipped, T-181 2026-08-18; wiring/quoting proven headlessly, the AppKit `registerForDraggedTypes` registration itself still needs a live human drag | `TerminalFileDropTests` + `GhosttyNSView` dragging-destination methods |
+| PTY quoting NFR-013 | shipped for FC-FR-040 (`SurfacePool.handleFileDrop` via `AutomationAuthoring.posixQuoted`); FC-FR-037 inherits it for free through the already-shipped `agent.command.v1` quoting, no new quoting code needed there | `TerminalFileDropTests` |
 
 Phases: canonical capture; write-contract repair; manual-pin decision; installed-app
 evidence. Write v2 must update inventory, source, manifests/callers, architecture tests/docs,
 and delete v1 in one reviewed change. A pin must extend the one catalog store without
-materializing surfaces.
+materializing surfaces. Agent entry points ship in two slices: `FC-FR-037`/`039`/`040` need
+nothing outside this PRD; `FC-FR-038` waits on PRD-017's `agent.list.v1`/`agent.get.v1`.
 
 ## 11. Dependencies, risks, and mitigations
+
+### Dependencies
+
+| Dependency | Owner | Needed by | Failure/fallback |
+|---|---|---|---|
+| `agent.list.v1`/`agent.get.v1` (`planned`, not yet in source) | PRD-017 agent-control | `FC-FR-038` | until shipped, the "Send to Agent" group stays absent everywhere; Files ships `FC-FR-037`/`039`/`040` without it |
+| `agent.inventory.v1`, `agent.command.v1` (`shipped`) | PRD-017 agent-control | `FC-FR-037` | already available; no fallback needed |
+| `terminal.open.v1` `workingDirectory`/`command` (`shipped`) | PRD-009 terminal | `FC-FR-037` | already available; no fallback needed |
+
+### Risks
 
 | Risk | Mitigation |
 |---|---|
@@ -381,15 +460,30 @@ materializing surfaces.
 | large diff stalls | off-main bounds, lazy rows, explicit refusal |
 | symlink appears after authorization | pinned descriptor/no-follow race tests |
 | row vocabulary becomes generic form framework | retain T-086 exclusion |
+| a "Send to Agent" target exits or is replaced between menu build and click | `agent.list.v1`/`agent.get.v1` bind pane, surface incarnation, and provider identity (`AC-FR-005/006`); a stale reference MUST fail typed, never retarget by pane position |
+| a composed or dropped path carries shell metacharacters that escape its quoting | reuse `AutomationAuthoring.posixQuoted` exactly as `agent.command.v1` already does (`FC-NFR-013`); no second quoting implementation |
+| Files quietly grows its own agent-launch logic instead of calling PRD-017's contracts | non-goal stated explicitly; fitness/source-inventory review before merge, mirroring `AC-FR-036` |
+| a long composed agent command line silently loses its trailing Enter — T-159 (`.kanban/tasks/T-159-a-command-longer-than-the-pty-queue-silently-loses-its-enter.md`) measured this at ~1.6 KB against macOS's 1024-byte `MAX_INPUT`, using an `agent.command.v1` claude launch as one of its two live repro cases; `FC-FR-037` composes and delivers exactly that kind of line through `terminal.open.v1` | not mitigated here — T-159 is unclaimed, host-side (`GhosttySurface.createSurface()`), and out of `FC-FR-037`'s scope; a habitual argument set long enough to cross that bound reproduces silently until T-159 ships |
 
 ## 12. Open questions and decisions
 
 - `FC-OQ-001` — Restore manual project-root pin or formally retire it?
 - `FC-OQ-002` — Retain staged write as v2 or replace it with another resource contract?
 - `FC-OQ-003` — Do current diff bounds reject a real expected workflow?
+- `FC-OQ-004` — Should "Open in Agent" order/filter its items by this person's launch habit
+  (`AgentLaunchSuggestion.habitDescription`), or list every installed agent identically?
+- `FC-OQ-005` — Should "Send to Agent" and the terminal drop target insert text only (current
+  assumption `FC-A-006`), or submit immediately once `agent.prompt.v1` exists to make that
+  atomic and occupant-safe?
+- `FC-OQ-006` — Does `FC-FR-040`'s drop target ever need to extend past terminal panes, or does
+  every other pane kind remain out of scope permanently?
 
 | Date | Decision | Supersedes |
 |---|---|---|
+| 2026-08-18 | Files' context-menu agent entry points and the terminal drop target are scoped into PRD-008, not a new PRD, because the trigger surface — Files' own menus and drag rows — already belongs to this PRD's stated scope | none; new requirements added to an existing boundary |
+| 2026-08-18 | "Open in Agent" and "Send to Agent" reach agent composition only through `agent.inventory.v1`/`agent.command.v1`/`agent.list.v1`/`agent.get.v1`; Files never assembles a command line itself | `AC-FR-036`, invariant 9 |
+| 2026-08-18 | "Send to Agent" ships only once `agent.list.v1`/`agent.get.v1` are public; no interim private-signal substitute is built | verified zero live-agent discovery intent exists in current source |
+| 2026-08-18 | Installed-agent lookup for `FC-FR-037` is cached on `Pane` at `open`/explicit `refresh`, not re-fetched inside `render`, after a peer session (debugging a live "Plugin view unavailable" regression) flagged that `render` already fires on every `workspace.changed`/`pane.cwd-changed`/`workspace.slot-focused` churn event across every open pane, and suspected exactly that loop of overflowing `BundledPluginRuntime`'s 256-slot mailbox | cross-session coordination, T-181; the peer's own hypothesis is unverified, so this is a precaution against contributing to it, not a claim their bug is fixed |
 | 2026-08-09 | ordinary open never creates a tab | T-010 historical wording |
 | 2026-08-09 | live source, not task checkboxes, determines shipped status | T-030/T-083 overclaims |
 | 2026-08-09 | restored cwd seeds only a fresh shell | T-030 old handoff |
@@ -411,6 +505,7 @@ materializing surfaces.
 | filesystem | catalog/policy/provider/pager/staging/race tests | write-major repair |
 | manual pin | no current symbol/field/UI/test found | whole requirement or retirement |
 | Docs retirement | 2026-08-09, T-103: `rg '\.docs\b'` over `Sources/`, `Tests/` and `plugins/` returns nothing; suite 1696 / 0; the fail-soft preference decode is mutation-proved (reverting one key to a strict `decodeIfPresent` turns `AppPreferencesTests` red, restore `cmp`-verified) | the empty-state launcher lost a button and was not photographed; no offscreen renderer exists for that card |
+| Open in Agent / terminal drop | 2026-08-18, T-181: `FileExplorerPluginTests` (6/0, three new: menu ordering with two installed agents, successful compose-then-open with exact `workingDirectory`/`command` assertions, and a failed `agent.command.v1` never reaching `terminal.open.v1`) and `TerminalFileDropTests` (2/0, new: a space-and-single-quote path arrives literally quoted, multiple dropped files arrive space-separated) both red before their implementation, green after; full suite **2366 / 0**, `ShippedPluginsTests` confirms `plugins/file-explorer/manifest.json`'s three new `uses` entries match Swift-source intent calls | `GhosttyNSView.draggingEntered`/`performDragOperation`'s real AppKit registration is not exercised by any test — constructing a real `GhosttyNSView` in the shared suite risks the T-135 crash, so this repeats that gap's existing shape rather than adding a new kind of one; needs a live human drag on an installed build |
 
 ## 14. Change history
 
@@ -420,4 +515,6 @@ materializing surfaces.
 | 2026-08-09 | Codex | Added the user-directed Docs-pane removal and fail-soft legacy-state contract. |
 | 2026-08-14 | Claude | Restated `FC-FR-014`'s creation branch as the shared placement policy after an operator hit a half-width pane being quartered while half the canvas stood empty. |
 | 2026-08-16 | Claude | Corrected the Files-plugin source link: T-167 ported `file-explorer` to the compiled bundled runtime, deleting `plugins/file-explorer/main.js`; the row now points at `FileExplorerPlugin.swift`. |
+| 2026-08-18 | Claude | Added `FC-FR-037…040`/`FC-NFR-013` for a Files-menu agent launch/send and a Tenon-terminal drop target, from an operator feature request; documented that `FC-FR-038` is blocked on PRD-017's unshipped `agent.list.v1`/`agent.get.v1`, and pinned already-shipped row drag-out (`FC-FR-039`) with a requirement it previously lacked. |
+| 2026-08-18 | Claude | Shipped `FC-FR-037`/`039`/`040`/`NFR-013` (T-181): Files' directory menu now offers "Open in `<agent>`" per installed agent, composed through `agent.command.v1` and opened through `terminal.open.v1`; a Tenon terminal pane accepts a dropped row's file URL and inserts its posix-quoted path. `FC-FR-038` remains explicitly unshipped, blocked on PRD-017. Full suite **2366 / 0**. |
 

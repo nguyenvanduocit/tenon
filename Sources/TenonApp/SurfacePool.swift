@@ -142,6 +142,9 @@ final class SurfacePool {
             else { return }
             self.onSlotFocusGained?(slotID)
         }
+        surface.onFileDrop = { [weak self] urls in
+            self?.handleFileDrop(urls, to: slotID)
+        }
         if let ghostty = surface as? GhosttySurface {
             ghostty.onProcessExit = { [weak self] in self?.onShellExited?(slotID) }
             ghostty.onNewTab = { [weak self] in self?.onNewTab?() }
@@ -300,6 +303,18 @@ final class SurfacePool {
         }
     }
 
+    /// FC-FR-040: a row dropped on this pane's real surface arrives here already resolved to
+    /// file URLs. Quoted the same way `agent.command.v1` quotes a composed command line
+    /// (`FC-NFR-013`) and delivered as text, never as a submitted line — the operator still
+    /// decides what runs.
+    private func handleFileDrop(_ urls: [URL], to slotID: UUID) {
+        guard !urls.isEmpty else { return }
+        let text = urls
+            .map { AutomationAuthoring.posixQuoted($0.path) }
+            .joined(separator: " ")
+        sendText(text, to: slotID)
+    }
+
     /// The visible screen text of a slot's surface, used by
     /// `terminal.viewport.read.v1`. Empty without a live PTY surface.
     func renderedText(for slotID: UUID) -> String {
@@ -354,6 +369,25 @@ final class SurfacePool {
     /// How many shell commands have finished in a slot, for `pane.wait --for command-finished`.
     func commandFinishedCount(for slotID: UUID) -> Int {
         surfaces[slotID]?.commandFinishedCount ?? 0
+    }
+
+    /// An agent running in this slot reported a turn boundary (`AgentHookLensBus`, on the
+    /// hook stream's `Stop` event) — the REPL-session counterpart of a real OSC 133 finish, for
+    /// a pane whose foreground process never exits between turns. A pane with no materialised
+    /// surface has nothing to tell yet and is left alone; the roster (`AgentPaneRoster`) is what
+    /// remembers a hook that arrived before its pane did.
+    func noteAgentTurnFinished(for slotID: UUID) {
+        surfaces[slotID]?.noteAgentTurnFinished()
+    }
+
+    /// Which incarnation of a pane is mounted right now, for readers that need to tell a
+    /// rebuilt pane from the one whose slot id it inherited.
+    ///
+    /// Deliberately cheaper than `agentTerminalIdentity` below and answering less: no
+    /// foreground-pid read, so a caller in a view body is not paying an FFI call per pane per
+    /// render. A pane with no surface has no incarnation and reports `nil`.
+    func surfaceToken(for slotID: UUID) -> UUID? {
+        surfaceTokens[slotID]
     }
 
     /// A coherent identity for the host-owned Agent Lens. Returning nil for a shell,

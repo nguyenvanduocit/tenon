@@ -28,7 +28,10 @@
       "workspace.pane.owner.v1",
       "workspace.content.open.v1",
       "workspace.pane.split.v1",
-      "workspace.pane.content.set.v1"
+      "workspace.pane.content.set.v1",
+      "agent.inventory.v1",
+      "agent.command.v1",
+      "terminal.open.v1"
     ],
     "provides": [
       {

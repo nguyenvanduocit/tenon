@@ -546,3 +546,84 @@ Feature: Work with project files and changes without losing workspace context
       When renderers are selected
       Then Files and Changes share TreeRowsView
       And Git remains outside it
+
+  Rule: A directory's context menu opens a supported agent at that root
+
+    @req-fc-fr-037 @agent-open
+    Scenario: Selecting an installed agent starts it at the chosen folder
+      Given a directory row is open in its context menu
+      And Claude, Codex, and opencode are all installed
+      When the operator chooses "Open in Claude"
+      Then Tenon composes Claude's command line through agent.command.v1
+      And a new terminal pane opens with that folder as its working directory
+      And the composed command runs there
+
+    @req-fc-fr-037 @agent-open @no-op
+    Scenario: No installed agent leaves the group absent, not empty
+      Given no supported agent is installed on this machine
+      When the operator opens a directory's context menu
+      Then no "Open in Agent" group appears
+      And every other directory menu item is unchanged
+
+    @req-fc-fr-037 @req-fc-nfr-013 @agent-open @failure
+    Scenario: An agent that fails to compose refuses before any pane opens
+      Given the requested agent is no longer installed at menu-build time
+      When the operator selects it anyway
+      Then agent.command.v1 fails typed with agent-unavailable
+      And no terminal pane is created
+
+  Rule: A file can be sent to a live agent already working in the canvas
+
+    @req-fc-fr-038 @agent-send
+    Scenario: Sending a file inserts its path into the chosen live agent's pane
+      Given a live Claude session is running in a pane this workspace can name
+      And a file row is open in its context menu
+      When the operator chooses "Send to Claude"
+      Then the file's absolute, shell-quoted path is inserted into that pane's PTY
+      And nothing is submitted on the operator's behalf
+      And focus does not move to that pane
+
+    @req-fc-fr-038 @agent-send @no-op
+    Scenario: No live agent in the workspace leaves the group absent
+      Given no pane in the current workspace is running a publicly discoverable agent
+      When the operator opens a file's context menu
+      Then no "Send to Agent" group appears
+      And every other file menu item is unchanged
+
+    @req-fc-fr-038 @agent-send @failure
+    Scenario: A target that exited before the click fails visibly
+      Given the "Send to Agent" list was built while an agent pane was live
+      And that pane's agent exits before the operator's click resolves
+      When the operator selects that now-stale target
+      Then the send fails with an explicit identity-changed reason
+      And no text reaches any pane's PTY
+
+  Rule: Dragging a row out behaves like dragging a Finder file everywhere Tenon owns
+
+    @req-fc-fr-039 @drag-out
+    Scenario Outline: A row's drag payload lands at every native destination
+      Given a file or directory row declares a path
+      When the operator drags it onto <destination>
+      Then <destination> receives the same file URL Finder would offer
+
+      Examples:
+        | destination |
+        | Finder |
+        | another macOS application |
+        | Tenon's own workspace sidebar |
+
+    @req-fc-fr-040 @drag-out @terminal-drop
+    Scenario: Dropping a row on a Tenon terminal inserts its path as text
+      Given a Tenon pane is showing a live terminal
+      And a file or directory row declares a path
+      When the operator drags that row and drops it on the terminal pane
+      Then the row's absolute, shell-quoted path is inserted into that pane's PTY
+      And the line is not submitted
+      And focus does not move to that pane
+
+    @req-fc-fr-040 @req-fc-nfr-013 @drag-out @edge
+    Scenario: A path with shell-significant characters still arrives literally
+      Given a file row's path contains a space and a single quote
+      When the operator drops that row on a Tenon terminal pane
+      Then the inserted text is quoted so the shell reads it as one literal path
+      And no fragment of the path is interpreted as shell syntax

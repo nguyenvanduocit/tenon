@@ -558,6 +558,8 @@ final class GhosttyNSView: NSView {
     var onNewSplit: ((SplitAxis) -> Void)?
     var onGotoSplit: (() -> Void)?
     var onFocusGained: (() -> Void)?
+    /// FC-FR-040: a row's file-URL drag was dropped on this real surface.
+    var onFileDrop: (([URL]) -> Void)?
 
     private let resources = GhosttyNSViewResources()
     private(set) var surface: ghostty_surface_t? {
@@ -600,6 +602,7 @@ final class GhosttyNSView: NSView {
         super.init(frame: .zero)
         callbackToken = GhosttyRuntime.register(self)
         wantsLayer = true
+        registerForDraggedTypes([.fileURL])
     }
 
     @available(*, unavailable)
@@ -616,6 +619,35 @@ final class GhosttyNSView: NSView {
                 GhosttyRuntime.unregister(callbackToken)
             }
         }
+    }
+
+    // MARK: File drop  @domain: terminal-surface
+
+    /// FC-FR-040: the same `public.file-url` transport `RowDragModifier` already offers —
+    /// Finder, another app, and Tenon's own sidebar already accept it; this is the one
+    /// destination inside Tenon that did not. Delivery and quoting live in `SurfacePool`,
+    /// which owns the pane identity this view does not.
+    override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(in: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func draggingUpdated(_ sender: any NSDraggingInfo) -> NSDragOperation {
+        Self.fileURLs(in: sender.draggingPasteboard).isEmpty ? [] : .copy
+    }
+
+    override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let urls = Self.fileURLs(in: sender.draggingPasteboard)
+        guard !urls.isEmpty else { return false }
+        onFileDrop?(urls)
+        return true
+    }
+
+    private static func fileURLs(in pasteboard: NSPasteboard) -> [URL] {
+        let objects = pasteboard.readObjects(
+            forClasses: [NSURL.self],
+            options: [.urlReadingFileURLsOnly: true]
+        )
+        return (objects as? [NSURL])?.map { $0 as URL } ?? []
     }
 
     // MARK: Surface lifecycle  @domain: terminal-surface
@@ -1319,6 +1351,7 @@ final class GhosttySurface: TerminalSurface {
     var onNewSplit: ((SplitAxis) -> Void)?
     var onGotoSplit: (() -> Void)?
     var onFocusGained: (() -> Void)?
+    var onFileDrop: (([URL]) -> Void)?
 
     private let view: GhosttyNSView
 
@@ -1342,6 +1375,7 @@ final class GhosttySurface: TerminalSurface {
         view.onNewSplit = { [weak self] orientation in self?.onNewSplit?(orientation) }
         view.onGotoSplit = { [weak self] in self?.onGotoSplit?() }
         view.onFocusGained = { [weak self] in self?.onFocusGained?() }
+        view.onFileDrop = { [weak self] urls in self?.onFileDrop?(urls) }
     }
 
     var renderedCells: [GhosttyRenderedCell] { view.renderedCells }
@@ -1349,6 +1383,11 @@ final class GhosttySurface: TerminalSurface {
     var screenFingerprint: Int { view.screenFingerprint }
     var scrollbackLines: [String] { view.scrollbackLines }
     var commandFinishedCount: Int { view.commandFinishedCount }
+
+    /// Shares the view's own counter with real OSC 133 finishes — see the protocol doc.
+    func noteAgentTurnFinished() {
+        view.commandFinishedCount += 1
+    }
     var surfaceSize: GhosttySurfaceSize? { view.surfaceSize }
     var foregroundPID: UInt64? { view.foregroundPID }
     var ttyName: String? { view.ttyName }
