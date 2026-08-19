@@ -153,17 +153,49 @@ private enum WorkspaceCustomIconCache {
 /// The row draws a mark and, when selected, a tint. Neither is speakable on its own, so the
 /// announcement carries the name and the mark's own word — and keeps the tab and unseen
 /// counts the row was already reading, which an explicit label would otherwise replace.
+///
+/// Where the row and this label deliberately part company (T-178): the visible line has room
+/// for one agent pane and a count of the rest, while the rest are a hover away in
+/// `WorkspaceAgentList` — and a pointer hover is not a route a screen reader has. So a row
+/// naming agents speaks **all** of them, once, in the order the list holds them, and the
+/// information the popover carries is never gated behind reaching for it.
 enum WorkspaceRowAnnouncement {
-    static func text(for workspace: Workspace, unseenCount: Int) -> String {
+    static func text(
+        for workspace: Workspace,
+        unseenCount: Int,
+        agentEntries: [WorkspaceAgentTagline.Entry] = []
+    ) -> String {
         var parts = [
             workspace.name,
             workspace.appearance.iconLabel,
             "\(workspace.tabs.count) \(workspace.tabs.count == 1 ? "tab" : "tabs")",
         ]
+        if !agentEntries.isEmpty {
+            parts.append(
+                "\(agentEntries.count) \(agentEntries.count == 1 ? "agent" : "agents")"
+            )
+            parts.append(contentsOf: agentEntries.map {
+                "\($0.title), \(spoken($0.state))"
+            })
+        }
         if unseenCount > 0 {
             parts.append("\(unseenCount) unseen")
         }
         return parts.joined(separator: ", ")
+    }
+
+    /// The one attention vocabulary, said out loud. `docs/domains.md` puts the spoken value
+    /// of a state here rather than in `attention`, beside the glyph that means the same thing.
+    /// The row's own toggled-open agent list speaks each of its rows with it too, so a pane
+    /// sounds the same wherever it is heard.
+    static func spoken(_ state: PaneActivityState) -> String {
+        switch state {
+        case .working: return "working"
+        case .idle: return "idle"
+        case .finishedUnseen: return "finished, unseen"
+        case .seen: return "finished"
+        case .exited: return "exited"
+        }
     }
 }
 

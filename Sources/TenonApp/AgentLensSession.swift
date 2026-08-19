@@ -50,6 +50,7 @@ extension AgentProvider {
         switch self {
         case .claude: .hotkeyThenReturn
         case .codex: .hotkey
+        case .opencode: .hotkey
         }
     }
 }
@@ -901,8 +902,38 @@ final class AgentLensViewModel {
             return
         }
 
-        let tailer = AgentTranscriptTailer()
-        let stream = await tailer.events(fileURL: transcriptURL, provider: next.provider)
+        let stream: AsyncThrowingStream<AgentLensEvent, any Error>
+        if next.provider == .opencode {
+            // opencode keeps every session's parts in one shared database, so the session id —
+            // reported by the hook for a live session, or carried by the reference for a
+            // recorded one — is what selects the transcript to read.
+            guard let sessionID = next.sessionID else {
+                seed.append(
+                    .diagnostic(
+                        AgentLensDiagnostic(
+                            id: "opencode-session-id-missing",
+                            severity: .warning,
+                            message: next.detail,
+                            evidence: connectionEvidence
+                        )
+                    )
+                )
+                for event in seed { await coordinator.apply(event, publish: publisher) }
+                return
+            }
+            let reader = AgentOpenCodePartsReader()
+            stream = await reader.events(
+                dbURL: transcriptURL,
+                sessionID: sessionID,
+                // A live attachment may arrive minutes into a session, so its initial read is
+                // bounded like the JSONL tailer's byte window; a recorded pane reads the whole
+                // session.
+                initialPartLimit: attachment.recordedSession == nil ? 2_000 : nil
+            )
+        } else {
+            let tailer = AgentTranscriptTailer()
+            stream = await tailer.events(fileURL: transcriptURL, provider: next.provider)
+        }
         streamTask = Task { [weak self] in
             guard let self else { return }
             await coordinator.consume(stream, seed: seed, publish: self.publisher)
@@ -915,16 +946,45 @@ final class AgentLensViewModel {
 /// The hook server is host-private and knows only a pane id; the lens pool knows which
 /// model owns that pane. Keeping the seam here means the composition root wires one line
 /// and neither side learns the other's internals.
+///
+/// Three sinks, because they want different halves of the same stream and neither can be
+/// derived from another. The pool wants what the agent *said*, and only for a pane whose
+/// model is mounted. The roster wants only that an agent is *there*, for every pane —
+/// including the ones in workspaces nobody is looking at, which is exactly the set the pool
+/// has no model for. The surfaces want only a turn boundary (`Stop`, root session): OSC 133
+/// never fires between an interactive agent's turns, so without this the sidebar's attention
+/// state for that pane can only ever read `working` or `idle` — never a real finish.
 @MainActor
 enum AgentHookLensBus {
     private(set) static weak var pool: AgentLensPool?
+    private(set) static weak var roster: AgentPaneRoster?
+    private(set) static weak var surfaces: SurfacePool?
 
     static func attach(_ pool: AgentLensPool) {
         self.pool = pool
     }
 
+    static func attach(_ roster: AgentPaneRoster) {
+        self.roster = roster
+    }
+
+    static func attach(_ surfaces: SurfacePool) {
+        self.surfaces = surfaces
+    }
+
+    /// Whether this event reports the root session's own turn finishing. A subagent's `Stop`
+    /// is its own nested tool call finishing, not the pane's turn — the same guard
+    /// `AgentPaneRoster.ingest` applies to the same stream.
+    static func isRootTurnBoundary(_ event: AgentHookEvent) -> Bool {
+        event.hookEventName == "Stop" && event.agentID == nil
+    }
+
     static func deliver(_ event: AgentHookEvent) {
         pool?.ingest(event)
+        roster?.ingest(event)
+        if isRootTurnBoundary(event) {
+            surfaces?.noteAgentTurnFinished(for: event.paneID)
+        }
     }
 }
 

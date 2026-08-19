@@ -30,6 +30,64 @@ Feature: Resume work in a stable native workspace shell
       And a name too long for the zone is truncated at its tail with the whole name in its tooltip
       And expanding the sidebar returns the zone to the wordmark, because the workspace list names the active workspace
 
+    @req-ws-fr-036 @sidebar
+    Scenario: A sidebar row names where its workspace lives instead of counting tabs
+      Given a workspace holds three panes and an agent is running in two of them
+      When the operator glances at its sidebar row
+      Then the line under the workspace name reads the workspace's own path
+      And a path too wide for the row is truncated at its head, keeping the deepest component
+      And the line ends with a count of the agent panes running in it
+      And nothing on that line moves, and no timed work is scheduled for it
+      And no per-pane state glyph is drawn on that line
+
+    @req-ws-fr-036 @sidebar
+    Scenario: A disclosure toggle opens the full account of a row's agents
+      Given a workspace whose sidebar row is naming agent panes
+      When the operator clicks that row's disclosure toggle
+      Then the account grows in place under the line, naming every agent pane in catalog order with its title and its state
+      And clicking the toggle again closes it
+      And clicking the toggle never selects the workspace
+      And selecting a different workspace never opens or closes it
+      And the account stays exactly as the toggle left it while the operator selects other workspaces
+
+    @req-ws-fr-036 @sidebar
+    Scenario: Choosing an agent brings its pane forward
+      Given the open account is naming an agent pane in a workspace that is not selected
+      And that pane sits in a tab that is not the active one
+      When the operator clicks that pane's line
+      Then its workspace becomes the selected one
+      And its tab becomes the active one
+      And that pane takes the keyboard
+
+    @req-ws-fr-036 @sidebar
+    Scenario: A row without agents keeps the count it always had
+      Given a workspace holds two panes and no agent is running in either
+      When the operator reads its sidebar row
+      Then the line under the workspace name reads "2 tabs"
+      And the row offers no disclosure toggle
+      And nothing on that row moves
+
+    @req-ws-fr-036 @sidebar @accessibility
+    Scenario: Every agent is reachable without opening the account
+      Given a workspace whose sidebar row is naming two agent panes
+      When VoiceOver reads that row
+      Then it speaks the workspace name, its mark, and its tab count as it always did
+      And it then speaks both agent panes with their states, in the order the list holds them
+
+    @req-ws-fr-036 @sidebar
+    Scenario: The rail's context menu is its only route to a row's panes
+      Given the sidebar is collapsed to the rail
+      And a workspace's row is naming two agent panes
+      When the operator opens that row's context menu
+      Then it offers both panes, so choosing one needs neither the expanded width nor the toggle
+
+    @req-ws-fr-036 @sidebar
+    Scenario: An expanded row's context menu does not repeat its own inline list
+      Given the sidebar is expanded
+      And a workspace's row is naming two agent panes
+      When the operator opens that row's context menu
+      Then it offers no agent panes, since the still line and its account already name them
+
     @req-ws-fr-003 @req-ws-nfr-009 @catalog
     Scenario: A valid catalog keeps every identity and selection internally consistent
       Given a catalog contains one or more workspaces
@@ -582,3 +640,48 @@ Feature: Resume work in a stable native workspace shell
       When a workspace-changed fact reports tab and pane counts
       Then its status text may show those structural counts
       And the fact contains no terminal text, file contents, secrets, or pane body
+
+    @req-ws-fr-035 @chrome-order
+    Scenario: The tab strip and the status strip trade places and nothing else moves
+      Given the shell is drawing tabs in the title bar
+      When the operator chooses to put the tab strip at the bottom
+      Then the tab strip is drawn in the foot row below the stage
+      And the plugin status items are drawn in the title bar's content zone
+      And the traffic lights, identity zone, resource monitor, and quick commands stay in the title bar
+      And no workspace, tab, pane, selection, or live terminal surface is disturbed
+
+    @req-ws-fr-035 @chrome-order @pointer
+    Scenario Outline: The strip behaves the same wherever it is drawn
+      Given the tab strip is drawn at the <edge> of the window
+      When the operator presses a chip without travelling
+      Then that chip's tab becomes active
+      When the operator drags a chip past one neighbour's midpoint
+      Then those two tabs swap while the button is still down
+      And a release aimed away from the strip returns the tab to the index it started at
+
+      Examples:
+        | edge   |
+        | top    |
+        | bottom |
+
+    @req-ws-fr-035 @chrome-order @window-drag
+    Scenario: The band the chips left goes back to the window
+      Given the tab strip is drawn in the foot row
+      When the window's drag region is read back
+      Then the empty title bar is inside it and still moves the window
+      And the foot row's chips are outside it
+      And the foot row asks for no window drag of its own
+
+    @req-ws-fr-035 @chrome-order @launcher
+    Scenario: A launcher opens into the window rather than off the edge it sits on
+      Given the tab strip is drawn in the foot row
+      When the operator opens the launcher from the + or from a chip's right-click
+      Then the popover opens upward from its anchor
+      And its result list is sized for the room above that anchor on the screen it is on
+
+    @req-ws-nfr-012 @chrome-order @evidence
+    Scenario: Both orders can be photographed on a headless machine
+      Given no window server session is available
+      When the whole shell is rendered offscreen at each chrome order
+      Then each picture shows both chrome rows and which strip each one holds
+      And the window's bottom resize gutter is measured by a probe rather than assumed

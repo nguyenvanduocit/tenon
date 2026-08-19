@@ -93,12 +93,7 @@ actor AgentSessionRegistry {
     private var recency: [Key] = []
 
     init(
-        allowedTranscriptRoots: [URL] = [
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".codex/sessions", isDirectory: true),
-            FileManager.default.homeDirectoryForCurrentUser
-                .appendingPathComponent(".claude/projects", isDirectory: true),
-        ]
+        allowedTranscriptRoots: [URL] = AgentTranscriptPath.allowedRoots()
     ) {
         self.allowedTranscriptRoots = allowedTranscriptRoots.map {
             $0.resolvingSymlinksInPath().standardizedFileURL
@@ -190,7 +185,11 @@ actor AgentSessionRegistry {
         // A hook reports a path a provider chose, which is the same question the session list
         // and the descriptor walk ask, so it is answered by the same rule. Existence is not
         // required: Claude Code names the transcript it is about to write before writing it.
-        return AgentTranscriptPath.validated(transcriptPath, roots: allowedTranscriptRoots)
+        return AgentTranscriptPath.validated(
+            transcriptPath,
+            roots: allowedTranscriptRoots,
+            fileExtension: event.provider.transcriptFileExtension
+        )
     }
 }
 
@@ -589,13 +588,17 @@ enum AgentHookInstaller {
     /// Claude Code's transcript is written at turn boundaries, so the tool and question
     /// hooks are the only source that reports work while it is happening. Codex publishes
     /// the same facts over its native protocol and needs its hooks only for session
-    /// identity, so it keeps the smaller set rather than paying for events twice.
+    /// identity, so it keeps the smaller set rather than paying for events twice. opencode
+    /// has no hooks.json at all — its hooks are a JS plugin, installed by
+    /// `AgentOpenCodeHookInstaller` — so it contributes no events to this installer.
     private static func events(for provider: AgentProvider) -> [String] {
         switch provider {
         case .claude:
             ["SessionStart", "UserPromptSubmit", "PreToolUse", "PostToolUse", "Notification", "Stop"]
         case .codex:
             ["SessionStart", "UserPromptSubmit", "Stop"]
+        case .opencode:
+            []
         }
     }
 
@@ -775,4 +778,168 @@ enum AgentHookInstaller {
           >/dev/null 2>&1 || :
         exit 0
         """
+}
+
+/// Installs the opencode lifecycle hook, which is a JS plugin rather than a hooks.json entry:
+/// opencode auto-loads plugins from its plugins directory and has no hook-command
+/// configuration. The plugin reports the same session facts the shell hook reports for the
+/// other two providers, through the same loopback server and the same event vocabulary, so
+/// nothing downstream learns that opencode's transport is a different one.
+enum AgentOpenCodeHookInstaller {
+    static let pluginFileName = "tenon-agent-hook.js"
+    private static let marker = "tenon-agent-hook-v1"
+
+    static func install(
+        pluginURL: URL,
+        fileManager: FileManager = .default
+    ) -> AgentHookInstallResult {
+        do {
+            try fileManager.createDirectory(
+                at: pluginURL.deletingLastPathComponent(),
+                withIntermediateDirectories: true
+            )
+            let existing = (try? String(contentsOf: pluginURL, encoding: .utf8)) ?? ""
+            guard existing != Self.plugin else { return .alreadyInstalled }
+            try Data(Self.plugin.utf8).write(to: pluginURL, options: .atomic)
+            try fileManager.setAttributes(
+                [.posixPermissions: 0o600],
+                ofItemAtPath: pluginURL.path
+            )
+            return .installed
+        } catch {
+            return .unavailable(error.localizedDescription)
+        }
+    }
+
+    /// A no-op outside a Tenon pane: opencode loads this plugin in every session it starts, so
+    /// the first thing it does is check for the hook environment and return no hooks when it is
+    /// absent. The process group is read once, from the opencode process the plugin itself runs
+    /// inside, which is the same process group the pane's foreground carries.
+    static let plugin = """
+    // Installed by Tenon (\(marker)). Reports opencode session lifecycle to the Tenon hook
+    // server when this terminal carries Tenon's hook environment, and does nothing otherwise.
+    const hookPort = process.env.TENON_AGENT_HOOK_PORT
+    const hookToken = process.env.TENON_AGENT_HOOK_TOKEN
+    const paneID = process.env.TENON_PANE_ID
+    const surfaceToken = process.env.TENON_AGENT_SURFACE_TOKEN
+    const enabled = Boolean(hookPort && hookToken && paneID && surfaceToken)
+
+    const dbPath = `${process.env.HOME}/.local/share/opencode/opencode.db`
+
+    export const TenonAgentHook = {
+      id: "tenon-agent-hook",
+      server: async ({ directory, $ }) => {
+        if (!enabled) return {}
+
+        let processGroup = ""
+        try {
+          processGroup = (await $`/bin/ps -o pgid= -p ${process.pid}`.text()).trim()
+        } catch {}
+        if (!processGroup) processGroup = String(process.pid)
+
+        async function post(body) {
+          try {
+            await fetch(`http://127.0.0.1:${hookPort}/v1/agent-events`, {
+              method: "POST",
+              headers: {
+                "Authorization": `Bearer ${hookToken}`,
+                "Content-Type": "application/json",
+                "X-Tenon-Pane-ID": paneID,
+                "X-Tenon-Surface-Token": surfaceToken,
+                "X-Tenon-Process-Group": processGroup,
+                "X-Tenon-Agent-Provider": "opencode",
+              },
+              body: JSON.stringify(body),
+            })
+          } catch {}
+        }
+
+        function textOf(parts) {
+          return (parts ?? [])
+            .filter((p) => p.type === "text" && typeof p.text === "string")
+            .map((p) => p.text)
+            .join("\\n")
+        }
+
+        const seenSessions = new Set()
+        let currentSession = ""
+
+        return {
+          "chat.message": async (input, output) => {
+            currentSession = input.sessionID
+            const body = {
+              session_id: input.sessionID,
+              transcript_path: dbPath,
+              cwd: directory,
+            }
+            if (!seenSessions.has(input.sessionID)) {
+              seenSessions.add(input.sessionID)
+              await post({ ...body, hook_event_name: "SessionStart" })
+            }
+            await post({
+              ...body,
+              hook_event_name: "UserPromptSubmit",
+              message: textOf(output?.parts),
+            })
+          },
+
+          "tool.execute.before": async (input) => {
+            currentSession = input.sessionID
+            await post({
+              session_id: input.sessionID,
+              transcript_path: dbPath,
+              cwd: directory,
+              hook_event_name: "PreToolUse",
+              tool_name: input.tool,
+              tool_use_id: input.callID,
+            })
+          },
+
+          "tool.execute.after": async (input, output) => {
+            currentSession = input.sessionID
+            await post({
+              session_id: input.sessionID,
+              transcript_path: dbPath,
+              cwd: directory,
+              hook_event_name: "PostToolUse",
+              tool_name: input.tool,
+              tool_use_id: input.callID,
+              tool_input: input.args,
+              tool_response: output
+                ? { title: output.title, output: output.output }
+                : undefined,
+            })
+          },
+
+          "permission.ask": async (input, output) => {
+            const sessionID = input.sessionID ?? input.session_id ?? currentSession
+            if (!sessionID) return
+            await post({
+              session_id: sessionID,
+              transcript_path: dbPath,
+              cwd: directory,
+              hook_event_name: "Notification",
+              message: input.permission
+                ? `Permission requested: ${input.permission}`
+                : "Permission requested",
+              permission_mode: output?.status ?? "ask",
+            })
+          },
+
+          event: async ({ event }) => {
+            if (event?.type !== "session.idle") return
+            const sessionID = event?.properties?.sessionID
+            if (!sessionID) return
+            currentSession = sessionID
+            await post({
+              session_id: sessionID,
+              transcript_path: dbPath,
+              cwd: directory,
+              hook_event_name: "Stop",
+            })
+          },
+        }
+      },
+    }
+    """
 }

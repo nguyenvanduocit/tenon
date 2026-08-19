@@ -256,6 +256,63 @@ final class WorkspaceIdentityFormTests: XCTestCase {
         )
     }
 
+    /// T-178 (`WS-FR-036`): the visible line has room for one agent and a count of the rest,
+    /// and the rest are behind a pointer hover — which a screen reader does not have. So the
+    /// row speaks every pane it holds, in the order the hovered list shows them.
+    func testARowNamingAgentsSpeaksEveryOneOfThemInTheOrderTheListHoldsThem() throws {
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(path: projectPath))
+        store.renameWorkspace(store.catalog.activeWorkspaceID, to: "Payments")
+        store.setWorkspaceAppearance(
+            store.catalog.activeWorkspaceID,
+            to: WorkspaceAppearance(symbol: .bolt, accent: .green)
+        )
+        let workspace = try XCTUnwrap(store.catalog.activeWorkspace)
+        let entries = [
+            WorkspaceAgentTagline.Entry(
+                slotID: UUID(),
+                title: "Fixing the token refresh race",
+                state: .working
+            ),
+            WorkspaceAgentTagline.Entry(
+                slotID: UUID(),
+                title: "Auditing the intent catalog",
+                state: .finishedUnseen
+            ),
+        ]
+
+        XCTAssertEqual(
+            WorkspaceRowAnnouncement.text(
+                for: workspace,
+                unseenCount: 1,
+                agentEntries: entries
+            ),
+            """
+            Payments, Automation, 1 tab, 2 agents, \
+            Fixing the token refresh race, working, \
+            Auditing the intent catalog, finished, unseen, 1 unseen
+            """
+        )
+    }
+
+    func testARowWithNoAgentSpeaksExactlyWhatItSpokeBefore() throws {
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(path: projectPath))
+        store.renameWorkspace(store.catalog.activeWorkspaceID, to: "Payments")
+        store.setWorkspaceAppearance(
+            store.catalog.activeWorkspaceID,
+            to: WorkspaceAppearance(symbol: .bolt, accent: .green)
+        )
+        let workspace = try XCTUnwrap(store.catalog.activeWorkspace)
+
+        XCTAssertEqual(
+            WorkspaceRowAnnouncement.text(
+                for: workspace,
+                unseenCount: 0,
+                agentEntries: []
+            ),
+            "Payments, Automation, 1 tab"
+        )
+    }
+
     /// A passing layout test says a view tree has the right *shape* and nothing about what
     /// it looks like. This renders the form offscreen — the same `NSHostingView` +
     /// `cacheDisplay` route `PaneViewSnapshotWriter` uses, no window and no permission — so
@@ -345,6 +402,60 @@ final class WorkspaceIdentityFormTests: XCTestCase {
             \(trailing) pt is left after the last swatch — room enough for another one, \
             so the row stopped short of the width it was laid out from
             """
+        )
+    }
+
+    /// (`WS-FR-036`): the row's own disclosure toggle grows this list in place under the
+    /// line it belongs to — a test cannot click the toggle, but it can mount the list and
+    /// measure it: one row per pane at the density the row states, which is what fails if a
+    /// row's content outgrows the height a row is given.
+    func testTheAgentListDrawsOneRowPerPaneAtItsStatedDensity() {
+        for count in [1, 3, 6] {
+            let entries = (0 ..< count).map { index in
+                WorkspaceAgentTagline.Entry(
+                    slotID: UUID(),
+                    title: "Pane \(index): a title long enough that the row has to truncate it",
+                    state: index.isMultiple(of: 2) ? .working : .finishedUnseen
+                )
+            }
+            let hosting = NSHostingView(
+                rootView: WorkspaceAgentList(entries: entries, focus: { _ in })
+            )
+
+            XCTAssertEqual(
+                hosting.fittingSize.height,
+                WorkspaceAgentListLayout.height(rows: count),
+                accuracy: 0.5,
+                """
+                \(count) agents drew \(hosting.fittingSize.height) pt, and the stated budget \
+                is \(WorkspaceAgentListLayout.height(rows: count)) pt.
+                """
+            )
+        }
+    }
+
+    /// The list grows in place under the row it belongs to, and the row itself bounds the
+    /// width — nothing pins it to a fixed width the way a popover once did, so a short entry
+    /// must size to its own content rather than pad out to some stated minimum.
+    func testTheAgentListSizesToItsOwnContentNotAFixedWidth() {
+        func hosted(_ title: String) -> NSHostingView<WorkspaceAgentList> {
+            NSHostingView(
+                rootView: WorkspaceAgentList(
+                    entries: [
+                        WorkspaceAgentTagline.Entry(slotID: UUID(), title: title, state: .working),
+                    ],
+                    focus: { _ in }
+                )
+            )
+        }
+
+        let short = hosted("short")
+        let long = hosted("a title long enough to widen the list well past a short one")
+
+        XCTAssertLessThan(
+            short.fittingSize.width,
+            long.fittingSize.width,
+            "A short entry sized to a fixed width instead of its own content."
         )
     }
 

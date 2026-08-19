@@ -39,20 +39,104 @@ enum SidebarSnapshot {
         store.addWorkspace(name: "carlens", path: folder("carlens"))
         store.addWorkspace(name: "invest", path: folder("invest"))
 
-        let pool = SurfacePool(backendName: "Sidebar snapshot") { _, _ in
-            StubTerminalSurface()
+        var stubs: [UUID: StubTerminalSurface] = [:]
+        let pool = SurfacePool(backendName: "Sidebar snapshot") { slotID, _ in
+            let stub = StubTerminalSurface()
+            stubs[slotID] = stub
+            return stub
         }
+        let agentPanes = AgentPaneRoster()
+        stage(store: store, pool: pool, roster: agentPanes, stubs: { stubs })
+
         PaneViewSnapshotWriter.write(
             bare: WorkspaceSidebarView(
                 store: store,
                 pool: pool,
                 closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
+                agentPanes: agentPanes,
                 isCollapsed: size.width <= SidebarResize.collapsedWidth
             )
             .frame(width: size.width, height: size.height),
             size: size,
             to: path
         )
+    }
+
+    /// Puts an agent in the first four workspaces, one per attention state, and drives each
+    /// one there through the real `PaneActivity` machine rather than asserting the state.
+    ///
+    /// The titles are the length that decides the picture: `supervision-experiments` gets a
+    /// sentence far wider than a 110 pt row, which is the case the line has to truncate, and
+    /// `docs-site` gets one that fits at both widths, which is the case it must leave whole.
+    /// The last three workspaces are left agentless on purpose — a sidebar where every row
+    /// names an agent cannot show that a row without one still reads as its tab count.
+    @MainActor
+    private static func stage(
+        store: WorkspaceStore,
+        pool: SurfacePool,
+        roster: AgentPaneRoster,
+        stubs: () -> [UUID: StubTerminalSurface]
+    ) {
+        let staged: [(title: String, state: PaneActivityState)] = [
+            ("Fixing the token refresh race in the auth middleware", .working),
+            ("Auditing the intent catalog", .finishedUnseen),
+            ("Waiting on the migration review", .idle),
+            ("Porting the board", .exited),
+        ]
+        let now = Date(timeIntervalSinceReferenceDate: 0)
+
+        for (workspace, staged) in zip(store.catalog.workspaces, staged) {
+            guard let slotID = workspace.tabs.first?.slots.first?.id else { continue }
+            _ = pool.surface(for: slotID, workspacePath: workspace.path)
+            guard let stub = stubs()[slotID],
+                  let token = pool.surfaceToken(for: slotID)
+            else { continue }
+
+            pool.setTitle(staged.title, for: slotID)
+            roster.ingest(
+                AgentHookEvent(
+                    paneID: slotID,
+                    surfaceToken: token,
+                    provider: .claude,
+                    sessionID: "snapshot-\(workspace.name)",
+                    transcriptPath: nil,
+                    hookEventName: "SessionStart",
+                    agentID: nil
+                )
+            )
+
+            switch staged.state {
+            case .working:
+                // Left changing rather than changed three times: the activity poll goes on
+                // running through the render's layout pass, and a screen that stopped moving
+                // would settle to `idle` before the picture was taken.
+                stub.screenKeepsChanging = true
+                pool.pollActivity(at: now)
+            case .idle, .seen:
+                for tick in 0..<4 {
+                    pool.pollActivity(at: now.addingTimeInterval(Double(tick)))
+                }
+            case .finishedUnseen:
+                for tick in 0..<4 {
+                    pool.pollActivity(at: now.addingTimeInterval(Double(tick)))
+                }
+                stub.commandFinishedCount = 1
+                pool.pollActivity(at: now.addingTimeInterval(5))
+            case .exited:
+                stub.processExited = true
+                pool.pollActivity(at: now.addingTimeInterval(1))
+            }
+
+            // What the machine actually reached, not what the fixture asked for. A picture
+            // cannot be read back for its states, so the run says them out loud — a staging
+            // that silently lands on the wrong state would otherwise photograph as a bug in
+            // the view.
+            let reached = pool.paneAttention[slotID]?.state
+            FileHandle.standardError.write(Data(
+                "snapshot: \(workspace.name) staged \(staged.state), reached \(reached.map(String.init(describing:)) ?? "none")\n"
+                    .utf8
+            ))
+        }
     }
 
     private static func folder(_ name: String) -> URL {

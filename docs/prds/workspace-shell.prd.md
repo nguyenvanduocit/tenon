@@ -275,7 +275,7 @@ restart to preserve the map of work even when live processes themselves cannot s
 | ID | Requirement | Priority | Delivery | Gherkin tag |
 |---|---|---|---|---|
 | `WS-FR-001` | Tenon **MUST** declare exactly one main workspace `Window` with stable ID `main`; it **MUST NOT** expose a `WindowGroup` or another path that creates a workspace window while surface pools are single-instance. | must | shipped | `@req-ws-fr-001` |
-| `WS-FR-002` | The 36-point hidden-titlebar shell **MUST** show the Tenon mark/wordmark, align tabs with traffic lights, preserve interactive controls, and give only empty chrome explicit system drag and configured double-click behavior. | must | shipped | `@req-ws-fr-002` |
+| `WS-FR-002` | The 36-point hidden-titlebar shell **MUST** show the Tenon mark/wordmark, align tabs with traffic lights **in the default chrome order** (`WS-FR-035`), preserve interactive controls, and give only empty chrome explicit system drag and configured double-click behavior. The title-bar row itself **MUST** keep its window-drag band in every chrome order. | must | shipped | `@req-ws-fr-002` |
 | `WS-FR-003` | A catalog **MUST** contain at least one uniquely identified workspace; every workspace **MUST** contain at least one uniquely identified tab; slot IDs **MUST** be catalog-unique; a non-empty tab **MUST** name one of its slots as active and an empty tab **MUST** use no active slot. | must | shipped | `@req-ws-fr-003` |
 | `WS-FR-004` | Add Workspace **MUST** accept one directory, derive its default name from the folder, create it with the current default content/sizing, select it, and record it in recent-workspace history only when creation succeeds. | must | shipped | `@req-ws-fr-004` |
 | `WS-FR-005` | Selecting a workspace **MUST** reveal that workspace's remembered active tab and active pane, preserve inactive workspace resources by identity, and publish workspace-selected, tab-selected, then slot-focused facts when applicable. | must | shipped | `@req-ws-fr-005` |
@@ -307,7 +307,9 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-FR-029` | AI Rename **MUST** snapshot the app's Companion profile, run its selected installed agent as one bounded turn, and accept only a title from the provider's machine-readable JSON channel and the shared title schema; Claude + Haiku remains the compatible default. The user **MUST** be able to cancel, and removing the pane through close-pane, close-tab, workspace removal, or shutdown **MUST** cancel its Swift task and terminate the CLI process; switching tabs **MUST NOT** cancel it. | must | shipped | `@req-ws-fr-029` |
 | `WS-FR-030` | A rename **MUST** be reported by the pane being renamed and **MUST NOT** present any surface over the shell: a running generation **MUST** read as `Naming…` on that pane's title while the pane stays usable, a validated title **MUST** return the title to normal presentation, and a failure **MUST** read as `Rename failed` with the provider's message as its tooltip and **MUST** clear itself after a bounded linger without an operator gesture. Rename state **MUST** be per pane, so concurrent generations on different panes cannot displace one another, and the pane's own name **MUST** remain what the rename actions start from while a state is being reported in its place. | must | shipped | `@req-ws-fr-030` |
 | `WS-FR-031` | A primary drag of at least six points beginning on a sidebar workspace row **MUST** reorder that workspace live by row midpoint, use no pasteboard payload, restore the original order when released outside the admitted horizontal band, and preserve active workspace/tab/pane selection, roots, content, and surface identity. Each row **MUST** expose Move workspace up/down only where that move exists, speak its position and completion, persist the resulting catalog order, and publish `workspace.moved` only for a real move. | must | shipped | `@req-ws-fr-031` |
+| `WS-FR-035` | The shell **MUST** draw its two movable chrome strips — the tab strip and the plugin status strip — in one stated order, each occupying exactly one of the title bar's content zone and the foot row. Reordering **MUST** move a strip whole: pixels, pointer ownership, reorder and close gestures, drop targeting, launcher, and accessibility actions. It **MUST NOT** move the traffic lights, identity zone, resource monitor or quick commands, and **MUST NOT** disturb any workspace, tab, pane, selection or live surface. Exactly one implementation of each strip **MUST** exist. Stated cost: tabs at the foot spend 10 points more of the window on chrome (36+1+1+34 against 36+1+1+24). | must | shipped | `@req-ws-fr-035` |
 | `WS-FR-034` | While the sidebar is collapsed, the title bar's identity zone **MUST** read the active workspace's name instead of the Tenon wordmark, truncate it at the tail rather than dropping it, and carry the full name in its tooltip and accessibility label. A blank or absent name, and the expanded sidebar — where the workspace list already names the active workspace — **MUST** read the wordmark, which keeps being dropped whole when the zone is too narrow for it. | must | shipped | `@req-ws-fr-034` |
+| `WS-FR-036` | An expanded sidebar row whose workspace holds agent panes **MUST** name them under the workspace name instead of counting tabs: the still line reads the workspace's own path, head-truncated so its most identifying (deepest) component stays on screen, and a count of the remaining agent panes. The line **MUST** hold still — a path too wide for the row is truncated at its head, and the full path is available from its tooltip — and the row **MUST NOT** schedule any timed work for it; no per-pane attention glyph is drawn on this line. A row that holds agent panes **MUST** offer a disclosure toggle, its own click target separate from the row's, that opens or closes the row's full account — naming **every** agent pane in catalog order, each with the name it answers to and a glyph for the state its own `PaneActivity` machine holds — growing the row in place under the line it belongs to. Clicking the toggle **MUST NOT** select the workspace, and selecting the workspace **MUST NOT** open or close the account. The account **MUST** stay exactly as the toggle last left it regardless of which workspace is selected, until the toggle is clicked again or the workspace's last agent pane leaves, which **MUST** close it. Choosing an agent pane from the open account **MUST** bring its workspace, its tab and that pane forward in a single typed mutation and give it the keyboard. The row's own click target and the toggle's **MUST** each stay reachable at every point of their own area — neither may claim the other's clicks. A collapsed (rail) row **MUST** offer the same panes from its context menu, since the rail has no room for the toggle and that menu is its only route to them; an expanded row's context menu **MUST NOT** repeat them, since the still line and its account already name them inline. The row's spoken label **MUST** name every agent pane once, regardless of whether the account is open. A row with no agent pane **MUST** read its tab count exactly as before and offers no toggle. No state may be recomputed here: the account's glyph reads the one attention vocabulary. | must | shipped | `@req-ws-fr-036` |
 
 ### Non-functional requirements
 
@@ -323,6 +325,7 @@ restart to preserve the map of work even when live processes themselves cannot s
 | `WS-NFR-008` | compatibility | Unknown JSON fields **MUST** be ignored, missing appearance **MUST** restore as default, unknown mark/tint **MUST** degrade independently, and a newer top-level schema **MUST** be declined without restore-time rewrite. | shipped | persistence/identity migration tests |
 | `WS-NFR-009` | ownership | Each semantic **MUST** have one state owner: catalog for workspace/tab/pane values, app preferences for sidebar layout, recent-workspace store for closed-folder history, recent-content store for per-workspace view history, and resource pools for live surfaces only. | shipped | architecture/source audit |
 | `WS-NFR-010` | visual verification | Titlebar, sidebar at minimum/default width, identity form, and footer **MUST** receive native hosted or installed-app visual verification; headless logic tests alone are insufficient evidence for pixels and pointer feel. | partial | snapshots exist; installed-app focus/light-appearance gaps remain documented |
+| `WS-NFR-012` | Chrome-order visual verification | Both chrome orders **MUST** be photographable offscreen, whole-shell, on a headless machine: `TENON_CHROME_SNAPSHOT` with `_ORDER`, `_SIDEBAR` and `_SIZE`. A row that is on screen at all times cannot be signed off from a view-tree assertion, which says a row has the right *shape* and nothing about its geometry. The window's bottom resize gutter **MUST** be measured rather than reasoned about — `scripts/internal/foot-strip-edge-probe.swift`, exit 0 — because no headless test can see it. | shipped | `ShellChromeSnapshot`, the foot-edge probe, and both orders captured at 1100×620 |
 | `WS-NFR-011` | AI rename bounds | Pane-title synthesis **MUST** stay off `MainActor`, accept at most a 12 KiB content excerpt, retain at most 64 KiB stdout and 8 KiB stderr, stop after 60 seconds, and expose no pane content in its workspace event. | shipped | generator/coordinator tests and interaction inventory |
 
 ## 8. Acceptance specification
@@ -448,7 +451,9 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | WS-FR-026 | shipped | `ShellCloseCoordinator`, `ContentView` native alert, sidebar and title-bar gesture adapters | `WorkspaceCloseConfirmationTests` (shared branches, exact sidebar wiring, hosted `NSWindow` sheet and Cancel button) | real-PTY running process remains covered by inspector/teardown tests; no installed-app context-menu journey was claimed because local Accessibility automation was unavailable while production stayed open |
 | WS-FR-027 | shipped | [`AgentPaneSessionCapture.swift`](../../Sources/TenonApp/AgentPaneSessionCapture.swift), `WorkspaceCatalogSnapshot.document`/`restore`, and both catalog save sites in `AppComposition` | `AgentPaneSessionCaptureTests` (9 assertions; the `.exact` guard killed a mutation that admitted `.inferred`), `WorkspaceCatalogPersistenceTests` (capture shape, restore, and both degraded forms, red before the change) | eligibility is asserted against the resolver's verdict, not against a real agent: no automated relaunch drives a live PTY through quit and back |
 | WS-FR-028…029, WS-NFR-011 | shipped | `PaneTitle`, catalog mutation/schema, `PaneRenameCoordinator`, `CompanionPaneTitleGenerator`, pane menu and modal overlay | `PaneTitleTests`, `PaneRenameTests`, `SpatialCanvasInteractionTests`, direct/event/resource inventory gates, 900×600 offscreen capture of the shipping modal | installed-app pointer feel and live provider-account runs remain manual; process arguments, structured-channel parsing, and cancellation are automated |
+| WS-FR-035, WS-NFR-012 | shipped | [`ShellChromeOrder.swift`](../../Sources/TenonCore/ShellChromeOrder.swift) (the pure rule), [`ShellTabStrip.swift`](../../Sources/TenonApp/ShellTabStrip.swift) (the one strip, taking its row's edge), [`ShellFootBar.swift`](../../Sources/TenonApp/ShellFootBar.swift), [`ShellChromeOccupant.swift`](../../Sources/TenonApp/ShellChromeOccupant.swift) (the one chooser), `ShellTitleBar`, `ContentView` | `ShellChromeOrderTests` (9, headless — placement, edge derivation, and the preferences round trip); `ShellChromeLayoutTests` (8 — foot height, sidebar-footer collinearity, gutter clearance, and the source sweeps that hold "one strip, one chooser"); `TabStripReorderTests` (23, real windows — including a reorder, a press, and a drag-region read at the foot, and one test that presses the same three fractions in both orders and demands the same tabs); `ShellChromeSnapshot` at both orders | the 26-pt chip clears the measured 3.1-pt resize gutter by 0.9 pt at a 34-pt row — thin, and why the probe exists; a live hardware drag on an installed build in the foot order is still owed |
 | WS-FR-034 | shipped | [`ShellIdentityLabel.swift`](../../Sources/TenonApp/ShellIdentityLabel.swift) and `ShellTitleBar.identityRow` | `ShellIdentityLabelTests`; `TENON_TITLEBAR_SNAPSHOT` photographs the shipping row collapsed, expanded, and with a name too long for the zone | the zone is ~90 pt after the traffic-light inset, so a long name is read from its tooltip rather than the bar |
+| WS-FR-036 | shipped | [`WorkspaceAgentTagline.swift`](../../Sources/TenonApp/WorkspaceAgentTagline.swift) (the pure join and the drawn state vocabulary), [`AgentPaneRoster.swift`](../../Sources/TenonApp/AgentPaneRoster.swift) (agent-ness, synchronous, for every workspace), `WorkspaceSidebarView`'s `WorkspaceAgentTaglineView` (the still line) / `accountToggle` (the one control that opens or closes the account, a sibling button beside the row's own — never nested in it) / `WorkspaceAgentList` + `WorkspaceAgentListLayout` (the account and its way in, `WorkspaceStore.focusSlot`, and `isActive` muting its rows the same way the row's own name mutes) / `AgentStateIndicator` / `PulsingDot`, `WorkspaceRowAnnouncement`, two added sinks on `AgentHookLensBus` (`AgentPaneRoster`, and `SurfacePool.noteAgentTurnFinished(for:)` reached through `TerminalSurface.noteAgentTurnFinished()` on a root-session `Stop`), `SurfacePool.surfaceToken(for:)` | `WorkspaceAgentTaglineTests` (9, headless — roster filtering, the terminal-content guard, catalog ordering, the title chain, every state copied out of a machine driven to it, and the drawn vocabulary; two mutations killed); `AgentPaneRosterTests` (13 — subagent refusal, incarnation guard, eviction, the known gap pinned, and `AgentHookLensBus.isRootTurnBoundary`); `PaneAttentionTests` (the hook-driven finish reaching the same state a real OSC 133 one would); `WorkspaceIdentityFormTests` (the spoken list, that a row with no agent speaks what it always spoke, the list's one-row-per-pane density mounted through `NSHostingView`, and that it sizes to its own content rather than a fixed width); `WorkspaceTests` already pins the cross-workspace half of `focusSlot` the list's click depends on; `TENON_SIDEBAR_SNAPSHOT` at 232 and 110, staging four states through the real machine and printing what each one reached | at 110 pt a row that also carries the unseen capsule has ~7 pt left and shows its glyph without text — which is what the toggle, available at that width too, is for; an agent that exits leaving its shell alive keeps its line, because no installed hook reports a session ending; whether clicking the toggle actually opens the account, and never also selects the workspace, is an installed-app check, since a test can mount the list but cannot press a button; and whether a live hook server actually delivers `Stop` for an interactive session the way the composed fixtures assume is likewise installed-app-only — all three in the decision log |
 | WS-FR-023…024 | shipped | `WorkspaceTint`, `WorkspaceMark`, identity form Automatic swatch | `WorkspaceTintTests`, `WorkspaceIdentityFormTests`, sidebar snapshots at both bounds | a pure path→colour rule cannot keep a whole sidebar distinct: eight workspaces collide about once, and the popover is the remedy |
 
 ### Phases
@@ -496,6 +501,10 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 
 | Date | Decision | Reason | Supersedes |
 |---|---|---|---|
+| 2026-08-17 | Agent-ness for a sidebar row comes from a new observable roster fed by the hook bus, not from `AgentSessionRegistry`. | the registry is an `actor` and a view body cannot `await` one; and the only synchronous reader of the same stream, `AgentLensPool.ingest`, routes to per-pane models that exist only for a MOUNTED pane — precisely the set a background workspace's row can never be in. The roster stores the pane and its surface incarnation and nothing an agent said, so it is a third reader of one stream rather than a second judgement | reading `boundPanes()` from the row, or storing agent-ness on `WorkspaceSlot` where the catalog would persist a runtime fact |
+| 2026-08-17 | One writer, not two: the roster is fed by hooks alone, with no second write at the agent launch site. | the launch writer was specified to cover the window before an agent's first tool call, and that window does not exist here. `AgentSessionRegistry` lags because its own `record` refuses an event with no session payload; this roster asks only for a pane id and a surface token, and `SessionStart` is installed and reaches the bus unfiltered. A second path to a fact already covered would be two paths for one job, and it would still miss the agent nobody launched through Tenon | a `note(slotID:surfaceToken:)` call in `AgentLaunchExecutor` |
+| 2026-08-17 | An agent that exits leaving its shell alive keeps its line until the pane is rebuilt. | no installed hook reports a session ending — `SessionStart`, `UserPromptSubmit`, `PreToolUse`, `PostToolUse`, `Notification`, `Stop` — and `Stop` is a turn boundary. The check that would settle it is `AgentCallerAdmission`'s process-group comparison, which costs an FFI read plus a `getpgid` per agent pane on a body that re-renders at the attention poll's cadence. T-141 is what unmeasured per-pane work on that path costs, so the gap is stated and pinned by a test rather than closed by a guess | inferring the ending from the pane's title, or from `Stop` |
+| 2026-08-17 | The line names one pane and holds still; every pane, and the way into it, is in the popover a hover opens. | a sidebar row is redrawn constantly and by design — hover writes the row's own state, and its entries are recomputed whenever a pane's title or attention state changes, which is exactly while an agent is working — so any motion held in that row's SwiftUI state is re-entered by every one of those redraws. The operator watched both consequences: a moving title restarted whenever they hovered, and a title crossing the row left it blank for the row's width once per cycle. Holding the line still removes the class rather than the symptom, and the popover carries what one line cannot: all of the panes, their states, and a click that hands one the keyboard. The T-141 rule holds absolutely now — a sidebar of any size schedules nothing for this line | a marquee whose crossing lives in Core Animation instead (accurate, and still one line naming one pane at a time); a rotation on a stable anchor; naming a count instead of the work, which is the tab count under a new name |
 | 2026-07-26 | Store catalog through a versioned DTO rather than `Codable` domain types. | hostile/stale bytes cannot reach domain preconditions | direct domain decoding |
 | 2026-07-26 | Bare launch restores exactly; explicit directory selects/adds without replacing. | CLI/project launch intent must coexist with recovery | always seed from cwd |
 | 2026-08-09 | Workspace UUID is identity; name/mark/tint are presentation. | duplicate names and resets must not disturb scope/tree | display-name identity |
@@ -529,6 +538,164 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   translation, horizontal cancellation, and spoken position. `WorkspaceOrderTests` pins
   real/no-op store publication, active workspace/tab/pane preservation, and persistence of
   the chosen order. The shipping SwiftUI gesture remains an installed-app pointer check.
+- 2026-08-17, `WS-FR-036`: the sidebar's tab count became the work its agents are doing.
+  `WorkspaceAgentTaglineTests` pins the join headlessly, and a mutation was killed to prove it
+  has teeth: dropping the terminal-content guard took
+  `testAPaneThatStoppedBeingATerminalIsNotNamedHoweverStaleTheRosterIs` red.
+  `AgentPaneRosterTests` (10) did the same for the roster — dropping the surface-incarnation
+  comparison and admitting subagent hooks each killed exactly the test written for it. Full
+  suite **2358 / 0**.
+  What the pictures added that no test could: the first render photographed `working` and
+  `idle` as the same hollow ring. Two separate faults, both real. The indicator was a mini
+  `ProgressView`, which draws as a plain ring in a still frame — replaced by a filled dot that
+  pulses, so the filled/hollow pair distinguishes them without depending on motion. And the
+  snapshot fixture itself was wrong: it set three changing screen fingerprints and stopped, so
+  the activity poll running through the render's 390 ms layout pass drove the pane to `idle`
+  before the shutter. `StubTerminalSurface.screenKeepsChanging` is what a screen still moving
+  actually is. The fixture now prints the state each pane reached beside the one it staged,
+  because a picture cannot be read back for its states.
+- 2026-08-17, `WS-FR-036`, second pass (T-179): the operator watched a live row and reported
+  two things the suite could not see — a title crossing the row left the row blank for the
+  row's own width once per cycle, and the crossing restarted whenever they hovered. The second
+  is structural: a row is redrawn on hover and on every title or attention change in it, and a
+  crossing held in that row's SwiftUI state is re-entered by each redraw. So the motion is
+  gone. The line names the first agent pane with a `+N` for the rest and truncates at its tail,
+  and a hover opens `WorkspaceAgentList` — every pane, its state, and a click that calls
+  `WorkspaceStore.focusSlot`, which brings a background workspace's tab and pane forward in one
+  mutation. The same panes are in the row's context menu, so choosing one is not a
+  pointer-only route. `WorkspaceAgentTaglineTests` lost the four rotation-arithmetic tests with
+  the rule they asserted; `WorkspaceIdentityFormTests` gained
+  `testTheHoveredAgentListDrawsOneRowPerPaneAtItsStatedDensity`, mounted through
+  `NSHostingView` at 1, 3 and 6 panes — mutation-checked by drawing only the first entry, which
+  took it red on both the 3-pane and 6-pane measurements. Full suite **2359 / 0**, and
+  `WorkspaceIdentityFormTests` **19 / 0**. The sidebar snapshot at 232 pt
+  shows four rows each naming their agent with a truncated title and a state glyph, and the
+  three agentless rows still reading `1 tab`. What no headless run can reach: that a hover
+  opens the popover at all, and that the pointer crossing into it keeps it open.
+- 2026-08-18, `WS-FR-036`, third pass (T-179): the operator's live pointer found what the
+  second pass's own decision log had already flagged as unreachable headlessly — the popover
+  it shipped animated in slowly enough to feel wrong on an ordinary hover, went visibly
+  inconsistent when the pointer crossed several rows quickly, and its anchor on the tagline
+  swallowed clicks meant for the row's own `select`. Root cause read from the source, not
+  guessed: the row carried *two* independent `.popover(isPresented:)` bindings in one view
+  subtree — the agent list on the tagline, the customisation form on the button underneath —
+  and SwiftUI drives at most one active popover per view. The two raced for the anchor on
+  every hover, which is what made the system's own show/hide animation look like it was
+  fighting itself, and put a popover-anchor view directly over a click the outer `Button` was
+  supposed to receive. Operator's call on the shape (not this task's): drop the popover
+  outright at the expanded width, where a fixed-position `.popover` fights a list of rows that
+  are constantly redrawn anyway. The row's account now grows in place, under the line, at
+  `WorkspaceSidebarLayout.reorderAnimation` (0.12 s, an existing constant, not a new one) — the
+  same duration a reorder already uses, chosen so a pointer crossing several rows never
+  outruns it. The rail keeps the popover, since it has no width to grow into, but now behind
+  one `.popover(item:)` anchored on the row's own button — `WorkspaceRowPopover` (`.agents`,
+  `.customize`), the single piece of state a row's two on-demand surfaces now share, closing
+  the identity-churn source rather than papering over its symptom. `WorkspaceAgentList` gained
+  `fixedWidth` (default `true`, unchanged for the rail's popover; `false` inline, where the row
+  itself bounds the width and the popover's fixed 260 pt would overflow or clip). New:
+  `testTheInlineAgentListDoesNotForceThePopoverWidth`, headless, pinning that `fixedWidth:
+  false` sizes to content instead of staying pinned to the popover's width. Full suite
+  **2360 / 0**. Still true from the second pass, now for two shapes instead of one: whether a
+  hover actually opens either account, and whether every point on an expanded row's line still
+  answers a click, are installed-app checks — no headless run can hover a pointer or click one.
+- 2026-08-19, `WS-FR-036`, fourth pass: the operator found a second reflow bug in the third
+  pass's own fix, this time with no popover involved — the expanded row's account still opened
+  and closed on hover, and closing a row the pointer had just left shifted every row below it
+  at the exact moment the operator's pointer was travelling toward one of them, so a click meant
+  for the next workspace missed. Hover-driven open/close is withdrawn outright rather than
+  layered under a new control: `WorkspaceRow` now offers one disclosure toggle per row (a
+  chevron at the trailing edge, drawn only where `agentEntries` is non-empty) as a sibling
+  button beside the row's own `select` button — not nested inside it, since a button nested in
+  a button's label only ever fires the outer one, and firing the toggle must never select the
+  workspace. `isShowingAgentsInline` is now written from exactly one place, the toggle's own
+  action, and it is no longer reset when the sidebar collapses to the rail: a pin now records a
+  deliberate operator choice rather than transient hover state, so it survives the row
+  disappearing into the rail and reappearing at the expanded width. The rail lost its popover
+  outright — `WorkspaceRowPopover` (`.agents`/`.customize`), `holdAgents`, `openAgents`,
+  `closeAgents`, and the 180 ms dismissal grace are all deleted, since nothing drives them any
+  more. The rail's context menu (already required by this same requirement) is now the only way
+  to reach a rail row's panes without returning to the expanded width; the row's own
+  accessibility identity moved from the row's outer container onto its `select` button
+  specifically, because a container holding two focusable children (the toggle sits beside it)
+  does not adopt a label placed on the container itself — an identity left there would silently
+  never be spoken. `WorkspaceAgentList` lost `fixedWidth`: the popover was its only caller ever
+  passing `true`, so the parameter is gone rather than kept for a mode nothing calls any more,
+  and `WorkspaceAgentListLayout.width` (260 pt) went with it.
+  `WorkspaceIdentityFormTests`' two popover-vs-inline tests became one
+  (`testTheAgentListDrawsOneRowPerPaneAtItsStatedDensity`, height only, the width assertion
+  dropped with the fixed width it measured) plus a new
+  `testTheAgentListSizesToItsOwnContentNotAFixedWidth`, asserting a longer title measures wider
+  than a shorter one now that nothing pins either to 260 pt. Full suite **2379 / 0**;
+  `TENON_SIDEBAR_SNAPSHOT` at 232 and 110 pt shows the toggle beside every row naming an agent
+  and no toggle on the three that do not. Still true, now for a click instead of a hover:
+  whether tapping the toggle actually opens the account, and whether it ever also fires
+  `select`, is an installed-app check — no headless run can press a button.
+- 2026-08-19, `WS-FR-036`, fifth pass (T-186): the operator found two more mismatches, both
+  fed by the same root cause. (a) A row's agent-account text stayed full-weight even when its
+  workspace lost `isActive` and its own name dimmed to muted — the list read as belonging to
+  whichever workspace was selected rather than the one it actually hung under. `AgentListRow`
+  now takes the row's own `isActive` (threaded through `WorkspaceAgentList`) and mutes its
+  title with the exact same rule the workspace name already uses. (b) An interactive agent
+  (`claude`, `codex`, `opencode` run as a REPL, not `-p`) that had genuinely finished a turn
+  still read `idle`, indistinguishable from a prompt that never had anything to say — because
+  the only finish signal `PaneActivity` had, `commandFinishedCount`, rises from OSC 133's
+  "a foreground shell command exited", and an interactive agent never exits its shell's
+  foreground between turns; only the whole session quitting would trip it. `AgentHookLensBus`
+  gains a third sink (`TerminalSurface.noteAgentTurnFinished()`, reached through
+  `SurfacePool.noteAgentTurnFinished(for:)`): a root-session `Stop` event — `isRootTurnBoundary`,
+  the same subagent guard `AgentPaneRoster.ingest` already applies to the same stream — bumps
+  the pane's own finish counter exactly as a real OSC 133 finish would, so `PaneActivity`
+  cannot tell the two apart and needed no change itself. New:
+  `testAnAgentsHookDrivenFinishReachesTheSameStateARealCommandFinishWould`
+  (`PaneAttentionTests`, proves the stuck-idle state before the fix and the reached
+  `finishedUnseen` after it, through the real machine), `testARootSessionsStopIsATurnBoundary` /
+  `testASubagentsStopIsNotThePanesTurnBoundary` / `testAMidTurnHookIsNotATurnBoundary`
+  (`AgentPaneRosterTests`, the extracted predicate). Full suite **2383 / 0**. Not committed.
+  Same session, immediate follow-up (c): the account's row title also read at the workspace
+  name's own 11 pt, so it carried no size signal that it is the row's nested detail rather than
+  a peer of the name above it — dropped to 10 pt (`AgentListRow`, `WorkspaceSidebarView.swift`),
+  one step under the name, weight left at `.regular` against the name's bold/semibold so the two
+  now differ on both axes. `swift build` clean; a full-suite re-run landed 1/2383 failing while
+  a concurrent peer session's unrelated `xcodebuild -configuration Release` build held the
+  machine at a 4-7 load average (confirmed via `ps aux`) and stretched the run to 3377 s against
+  a normal ~155 s — the failing test's own name was lost to a `tail -15` pipe on that run. A
+  targeted re-run of the three files this pass and the one before it touch —
+  `PaneAttentionTests` / `AgentPaneRosterTests` / `WorkspaceIdentityFormTests` — was clean at
+  **44 / 44** outside that contention. No test in this suite asserts an exact SwiftUI font size
+  and this edit is one `CGFloat` literal, so the full-suite failure reads as load-induced flake
+  rather than caused by it — **stated as unconfirmed, not silently assumed clean**: the full
+  suite has not been re-run end to end since without a concurrent build sharing the machine.
+- 2026-08-19, `WS-FR-036`, sixth pass: the operator flagged, from a live screenshot of an
+  expanded row, that its context menu listed the same two agent panes already visible on the
+  open inline account right below it — the menu's own comment already named the reason it
+  exists ("the rail's only way", since "the rail has no room for the toggle"), but the code
+  offered it unconditionally at every sidebar width, not only the one that comment justified.
+  `WorkspaceRow`'s `.contextMenu` now gates the `ForEach(agentEntries)` and its `Divider` on
+  `isCollapsed`; an expanded row's menu keeps only Customise/Remove. Restated in the
+  requirement text and split the accessibility scenario in two — one for the rail's menu
+  (only route to a row's panes at that width), one for the expanded row's (offers none, since
+  the still line and its account already speak them). No headless test covers SwiftUI
+  `.contextMenu` content (no `ViewInspector` in this tree), so this is source-and-PRD only,
+  consistent with every other click/hover claim already marked installed-app-only in this
+  requirement's log; `swift build` and the full suite were re-run clean after the edit.
+- 2026-08-19, `WS-FR-036`, seventh pass: the still line stopped naming the first agent pane
+  and started reading the workspace's own path earlier in this same session — a path is fixed
+  regardless of what a pane is doing, so the line reads the same in a screenshot taken a minute
+  apart, where a rotating pane name would not. That swap shipped without a decision-log entry;
+  restated here rather than left unrecorded. The operator then flagged the leading state glyph
+  it kept from the pane-name line as noise beside a path that never changes state — a glyph
+  answering "what is the state of a fact this line no longer names" reads as decoration, not
+  information. `WorkspaceAgentTaglineView` drops the `AgentStateIndicator` (and the
+  `accessibilityReduceMotion` read it alone needed); the `+N` remaining-pane count stays, since
+  that is still live information the line carries. The account list's own row keeps its glyph —
+  `AgentListRow` names each pane by its own title, where a state glyph still answers a real
+  question. `swift build` clean. Two full-suite runs read 2387 tests with 2 failures (1
+  unexpected) then 1 failure (0 unexpected); both times the one named failure was
+  `PluginBuiltinsTests.testProcessStreamDeliversOwnedOutputBackToRuntime`, a `posix_spawn`
+  timing test in an unrelated file this pass never touches, and it passed clean in 0.022 s run
+  alone — full-suite contention, not this change. The suites this pass actually reaches —
+  `WorkspaceIdentityFormTests`, `PaneAttentionTests`, `AgentPaneRosterTests`,
+  `WorkspaceAgentTaglineTests`, `DomainTagFitnessTests` — ran **60 / 60**. Not committed.
 - 2026-08-17, `WS-FR-034`: `ShellIdentityLabelTests` pins the one rule at five inputs —
   collapsed with a name, with a name of only whitespace, with no workspace, and expanded —
   red first at `("Tenon", false)` against `("tenon", true)`, green after. The pixels were
@@ -536,6 +703,43 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
   over a real store and host: collapsed reads `tenon`, expanded reads `Tenon`, and
   `interviewassistant-monorepo` truncates to `intervie…` without crowding the sidebar toggle
   or the divider.
+- 2026-08-17, `WS-FR-035`: the tab strip was extracted whole out of `ShellTitleBar` into
+  `ShellTabStrip`, which takes the window edge its row is attached to and consumes it in
+  exactly three places: the fill behind its trailing stretch (`WindowDragArea` in the
+  title-bar band, plain chrome at the foot), a launcher popover's preferred side, and the
+  room that popover may grow into. Everything else is identical by construction rather than
+  by two views agreeing, and `ShellChromeLayoutTests` sweeps `Sources/TenonApp` to hold that:
+  one file draws `TabStripSurface(`, one file chooses between the strips.
+- 2026-08-17, `WS-FR-035`: the drag-region overrides on `TabStripSurface.SurfaceView` are
+  **kept unconditional**, against a measurement that says they do nothing at the foot (a
+  mirror of `drag-region-probe.swift` placed a control at y=3 in a 300-pt window; the region
+  was the top ~32 pt and skipped it whatever the class). Tabs-on-top is the default and stays
+  shipped, so the carve-out is load-bearing for the majority configuration; a rule that only
+  applied in one configuration would be a second behaviour to keep in step, and deleting it
+  would re-open T-101, which took three shipped fixes.
+- 2026-08-17, `WS-FR-035`: `acceptsFirstMouse` stays `true` at both edges rather than being
+  scoped to the title bar. Scoping it would make the same control behave differently for
+  where it is drawn, which is the one thing this requirement forbids. Residual hazard, stated:
+  a click that activates a background window can land on a 24-pt ✕ and close that tab.
+- 2026-08-17, `WS-NFR-012`: the foot tab row is 34 pt, which is `SidebarFooterLayout.height`,
+  so the rule above it and the rule above the sidebar footer are one line across the window
+  instead of a 2-pt kink. Measured consequence: `foot-strip-edge-probe.swift` reports the
+  window's bottom 3.1 pt hit-testing to `NSThemeFrame`, and a centred 26-pt chip clears it by
+  0.9 pt. Thin, and chosen anyway because 34 pt is the height an already-shipped row at the
+  same window edge uses. If a future macOS widens the gutter the probe fails and the answer
+  is 36 pt plus the kink.
+- 2026-08-17, `WS-FR-035`: `LauncherMenu`'s list ceiling stopped being computed from
+  `window.frame.maxY - titleBarHeight`. That number assumed every launcher hangs under the
+  title bar — already false for the empty-grid anchor, which was reading it from out on the
+  canvas — and a strip at the foot opens upward, where measuring downward from the window's
+  top claims a whole window of room that is not on the screen. The arithmetic moved to
+  `LauncherListHeight.ceiling(anchor:opening:visibleFrame:chrome:)` and every anchor now
+  states its own screen rect and direction.
+- 2026-08-17, `WS-FR-035`: the tab-strip drop band shrank. It used to be reported over the
+  whole title-bar right zone, so a pane released over the resource monitor or the quick
+  commands made a tab; it is now the strip plus its own trailing fill, and travels with the
+  strip. No requirement pinned the larger band and no test covered it — every band test
+  injects the rect directly — so this ships as a decision rather than a requirement edit.
 - 2026-08-16, `WS-NFR-006`, `WS-NFR-010`: `WorkspaceIdentityFormTests` reads back the
   pixels the popover drew and requires a swatch row to leave the same space before its
   first mark as after its last, and less than a swatch of either. Red first at 7 pt against
@@ -634,3 +838,6 @@ lightweight placeholders, flushes it, then shuts down plugin and surface resourc
 | 2026-08-13 | Corrected `WS-FR-025`'s native transport from `public.folder` to Finder's `public.file-url` plus semantic folder filtering; added mounted AppKit evidence. Added `WS-FR-026` for the shared process-safe tab/workspace close gate and native workspace confirmation. | Codex |
 | 2026-08-13 | Added `WS-FR-028…029`: persistent manual pane names and cancellable Companion JSON naming owned by pane lifetime; Claude + Haiku is the compatible default and Codex JSONL is also supported. | Codex |
 | 2026-08-14 | Added `WS-FR-031`: workspace rows reorder directly in the sidebar with matching VoiceOver actions, persistence, and `workspace.moved` facts. | Codex |
+| 2026-08-17 | Added `WS-FR-036`: a sidebar row names the agent panes its workspace holds, one at a time with their attention states, in place of its tab count. | Claude (T-178) |
+| 2026-08-17 | Restated `WS-FR-036` on operator report: the line holds still and names the first agent pane with a count of the rest, and a hover opens the full list of panes with a click that focuses one. The rotation and the scrolling title are withdrawn — the 2026-08-17 row above about elapsed-reference-time phasing is superseded by the row about the still line. | Claude (T-179) |
+| 2026-08-19 | Restated `WS-FR-036` on operator report: hover-driven open/close is withdrawn — closing a row on hover-out reflowed the rows below it under a pointer already travelling toward one of them, missing the click. A per-row disclosure toggle, a click target of its own beside `select` rather than nested in it, opens or closes the account instead; it is pinned exactly as the operator left it, independent of which workspace is selected, until clicked again. The rail's popover is withdrawn with the hover that drove it — its context menu is now the rail's one route to a row's panes. Supersedes the second and third passes' hover framing above. | Claude (T-185) |

@@ -87,6 +87,36 @@ final class PaneAttentionTests: XCTestCase {
         )
     }
 
+    /// T-178's own hazard: an interactive agent (`claude`, `codex`, `opencode`) never returns
+    /// its foreground shell command, so OSC 133 never fires between its turns — a pane running
+    /// one can only ever poll into `.working` or `.idle`, and a turn that genuinely finished
+    /// reads identically to a prompt that never had anything to say. `noteAgentTurnFinished` is
+    /// the hook-driven escape from that ceiling.
+    func testAnAgentsHookDrivenFinishReachesTheSameStateARealCommandFinishWould() {
+        let pool = makePool()
+        let slot = UUID()
+        _ = pool.surface(for: slot, workspacePath: scratch)
+        scripted[slot]?.text = "$ "
+
+        pool.pollActivity(at: tick(0))
+        pool.pollActivity(at: tick(1))
+        pool.pollActivity(at: tick(2))
+        XCTAssertEqual(
+            pool.paneAttention[slot]?.state,
+            .idle,
+            "no OSC 133 finish ever arrived, so a stable screen alone reads as idle — this is the bug"
+        )
+
+        pool.noteAgentTurnFinished(for: slot)
+        pool.pollActivity(at: tick(3))
+
+        XCTAssertEqual(
+            pool.paneAttention[slot]?.state,
+            .finishedUnseen,
+            "a Stop-driven finish must be indistinguishable from a real OSC 133 one to the machine"
+        )
+    }
+
     /// T-141. The poll asks every open pane, five times a second, on the main thread — and the
     /// only thing it ever does with a screen is compare it to the previous one
     /// (`IdleDetector.record` is a single `==`). Taking the rendered-text answer for that
@@ -506,6 +536,10 @@ private final class ScriptedTerminalSurface: TerminalSurface {
     var screenFingerprint: Int { revision }
     var processExited: Bool { exited }
     var commandFinishedCount: Int { finishedCount }
+
+    func noteAgentTurnFinished() {
+        finishedCount += 1
+    }
 
     func makeView() -> AnyView {
         AnyView(EmptyView())
