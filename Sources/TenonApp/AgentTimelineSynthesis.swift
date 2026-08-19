@@ -469,6 +469,10 @@ enum AgentCLIStreamReader {
         switch provider {
         case .claude: return claude(record)
         case .codex: return codex(record)
+        case .opencode:
+            // opencode's answer arrives across several `text` parts and no result event, so it
+            // is read by the stateful `AgentOpenCodeCLIStreamReader` instead.
+            return .ignored
         }
     }
 
@@ -552,6 +556,57 @@ enum AgentCLIStreamReader {
 
         default:
             // `assistant` repeats what the deltas already carried, and the rest is framing.
+            return .ignored
+        }
+    }
+}
+
+/// Reads opencode's `--format json` stream, which differs from the other two CLIs in one way
+/// that matters to a result: its answer arrives as a sequence of complete `text` parts with no
+/// result event, so the reader accumulates them and the terminal `step_finish` flushes the
+/// accumulation as the result. Stateful where `AgentCLIStreamReader` is pure, because the result
+/// is the accumulation of what came before the final event.
+final class AgentOpenCodeCLIStreamReader: @unchecked Sendable {
+    private let lock = NSLock()
+    private var textParts: [String] = []
+
+    func read(line: Data) -> AgentCLIStreamReading {
+        guard let record = try? JSONSerialization.jsonObject(with: line) as? [String: Any],
+              let type = record["type"] as? String
+        else { return .ignored }
+        switch type {
+        case "step_start":
+            return .connected
+
+        case "text":
+            guard let part = record["part"] as? [String: Any],
+                  let text = part["text"] as? String, !text.isEmpty
+            else { return .ignored }
+            lock.withLock { textParts.append(text) }
+            return .wrote(text)
+
+        case "step_finish":
+            guard let part = record["part"] as? [String: Any] else { return .ignored }
+            switch part["reason"] as? String {
+            case "stop":
+                let text = lock.withLock { textParts.joined(separator: "\n\n") }
+                guard !text.isEmpty else {
+                    return .finished(.failure(.malformedOutput("the CLI returned an empty reply")))
+                }
+                return .finished(.success(text))
+            case "error", "tool-error":
+                return .finished(.failure(.runFailed("the agent CLI reported an error")))
+            default:
+                // `tool-calls` and friends end a step that continues in a later one; the answer
+                // comes in the text part that follows.
+                return .ignored
+            }
+
+        case "error":
+            let detail = record["message"] as? String ?? "the agent CLI reported an error"
+            return .finished(.failure(.runFailed(detail)))
+
+        default:
             return .ignored
         }
     }
@@ -676,6 +731,12 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
             // argument is absent or is exactly that.
             arguments.append("-")
             return arguments
+        case .opencode:
+            // `run --format json` reads the prompt from stdin when no message is given, which is
+            // how the shared runner hands it over. The model id is `provider/model`.
+            var arguments = ["run", "--format", "json"]
+            if let alias = model.alias { arguments += ["--model", alias] }
+            return arguments
         }
     }
 
@@ -690,7 +751,9 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         case .claude: silenceSeconds
         // `codex exec --json` reports items as they complete rather than tokens as they arrive,
         // so a healthy run is quiet for its whole reasoning turn. The ceiling is its only bound.
-        case .codex: nil
+        // opencode is the same shape: `text` arrives as one complete part per message, so a
+        // healthy run can be quiet across a whole reasoning turn too.
+        case .codex, .opencode: nil
         }
     }
 
@@ -764,6 +827,7 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
         watchdog.resume()
 
         let reading = StreamReading()
+        let opencodeReader = provider == .opencode ? AgentOpenCodeCLIStreamReader() : nil
         let group = DispatchGroup()
         group.enter()
         DispatchQueue.global(qos: .userInitiated).async {
@@ -778,7 +842,8 @@ struct AgentCLITimelineSynthesizer: AgentTimelineSynthesizer {
                     let line = Data(pending.prefix(length))
                     pending.removeFirst(length + 1)
                     guard !line.isEmpty else { continue }
-                    let event = AgentCLIStreamReader.read(line: line, provider: provider)
+                    let event = opencodeReader.map { $0.read(line: line) }
+                        ?? AgentCLIStreamReader.read(line: line, provider: provider)
                     // Which phase the run is in decides whether its quiet means anything, so the
                     // deadline is told before the pane is.
                     switch event {

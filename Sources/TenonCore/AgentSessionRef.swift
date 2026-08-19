@@ -10,6 +10,16 @@ import Foundation
 public enum AgentSessionProvider: String, Sendable, Equatable, Hashable, CaseIterable, Codable {
     case codex
     case claude
+    case opencode
+
+    /// The file shape a recorded transcript takes on disk. Codex and Claude Code write
+    /// line-delimited JSON; opencode keeps its parts in a SQLite database.
+    public var transcriptFileExtension: String {
+        switch self {
+        case .codex, .claude: "jsonl"
+        case .opencode: "db"
+        }
+    }
 }
 
 /// A session that has already happened, named well enough to open a pane over it.
@@ -51,12 +61,13 @@ public struct AgentSessionRef: Equatable, Sendable, Hashable {
               !trimmedID.contains("/")
         else { return nil }
 
-        // Absolute and `.jsonl` are shape, not permission: the containment question is asked
-        // before this initializer with symlinks resolved. Refusing the obviously-wrong shapes
-        // here keeps a relative path from reaching a pane through a route that never asked.
+        // Absolute and a recognized provider transcript shape are shape, not permission: the
+        // containment question is asked before this initializer with symlinks resolved.
+        // Refusing the obviously-wrong shapes here keeps a relative path from reaching a
+        // pane through a route that never asked.
         guard transcriptPath.hasPrefix("/"),
               transcriptPath.count <= Self.transcriptPathLimit,
-              transcriptPath.hasSuffix(".jsonl"),
+              transcriptPath.hasSuffix(".\(provider.transcriptFileExtension)"),
               transcriptPath.unicodeScalars.allSatisfy({ !CharacterSet.newlines.contains($0) })
         else { return nil }
 

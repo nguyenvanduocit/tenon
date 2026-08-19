@@ -24,6 +24,15 @@ struct AgentTranscriptDecoder: Sendable {
         "custom_tool_call_output",
     ]
 
+    /// opencode part types that can begin a bounded history window on their own terms.
+    private static let opencodeWindowOpeners: Set<String> = [
+        "text",
+        "tool",
+        "reasoning",
+        "patch",
+        "agent",
+    ]
+
     let provider: AgentProvider
 
     /// Whether a record can begin a bounded history window on its own terms.
@@ -50,6 +59,11 @@ struct AgentTranscriptDecoder: Sendable {
                   let payloadType = Self.string(payload["type"])
             else { return false }
             return !Self.codexCallOutputTypes.contains(payloadType)
+        case .opencode:
+            // Parts that say what they are open a window on their own terms; lifecycle and
+            // bookkeeping parts do not name anything a reader could act on.
+            guard let type = Self.string(record["type"]) else { return false }
+            return Self.opencodeWindowOpeners.contains(type)
         }
     }
 
@@ -70,6 +84,12 @@ struct AgentTranscriptDecoder: Sendable {
             return decodeClaude(record, evidence: evidence, byteOffset: byteOffset)
         case .codex:
             return decodeCodex(record, evidence: evidence, byteOffset: byteOffset)
+        case .opencode:
+            // The role is a property of the enclosing message, which a bare JSONL line does not
+            // carry — so a line decoded this way defaults text to assistant. The parts reader is
+            // the real consumer and always supplies the role; this path exists only to keep the
+            // switch exhaustive.
+            return decodeOpenCode(record, role: nil, evidence: evidence, byteOffset: byteOffset)
         }
     }
 
@@ -292,6 +312,136 @@ struct AgentTranscriptDecoder: Sendable {
             default:
                 return []
             }
+        default:
+            return []
+        }
+    }
+
+    /// Decodes one opencode part, drawn from its SQLite database rather than a JSONL line.
+    ///
+    /// The part carries the semantic content; the enclosing message's `role` is what decides
+    /// whether a text part is the person's prompt or the agent's answer. opencode's tool part
+    /// is self-describing — `state.status` names the whole run — so a single part resolves to
+    /// either a `toolStarted` or a `toolFinished`, never both.
+    func decodeOpenCode(
+        _ record: [String: Any],
+        role: AgentMessageRole?,
+        evidence: AgentEvidence,
+        byteOffset: UInt64
+    ) -> [AgentLensEvent] {
+        let type = Self.string(record["type"]) ?? ""
+        let fallbackID = "opencode-\(byteOffset)"
+
+        switch type {
+        case "text":
+            guard let text = Self.string(record["text"]), !text.isEmpty else { return [] }
+            let id = Self.string(record["id"]) ?? fallbackID
+            let role = role ?? .assistant
+            let kind = Self.messageKind(role: role, text: text)
+            let message = AgentLensMessage(
+                id: id,
+                role: role,
+                kind: kind,
+                text: text,
+                isStreaming: false,
+                evidence: evidence
+            )
+            if kind != .conversation { return [.contextMessage(message)] }
+            return role == .user ? [.userMessage(message)] : [.assistantMessage(message)]
+
+        case "reasoning":
+            guard let text = Self.string(record["text"]), !text.isEmpty else { return [] }
+            return [
+                .reasoning(
+                    AgentLensMessage(
+                        id: Self.string(record["id"]) ?? "\(fallbackID)-reasoning",
+                        role: .reasoning,
+                        text: text,
+                        isStreaming: false,
+                        evidence: evidence
+                    )
+                ),
+            ]
+
+        case "tool":
+            let state = record["state"] as? [String: Any]
+            let status = Self.string(state?["status"]) ?? "running"
+            let rawName = Self.string(record["tool"]) ?? "Tool"
+            let callID = Self.string(record["callID"]) ?? "\(fallbackID)-tool"
+            let input = Self.summary(state?["input"])
+            let kind = Self.toolKind(name: rawName, input: input)
+            let name = Self.toolName(rawName, kind: kind, input: input)
+            let exitCode = (state?["exit"] as? NSNumber)?.intValue
+            let toolState: AgentToolState = switch status {
+            case "completed": exitCode == nil || exitCode == 0 ? .succeeded : .failed
+            case "error": .failed
+            default: .running
+            }
+            let tool = AgentToolRun(
+                id: callID,
+                name: name,
+                kind: kind,
+                summary: Self.toolSummary(input, name: name, kind: kind),
+                detail: Self.capped(Self.summary(state?["output"])),
+                state: toolState,
+                exitCode: exitCode,
+                evidence: evidence
+            )
+            return [toolState == .running ? .toolStarted(tool) : .toolFinished(tool)]
+
+        case "patch":
+            let path = Self.string(record["filePath"]) ?? ""
+            let tool = AgentToolRun(
+                id: "\(fallbackID)-patch",
+                name: "File change",
+                kind: .fileChange,
+                summary: path.isEmpty ? "File changed" : path,
+                detail: "",
+                state: .succeeded,
+                exitCode: nil,
+                evidence: evidence
+            )
+            return [.toolFinished(tool)]
+
+        case "step-start":
+            // A step is the model starting to work. Without this, a text-only step (no tool
+            // part) never moves the lens off `.ready`, so the pane cannot tell that the agent
+            // is working until it has already stopped.
+            return [.status(.running, evidence: evidence)]
+
+        case "step-finish":
+            let reason = Self.string(record["reason"]) ?? "stop"
+            var events: [AgentLensEvent] = []
+            if let tokens = record["tokens"] as? [String: Any],
+               let total = (tokens["total"] as? NSNumber)?.intValue
+            {
+                let cache = tokens["cache"] as? [String: Any]
+                let usage = AgentTokenUsage(
+                    inputTokens: (tokens["input"] as? NSNumber)?.intValue ?? 0,
+                    cachedInputTokens: (cache?["read"] as? NSNumber)?.intValue ?? 0,
+                    outputTokens: (tokens["output"] as? NSNumber)?.intValue ?? 0,
+                    reasoningOutputTokens: (tokens["reasoning"] as? NSNumber)?.intValue ?? 0,
+                    totalTokens: total
+                )
+                events.append(
+                    .contextUsageUpdated(
+                        AgentContextUsage(
+                            turnID: nil,
+                            last: usage,
+                            total: usage,
+                            modelContextWindow: nil,
+                            evidence: evidence
+                        )
+                    )
+                )
+            }
+            if reason == "stop" {
+                events.append(.status(.completed, evidence: evidence))
+            } else if reason == "error" || reason == "tool-error" {
+                events.append(.status(.failed("Step failed"), evidence: evidence))
+            }
+            return events
+
         default:
             return []
         }

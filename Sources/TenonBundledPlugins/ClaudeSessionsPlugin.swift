@@ -19,6 +19,9 @@ enum ClaudeSessionsPlugin {
         return BundledPluginProgram(
             id: id,
             subscribedEvents: ["settings.changed", "workspace.changed"],
+            // T-182: `"workspace.changed"` only triggers an ownership recheck here and never
+            // reads the payload, so a burst of firings needs at most one pending.
+            coalescableEvents: ["workspace.changed"],
             providedIntents: [open, refresh],
             viewCallbacks: [
                 viewID: BundledPluginViewCallbacks(
@@ -264,8 +267,21 @@ enum ClaudeSessionsPlugin {
                 log: context.log
             )
             guard isCurrent(instanceID, generation: generation) else { return nil }
+            let opencode = await ClaudeSessionsScan.scanOpenCode(
+                project: pane.project,
+                opencodeHome: setting(
+                    context,
+                    key: "opencodeHome",
+                    default: "~/.local/share/opencode"
+                ),
+                favourites: favourites,
+                limit: limit,
+                caller: caller,
+                log: context.log
+            )
+            guard isCurrent(instanceID, generation: generation) else { return nil }
 
-            var found = claude.sessions + codex
+            var found = claude.sessions + codex + opencode
             found.sort { $0.mtime > $1.mtime }
             var marked: [ClaudeSessionRecord] = []
             var recent: [ClaudeSessionRecord] = []
@@ -501,7 +517,11 @@ enum ClaudeSessionsPlugin {
 
         private func sessionTitle(_ session: ClaudeSessionRecord) -> String {
             if !session.title.isEmpty { return session.title }
-            return session.provider == .codex ? "Untitled Codex session" : "Untitled Claude session"
+            switch session.provider {
+            case .claude: return "Untitled Claude session"
+            case .codex: return "Untitled Codex session"
+            case .opencode: return "Untitled opencode session"
+            }
         }
 
         private func failureCode(_ result: IntentResult) -> String {

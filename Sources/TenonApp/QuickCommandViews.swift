@@ -761,6 +761,8 @@ private struct QuickCommandEditor: View {
             "Starts Codex in a fresh terminal tab"
         case .claude:
             "Starts Claude in a fresh terminal tab"
+        case .opencode:
+            "Starts opencode in a fresh terminal tab"
         }
         let availability = switch availability {
         case .project:
@@ -801,6 +803,7 @@ private extension QuickCommandRunner {
         case .terminal: "terminal.fill"
         case .codex: "chevron.left.forwardslash.chevron.right"
         case .claude: "sparkles"
+        case .opencode: "curlybraces"
         }
     }
 

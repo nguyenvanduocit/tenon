@@ -7,12 +7,14 @@ enum QuickCommandRunner: String, CaseIterable, Codable, Sendable {
     case terminal
     case codex
     case claude
+    case opencode
 
     var label: String {
         switch self {
         case .terminal: "Terminal"
         case .codex: "Codex"
         case .claude: "Claude"
+        case .opencode: "opencode"
         }
     }
 
@@ -23,6 +25,7 @@ enum QuickCommandRunner: String, CaseIterable, Codable, Sendable {
         case .terminal: nil
         case .codex: "codex"
         case .claude: "claude"
+        case .opencode: "opencode"
         }
     }
 }
@@ -354,7 +357,7 @@ enum QuickCommandExecutor {
                 to: paneID
             )
 
-        case .codex, .claude:
+        case .codex, .claude, .opencode:
             workspaceStore.newTab(content: .terminal)
             guard let paneID = workspaceStore.catalog.activeSlotID,
                   workspaceStore.catalog.slot(id: paneID)?.content == .terminal,

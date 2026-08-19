@@ -35,10 +35,12 @@ struct AgentLensResolution: Equatable, Sendable {
 actor AgentLensDiscovery {
     private let homeDirectory: URL
     private let codexSessionsRoot: URL
+    private let opencodeDataRoot: URL
     private let fileManager: FileManager
     private let sessionRegistry: AgentSessionRegistry
     private let codexHookDegradation: String?
     private let claudeHookDegradation: String?
+    private let opencodeHookDegradation: String?
     private let processProvider: (@Sendable (UInt64) -> AgentProvider?)?
     private let processGroupProvider: (@Sendable (UInt64) -> UInt64?)?
     /// One provider verdict per surface, keyed to the foreground process it was derived from.
@@ -50,27 +52,35 @@ actor AgentLensDiscovery {
         fileManager: FileManager = .default,
         sessionRegistry: AgentSessionRegistry? = nil,
         codexSessionsRoot: URL? = nil,
+        opencodeDataRoot: URL? = nil,
         codexHookDegradation: String? = nil,
         claudeHookDegradation: String? = nil,
+        opencodeHookDegradation: String? = nil,
         processProvider: (@Sendable (UInt64) -> AgentProvider?)? = nil,
         processGroupProvider: (@Sendable (UInt64) -> UInt64?)? = nil
     ) {
         let resolvedCodexSessionsRoot = (codexSessionsRoot ?? homeDirectory
             .appendingPathComponent(".codex/sessions", isDirectory: true))
             .standardizedFileURL
+        let resolvedOpenCodeDataRoot = (opencodeDataRoot ?? homeDirectory
+            .appendingPathComponent(".local/share/opencode", isDirectory: true))
+            .standardizedFileURL
         self.homeDirectory = homeDirectory.standardizedFileURL
         self.codexSessionsRoot = resolvedCodexSessionsRoot
+        self.opencodeDataRoot = resolvedOpenCodeDataRoot
         self.fileManager = fileManager
         self.sessionRegistry = sessionRegistry ?? AgentSessionRegistry(
             allowedTranscriptRoots: [
                 resolvedCodexSessionsRoot,
                 homeDirectory.appendingPathComponent(".claude/projects", isDirectory: true),
+                resolvedOpenCodeDataRoot,
             ]
         )
         self.processProvider = processProvider
         self.processGroupProvider = processGroupProvider
         self.codexHookDegradation = codexHookDegradation
         self.claudeHookDegradation = claudeHookDegradation
+        self.opencodeHookDegradation = opencodeHookDegradation
     }
 
     func resolve(_ identity: AgentTerminalIdentity) async -> AgentLensResolution? {
@@ -86,7 +96,7 @@ actor AgentLensDiscovery {
             return bound
         }
 
-        if provider != .codex,
+        if provider == .claude,
            let exact = openTranscript(for: identity.foregroundPID, under: roots)
         {
             return AgentLensResolution(
@@ -99,9 +109,10 @@ actor AgentLensDiscovery {
             )
         }
 
-        // Codex commonly has a Node foreground process and a native child with several
-        // transcript FDs. Cwd + mtime cannot distinguish concurrent sessions, so Codex
-        // stays process-only until its root hook reports the exact resource.
+        // Codex and opencode commonly have a Node/bun foreground process. Codex has a native
+        // child with several transcript FDs, and opencode keeps every session in one shared
+        // database that names no single session — so both stay process-only until their root
+        // hook reports the exact resource.
         return AgentLensResolution(
             provider: provider,
             sessionID: nil,
@@ -146,7 +157,11 @@ actor AgentLensDiscovery {
     ) -> AgentLensResolution? {
         guard binding.processGroupID == nil ||
                 binding.processGroupID == processGroupID(for: identity.foregroundPID),
-              let transcript = declared(binding.transcriptURL, under: roots)
+              let transcript = declared(
+                binding.transcriptURL,
+                under: roots,
+                provider: binding.provider
+              )
         else { return nil }
         return AgentLensResolution(
             provider: binding.provider,
@@ -163,6 +178,7 @@ actor AgentLensDiscovery {
         let degradation = switch provider {
         case .claude: claudeHookDegradation
         case .codex: codexHookDegradation
+        case .opencode: opencodeHookDegradation
         }
         if let degradation {
             return "\(provider.displayName) detected, but its Tenon hook is unavailable: \(degradation)"
@@ -207,6 +223,9 @@ actor AgentLensDiscovery {
         if Self.containsExecutable("codex", in: probe) || probe.contains("@openai/codex") {
             return .codex
         }
+        if Self.containsExecutable("opencode", in: probe) || probe.contains("opencode-ai") {
+            return .opencode
+        }
         return nil
     }
 
@@ -248,6 +267,8 @@ actor AgentLensDiscovery {
             ]
         case .codex:
             return [codexSessionsRoot]
+        case .opencode:
+            return [opencodeDataRoot]
         }
     }
 
@@ -280,8 +301,12 @@ actor AgentLensDiscovery {
     }
 
     /// Where a transcript is allowed to be, which a root session can state before it writes one.
-    private func declared(_ candidate: URL, under roots: [URL]) -> URL? {
-        AgentTranscriptPath.validated(candidate, roots: roots)
+    private func declared(_ candidate: URL, under roots: [URL], provider: AgentProvider) -> URL? {
+        AgentTranscriptPath.validated(
+            candidate,
+            roots: roots,
+            fileExtension: provider.transcriptFileExtension
+        )
     }
 
     /// The same question asked of a file that is already there, for a transcript found by

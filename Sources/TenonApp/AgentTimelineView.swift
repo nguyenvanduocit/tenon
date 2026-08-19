@@ -18,6 +18,9 @@ struct AgentSessionTimelineView: View {
     var body: some View {
         ScrollView {
             LazyVStack(alignment: .leading, spacing: 10) {
+                // The four choices sit here, above every state, so the reading can be configured
+                // the same way whether it has not started, is in flight, is on screen, or failed.
+                readingControls
                 switch model.timelineGeneration {
                 case .idle:
                     // Asked here, on every snapshot change, rather than remembered from the
@@ -72,7 +75,6 @@ struct AgentSessionTimelineView: View {
             .font(TenonTheme.interfaceFont(size: 11.5))
             .foregroundStyle(TenonTheme.muted)
             .fixedSize(horizontal: false, vertical: true)
-            readingControls
             Text(model.readingOptions.lens.hint)
                 .font(TenonTheme.utilityFont(size: 9.5))
                 .foregroundStyle(TenonTheme.muted)
@@ -91,9 +93,10 @@ struct AgentSessionTimelineView: View {
 
     /// The four choices, folded to whatever the pane is wide enough for.
     ///
-    /// They sit on the invitation rather than in the pane header because they belong to the
+    /// They sit above every state rather than in the pane header because they belong to the
     /// reading that has not been asked for yet: a run in flight keeps the options it started
-    /// with, and a header control would suggest it could be steered mid-flight.
+    /// with, a header control would suggest it could be steered mid-flight, and keeping one
+    /// place for them means the pane never reflows when the reading's state changes.
     private var readingControls: some View {
         ViewThatFits(in: .horizontal) {
             HStack(spacing: 8) {
@@ -239,10 +242,9 @@ struct AgentSessionTimelineView: View {
                 tint: TenonTheme.amber
             )
             if failure.isRetryable {
-                // The controls come back with the retry rather than only on the invitation: the
-                // most useful thing to change after a reading failed is the reading — a CLI that
-                // is not installed, a model that was busy, a span that was too much to chew.
-                readingControls
+                // The controls sit above, on every state, so the retry needs nothing of its own:
+                // the most useful thing to change after a reading failed is the reading — a CLI
+                // that is not installed, a model that was busy, a span that was too much to chew.
                 Button("Try again") { model.generateTimeline() }
                     .buttonStyle(.bordered)
                     .controlSize(.small)

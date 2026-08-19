@@ -567,7 +567,7 @@ final class WorkspaceScopedViewStateTests: XCTestCase {
                 guard request.intentID.rawValue == "process.exec.v1" else { return nil }
                 let arguments = request.input.objectValue?["arguments"]?.arrayValue?
                     .compactMap(\.stringValue) ?? []
-                let isCodexIndexRead = arguments.contains { $0.contains("sqlite3") }
+                let isCodexIndexRead = arguments.contains { $0.contains("FROM threads") }
                 func inline(_ text: String) -> IntentValue {
                     .object(["kind": .string("inline"), "text": .string(text)])
                 }

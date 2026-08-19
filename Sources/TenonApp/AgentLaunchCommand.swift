@@ -135,6 +135,8 @@ enum AgentLaunchComposer {
         case (.claude, .fork): ["--resume", sessionID, "--fork-session"]
         case (.codex, .resume): ["resume", sessionID]
         case (.codex, .fork): ["fork", sessionID]
+        case (.opencode, .resume): ["--session", sessionID]
+        case (.opencode, .fork): ["--session", sessionID, "--fork"]
         }
     }
 
@@ -146,14 +148,25 @@ enum AgentLaunchComposer {
         transcriptPath: String,
         callerPrompt: String?
     ) -> String {
+        let formatLine = provider == .opencode
+            ? """
+              That file is opencode's SQLite session database; its parts live in the `part` \
+              table, joined to their message's role through the `message` table. Read the most \
+              recent parts first to recover what was happening, then read further back only as \
+              far as you need.
+              """
+            : """
+              That file is JSON Lines — one JSON record per line, oldest first. Read the end of \
+              it first to recover what was happening, then read further back only as far as you \
+              need.
+              """
         var text = """
         You are continuing a session that was recorded by \(provider.label), not by you. \
         Its full transcript is on this machine at:
 
           \(transcriptPath)
 
-        That file is JSON Lines — one JSON record per line, oldest first. Read the end of it \
-        first to recover what was happening, then read further back only as far as you need. \
+        \(formatLine) \
         Before changing anything, tell me what that session was doing and what it left \
         unfinished.
         """

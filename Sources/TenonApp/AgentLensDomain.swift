@@ -4,11 +4,22 @@ import Foundation
 enum AgentProvider: String, CaseIterable, Codable, Sendable {
     case claude
     case codex
+    case opencode
 
     var displayName: String {
         switch self {
         case .claude: "Claude"
         case .codex: "Codex"
+        case .opencode: "opencode"
+        }
+    }
+
+    /// The file shape a recorded transcript takes on disk, mirroring
+    /// `AgentSessionProvider.transcriptFileExtension` at this boundary.
+    var transcriptFileExtension: String {
+        switch self {
+        case .claude, .codex: "jsonl"
+        case .opencode: "db"
         }
     }
 }

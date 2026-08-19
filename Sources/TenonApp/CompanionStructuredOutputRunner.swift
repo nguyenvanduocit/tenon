@@ -48,6 +48,15 @@ struct LiveCompanionStructuredOutputRunner: CompanionStructuredOutputRunning, Se
                 workingDirectoryURL: workingDirectoryURL
             )
             return try CompanionCodexAdapter.structuredOutput(from: output.stdout)
+        case .opencode:
+            let output = try await CompanionOpenCodeAdapter.run(
+                executableURL: executableURL,
+                model: profile.modelArgument,
+                prompt: effectivePrompt,
+                outputSchema: outputSchema,
+                workingDirectoryURL: workingDirectoryURL
+            )
+            return try CompanionOpenCodeAdapter.structuredOutput(from: output.stdout)
         }
     }
 
@@ -195,6 +204,57 @@ enum CompanionCodexAdapter {
                   let item = event["item"] as? [String: Any],
                   item["type"] as? String == "agent_message",
                   let text = item["text"] as? String,
+                  let payload = text.data(using: .utf8),
+                  let object = try? JSONSerialization.jsonObject(with: payload),
+                  JSONSerialization.isValidJSONObject(object)
+            else { continue }
+            candidate = try? JSONSerialization.data(
+                withJSONObject: object,
+                options: [.sortedKeys]
+            )
+        }
+        guard let candidate else { throw CompanionTaskFailure.malformedOutput }
+        return candidate
+    }
+}
+
+enum CompanionOpenCodeAdapter {
+    static func arguments(model: String?) -> [String] {
+        var result = ["run", "--format", "json"]
+        if let model { result += ["--model", model] }
+        return result
+    }
+
+    static func run(
+        executableURL: URL,
+        model: String?,
+        prompt: String,
+        outputSchema: String,
+        workingDirectoryURL: URL
+    ) async throws -> CompanionProcessOutput {
+        // opencode has no structured-output flag, so the schema is asked for in the prompt
+        // instead, and the JSON is read back out of the answer's `text` parts.
+        let structuredPrompt = prompt
+            + "\n\nRespond with a single JSON object that matches this schema:\n"
+            + outputSchema
+        return try await CompanionProcessRunner.run(
+            executableURL: executableURL,
+            arguments: arguments(model: model),
+            prompt: structuredPrompt,
+            workingDirectoryURL: workingDirectoryURL
+        )
+    }
+
+    /// opencode's `--format json` channel is JSONL. The answer arrives in `text` parts rather
+    /// than in a result event; the last part whose text parses as JSON is the task output.
+    static func structuredOutput(from data: Data) throws -> Data {
+        var candidate: Data?
+        for line in data.split(separator: 0x0A) {
+            guard let event = try? JSONSerialization.jsonObject(with: Data(line))
+                    as? [String: Any],
+                  event["type"] as? String == "text",
+                  let part = event["part"] as? [String: Any],
+                  let text = part["text"] as? String,
                   let payload = text.data(using: .utf8),
                   let object = try? JSONSerialization.jsonObject(with: payload),
                   JSONSerialization.isValidJSONObject(object)

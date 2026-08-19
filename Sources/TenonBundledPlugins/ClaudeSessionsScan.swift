@@ -7,6 +7,7 @@ struct ClaudeSessionRecord: Sendable, Equatable {
     enum Provider: String, Sendable {
         case claude
         case codex
+        case opencode
     }
 
     let provider: Provider
@@ -247,6 +248,45 @@ function emit() { printf "%s\t%d\t%d\t%s\t%s\t%s\n", f, p, r, t, first, branch }
             .map(String.init) ?? ""
     }
 
+    static func scanOpenCode(
+        project: String,
+        opencodeHome: String,
+        favourites: [ClaudeFavouriteRecord],
+        limit: Int,
+        caller: ClaudeSessionsIntentCaller,
+        log: @escaping @Sendable (String) async -> Void
+    ) async -> [ClaudeSessionRecord] {
+        let dbPath = opencodeHome.trimmingTrailingSlashes + "/opencode.db"
+        let sessions = await fetchOpenCode(
+            dbPath: dbPath,
+            project: project,
+            filter: "",
+            limit: limit,
+            caller: caller,
+            log: log
+        )
+        let seen = Set(sessions.map(\.id))
+        var missing = favouriteIDs(favourites, project: project, provider: .opencode)
+            .filter { !seen.contains($0) }
+        if missing.count > maxFavouriteLookup {
+            await log(
+                "agent-sessions: \(missing.count - maxFavouriteLookup) favourited opencode "
+                    + "sessions past the \(maxFavouriteLookup) this scan looks up"
+            )
+            missing = Array(missing.prefix(maxFavouriteLookup))
+        }
+        guard !missing.isEmpty else { return sessions }
+        let marked = await fetchOpenCode(
+            dbPath: dbPath,
+            project: project,
+            filter: codexIDFilter(missing),
+            limit: missing.count,
+            caller: caller,
+            log: log
+        )
+        return sessions + marked
+    }
+
     static func owningWorkspace(
         instanceID: String,
         caller: ClaudeSessionsIntentCaller
@@ -469,6 +509,72 @@ function emit() { printf "%s\t%d\t%d\t%s\t%s\t%s\n", f, p, r, t, first, branch }
         return await exec(
             command: "/bin/sh",
             arguments: ["-c", script, "tenon-codex-scan", query],
+            workingDirectory: project,
+            caller: caller
+        )
+    }
+
+    private static func fetchOpenCode(
+        dbPath: String,
+        project: String,
+        filter: String,
+        limit: Int,
+        caller: ClaudeSessionsIntentCaller,
+        log: @escaping @Sendable (String) async -> Void
+    ) async -> [ClaudeSessionRecord] {
+        let base = "SELECT id, (time_updated / 1000) AS mtime, "
+            + "substr(COALESCE(NULLIF(trim(title), ''), ''), 1, 160) AS title, "
+            + "(tokens_input + tokens_output + tokens_reasoning) AS tokens "
+            + "FROM session WHERE time_archived IS NULL AND directory = "
+            + sqlString(project) + filter
+            + " ORDER BY time_updated DESC, id DESC LIMIT \(limit)"
+        let result = await runOpenCodeQuery(
+            dbPath: dbPath,
+            project: project,
+            query: base,
+            caller: caller
+        )
+        guard result.ok, result.status == 0 else {
+            if !result.ok || result.status != 0 {
+                await log(
+                    "agent-sessions: could not read opencode sessions: "
+                        + (result.error ?? result.stderr)
+                )
+            }
+            return []
+        }
+        guard let data = result.stdout.data(using: .utf8),
+              let rows = try? JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+        else { return [] }
+
+        return rows.compactMap { row in
+            guard let id = row["id"] as? String, !id.isEmpty else { return nil }
+            return ClaudeSessionRecord(
+                provider: .opencode,
+                id: id,
+                path: dbPath,
+                mtime: integer(row["mtime"]),
+                size: 0,
+                prompts: 0,
+                replies: 0,
+                tokens: integer(row["tokens"]),
+                branch: "",
+                title: cleanTitle(String(row["title"] as? String ?? "")) ?? ""
+            )
+        }
+    }
+
+    private static func runOpenCodeQuery(
+        dbPath: String,
+        project: String,
+        query: String,
+        caller: ClaudeSessionsIntentCaller
+    ) async -> ClaudeProcessResult {
+        let script = "exec /usr/bin/sqlite3 -readonly -json \(shellPath(dbPath)) "
+            + "\"$1\""
+        return await exec(
+            command: "/bin/sh",
+            arguments: ["-c", script, "tenon-opencode-scan", query],
             workingDirectory: project,
             caller: caller
         )

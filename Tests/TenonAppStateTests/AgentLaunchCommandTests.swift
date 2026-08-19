@@ -99,6 +99,40 @@ final class AgentLaunchCommandTests: XCTestCase {
         )
     }
 
+    func testOpenCodeResumesAndForksThroughItsSessionFlags() throws {
+        let session = "ses_00f37f026001r6IVuxUAf5WoBM"
+        let opencodePath = "/Users/x/.opencode/bin/opencode"
+
+        let resume = try AgentLaunchComposer.plan(
+            agent: .opencode,
+            executablePath: opencodePath,
+            userArguments: [],
+            prompt: nil,
+            session: AgentSessionHandoff(
+                provider: .opencode,
+                sessionID: session,
+                transcriptPath: "/Users/x/.local/share/opencode/opencode.db"
+            )
+        )
+        let fork = try AgentLaunchComposer.plan(
+            agent: .opencode,
+            executablePath: opencodePath,
+            userArguments: [],
+            prompt: nil,
+            session: AgentSessionHandoff(
+                provider: .opencode,
+                sessionID: session,
+                transcriptPath: "/Users/x/.local/share/opencode/opencode.db",
+                continuation: .fork
+            )
+        )
+
+        XCTAssertEqual(resume.arguments, ["--session", session])
+        XCTAssertEqual(fork.arguments, ["--session", session, "--fork"])
+        XCTAssertFalse(resume.handoff)
+        XCTAssertFalse(fork.handoff)
+    }
+
     // MARK: - Forking the agent's own session
 
     /// A fork is the provider's own "continue this as a NEW session" spelling — verified

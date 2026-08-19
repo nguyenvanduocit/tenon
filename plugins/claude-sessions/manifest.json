@@ -70,6 +70,13 @@
       "group": "Scanning"
     },
     {
+      "key": "opencodeHome",
+      "label": "opencode home",
+      "type": "string",
+      "default": "~/.local/share/opencode",
+      "group": "Scanning"
+    },
+    {
       "key": "limit",
       "label": "Sessions shown",
       "type": "select",

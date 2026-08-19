@@ -831,7 +831,11 @@ extension WorkspaceIntentProvider {
             // decided here, with symlinks resolved on both sides, and decided BEFORE a
             // reference exists. A path that does not resolve under one of the provider roots
             // is a typed invalid-input refusal: no pane opens, and nothing partial is built.
-            guard let transcript = AgentTranscriptPath.validated(rawPath, roots: transcriptRoots)
+            guard let transcript = AgentTranscriptPath.validated(
+                rawPath,
+                roots: transcriptRoots,
+                fileExtension: provider.transcriptFileExtension
+            )
             else {
                 throw AppIntentInputError.missingOrInvalidField("transcriptPath")
             }

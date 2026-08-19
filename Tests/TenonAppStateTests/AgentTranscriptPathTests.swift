@@ -134,4 +134,24 @@ final class AgentTranscriptPathTests: XCTestCase {
         let transcript = try write("rollout.jsonl", in: codexRoot)
         XCTAssertNotNil(AgentTranscriptPath.validated(transcript.path, roots: roots))
     }
+
+    /// opencode's transcript is a single database rather than a directory of JSONL files, so the
+    /// extension that admits it is `.db` — and only under the opencode data root.
+    func testOpenCodeDatabaseIsAllowedWithTheDbExtension() throws {
+        let opencodeRoot = home.appendingPathComponent(".local/share/opencode", isDirectory: true)
+        try FileManager.default.createDirectory(at: opencodeRoot, withIntermediateDirectories: true)
+        let database = try write("opencode.db", in: opencodeRoot)
+        XCTAssertNotNil(
+            AgentTranscriptPath.validated(database.path, roots: roots, fileExtension: "db")
+        )
+        XCTAssertNil(
+            AgentTranscriptPath.validated(database.path, roots: roots),
+            "the default jsonl extension refuses a .db"
+        )
+        let jsonl = try write("opencode.jsonl", in: opencodeRoot)
+        XCTAssertNil(
+            AgentTranscriptPath.validated(jsonl.path, roots: roots, fileExtension: "db"),
+            "the db extension refuses a .jsonl"
+        )
+    }
 }

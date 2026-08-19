@@ -9,6 +9,7 @@ import Foundation
 public enum AgentCLI: String, CaseIterable, Codable, Hashable, Identifiable, Sendable {
     case codex
     case claude
+    case opencode
 
     public var id: String { rawValue }
 
@@ -16,6 +17,7 @@ public enum AgentCLI: String, CaseIterable, Codable, Hashable, Identifiable, Sen
         switch self {
         case .codex: "Codex"
         case .claude: "Claude Code"
+        case .opencode: "opencode"
         }
     }
 

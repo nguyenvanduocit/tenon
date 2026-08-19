@@ -79,7 +79,7 @@ enum ClaudeSessionsView {
                 .card(children: [
                     .text("No agent sessions here yet", style: .body, weight: .semibold, color: .default),
                     .text(
-                        "Run `claude` or `codex` in this directory and it will show up.",
+                        "Run `claude`, `codex`, or `opencode` in this directory and it will show up.",
                         style: .caption,
                         weight: .regular,
                         color: .muted
@@ -120,7 +120,7 @@ enum ClaudeSessionsView {
         if session.size > 0 { facts.append(size(session.size)) }
 
         var metadata: [PluginViewNode] = [
-            .badge(session.provider == .codex ? "Codex" : "Claude", tint: session.provider == .codex ? .green : .amber),
+            .badge(providerBadge(session.provider).0, tint: providerBadge(session.provider).1),
         ]
         if !session.branch.isEmpty { metadata.append(.badge(session.branch, tint: .green)) }
         if !facts.isEmpty {
@@ -175,11 +175,15 @@ enum ClaudeSessionsView {
         }
         let claudeCount = pane.sessions.filter { $0.provider == .claude }.count
         let codexCount = pane.sessions.filter { $0.provider == .codex }.count
+        let opencodeCount = pane.sessions.filter { $0.provider == .opencode }.count
         if claudeCount > 0 {
             leading.append(.badge(id: "claude", text: "\(claudeCount) Claude", tint: .amber, tooltip: nil))
         }
         if codexCount > 0 {
             leading.append(.badge(id: "codex", text: "\(codexCount) Codex", tint: .green, tooltip: nil))
+        }
+        if opencodeCount > 0 {
+            leading.append(.badge(id: "opencode", text: "\(opencodeCount) opencode", tint: .default, tooltip: nil))
         }
 
         var trailing: [PaneHeaderItem] = []
@@ -221,7 +225,21 @@ enum ClaudeSessionsView {
 
     private static func sessionTitle(_ session: ClaudeSessionRecord) -> String {
         if !session.title.isEmpty { return session.title }
-        return session.provider == .codex ? "Untitled Codex session" : "Untitled Claude session"
+        switch session.provider {
+        case .claude: return "Untitled Claude session"
+        case .codex: return "Untitled Codex session"
+        case .opencode: return "Untitled opencode session"
+        }
+    }
+
+    private static func providerBadge(
+        _ provider: ClaudeSessionRecord.Provider
+    ) -> (String, ColorToken) {
+        switch provider {
+        case .claude: return ("Claude", .amber)
+        case .codex: return ("Codex", .green)
+        case .opencode: return ("opencode", .default)
+        }
     }
 
     private static func ago(_ seconds: Int) -> String {

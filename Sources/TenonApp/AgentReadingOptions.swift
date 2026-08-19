@@ -148,13 +148,14 @@ enum AgentReadingModel: String, CaseIterable, Identifiable, Sendable {
         self == .providerDefault ? nil : rawValue
     }
 
-    /// Codex takes `-m`, but its model ids come from the person's own `config.toml` rather than
-    /// from a documented alias list, so offering names here would be guessing at ids the CLI
-    /// would reject. Its readings run whatever that CLI is configured for.
+    /// Codex and opencode take `-m`/`--model`, but their model ids come from the person's own
+    /// config rather than from a documented alias list — Codex's `config.toml` profiles and
+    /// opencode's `provider/model` ids — so offering names here would be guessing at ids the CLI
+    /// would reject. Their readings run whatever that CLI is configured for.
     static func choices(for provider: AgentCLI) -> [Self] {
         switch provider {
         case .claude: allCases
-        case .codex: [.providerDefault]
+        case .codex, .opencode: [.providerDefault]
         }
     }
 }

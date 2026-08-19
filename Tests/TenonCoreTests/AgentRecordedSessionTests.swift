@@ -90,6 +90,36 @@ final class AgentRecordedSessionTests: XCTestCase {
         )
     }
 
+    /// A transcript's file shape is a property of its provider: Codex and Claude Code write
+    /// `.jsonl`, opencode writes one `.db` for every session. A shape that does not belong to
+    /// the named provider is refused on shape alone, before any containment question.
+    func testAReferenceRequiresTheProvidersOwnTranscriptShape() {
+        XCTAssertNotNil(
+            AgentSessionRef(
+                provider: .opencode,
+                sessionID: "ses_abc",
+                transcriptPath: "/Users/x/.local/share/opencode/opencode.db"
+            ),
+            "an opencode session is a .db"
+        )
+        XCTAssertNil(
+            AgentSessionRef(
+                provider: .opencode,
+                sessionID: "ses_abc",
+                transcriptPath: "/Users/x/.local/share/opencode/opencode.jsonl"
+            ),
+            "an opencode session is not a .jsonl"
+        )
+        XCTAssertNil(
+            AgentSessionRef(
+                provider: .claude,
+                sessionID: "s",
+                transcriptPath: "/Users/x/.local/share/opencode/opencode.db"
+            ),
+            "a Claude session is not a .db"
+        )
+    }
+
     func testATitleIsTrimmedBoundedAndOptional() {
         XCTAssertNil(ref(title: "   ").title, "an empty title is no title")
         XCTAssertEqual(ref(title: "  Fix the tab drag  ").title, "Fix the tab drag")

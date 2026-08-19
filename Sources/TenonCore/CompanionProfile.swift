@@ -86,7 +86,7 @@ public struct CompanionProfile: Codable, Equatable, Sendable {
     public static func defaultModel(for agent: AgentCLI) -> String {
         switch agent {
         case .claude: "haiku"
-        case .codex: ""
+        case .codex, .opencode: ""
         }
     }
 
@@ -123,11 +123,11 @@ public struct CompanionProfile: Codable, Equatable, Sendable {
 
     private static func normalizedModel(_ value: String, for agent: AgentCLI) -> String {
         let bounded = bounded(value, maximumBytes: maximumModelBytes)
-        if agent == .codex,
+        if agent == .codex || agent == .opencode,
            bounded.trimmingCharacters(in: .whitespacesAndNewlines)
             == defaultModel(for: .claude)
         {
-            return defaultModel(for: .codex)
+            return defaultModel(for: agent)
         }
         return bounded
     }

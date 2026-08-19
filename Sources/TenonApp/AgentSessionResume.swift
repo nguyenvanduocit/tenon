@@ -87,6 +87,7 @@ extension AgentSessionProvider {
         switch self {
         case .claude: .claude
         case .codex: .codex
+        case .opencode: .opencode
         }
     }
 }

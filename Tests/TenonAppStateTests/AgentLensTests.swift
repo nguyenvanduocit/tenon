@@ -746,6 +746,57 @@ final class AgentLensDecoderTests: XCTestCase {
     private func json(_ object: Any) throws -> Data {
         try JSONSerialization.data(withJSONObject: object, options: [.sortedKeys])
     }
+
+    func testOpenCodePartDecodesTextToolAndStepFinish() throws {
+        let decoder = AgentTranscriptDecoder(provider: .opencode)
+        let evidence = AgentEvidence(
+            source: .transcript,
+            authority: .reported,
+            location: "/tmp/opencode.db",
+            byteOffset: 1,
+            fingerprint: "",
+            capturedAt: Date(),
+            freshness: .current
+        )
+
+        let text = try json(["type": "text", "text": "DONE"])
+        let events = decoder.decodeOpenCode(
+            try JSONSerialization.jsonObject(with: text) as! [String: Any],
+            role: .assistant,
+            evidence: evidence,
+            byteOffset: 1
+        )
+        guard case let .assistantMessage(message) = try XCTUnwrap(events.first) else {
+            return XCTFail("opencode text part was not an assistant message")
+        }
+        XCTAssertEqual(message.text, "DONE")
+
+        let tool = try json([
+            "type": "tool",
+            "tool": "bash",
+            "callID": "call_1",
+            "state": ["status": "completed", "input": ["command": "ls"], "output": "a"],
+        ])
+        let toolEvents = decoder.decodeOpenCode(
+            try JSONSerialization.jsonObject(with: tool) as! [String: Any],
+            role: nil,
+            evidence: evidence,
+            byteOffset: 2
+        )
+        guard case let .toolFinished(run) = try XCTUnwrap(toolEvents.first) else {
+            return XCTFail("opencode completed tool part was not a toolFinished")
+        }
+        XCTAssertEqual(run.state, .succeeded)
+
+        let stop = try json(["type": "step-finish", "reason": "stop"])
+        let stopEvents = decoder.decodeOpenCode(
+            try JSONSerialization.jsonObject(with: stop) as! [String: Any],
+            role: nil,
+            evidence: evidence,
+            byteOffset: 3
+        )
+        XCTAssertTrue(stopEvents.contains { if case .status(.completed, _) = $0 { true } else { false } })
+    }
 }
 
 final class AgentLensReducerTests: XCTestCase {

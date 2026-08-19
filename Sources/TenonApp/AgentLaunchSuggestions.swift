@@ -46,6 +46,12 @@ struct AgentLaunchSuggestion: Identifiable, Equatable, Sendable {
             if let value = value(after: "--permission-mode") {
                 return "Permissions: \(value)"
             }
+
+        case .opencode:
+            if arguments.contains("--auto") { return "Auto approve" }
+            if let value = value(after: "--model") { return "Model \(value)" }
+            if let value = value(after: "--agent") { return "Agent \(value)" }
+            if let value = value(after: "--variant") { return "Variant \(value)" }
         }
         return arguments.isEmpty ? nil : "Recent options"
     }
@@ -143,6 +149,7 @@ struct AgentExecutableLocator: Sendable {
             ".npm-global/bin",
             ".local/share/pnpm",
             ".bun/bin",
+            ".opencode/bin",
             ".volta/bin",
             ".asdf/shims",
             ".local/share/mise/shims",
@@ -441,6 +448,22 @@ enum AgentLaunchHistory {
                     "--prompt-suggestions": "--prompt-suggestions",
                 ]
             )
+
+        case .opencode:
+            // Grounded in `opencode run --help`. `--session` is deliberately absent: a session
+            // id in history is a one-off, not a launch habit.
+            return (
+                [
+                    "--auto": "--auto",
+                    "--thinking": "--thinking",
+                    "--share": "--share",
+                ],
+                [
+                    "-m": "--model", "--model": "--model",
+                    "--agent": "--agent",
+                    "--variant": "--variant",
+                ]
+            )
         }
     }
 
@@ -538,8 +561,9 @@ enum AgentLaunchPlacement: Equatable {
     case emptyGrid(GridRect)
 }
 
-/// Host-native placement and terminal delivery. This is the same typed workspace/surface
-/// path used by personal runbooks; it never mints a principal or enters the intent adapter.
+/// A detected agent is one command line with an executable behind it: this checks that the
+/// executable is still there and still runnable at the moment of the click, then hands the
+/// assembled line to the shared terminal placement/delivery path.
 @MainActor
 enum AgentLaunchExecutor {
     static func run(
@@ -557,68 +581,11 @@ enum AgentLaunchExecutor {
             fileManager.isExecutableFile(atPath: suggestion.executableURL.path)
         else { return .agentUnavailable }
 
-        guard let workspace = workspaceStore.catalog.activeWorkspace else {
-            return .targetUnavailable
-        }
-        let paneID: UUID?
-        switch placement {
-        case .newTab:
-            let existingTabs = Set(workspace.tabs.map(\.id))
-            workspaceStore.newTab(content: .terminal)
-            guard let tab = workspaceStore.catalog.activeTab,
-                  !existingTabs.contains(tab.id)
-            else { return .targetUnavailable }
-            paneID = tab.activeSlotID
-
-        case .tab(let tabID):
-            guard workspace.tabs.contains(where: { $0.id == tabID }) else {
-                return .targetUnavailable
-            }
-            workspaceStore.selectTab(tabID)
-            if let empty = workspaceStore.catalog.activeTab?.slots.first(where: {
-                $0.content == .empty
-            }) {
-                workspaceStore.setSlotContent(empty.id, .terminal)
-                workspaceStore.focusSlot(empty.id)
-                paneID = empty.id
-            } else if workspaceStore.catalog.activeTab?.slots.isEmpty == true {
-                workspaceStore.addSlot(content: .terminal)
-                paneID = workspaceStore.catalog.activeSlotID
-            } else {
-                let existingPanes = Set(
-                    workspaceStore.catalog.activeTab?.slots.map(\.id) ?? []
-                )
-                workspaceStore.splitActiveSlot(.horizontal, content: .terminal)
-                let candidate = workspaceStore.catalog.activeSlotID
-                paneID = candidate.flatMap { existingPanes.contains($0) ? nil : $0 }
-            }
-
-        case .emptyTab:
-            guard workspaceStore.catalog.activeTab?.slots.isEmpty == true else {
-                return .targetUnavailable
-            }
-            workspaceStore.addSlot(content: .terminal)
-            paneID = workspaceStore.catalog.activeSlotID
-
-        case .emptySlot(let slotID):
-            guard workspaceStore.catalog.slot(id: slotID)?.content == .empty else {
-                return .targetUnavailable
-            }
-            workspaceStore.setSlotContent(slotID, .terminal)
-            workspaceStore.focusSlot(slotID)
-            paneID = workspaceStore.catalog.slot(id: slotID)?.content == .terminal
-                ? slotID
-                : nil
-
-        case .emptyGrid(let rect):
-            paneID = workspaceStore.addSlot(content: .terminal, at: rect)
-        }
-
-        guard let paneID,
-              workspaceStore.catalog.slot(id: paneID)?.content == .terminal
-        else { return .targetUnavailable }
-        terminalPool.seedSpawnDirectory(workspace.path, for: paneID)
-        terminalPool.sendTextWhenReady(suggestion.commandLine + "\n", to: paneID)
-        return .ran
+        return TerminalCommandLaunch.run(
+            commandLine: suggestion.commandLine,
+            placement: placement,
+            workspaceStore: workspaceStore,
+            terminalPool: terminalPool
+        )
     }
 }
