@@ -1,0 +1,93 @@
+# T-179: The agent line holds still and a hover tells the rest
+
+> The sidebar row names one agent pane and stops moving; hovering the row opens the full list
+> of its agent panes, each with its state, and choosing one hands that pane the keyboard.
+
+- **priority**: high
+- **effort**: S
+- **prd**: `TENON-PRD-001` (`docs/prds/workspace-shell.prd.md`) — restates `WS-FR-036`
+
+## Why
+
+The operator watched a live row and reported two defects in T-178's `MarqueeLabel`, then chose
+the shape that removes the class rather than the symptoms:
+
+1. **The row went blank.** The label started fully offscreen at the right edge and travelled to
+   fully offscreen at the left, so a blank the full width of the row crossed it once per cycle.
+2. **Anything that redrew the row restarted the crossing.** The animation lived in SwiftUI
+   state (`@State isAnimating` + `.animation(_:value:)`), attached inside the transaction that
+   draws the row — and the row is redrawn constantly and by design: `.onHover` writes
+   `WorkspaceRow.isHovering`, and `agentEntries` is recomputed from `pool.titles` /
+   `pool.paneAttention`, which change while an agent works. A crossing that cannot survive a
+   redraw cannot survive being watched.
+
+A ticker fixed in Core Animation would have answered both, and was refused as complexity the
+feature does not earn: a line that moves can still only name one pane at a time. So the motion
+is gone and the account moved to a surface that can hold all of it.
+
+## What shipped
+
+- The line names the first agent pane in catalog order — its title truncated at the tail, its
+  state glyph, and `+N` for the panes it did not name. Nothing on it moves except the `working`
+  indicator, and no timed work is scheduled for it at any sidebar size.
+- Hovering a row opens `WorkspaceAgentList`: every agent pane, in catalog order, with its
+  state. The pointer crossing from the row into the popover keeps it open (180 ms grace);
+  leaving both closes it; a row whose last agent leaves closes it. The rail shows the same list,
+  where it is the only account of that workspace's agents there is.
+- Choosing a pane calls `WorkspaceStore.focusSlot`, which brings its workspace, its tab and the
+  pane forward in one typed mutation — already the whole selection chain, already covered by
+  `WorkspaceTests`.
+- The same panes sit in the row's context menu, so choosing one is not a pointer-only route,
+  and `WorkspaceRowAnnouncement` still speaks every pane once.
+- Deleted with the rule they served: `MarqueeLabel`, `MarqueeTextWidthKey`,
+  `WorkspaceAgentTagline.dwell`, `WorkspaceAgentTagline.index(elapsed:count:dwell:)`, the
+  tagline's `TimelineView`, and the four rotation-arithmetic tests.
+
+## Criteria
+
+- [x] The line names one pane with a count of the rest, truncates at its tail, and schedules
+      nothing.
+- [x] The hovered list names every agent pane in catalog order with its state, at both sidebar
+      widths, for a workspace that is not selected.
+- [x] Choosing a pane selects its workspace, its tab, and gives it the keyboard.
+- [x] The pointer moving from the row into the list does not close it; a row that loses its
+      last agent does.
+- [x] The panes are reachable without a hover, and the row's spoken label still names them all.
+- [x] A row with no agent pane still reads its tab count.
+- [x] `testTheHoveredAgentListDrawsOneRowPerPaneAtItsStatedDensity` mounts the real list at 1,
+      3 and 6 panes and measures it; mutation-checked by drawing only the first entry (red on
+      the 3- and 6-pane measurements).
+- [x] `WS-FR-036` restated with new `.feature` scenarios, a decision row superseding the
+      rotation-phasing row, and a dated verification receipt.
+- [x] Full suite **2359 / 0**; sidebar snapshots at 232 and 110 pt.
+
+## Owed
+
+- **A live hover.** No headless run can show that resting the pointer on a row opens the
+  popover, that crossing into it keeps it open, or that clicking a line focuses the pane —
+  `swift test` can mount the list and measure it, and nothing more. Needs `./tenon dev` and a
+  pointer.
+- At 110 pt a row carrying the unseen capsule still shows its glyph with almost no text. That
+  is now what the hovered list is for at that width, rather than a defect to fix in the line.
+
+## Owner / files (agent lock)
+
+Claimed by session `c7162dba` 2026-08-17 20:3x.
+
+- `Sources/TenonApp/WorkspaceSidebarView.swift` (the still line, `WorkspaceAgentList`,
+  `WorkspaceAgentListLayout`, `AgentStateIndicator`, the hover grace)
+- `Sources/TenonApp/WorkspaceAgentTagline.swift` (the rotation rule removed)
+- `Sources/TenonApp/WorkspaceIdentityViews.swift` (`spoken` shared with the list)
+- `Sources/TenonApp/SidebarSnapshot.swift` (one stale comment)
+- `Tests/TenonAppStateTests/WorkspaceAgentTaglineTests.swift`,
+  `Tests/TenonAppStateTests/WorkspaceIdentityFormTests.swift`
+- `docs/prds/workspace-shell.prd.md`, `docs/prds/workspace-shell.feature`
+- `Tenon.xcodeproj/project.pbxproj` (regenerated by `xcodegen`; the run also registered the new
+  files other live sessions had added and dropped the deleted `CoreIntentCatalog.swift`, which
+  is what `xcodegen generate` + `git diff --exit-code` in CI requires)
+
+These are T-178's files, whose work is complete and sitting uncommitted in the tree — this task
+is the operator's correction to that same feature, taken directly. Nothing here is held by
+T-177 (`ContentView.swift`, `ShellTitleBar.swift`, `ShellTabStrip.swift`, `ShellFootBar.swift`,
+`WorkspaceStatusBar.swift`, `TitleBarSnapshot.swift`, `AppPreferences.swift`,
+`SettingsView.swift`), T-144, T-141, T-140 or T-135.
