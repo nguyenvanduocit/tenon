@@ -686,6 +686,122 @@ final class WorkspaceIntentProviderTests: XCTestCase {
         })
         XCTAssertEqual(store.catalog.activeTab?.id, targetTabID)
     }
+
+    func testWorkspaceSleepCallsSleepActionWithTheScopedWorkspaceID() async throws {
+        let store = WorkspaceStore()
+        let sleepAction = WorkspaceSleepAction()
+        var invoked: UUID?
+        sleepAction.perform = { invoked = $0 }
+        let bindings = try WorkspaceIntentProvider(store: store, sleepAction: sleepAction)
+            .bindings()
+        let workspaceID = store.catalog.activeWorkspaceID
+
+        _ = try successReply(
+            await invoke(
+                .workspaceSleep,
+                input: .object([:]),
+                scope: InvocationScope(workspaceID: workspaceID),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(invoked, workspaceID)
+    }
+
+    func testWorkspaceSleepOnUnknownWorkspaceFailsWithoutCallingSleepAction() async throws {
+        let store = WorkspaceStore()
+        let sleepAction = WorkspaceSleepAction()
+        var invoked: UUID?
+        sleepAction.perform = { invoked = $0 }
+        let bindings = try WorkspaceIntentProvider(store: store, sleepAction: sleepAction)
+            .bindings()
+
+        let reply = try await invoke(
+            .workspaceSleep,
+            input: .object([:]),
+            scope: InvocationScope(workspaceID: UUID()),
+            bindings: bindings
+        )
+
+        guard case let .failure(failure) = reply else {
+            return XCTFail("unknown workspace scope must fail closed")
+        }
+        XCTAssertEqual(
+            failure.code,
+            .domain(try IntentDomainErrorCode("dev.tenon.core.workspace-not-found"))
+        )
+        XCTAssertNil(invoked)
+    }
+
+    func testWorkspaceVisibilitySetBackgroundsAndRestoresAWorkspace() async throws {
+        let store = WorkspaceStore()
+        store.addWorkspace(name: "Second", path: URL(fileURLWithPath: "/tmp/second"))
+        let second = store.catalog.workspaces[1].id
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        _ = try successReply(
+            await invoke(
+                .workspaceVisibilitySet,
+                input: .object(["visibility": .string("background")]),
+                scope: InvocationScope(workspaceID: second),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(store.catalog.workspaces.first { $0.id == second }?.visibility, .background)
+
+        _ = try successReply(
+            await invoke(
+                .workspaceVisibilitySet,
+                input: .object(["visibility": .string("visible")]),
+                scope: InvocationScope(workspaceID: second),
+                bindings: bindings
+            )
+        )
+
+        XCTAssertEqual(store.catalog.workspaces.first { $0.id == second }?.visibility, .visible)
+    }
+
+    func testWorkspaceVisibilitySetRefusesTheLastVisibleWorkspace() async throws {
+        let store = WorkspaceStore()
+        store.addWorkspace(name: "Second", path: URL(fileURLWithPath: "/tmp/second"))
+        let first = store.catalog.workspaces[0].id
+        let second = store.catalog.workspaces[1].id
+        store.setVisibility(second, to: .background)
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        let reply = try await invoke(
+            .workspaceVisibilitySet,
+            input: .object(["visibility": .string("background")]),
+            scope: InvocationScope(workspaceID: first),
+            bindings: bindings
+        )
+
+        guard case let .failure(failure) = reply else {
+            return XCTFail("backgrounding the last visible workspace must fail closed")
+        }
+        XCTAssertEqual(
+            failure.code,
+            .domain(try IntentDomainErrorCode("dev.tenon.core.visibility-refused"))
+        )
+        XCTAssertEqual(store.catalog.workspaces.first { $0.id == first }?.visibility, .visible)
+    }
+
+    func testWorkspaceVisibilitySetRejectsAnInvalidEnumValue() async throws {
+        let store = WorkspaceStore()
+        let bindings = try WorkspaceIntentProvider(store: store).bindings()
+
+        let reply = try await invoke(
+            .workspaceVisibilitySet,
+            input: .object(["visibility": .string("hidden")]),
+            scope: InvocationScope(workspaceID: store.catalog.activeWorkspaceID),
+            bindings: bindings
+        )
+
+        guard case .failure = reply else {
+            return XCTFail("an unrecognized visibility value must be refused as invalid input")
+        }
+    }
 }
 
 private extension WorkspaceIntentProviderTests {

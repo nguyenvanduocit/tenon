@@ -3,6 +3,23 @@ import Foundation
 import TenonCore
 import TenonIntentCore
 
+/// The one typed implementation `workspace.sleep.v1` and the sidebar's Sleep button both
+/// call (invariant 6 forbids two protocols for one operation).
+///
+/// Late-bound because the real teardown needs `PluginHost`, which `TenonApp.swift`
+/// constructs *after* `AppIntentRuntime` — `PluginHost.init` takes `intentRuntime.kernel`,
+/// so `PluginHost` cannot exist yet at the point this provider is built. `perform` is `nil`
+/// until composition assigns it once every dependency exists; every call before that (and
+/// every test that never assigns `perform`) is a safe no-op.
+@MainActor
+final class WorkspaceSleepAction {
+    var perform: ((UUID) -> Void)?
+
+    func callAsFunction(_ workspaceID: UUID) {
+        perform?(workspaceID)
+    }
+}
+
 @MainActor
 final class WorkspaceIntentProvider {
     typealias CustomIconNormalizer = @Sendable (
@@ -18,6 +35,7 @@ final class WorkspaceIntentProvider {
         let closeRefused: IntentErrorCode
         let contentUnavailable: IntentErrorCode
         let cursorInvalidated: IntentErrorCode
+        let visibilityRefused: IntentErrorCode
 
         init() throws {
             workspaceUnavailable = .domain(
@@ -54,21 +72,29 @@ final class WorkspaceIntentProvider {
                     "dev.tenon.core.cursor-invalidated"
                 )
             )
+            visibilityRefused = .domain(
+                try IntentDomainErrorCode(
+                    "dev.tenon.core.visibility-refused"
+                )
+            )
         }
     }
 
     private let store: WorkspaceStore
     private let codes: ErrorCodes
     private let normalizeCustomIcon: CustomIconNormalizer
+    private let sleepAction: WorkspaceSleepAction
 
     init(
         store: WorkspaceStore,
         normalizeCustomIcon: @escaping CustomIconNormalizer = {
             try await WorkspaceCustomIconImport.icon(from: $0)
-        }
+        },
+        sleepAction: WorkspaceSleepAction = WorkspaceSleepAction()
     ) throws {
         self.store = store
         self.normalizeCustomIcon = normalizeCustomIcon
+        self.sleepAction = sleepAction
         codes = try ErrorCodes()
     }
 
@@ -175,6 +201,18 @@ final class WorkspaceIntentProvider {
             ) { envelope, context in
                 try context.checkCancellation()
                 return await self.selectWorkspace(envelope: envelope)
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.workspaceSleep.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return await self.sleepWorkspace(envelope: envelope)
+            },
+            IntentProviderBinding(
+                intentID: try CoreIntentName.workspaceVisibilitySet.intentID
+            ) { envelope, context in
+                try context.checkCancellation()
+                return try await self.setWorkspaceVisibility(envelope: envelope)
             },
         ]
     }
@@ -767,6 +805,59 @@ private extension WorkspaceIntentProvider {
             )
         }
         return AppIntentProviderSupport.emptySuccess
+    }
+
+    /// `workspace.sleep.v1` — the public adapter over `WorkspaceSleepAction`, the same
+    /// typed action the sidebar's Sleep button calls DIRECT. Handles the active-workspace
+    /// handoff itself, so both callers get it for free instead of one of them forgetting it.
+    func sleepWorkspace(envelope: IntentEnvelope) -> IntentProviderReply {
+        guard envelope.input == .object([:]) else {
+            return AppIntentProviderSupport.invalidInput(.expectedObject)
+        }
+        guard let workspaceID = envelope.scope.workspaceID,
+              store.catalog.workspaces.contains(where: { $0.id == workspaceID })
+        else {
+            return failure(codes.workspaceNotFound, reason: "workspace-scope-not-found")
+        }
+        sleepAction(workspaceID)
+        return AppIntentProviderSupport.emptySuccess
+    }
+
+    /// `workspace.visibility.set.v1` — the public adapter over `WorkspaceStore.setVisibility`.
+    func setWorkspaceVisibility(
+        envelope: IntentEnvelope
+    ) async throws -> IntentProviderReply {
+        do {
+            let object = try AppIntentProviderSupport.object(envelope.input)
+            let value = try AppIntentProviderSupport.string("visibility", in: object)
+            let visibility: WorkspaceVisibility
+            switch value {
+            case "visible":
+                visibility = .visible
+            case "background":
+                visibility = .background
+            default:
+                throw AppIntentInputError.missingOrInvalidField("visibility")
+            }
+            guard let workspaceID = envelope.scope.workspaceID,
+                  store.catalog.workspaces.contains(where: { $0.id == workspaceID })
+            else {
+                return failure(codes.workspaceNotFound, reason: "workspace-scope-not-found")
+            }
+            store.setVisibility(workspaceID, to: visibility)
+            guard store.catalog.workspaces.first(where: { $0.id == workspaceID })?.visibility
+                == visibility
+            else {
+                return failure(codes.visibilityRefused, reason: "visibility-change-refused")
+            }
+            return AppIntentProviderSupport.emptySuccess
+        } catch let error as AppIntentInputError {
+            return AppIntentProviderSupport.invalidInput(error)
+        } catch {
+            return AppIntentProviderSupport.invalidInput(
+                .missingOrInvalidField("$")
+            )
+        }
     }
 
     func selectScopedWorkspace(_ scope: InvocationScope) -> Bool {
