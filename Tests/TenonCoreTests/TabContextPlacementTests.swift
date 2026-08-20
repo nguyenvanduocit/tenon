@@ -31,6 +31,46 @@ final class TabContextPlacementTests: XCTestCase {
         )
     }
 
+    /// Reproduces the operator-reported "This space is no longer available" dead end: a
+    /// workspace's *sole* tab keeps existing with zero slots once its last pane closes —
+    /// `closeTab`'s own invariant refuses to remove a workspace's last tab
+    /// (`Workspace.swift:656`, "the workspace's required final tab remains as its empty
+    /// structural placeholder") — but `scopedPane` answers a live, still-visible tab exactly
+    /// like an unknown one. `ShellTabStrip.send(_:onTab:)` reads that `nil` as "refuse", so
+    /// every command in that tab's own right-click menu — including "New Terminal" — fails
+    /// against a tab the operator is looking straight at.
+    func testATabEmptiedToTheWorkspacesLastPaneResolvesToNothingEvenThoughItStillExists() {
+        var catalog = WorkspaceCatalog(
+            path: FileManager.default.temporaryDirectory,
+            content: .terminal
+        )
+        let workspaceID = catalog.activeWorkspaceID
+        let tab = catalog.activeWorkspace!.tabs[0]
+        XCTAssertEqual(catalog.activeWorkspace?.tabs.count, 1, "the fixture needs a lone tab")
+
+        catalog.closeSlot(tab.slots[0].id)
+
+        XCTAssertEqual(
+            catalog.activeWorkspace?.tabs.map(\.id),
+            [tab.id],
+            "the tab must survive its last pane closing — it is the workspace's only tab"
+        )
+        XCTAssertEqual(
+            catalog.activeWorkspace?.tabs[0].slots,
+            [],
+            "the surviving tab must actually be empty, or this proves nothing"
+        )
+        XCTAssertNil(
+            TabContextPlacement.scopedPane(in: catalog, tabID: tab.id),
+            "today's behavior: a real, visible, empty tab reads exactly like a closed one"
+        )
+        XCTAssertEqual(
+            TabContextPlacement.owningWorkspace(in: catalog, tabID: tab.id),
+            workspaceID,
+            "the tab is not gone — its workspace still names it"
+        )
+    }
+
     func testATabInAnUnselectedWorkspaceStillResolvesToItsOwnWorkspace() {
         let fixture = makeCatalog()
 
