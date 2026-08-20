@@ -685,3 +685,60 @@ Feature: Resume work in a stable native workspace shell
       When the whole shell is rendered offscreen at each chrome order
       Then each picture shows both chrome rows and which strip each one holds
       And the window's bottom resize gutter is measured by a probe rather than assumed
+
+  Rule: A workspace can be put to sleep or moved to the background without losing its shape
+
+    @req-ws-fr-037 @sleep
+    Scenario: Sleep releases a workspace's live resources without touching its catalog
+      Given a workspace holds two terminal panes with live shells
+      When the operator chooses Sleep from that workspace's row
+      Then both panes' live terminal surfaces are released
+      And the workspace's tabs, panes, layout, and UUIDs are unchanged
+      And no `WorkspaceEvent` is published, because nothing in the catalog moved
+
+    @req-ws-fr-037 @sleep
+    Scenario: Reopening a slept pane starts fresh, exactly like a relaunch would
+      Given a workspace was put to sleep
+      When the operator opens one of its tabs
+      Then that pane materializes a new shell in its saved directory
+      And no prior process or scrollback is restored
+
+    @req-ws-fr-037 @sleep
+    Scenario: Sleeping the active workspace selects another workspace first
+      Given the workspace being slept is the one currently active
+      When Sleep runs
+      Then a different workspace becomes active before any resource is released
+
+    @req-ws-fr-037 @sleep @cli
+    Scenario: workspace.sleep.v1 reaches the same action the sidebar button does
+      Given a CLI caller names a workspace in invocation scope
+      When it sends workspace.sleep.v1
+      Then the named workspace's live resources are released exactly as the sidebar's Sleep button would release them
+
+    @req-ws-fr-038 @background
+    Scenario: Move to Background hides a workspace without touching its resources
+      Given a workspace with a live terminal pane
+      When the operator chooses Move to Background from its row
+      Then the workspace no longer appears in the sidebar's main list
+      And its live terminal pane keeps running unchanged
+
+    @req-ws-fr-038 @background
+    Scenario: The last visible workspace cannot be backgrounded
+      Given exactly one workspace is currently visible
+      When the operator tries to move it to the background
+      Then the request is refused
+      And that workspace remains visible
+
+    @req-ws-fr-038 @background
+    Scenario: Backgrounding the active workspace selects a visible neighbor
+      Given the workspace being backgrounded is the one currently active
+      And at least one other workspace is visible
+      When Move to Background runs
+      Then a visible neighbor becomes the active workspace
+
+    @req-ws-fr-038 @background
+    Scenario: A backgrounded workspace is found again through its own section
+      Given a workspace has been moved to the background
+      When the operator selects it from the sidebar's Backgrounded section
+      Then it becomes visible again in the main list
+      And it becomes the active workspace
