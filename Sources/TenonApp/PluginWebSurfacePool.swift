@@ -141,6 +141,32 @@ final class PluginWebSurfacePool {
         }
     }
 
+    /// Disposes exactly the web surfaces owned by the given pluginView slots, for
+    /// `workspace.sleep.v1` — which must release one workspace's webviews without
+    /// recomputing or touching any other workspace's live keys the way `reconcile` does.
+    func disposeSurfaces(
+        forPluginViewSlots slots: [(slotID: UUID, pluginID: PluginID, viewID: String)],
+        host: PluginHost
+    ) {
+        let active = Self.activeInstallations(in: host)
+        for slot in slots {
+            guard let installation = active[slot.pluginID],
+                  let section = host.pluginViews.first(where: {
+                      $0.pluginID == slot.pluginID
+                          && $0.viewID == slot.viewID
+                          && (
+                              $0.instanceID == nil
+                                  || $0.instanceID == slot.slotID.uuidString
+                          )
+                  }),
+                  let body = section.body
+            else { continue }
+            for surfaceID in Self.webSurfaceIDs(in: body) {
+                dispose(WebSurfaceKey(installation: installation, surfaceID: surfaceID))
+            }
+        }
+    }
+
     /// Reconciles surface lifetime against the host's active view tree and durable
     /// installation snapshots.
     ///
@@ -162,25 +188,7 @@ final class PluginWebSurfacePool {
                 )
             }
         )
-        let active = Dictionary(
-            uniqueKeysWithValues: host.plugins.compactMap {
-                plugin -> (PluginID, PluginInstallationKey)? in
-                guard plugin.isEnabled,
-                      plugin.isLoaded,
-                      plugin.permissions.contains("web.view"),
-                      let installationID = plugin.installationID
-                else {
-                    return nil
-                }
-                return (
-                    plugin.id,
-                    PluginInstallationKey(
-                        pluginID: plugin.id,
-                        installationID: installationID
-                    )
-                )
-            }
-        )
+        let active = Self.activeInstallations(in: host)
 
         var liveKeys: Set<WebSurfaceKey> = []
         for slot in catalog.pluginViewSlots {
@@ -232,6 +240,30 @@ private extension PluginWebSurfacePool {
                 name: name,
                 payload: .object(fields)
             )
+        )
+    }
+
+    static func activeInstallations(
+        in host: PluginHost
+    ) -> [PluginID: PluginInstallationKey] {
+        Dictionary(
+            uniqueKeysWithValues: host.plugins.compactMap {
+                plugin -> (PluginID, PluginInstallationKey)? in
+                guard plugin.isEnabled,
+                      plugin.isLoaded,
+                      plugin.permissions.contains("web.view"),
+                      let installationID = plugin.installationID
+                else {
+                    return nil
+                }
+                return (
+                    plugin.id,
+                    PluginInstallationKey(
+                        pluginID: plugin.id,
+                        installationID: installationID
+                    )
+                )
+            }
         )
     }
 

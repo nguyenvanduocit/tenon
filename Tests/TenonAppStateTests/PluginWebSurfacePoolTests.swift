@@ -360,6 +360,110 @@ final class PluginWebSurfacePoolTests: XCTestCase {
     }
 
     @MainActor
+    func testDisposeSurfacesForPluginViewSlotsReleasesOnlyTheNamedSlotsWebviews() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(
+            "tenon-web-dispose-\(UUID().uuidString)",
+            isDirectory: true
+        )
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        // Two separate plugin installations (not two panes of one plugin) so each slot's
+        // webview key is unambiguous without needing per-instance surfaceIDs.
+        let pluginIDA: PluginID = "dev.test.web-dispose-a"
+        let pluginIDB: PluginID = "dev.test.web-dispose-b"
+        for pluginID in [pluginIDA, pluginIDB] {
+            let pluginDirectory = root.appendingPathComponent(
+                pluginID.rawValue,
+                isDirectory: true
+            )
+            try FileManager.default.createDirectory(
+                at: pluginDirectory,
+                withIntermediateDirectories: true
+            )
+            try """
+            {
+              "id": "\(pluginID.rawValue)",
+              "name": "\(pluginID.rawValue)",
+              "version": "1",
+              "permissions": ["web.view"],
+              "intents": { "uses": [], "provides": [] }
+            }
+            """.write(
+                to: pluginDirectory.appendingPathComponent("manifest.json"),
+                atomically: true,
+                encoding: .utf8
+            )
+            try """
+            tenon.views.register("browser", { title: "Browser" });
+            tenon.views.set("browser", {
+              body: { type: "webview", surfaceID: "main" }
+            });
+            """.write(
+                to: pluginDirectory.appendingPathComponent("main.js"),
+                atomically: true,
+                encoding: .utf8
+            )
+        }
+
+        var catalog = WorkspaceCatalog(
+            name: "A",
+            path: root,
+            content: .pluginView(pluginID: pluginIDA, viewID: "browser")
+        )
+        catalog.addWorkspace(
+            name: "B",
+            path: root,
+            content: .pluginView(pluginID: pluginIDB, viewID: "browser")
+        )
+        let slotsByWorkspace = catalog.workspaces.map { workspace in
+            catalog.pluginViewSlots.filter { entry in
+                workspace.tabs.contains { $0.slots.contains { $0.id == entry.slotID } }
+            }
+        }
+        let workspaceASlots = slotsByWorkspace[0]
+        XCTAssertEqual(workspaceASlots.count, 1)
+
+        let stateRoot = root.deletingLastPathComponent()
+            .appendingPathComponent(
+                "\(root.lastPathComponent)-state",
+                isDirectory: true
+            )
+        addTeardownBlock {
+            try? FileManager.default.removeItem(at: stateRoot)
+        }
+        let kernel = try IntentKernelComponents(
+            persistence: IntentSQLiteIdempotencyPersistence.inMemory()
+        )
+        let host = try PluginHost(
+            pluginsRoot: root,
+            stateRoot: stateRoot,
+            kernel: kernel,
+            authorization: .bundledInventory
+        )
+        let pool = PluginWebSurfacePool()
+        try await host.loadAll()
+
+        let keyA = try XCTUnwrap(
+            pool.key(pluginID: pluginIDA, surfaceID: "main", host: host)
+        )
+        let keyB = try XCTUnwrap(
+            pool.key(pluginID: pluginIDB, surfaceID: "main", host: host)
+        )
+        _ = pool.surface(for: keyA)
+        _ = pool.surface(for: keyB)
+        XCTAssertNotNil(pool.existingSurface(for: keyA))
+        XCTAssertNotNil(pool.existingSurface(for: keyB))
+
+        pool.disposeSurfaces(forPluginViewSlots: workspaceASlots, host: host)
+
+        XCTAssertNil(pool.existingSurface(for: keyA))
+        XCTAssertNotNil(pool.existingSurface(for: keyB))
+
+        pool.disposeAll()
+        await host.shutdown()
+    }
+
+    @MainActor
     func testVisibleTopLevelNavigationAllowsOnlyHTTPAndHTTPS() {
         XCTAssertTrue(
             WebSurface.allowsTopLevelNavigation(
