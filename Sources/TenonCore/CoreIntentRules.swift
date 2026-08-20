@@ -1537,6 +1537,58 @@ extension CoreIntentCatalog {
                 trustedProviderID: trustedProviderID
             ),
             try CoreIntentRuleData.definition(
+                .workspaceSleep,
+                title: "Sleep workspace",
+                description: """
+                Releases every live terminal and plugin-webview resource owned by the \
+                workspace identified by invocation scope, leaving its tabs, panes, and \
+                layout untouched. Reopening any of its panes materializes a fresh \
+                resource, exactly like restoring a workspace after relaunch.
+                """,
+                input: emptyInput,
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(
+                    .destructive,
+                    confirmation: .policy
+                ),
+                errors: ["dev.tenon.core.workspace-not-found"],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(10),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
+                .workspaceVisibilitySet,
+                title: "Set workspace visibility",
+                description: """
+                Shows or hides the workspace identified by invocation scope in the \
+                sidebar's main catalog list. A hidden workspace keeps every live \
+                resource running unchanged; at least one workspace must remain visible.
+                """,
+                input: CoreIntentSchema.root(
+                    properties: [
+                        "visibility": CoreIntentSchema.string(
+                            enumValues: ["visible", "background"]
+                        )
+                    ],
+                    required: ["visibility"]
+                ),
+                output: emptyOutput,
+                audiences: programmatic,
+                exposure: programmaticExposure,
+                effects: try CoreIntentRuleData.effects(.write),
+                errors: [
+                    "dev.tenon.core.workspace-not-found",
+                    "dev.tenon.core.visibility-refused",
+                ],
+                bindings: [workspaceControl],
+                admission: .interactive,
+                timeout: .seconds(10),
+                trustedProviderID: trustedProviderID
+            ),
+            try CoreIntentRuleData.definition(
                 .networkFetch,
                 title: "Fetch network resource",
                 description: "Performs one bounded HTTP request to a policy-authorized host.",

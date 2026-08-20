@@ -45,7 +45,8 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         // 48 → 49 (T-139): one finite agent question and its bounded wait lane.
         // 49 → 50 (T-147): one pane title an agent may set, on the existing workspace lane.
         // 50 → 51 (T-154): workspace identity, one request/reply on that same lane.
-        XCTAssertEqual(CoreIntentName.allCases.count, 51)
+        // 51 → 53 (Sleep Workspace): two new intents on the existing workspace lane.
+        XCTAssertEqual(CoreIntentName.allCases.count, 53)
         XCTAssertEqual(CoreIntentExecutionLane.allCases.count, 13)
         XCTAssertEqual(IntentAudience.allCases.count, 5)
 

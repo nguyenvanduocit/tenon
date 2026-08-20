@@ -55,6 +55,8 @@ public enum CoreIntentName: String, CaseIterable, Sendable, Hashable {
     case workspaceTabPrevious = "workspace.tab.previous.v1"
     case workspacePaneFocusNext = "workspace.pane.focus-next.v1"
     case workspaceSelect = "workspace.select.v1"
+    case workspaceSleep = "workspace.sleep.v1"
+    case workspaceVisibilitySet = "workspace.visibility.set.v1"
     case networkFetch = "network.fetch.v1"
     case agentInventory = "agent.inventory.v1"
     case agentCommand = "agent.command.v1"
@@ -137,6 +139,8 @@ public extension CoreIntentName {
              .workspaceTabPrevious,
              .workspacePaneFocusNext,
              .workspaceSelect,
+             .workspaceSleep,
+             .workspaceVisibilitySet,
              .networkFetch,
              .agentInventory,
              .agentCommand,
@@ -238,7 +242,9 @@ public extension CoreIntentName {
              .workspaceTabNext,
              .workspaceTabPrevious,
              .workspacePaneFocusNext,
-             .workspaceSelect:
+             .workspaceSelect,
+             .workspaceSleep,
+             .workspaceVisibilitySet:
             .workspace
 
         case .terminalWrite,

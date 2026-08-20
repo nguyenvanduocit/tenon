@@ -38,10 +38,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         let authoritativeDispatcher = await components.dispatcher.snapshot()
 
         XCTAssertEqual(compilationCount, 1)
-        XCTAssertEqual(revisions, Array(repeating: 51, count: 32))
-        XCTAssertEqual(compiled.definitions.count, 51)
-        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 51)
-        XCTAssertEqual(compiled.dispatchRules.count, 51)
+        XCTAssertEqual(revisions, Array(repeating: 53, count: 32))
+        XCTAssertEqual(compiled.definitions.count, 53)
+        XCTAssertEqual(compiled.contractSnapshot.contracts.count, 53)
+        XCTAssertEqual(compiled.dispatchRules.count, 53)
         XCTAssertEqual(compiled.trustedProviderID.rawValue, "dev.tenon.core")
         XCTAssertEqual(compiled.contractSnapshot, authoritativeCatalog)
         XCTAssertEqual(
@@ -65,8 +65,8 @@ final class CoreIntentCatalogTests: XCTestCase {
         let expectedNames = CoreIntentName.allCases.map(\.rawValue)
 
         XCTAssertEqual(actualNames, expectedNames)
-        XCTAssertEqual(Set(actualNames).count, 51)
-        XCTAssertEqual(actualNames.count, 51)
+        XCTAssertEqual(Set(actualNames).count, 53)
+        XCTAssertEqual(actualNames.count, 53)
 
         let forbiddenFragments = [
             "tenon.",
@@ -929,7 +929,10 @@ final class CoreIntentCatalogTests: XCTestCase {
         // a person's global agent instructions describes a capability that exists.
         // 50 → 51 (T-154): one finite identity patch exposes the workspace name, colour,
         // and icon that the native form already owns, on the existing workspace lane.
-        XCTAssertEqual(CoreIntentName.allCases.count, 51)
+        // 51 → 53 (Sleep Workspace): workspace.sleep.v1 releases live resources without a
+        // domain mutation; workspace.visibility.set.v1 shows/hides in the sidebar. Both on
+        // the existing workspace lane.
+        XCTAssertEqual(CoreIntentName.allCases.count, 53)
         XCTAssertEqual(definitions.count, CoreIntentName.allCases.count)
         for name in CoreIntentName.allCases {
             XCTAssertEqual(
@@ -991,6 +994,8 @@ final class CoreIntentCatalogTests: XCTestCase {
                 .workspaceTabPrevious,
                 .workspacePaneFocusNext,
                 .workspaceSelect,
+                .workspaceSleep,
+                .workspaceVisibilitySet,
             ],
             .terminalImmediate: [
                 .terminalWrite,
@@ -1348,6 +1353,13 @@ private extension CoreIntentCatalogTests {
             .workspaceTabPrevious: emptyShape(),
             .workspacePaneFocusNext: emptyShape(),
             .workspaceSelect: emptyShape(),
+            .workspaceSleep: emptyShape(),
+            .workspaceVisibilitySet: SchemaShape(
+                ["visibility"],
+                required: ["visibility"],
+                output: [],
+                requiredOutput: []
+            ),
             .networkFetch: SchemaShape(
                 ["url", "method", "headers", "body", "timeoutMs"],
                 required: ["url", "method"],
@@ -1441,6 +1453,8 @@ private extension CoreIntentCatalogTests {
             .workspaceTabPrevious: ["workspace.control"],
             .workspacePaneFocusNext: ["workspace.control"],
             .workspaceSelect: ["workspace.control"],
+            .workspaceSleep: ["workspace.control"],
+            .workspaceVisibilitySet: ["workspace.control"],
             .networkFetch: ["network"],
             // Knowing which agent a person runs, and composing the line that would run it,
             // grant nothing a caller that may already write to a terminal did not have.
