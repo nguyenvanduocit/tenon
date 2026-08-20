@@ -1083,8 +1083,13 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
             thumbnail.frame.size = size
             addSubview(thumbnail, positioned: .above, relativeTo: nil)
             dragThumbnailView = thumbnail
+            // Dimming the source card is a one-time state change for the gesture, not a
+            // per-event one — same reasoning as the thumbnail above. Re-assigning it on
+            // every `.leftMouseDragged` (T-127's exact class of bug: per-card work redone
+            // on every drag event) forces AppKit to re-composite the card's live content,
+            // which is the empty pane's full launcher view when that is what is carried.
+            sourceCard.alphaValue = 0.55
         }
-        sourceCard.alphaValue = 0.55
         thumbnail.frame.origin = CGPoint(
             x: point.x - thumbnail.frame.width / 2,
             y: point.y - thumbnail.frame.height / 2
