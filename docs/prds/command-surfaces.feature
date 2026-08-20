@@ -382,3 +382,20 @@ Feature: Discover commands and arrange tabs without losing context
       When the operator right-clicks that tab's chip
       Then the launcher's "Pane" section offers Arrange Panes
       And choosing a preset rearranges that exact tab, the one the click named
+
+  Rule: The empty-pane card's "Open a view" section matches the real plugin inventory
+
+    @req-cmd-fr-025
+    Scenario: Every fillsPane plugin command has a matching "Open a view" row
+      Given a plugin manifest declares a command as `launcher: true, fillsPane: true`
+      And that command is not the terminal command already drawn as the card's own CTA
+      When the operator looks at the empty tab/pane card's grouped "Open a view" section
+      Then a row for that command's view is present there
+      And it opens the same content `LauncherMenu`'s "Open a view" tile grid would for it
+
+    @req-cmd-fr-025
+    Scenario: A manifest gaining or losing a fillsPane command fails a test, not a screenshot
+      Given the real `plugins/` inventory's set of `fillsPane` commands changes
+      And `EmptyPaneOfferings.views` was not edited to match
+      When `EmptyPaneSearchTests.testOpenAViewOffersEveryFillsPaneCommandInTheRealPluginInventory` runs
+      Then it fails, naming the command id with no matching "Open a view" row

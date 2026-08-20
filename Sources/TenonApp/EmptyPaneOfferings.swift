@@ -32,6 +32,11 @@ struct EmptyPaneOfferings {
     private static let viewPrefix = "view."
     private static let recentPrefix = "recent."
 
+    // Kept in sync by hand with every plugin manifest's `fillsPane` declaration —
+    // `EmptyPaneSearchTests.testOpenAViewOffersEveryFillsPaneCommandInTheRealPluginInventory`
+    // fails the day a manifest adds or drops one without a matching edit here. The real fix
+    // is T-149's dynamic `SlotContent` mapping (`command-surfaces.prd.md` §3); this list is
+    // the deliberately-named "second command registry" until then.
     static let views: [View] = [
         View(
             content: .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree"),
@@ -44,6 +49,16 @@ struct EmptyPaneOfferings {
             content: .pluginView(pluginID: "dev.tenon.browser", viewID: "browser"),
             label: "Browser",
             keywords: ["web", "url", "page"]
+        ),
+        View(
+            content: .pluginView(pluginID: "dev.tenon.kanban", viewID: "board"),
+            label: "Kanban",
+            keywords: ["kanban", "board", "tasks", "todo"]
+        ),
+        View(
+            content: .pluginView(pluginID: "dev.tenon.claude-sessions", viewID: "sessions"),
+            label: "Agent Sessions",
+            keywords: ["agent", "claude", "codex", "session", "resume", "history", "transcript"]
         ),
     ]
 

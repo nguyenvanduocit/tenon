@@ -206,4 +206,64 @@ final class EmptyPaneSearchTests: XCTestCase {
             "one row is shorter than three"
         )
     }
+
+    // MARK: - "Open a view" tracks the real plugin catalog
+
+    /// `EmptyPaneOfferings.views` is a hand-maintained list; `LauncherMenu`'s own "Open a
+    /// view" section reads live off every plugin manifest's `fillsPane` declaration instead
+    /// (`groupedPaneFillers`, `LauncherMenu.swift`). T-188 named this exact divergence a
+    /// "second command registry" and left it unrewritten because closing it for real needs
+    /// `SlotContent` to stop being a closed enum (T-149, `command-surfaces.prd.md` §3). Until
+    /// then, this walks the real `plugins/` inventory so a new or removed `fillsPane` command
+    /// fails this test the same day, instead of silently reappearing as the two popovers
+    /// disagreeing again (T-191).
+    func testOpenAViewOffersEveryFillsPaneCommandInTheRealPluginInventory() throws {
+        // The SlotContent a fillsPane command resolves to has no derivable relationship to
+        // its intent id — that is the exact gap T-149 exists to close — so this map is
+        // hand-written, same as `EmptyPaneOfferings.views` itself.
+        let expectedContent: [String: SlotContent] = [
+            "dev.tenon.core-commands.changes.open.v1": .changes,
+            "dev.tenon.core-commands.automation.open.v1": .automation,
+            "dev.tenon.file-explorer.open.v1":
+                .pluginView(pluginID: "dev.tenon.file-explorer", viewID: "tree"),
+            "dev.tenon.browser.open.v1":
+                .pluginView(pluginID: "dev.tenon.browser", viewID: "browser"),
+            "dev.tenon.claude-sessions.open.v1":
+                .pluginView(pluginID: "dev.tenon.claude-sessions", viewID: "sessions"),
+            "dev.tenon.kanban.open.v1":
+                .pluginView(pluginID: "dev.tenon.kanban", viewID: "board"),
+        ]
+        // "New Terminal" is also `fillsPane`, but the card already offers it as its own CTA
+        // (`EmptyPaneOfferings.terminalID`), not as an "Open a view" row.
+        let terminalCommandID = "dev.tenon.core-commands.terminal.new.v1"
+
+        let pluginsRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .deletingLastPathComponent()
+            .appendingPathComponent("plugins")
+
+        var discovered: Set<String> = []
+        for directory in PluginLoader.discover(in: pluginsRoot) {
+            let manifest = try PluginLoader.loadManifest(at: directory)
+            for provision in manifest.intents.provides
+            where provision.palette?.launcher == true && provision.palette?.fillsPane == true {
+                discovered.insert(provision.name.rawValue)
+            }
+        }
+        discovered.remove(terminalCommandID)
+
+        XCTAssertEqual(
+            discovered,
+            Set(expectedContent.keys),
+            "a plugin shipped or dropped a fillsPane command without this test's map, and "
+                + "EmptyPaneOfferings.views, following"
+        )
+        for (id, content) in expectedContent {
+            XCTAssertTrue(
+                EmptyPaneOfferings.views.contains { $0.content == content },
+                "\(id) is fillsPane but EmptyPaneOfferings.views offers no \(content) row for it"
+            )
+        }
+    }
 }
