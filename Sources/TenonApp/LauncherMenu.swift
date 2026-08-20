@@ -19,6 +19,19 @@ enum LauncherPurpose: Equatable {
 /// groups instead, the same presentation `EmptyStateCard` draws for an empty tab or pane:
 /// a terminal CTA, agents, commands regrouped by category, recents, and pane utilities.
 /// One ranking, one dispatch path, two presentations of it.
+///
+/// "Shared" means the *vocabulary* — the same ranked commands, the same grouping, the
+/// same run-a-typed-command row. It does not mean every anchor hands this view the same
+/// optional callbacks. `+` **creates a destination**: nothing it can name exists yet.
+/// A tab's right-click **names an existing tab**: the one that was clicked. A utility
+/// whose meaning depends on that existing tab already having a pane layout —
+/// `paneArrangements`/`arrangePanes`, same as `copyTabID` — is therefore only ever
+/// correct coming from the tab anchor. `+` passing them anyway does not fail to compile
+/// (both anchors construct the same `LauncherMenu`), it just ends up aimed at whichever
+/// tab happened to be active — a tab the click never named — which is exactly the
+/// regression `CMD-FR-024` in `command-surfaces.prd.md` and T-189 exist to keep out.
+/// Before adding a new optional callback here, ask which anchors have a real answer for
+/// it; an anchor with none must leave it `nil`, not borrow another anchor's target.
 struct LauncherMenu: View {
     private static func agentIcon(_ agent: AgentCLI) -> String {
         switch agent {
@@ -40,7 +53,9 @@ struct LauncherMenu: View {
     /// open command and has no public intent principal.
     var copyTabID: (() -> Void)? = nil
     /// Whole-tab geometry is another fixed host utility, not a plugin command pretending
-    /// to have won fuzzy ranking. The anchor supplies only presets valid for its exact tab.
+    /// to have won fuzzy ranking. The anchor supplies only presets valid for its exact tab —
+    /// which means the `+` anchor, which names no tab at all, must leave both `nil`/`[]`
+    /// rather than reach for whichever tab is merely active (T-189, `CMD-FR-024`).
     var paneArrangements: [PaneArrangementPreset] = []
     var arrangePanes: ((PaneArrangementPreset) -> Void)? = nil
     /// This workspace's recently opened content, same source and same cap `EmptyStateCard`

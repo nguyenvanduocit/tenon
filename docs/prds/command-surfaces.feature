@@ -366,3 +366,19 @@ Feature: Discover commands and arrange tabs without losing context
       Given any launcher anchor
       When the query is empty
       Then no run-command row is drawn, whether the layout is grouped or flat
+
+  Rule: A tab-scoped utility appears only on the anchor that names an existing tab
+
+    @req-cmd-fr-024
+    Scenario: The `+` launcher never offers to arrange panes
+      Given the tab-strip `+` launcher is open
+      When the operator looks at the "Pane" section
+      Then no Arrange Panes utility is drawn there
+      And no pane arrangement choice reaches any tab, since `+` names none
+
+    @req-cmd-fr-024
+    Scenario: A tab's right-click keeps offering to arrange its own panes
+      Given a tab with more than one pane
+      When the operator right-clicks that tab's chip
+      Then the launcher's "Pane" section offers Arrange Panes
+      And choosing a preset rearranges that exact tab, the one the click named

@@ -514,6 +514,45 @@ final class InteractionBoundaryFitnessTests: XCTestCase {
         )
     }
 
+    /// `CMD-FR-024`: the `+` anchor creates a destination — it names no existing tab — while
+    /// a tab's secondary click names the exact tab that was clicked. A utility whose meaning
+    /// depends on an existing tab's current pane layout (Arrange Panes, same as Copy Tab ID
+    /// under `CMD-FR-007`) is therefore a tab-launcher-only offer. T-189: the `+` popover once
+    /// drew "Arrange Panes" anyway, wired straight to whatever tab happened to be active —
+    /// rearranging a tab the click never named, which is what an operator reported as
+    /// confusing across screenshots more than once. Both call sites share one type
+    /// (`LauncherMenu`), so only their own construction can tell them apart; a sweep of the
+    /// two argument lists is the whole test.
+    func testPlusAnchorNeverOffersTheTabLaunchersExistingTabUtilities() throws {
+        let strip = try source("TenonApp/ShellTabStrip.swift")
+
+        let plusLauncher = try sourceSlice(
+            strip,
+            from: "private var newTabButton: some View {",
+            before: "// MARK: - Derived state"
+        )
+        for forbidden in ["arrangePanes:", "paneArrangements:", "copyTabID:"] {
+            XCTAssertFalse(
+                plusLauncher.contains(forbidden),
+                "the `+` anchor wires \(forbidden) — it creates a destination tab, " +
+                    "it does not name an existing one to mutate"
+            )
+        }
+
+        let tabLauncher = try sourceSlice(
+            strip,
+            from: "private func tabLauncher(for tab: TenonCore.Tab) -> LauncherMenu {",
+            before: "/// One chip, with everything the strip needs back from it"
+        )
+        for expected in ["arrangePanes:", "paneArrangements:", "copyTabID:"] {
+            XCTAssertTrue(
+                tabLauncher.contains(expected),
+                "the tab launcher must keep offering \(expected) — " +
+                    "it is the anchor that names an existing tab"
+            )
+        }
+    }
+
     /// The built-in half of the header stays typed.
     ///
     /// A DIRECT call must use typed Swift interfaces, and a header action travels as a bare

@@ -560,10 +560,15 @@ struct ShellTabStrip: View {
                         terminalPool: pool
                     )
                 },
-                paneArrangements: activeWorkspace?.activeTab.map {
-                    arrangements(for: $0)
-                } ?? [],
-                arrangePanes: { preset in store.arrangeActiveTab(preset) },
+                // No `copyTabID`, `paneArrangements`, or `arrangePanes` here — on purpose.
+                // `+` creates a destination tab; it names no existing one, so it has no
+                // pane layout to rearrange and no ID to copy. Wiring either to "whatever
+                // tab is merely active right now" (T-189) makes `+` silently reach past
+                // itself into a tab the click never named — CMD-FR-024 in
+                // command-surfaces.prd.md states this as a general rule, and
+                // `InteractionBoundaryFitnessTests
+                // .testPlusAnchorNeverOffersTheTabLaunchersExistingTabUtilities` holds it.
+                // `tabLauncher(for:)` below is the one anchor allowed to supply them.
                 recents: workspaceRecents,
                 openRecent: { content in store.newTab(content: content) },
                 send: { invocation in
