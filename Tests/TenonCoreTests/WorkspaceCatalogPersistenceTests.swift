@@ -859,4 +859,51 @@ final class WorkspaceCatalogPersistenceTests: XCTestCase {
             "a provider this build cannot name degrades the reading, never the pane"
         )
     }
+
+    func testVisibilityRoundTripsThroughCaptureAndRestore() throws {
+        var catalog = WorkspaceCatalog(name: "Alpha", path: alphaPath)
+        catalog.addWorkspace(name: "Beta", path: betaPath)
+        let beta = catalog.workspaces[1].id
+        _ = catalog.setVisibility(beta, to: .background)
+
+        let document = WorkspaceCatalogSnapshot.document(capturing: catalog)
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            document,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertEqual(
+            restored.catalog.workspaces.first { $0.id == beta }?.visibility,
+            .background
+        )
+        XCTAssertEqual(
+            restored.catalog.workspaces.first { $0.id != beta }?.visibility,
+            .visible
+        )
+    }
+
+    func testADocumentWrittenBeforeVisibilityExistedRestoresEveryWorkspaceVisible() throws {
+        var catalog = WorkspaceCatalog(name: "Alpha", path: alphaPath)
+        catalog.addWorkspace(name: "Beta", path: betaPath)
+        _ = catalog.setVisibility(catalog.workspaces[1].id, to: .background)
+        var document = WorkspaceCatalogSnapshot.document(capturing: catalog)
+        // Simulate a document written before `visibility` existed: every workspace record
+        // omitted the field entirely, exactly like `appearance: nil` did before T-097.
+        document.workspaces = document.workspaces.map {
+            var record = $0
+            record.visibility = nil
+            return record
+        }
+
+        let restored = try XCTUnwrap(WorkspaceCatalogSnapshot.restore(
+            document,
+            isDirectory: anyDirectory,
+            isFileReadable: anyFile,
+            isKnownPluginView: anyPluginView
+        ))
+
+        XCTAssertTrue(restored.catalog.workspaces.allSatisfy { $0.visibility == .visible })
+    }
 }

@@ -44,6 +44,11 @@ public enum WorkspaceCatalogSnapshot {
         /// key decodes to nil and restores as `WorkspaceAppearance.default`, so an older
         /// catalog comes back looking exactly as it did.
         public var appearance: AppearanceRecord?
+        /// Sleep Workspace: whether this workspace shows in the sidebar's main list.
+        /// Absent in every document written before this field existed, which decodes to
+        /// nil and restores as `.visible` — the same forward-compatibility shape
+        /// `appearance: AppearanceRecord?` already has.
+        public var visibility: String?
         public var tabs: [TabRecord]
         public var activeTabID: UUID
 
@@ -52,6 +57,7 @@ public enum WorkspaceCatalogSnapshot {
             name: String,
             path: String,
             appearance: AppearanceRecord? = nil,
+            visibility: String? = nil,
             tabs: [TabRecord],
             activeTabID: UUID
         ) {
@@ -59,6 +65,7 @@ public enum WorkspaceCatalogSnapshot {
             self.name = name
             self.path = path
             self.appearance = appearance
+            self.visibility = visibility
             self.tabs = tabs
             self.activeTabID = activeTabID
         }
@@ -240,6 +247,7 @@ public enum WorkspaceCatalogSnapshot {
                     name: workspace.name,
                     path: workspace.path.path,
                     appearance: appearanceRecord(of: workspace.appearance),
+                    visibility: visibilityRecord(of: workspace.visibility),
                     tabs: workspace.tabs.map { tab in
                         TabRecord(
                             id: tab.id,
@@ -394,6 +402,7 @@ public enum WorkspaceCatalogSnapshot {
                     ?? WorkspaceName.derived(for: workspacePath),
                 path: workspacePath,
                 appearance: appearance(of: workspaceRecord.appearance),
+                visibility: visibility(of: workspaceRecord.visibility),
                 tabs: tabs,
                 activeTabID: activeTabID
             ))
@@ -495,6 +504,16 @@ public enum WorkspaceCatalogSnapshot {
             accent: record.accent.flatMap(AccentColor.init(rawValue:)),
             customIcon: customIcon
         )
+    }
+
+    /// `.visible` writes nothing, matching `appearanceRecord`'s "default writes nothing"
+    /// shape — an uncustomised catalog produces the same document either way.
+    private static func visibilityRecord(of visibility: WorkspaceVisibility) -> String? {
+        visibility == .background ? "background" : nil
+    }
+
+    private static func visibility(of record: String?) -> WorkspaceVisibility {
+        record == "background" ? .background : .visible
     }
 
     private static func sessionRecord(of ref: AgentSessionRef) -> AgentSessionRecord {
