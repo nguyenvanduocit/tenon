@@ -417,7 +417,7 @@ struct ShellTabStrip: View {
                     terminalPool: pool
                 )
             },
-            copyTabID: { WorkspaceIdentifierClipboard.copy(tab.id) },
+            copyTabID: { WorkspaceIdentifierClipboard.copy(tabID: tab.id) },
             paneArrangements: arrangements(for: tab),
             arrangePanes: { preset in
                 if store.catalog.activeTab?.id != tab.id {
@@ -477,7 +477,7 @@ struct ShellTabStrip: View {
             select: { store.selectTab(tab.id) },
             close: { requestClose(tab, title: title) },
             openLauncher: { contextLauncherTab = tab.id },
-            copyID: { WorkspaceIdentifierClipboard.copy(tab.id) }
+            copyID: { WorkspaceIdentifierClipboard.copy(tabID: tab.id) }
         )
         // Report the chip's window-space frame so a pane dragged toward the strip can be
         // hit-tested against it.
@@ -638,18 +638,35 @@ struct ShellTabStripWidthKey: PreferenceKey {
     }
 }
 
-/// One clipboard spelling for workspace entity identities. Menus copy the raw UUID because
-/// it can be pasted directly into `tenon-cli --tab` or `--pane`; labels and prefixes belong
-/// to the surrounding prose, not to the address itself.
+/// One clipboard spelling for workspace entity identities. Menus copy a `tenon://` deep
+/// link because the address is self-describing — a reader (human or AI) sees which entity
+/// it names and the hierarchy it lives in, and it can be pasted straight into `tenon-cli
+/// --tab` / `--pane` or opened to focus the target.
 @MainActor
 enum WorkspaceIdentifierClipboard {
     @discardableResult
     static func copy(
-        _ id: UUID,
+        tabID: UUID,
         to pasteboard: NSPasteboard = .general
     ) -> Bool {
         pasteboard.clearContents()
-        return pasteboard.setString(id.uuidString, forType: .string)
+        return pasteboard.setString(
+            WorkspaceDeepLink.url(tabID: tabID),
+            forType: .string
+        )
+    }
+
+    @discardableResult
+    static func copy(
+        tabID: UUID,
+        paneID: UUID,
+        to pasteboard: NSPasteboard = .general
+    ) -> Bool {
+        pasteboard.clearContents()
+        return pasteboard.setString(
+            WorkspaceDeepLink.url(tabID: tabID, paneID: paneID),
+            forType: .string
+        )
     }
 }
 

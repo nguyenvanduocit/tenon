@@ -42,7 +42,7 @@ final class SpatialCanvasNSView: NSView, NSPopoverDelegate {
     /// Test seam for the clipboard edge. Both the contextual-menu item and the pane's
     /// VoiceOver action enter this one route.
     var copyWorkspaceIdentifier: (UUID) -> Void = {
-        WorkspaceIdentifierClipboard.copy($0)
+        WorkspaceIdentifierClipboard.copy(tabID: $0)
     }
     /// Test seam for the lens edge: which agent session a pane carries right now.
     /// Production leaves it nil and `agentSessionRef(for:)` reads the pane's own lens —

@@ -2647,7 +2647,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         )
         defer { pasteboard.clearContents() }
 
-        XCTAssertTrue(WorkspaceIdentifierClipboard.copy(id, to: pasteboard))
+        XCTAssertTrue(WorkspaceIdentifierClipboard.copy(tabID: id, to: pasteboard))
         XCTAssertEqual(pasteboard.string(forType: .string), id.uuidString)
     }
 
