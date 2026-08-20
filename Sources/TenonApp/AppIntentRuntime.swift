@@ -99,7 +99,8 @@ final class AppIntentRuntime {
         terminalSurfaces: SurfacePool,
         webSurfaces: PluginWebSurfacePool,
         userInterface: PluginUIState,
-        agentQuestions: AgentAskStore = AgentAskStore()
+        agentQuestions: AgentAskStore = AgentAskStore(),
+        sleepAction: WorkspaceSleepAction = WorkspaceSleepAction()
     ) throws {
         self.kernel = kernel
         self.workspaceStore = workspaceStore
@@ -117,7 +118,8 @@ final class AppIntentRuntime {
         )
         collected.append(
             contentsOf: try WorkspaceIntentProvider(
-                store: workspaceStore
+                store: workspaceStore,
+                sleepAction: sleepAction
             ).bindings()
         )
         collected.append(

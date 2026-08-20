@@ -416,6 +416,9 @@ final class AppComposition {
     let opencodeHookInstallResult: AgentHookInstallResult
     let webSurfaces: PluginWebSurfacePool
     let intentRuntime: AppIntentRuntime
+    /// Sleep Workspace: the one typed teardown action `workspace.sleep.v1` and the
+    /// sidebar's Sleep button both call. See `WorkspaceSleepAction`.
+    let sleepAction: WorkspaceSleepAction
     let cliServer: CLISocketServer
     let instanceChannel: AppInstanceChannel
     let router = DragRouter()
@@ -600,13 +603,15 @@ final class AppComposition {
         // The third sink: a `Stop` on this bus is a turn boundary OSC 133 cannot see for a
         // long-running agent REPL, so the pane's own attention state needs it fed straight in.
         AgentHookLensBus.attach(terminalSurfaces)
+        let sleepAction = WorkspaceSleepAction()
         let intentRuntime = try AppIntentRuntime(
             kernel: prepared.kernel,
             workspaceStore: store,
             terminalSurfaces: terminalSurfaces,
             webSurfaces: webSurfaces,
             userInterface: userInterface,
-            agentQuestions: agentQuestions
+            agentQuestions: agentQuestions,
+            sleepAction: sleepAction
         )
         // Two inventories, ordered (T-062). The primary one ships with the app and is
         // sealed — writing into a signed bundle breaks its signature and the next
@@ -675,6 +680,35 @@ final class AppComposition {
             runtimeFactory: BundledPluginRuntime.factory
         )
 
+        // The real Sleep teardown. Late-bound here because this is the first point in
+        // composition where `store`, `terminalSurfaces`, `webSurfaces`, and `host` all
+        // exist together — `host` needs `intentRuntime.kernel`, so it cannot be built
+        // before `intentRuntime`, and `intentRuntime`'s `WorkspaceIntentProvider` needs
+        // this closure at construction time. Both the sidebar's Sleep button and
+        // `workspace.sleep.v1` call the SAME `sleepAction`, so this is the one place the
+        // active-workspace handoff and the resource teardown are implemented.
+        sleepAction.perform = {
+            [weak store, weak terminalSurfaces, weak webSurfaces, weak host] workspaceID in
+            guard let store, let terminalSurfaces, let webSurfaces, let host,
+                  let workspace = store.catalog.workspaces.first(where: { $0.id == workspaceID })
+            else { return }
+
+            if store.catalog.activeWorkspaceID == workspaceID,
+               let neighbor = store.catalog.workspaces.first(where: { $0.id != workspaceID })
+            {
+                store.selectWorkspace(neighbor.id)
+            }
+
+            let ownedSlotIDs = Set(workspace.tabs.flatMap { $0.slots.map(\.id) })
+            terminalSurfaces.retainOnly(
+                Set(store.catalog.allSlotIDs).subtracting(ownedSlotIDs)
+            )
+            let ownedPluginViewSlots = store.catalog.pluginViewSlots.filter {
+                ownedSlotIDs.contains($0.slotID)
+            }
+            webSurfaces.disposeSurfaces(forPluginViewSlots: ownedPluginViewSlots, host: host)
+        }
+
         let attentionNotifier = PaneAttentionNotifier(
             isAppFrontmost: { NSApplication.shared.isActive },
             deliver: { SystemNotificationDelivery.shared.deliver($0) }
@@ -723,6 +757,7 @@ final class AppComposition {
         self.opencodeHookInstallResult = prepared.opencodeHookInstallResult
         self.webSurfaces = webSurfaces
         self.intentRuntime = intentRuntime
+        self.sleepAction = sleepAction
         self.cliServer = prepared.cliServer
         self.instanceChannel = prepared.paths.instanceChannel
         self.palette = CommandPaletteState(storeURL: paths.commandFrecencyFile)
