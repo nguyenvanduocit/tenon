@@ -38,6 +38,11 @@ enum SidebarSnapshot {
         store.addWorkspace(name: "infra", path: folder("infra"))
         store.addWorkspace(name: "carlens", path: folder("carlens"))
         store.addWorkspace(name: "invest", path: folder("invest"))
+        // Sleep Workspace: one backgrounded row, so the sidebar's "Backgrounded" section is
+        // visible in the same photograph rather than needing a second snapshot run.
+        if let invest = store.catalog.workspaces.first(where: { $0.name == "invest" }) {
+            store.setVisibility(invest.id, to: .background)
+        }
 
         var stubs: [UUID: StubTerminalSurface] = [:]
         let pool = SurfacePool(backendName: "Sidebar snapshot") { slotID, _ in

@@ -58,6 +58,10 @@ struct WorkspaceSidebarView: View {
                 .contentShape(Rectangle())
             }
 
+            if !isCollapsed {
+                BackgroundedWorkspacesSection(store: store)
+            }
+
             SidebarFooter(isCollapsed: isCollapsed)
         }
         .background(TenonTheme.chrome)
@@ -70,6 +74,39 @@ struct WorkspaceSidebarView: View {
         }
     }
 
+}
+
+/// The only way to find a `.background` workspace again — selecting a row here restores
+/// `.visible` and makes it active in one action. Absent entirely when nothing is
+/// backgrounded, so an unused feature leaves no residue in the sidebar.
+// MARK: - Backgrounded workspaces  @domain: workspace-model
+
+private struct BackgroundedWorkspacesSection: View {
+    var store: WorkspaceStore
+
+    private var backgrounded: [Workspace] {
+        store.catalog.workspaces.filter { $0.visibility == .background }
+    }
+
+    var body: some View {
+        if !backgrounded.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                Text("Backgrounded")
+                    .font(TenonTheme.interfaceFont(size: 10, weight: .medium))
+                    .foregroundStyle(TenonTheme.muted)
+                ForEach(backgrounded) { workspace in
+                    Button(workspace.name) {
+                        store.setVisibility(workspace.id, to: .visible)
+                        store.selectWorkspace(workspace.id)
+                    }
+                    .buttonStyle(.plain)
+                    .font(TenonTheme.interfaceFont(size: 11, weight: .regular))
+                }
+            }
+            .padding(.horizontal, WorkspaceSidebarLayout.expandedHorizontalInset + 5)
+            .padding(.vertical, 6)
+        }
+    }
 }
 
 /// The scrollable list of workspace rows and the contextual library's click target. Row
@@ -92,20 +129,31 @@ private struct WorkspaceRowList: View {
     @State private var isRecentMenuPresented = false
     @State private var workspaceDrag: WorkspaceSidebarDrag?
 
+    /// Only `.visible` workspaces render — a `.background` one is found again through
+    /// `BackgroundedWorkspacesSection`, never in this list. Every geometry/reorder
+    /// computation below is deliberately expressed in this same filtered space; only the
+    /// final `store.moveWorkspace` call translates back to the full catalog's absolute
+    /// index (`absoluteWorkspaceIndex(forVisibleDestination:in:)`), so a backgrounded
+    /// workspace sitting between two visible ones never has to be reasoned about anywhere
+    /// else.
+    private var visibleWorkspaces: [Workspace] {
+        store.catalog.workspaces.filter { $0.visibility == .visible }
+    }
+
     var body: some View {
         ScrollView {
             // Workspace order needs every row's midpoint, including rows beyond the current
             // scroll viewport. Catalogs are human-scale, so laying out this short navigation
             // list eagerly keeps reorder complete without making a second geometry model.
             VStack(spacing: 3) {
-                ForEach(Array(store.catalog.workspaces.enumerated()), id: \.element.id) {
+                ForEach(Array(visibleWorkspaces.enumerated()), id: \.element.id) {
                     index, workspace in
                     WorkspaceRow(
                         workspace: workspace,
                         store: store,
                         isActive: workspace.id == store.catalog.activeWorkspaceID,
                         position: index,
-                        workspaceCount: store.catalog.workspaces.count,
+                        workspaceCount: visibleWorkspaces.count,
                         isDragging: workspaceDrag?.workspaceID == workspace.id,
                         move: { destination in
                             moveWorkspace(workspace.id, to: destination)
@@ -212,7 +260,7 @@ private struct WorkspaceRowList: View {
     }
 
     private var rowStrip: [WorkspaceRowExtent] {
-        store.catalog.workspaces.compactMap { workspace in
+        visibleWorkspaces.compactMap { workspace in
             rowFrames[workspace.id].map {
                 WorkspaceRowExtent(
                     id: workspace.id,
@@ -224,8 +272,8 @@ private struct WorkspaceRowList: View {
     }
 
     private var horizontalBand: ClosedRange<Double>? {
-        let frames = store.catalog.workspaces.compactMap { rowFrames[$0.id] }
-        guard frames.count == store.catalog.workspaces.count,
+        let frames = visibleWorkspaces.compactMap { rowFrames[$0.id] }
+        guard frames.count == visibleWorkspaces.count,
               let minX = frames.map(\.minX).min(),
               let maxX = frames.map(\.maxX).max()
         else { return nil }
@@ -242,7 +290,7 @@ private struct WorkspaceRowList: View {
     }
 
     private func updateReorder(_ workspaceID: UUID, at point: CGPoint) {
-        let workspaces = store.catalog.workspaces
+        let workspaces = visibleWorkspaces
         let rows = rowStrip
         guard rows.count == workspaces.count, let band = horizontalBand else { return }
 
@@ -269,11 +317,15 @@ private struct WorkspaceRowList: View {
                       rows: rows
                   ),
                   rows: rows
+              ),
+              let absoluteDestination = absoluteWorkspaceIndex(
+                  forVisibleDestination: destination,
+                  in: store.catalog.workspaces
               )
         else { return }
 
         withAnimation(reduceMotion ? nil : WorkspaceSidebarLayout.reorderAnimation) {
-            store.moveWorkspace(workspaceID, to: destination)
+            store.moveWorkspace(workspaceID, to: absoluteDestination)
         }
     }
 
@@ -294,13 +346,17 @@ private struct WorkspaceRowList: View {
     }
 
     private func restore(_ drag: WorkspaceSidebarDrag) {
+        guard let absoluteOrigin = absoluteWorkspaceIndex(
+            forVisibleDestination: drag.originIndex,
+            in: store.catalog.workspaces
+        ) else { return }
         withAnimation(reduceMotion ? nil : WorkspaceSidebarLayout.reorderAnimation) {
-            store.moveWorkspace(drag.workspaceID, to: drag.originIndex)
+            store.moveWorkspace(drag.workspaceID, to: absoluteOrigin)
         }
     }
 
     private func announceLanding(of drag: WorkspaceSidebarDrag) {
-        let workspaces = store.catalog.workspaces
+        let workspaces = visibleWorkspaces
         guard let index = workspaces.firstIndex(where: { $0.id == drag.workspaceID }),
               index != drag.originIndex
         else { return }
@@ -314,15 +370,19 @@ private struct WorkspaceRowList: View {
     }
 
     private func moveWorkspace(_ workspaceID: UUID, to destination: Int) {
-        let workspaces = store.catalog.workspaces
+        let workspaces = visibleWorkspaces
         guard let index = workspaces.firstIndex(where: { $0.id == workspaceID }),
               destination >= 0,
               destination < workspaces.count,
-              destination != index
+              destination != index,
+              let absoluteDestination = absoluteWorkspaceIndex(
+                  forVisibleDestination: destination,
+                  in: store.catalog.workspaces
+              )
         else { return }
         let name = workspaces[index].name
         withAnimation(reduceMotion ? nil : WorkspaceSidebarLayout.reorderAnimation) {
-            store.moveWorkspace(workspaceID, to: destination)
+            store.moveWorkspace(workspaceID, to: absoluteDestination)
         }
         ReorderAnnouncer.say(
             WorkspaceReorder.announcement(
@@ -332,6 +392,33 @@ private struct WorkspaceRowList: View {
             )
         )
     }
+}
+
+/// Translates a destination position within the *visible-only* row list into the absolute
+/// index `WorkspaceCatalog.moveWorkspace` expects over the full (visible + background)
+/// array — so dragging a visible row past another visible one lands correctly even with a
+/// backgrounded workspace sitting between them. Scoped to this task deliberately: reorder
+/// interaction with a backgrounded workspace itself is out of scope, since it never renders
+/// a row to drag.
+///
+/// `destination` is an index into the visible-only ordering, as `WorkspaceReorder` already
+/// computes it today for the unfiltered case. The absolute index handed back is "the
+/// current (pre-move) position of whichever workspace occupies that visible slot" — which
+/// preserves `WorkspaceCatalog.moveWorkspace`'s existing remove-then-insert semantics,
+/// because that is exactly the same kind of pre-move absolute index `WorkspaceReorder`
+/// already returns for the unfiltered case.
+func absoluteWorkspaceIndex(
+    forVisibleDestination destination: Int,
+    in workspaces: [Workspace]
+) -> Int? {
+    let visible = workspaces.filter { $0.visibility == .visible }
+    guard !visible.isEmpty else { return nil }
+    if destination >= visible.count {
+        guard let last = visible.last else { return nil }
+        return workspaces.firstIndex(where: { $0.id == last.id })
+    }
+    let targetID = visible[max(0, destination)].id
+    return workspaces.firstIndex(where: { $0.id == targetID })
 }
 
 private struct WorkspaceSidebarDrag {
