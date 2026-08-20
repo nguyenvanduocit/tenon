@@ -14,6 +14,9 @@ struct ContentView: View {
     var store: WorkspaceStore
     var pool: SurfacePool
     var closeCoordinator: ShellCloseCoordinator
+    /// Sleep Workspace: the one typed teardown action `workspace.sleep.v1` and the
+    /// sidebar's Sleep button both call. See `WorkspaceSleepAction`.
+    var sleepAction: WorkspaceSleepAction
     var paneRenamer: PaneRenameCoordinator
     var agentLens: AgentLensPool
     /// T-178: which panes hold an agent, for the sidebar's tagline. Optional so an offscreen
@@ -85,6 +88,7 @@ struct ContentView: View {
                     store: store,
                     pool: pool,
                     closeCoordinator: closeCoordinator,
+                    sleepAction: sleepAction,
                     agentPanes: agentPanes,
                     isCollapsed: !sidebarVisible
                 )

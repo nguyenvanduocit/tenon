@@ -28,6 +28,9 @@ struct WorkspaceSidebarView: View {
     var store: WorkspaceStore
     var pool: SurfacePool
     var closeCoordinator: ShellCloseCoordinator
+    /// Sleep Workspace: the one typed teardown action `workspace.sleep.v1` and this row's
+    /// Sleep button both call. See `WorkspaceSleepAction`.
+    var sleepAction: WorkspaceSleepAction
     /// Which panes an agent occupies, for every workspace at once. Optional because the
     /// sidebar is mounted in snapshots and previews that compose no hook server; a row with
     /// no roster falls back to its tab count, which is what a workspace with no agent shows
@@ -47,6 +50,7 @@ struct WorkspaceSidebarView: View {
                     store: store,
                     pool: pool,
                     closeCoordinator: closeCoordinator,
+                    sleepAction: sleepAction,
                     agentPanes: agentPanes,
                     isCollapsed: isCollapsed
                 )
@@ -79,6 +83,7 @@ private struct WorkspaceRowList: View {
     var store: WorkspaceStore
     var pool: SurfacePool
     var closeCoordinator: ShellCloseCoordinator
+    var sleepAction: WorkspaceSleepAction
     var agentPanes: AgentPaneRoster?
     let isCollapsed: Bool
 
@@ -121,6 +126,13 @@ private struct WorkspaceRowList: View {
                             workspace: workspace,
                             coordinator: closeCoordinator
                         ),
+                        sleepAction: sleepAction,
+                        hasLiveTerminalResources: pool.terminalProcessSnapshot(
+                            for: Set(workspace.tabs.flatMap { $0.slots.map(\.id) })
+                        ).liveTerminalCount > 0,
+                        canBackground: store.catalog.workspaces.contains {
+                            $0.id != workspace.id && $0.visibility == .visible
+                        },
                         isCollapsed: isCollapsed
                     )
                     .background {
@@ -372,10 +384,20 @@ private struct WorkspaceRow: View {
     let canRemove: Bool
     let select: () -> Void
     let removal: WorkspaceRemovalAction
+    /// Sleep Workspace: the one typed teardown action `workspace.sleep.v1` also calls.
+    let sleepAction: WorkspaceSleepAction
+    /// Whether any of this workspace's panes currently holds a live, non-exited terminal —
+    /// the trigger for Sleep's destructive confirmation. Coarser than tab-close's
+    /// idle-vs-running distinction on purpose (see the plan's Global Constraints).
+    let hasLiveTerminalResources: Bool
+    /// Whether at least one other `.visible` workspace exists, so Move to Background never
+    /// leaves the sidebar with nothing to show.
+    let canBackground: Bool
     let isCollapsed: Bool
 
     @State private var isHovering = false
     @State private var isCustomizing = false
+    @State private var isConfirmingSleep = false
     /// Whether this row's account is showing, under the line it belongs to. Only
     /// `accountToggle` changes it now — a hover used to, and closing the moment the pointer
     /// reached a neighbouring row moved that row's own click target out from under a pointer
@@ -427,6 +449,17 @@ private struct WorkspaceRow: View {
                 }
             }
             Button("Customise Workspace…") { isCustomizing = true }
+            Button("Sleep") {
+                if hasLiveTerminalResources {
+                    isConfirmingSleep = true
+                } else {
+                    sleepAction(workspace.id)
+                }
+            }
+            Button("Move to Background") {
+                store.setVisibility(workspace.id, to: .background)
+            }
+            .disabled(!canBackground)
             Button("Remove Workspace", role: .destructive) { removal.perform() }
                 .disabled(!canRemove)
         }
@@ -435,6 +468,19 @@ private struct WorkspaceRow: View {
                 workspace: workspace,
                 store: store,
                 dismiss: { isCustomizing = false }
+            )
+        }
+        .confirmationDialog(
+            "Sleep \(workspace.name)?",
+            isPresented: $isConfirmingSleep,
+            titleVisibility: .visible
+        ) {
+            Button("Sleep", role: .destructive) { sleepAction(workspace.id) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Running terminals and agents in this workspace will be stopped. "
+                    + "Its tabs and layout stay exactly as they are."
             )
         }
     }

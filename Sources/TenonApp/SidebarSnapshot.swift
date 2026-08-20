@@ -53,6 +53,7 @@ enum SidebarSnapshot {
                 store: store,
                 pool: pool,
                 closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
+                sleepAction: WorkspaceSleepAction(),
                 agentPanes: agentPanes,
                 isCollapsed: size.width <= SidebarResize.collapsedWidth
             )

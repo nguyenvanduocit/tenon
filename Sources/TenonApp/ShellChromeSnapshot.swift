@@ -98,6 +98,7 @@ enum ShellChromeSnapshot {
                 store: store,
                 pool: pool,
                 closeCoordinator: ShellCloseCoordinator(store: store, pool: pool),
+                sleepAction: WorkspaceSleepAction(),
                 paneRenamer: PaneRenameCoordinator(
                     store: store,
                     pool: pool,

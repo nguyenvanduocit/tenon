@@ -45,6 +45,7 @@ struct TenonApp: App {
                     store: composition.store,
                     pool: composition.terminalSurfaces,
                     closeCoordinator: composition.shellCloseCoordinator,
+                    sleepAction: composition.sleepAction,
                     paneRenamer: composition.paneRenamer,
                     agentLens: composition.agentLens,
                     agentPanes: composition.agentPaneRoster,
