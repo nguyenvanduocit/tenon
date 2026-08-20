@@ -65,7 +65,7 @@ enum ClaudeSessionsScan {
     static let awk = #"""
 FNR == 1 { if (f != "") emit(); f = FILENAME; p = 0; r = 0; t = ""; first = ""; branch = "" }
 { h = substr($0, 1, 1000) }
-h ~ /"role":"user"/ && h !~ /"tool_use_id"/ { p++; if (first == "") first = jsonString($0, "content", 240); if (branch == "") branch = jsonString($0, "gitBranch", 100) }
+h ~ /"role":"user"/ && h !~ /"tool_use_id"/ { p++; if (first == "") { first = jsonString($0, "content", 240); if (first == "") first = jsonString($0, "text", 240) } if (branch == "") branch = jsonString($0, "gitBranch", 100) }
 h ~ /"role":"assistant"/ { r++ }
 h ~ /[,{]"type":"ai-title"[,}]/ { t = jsonString($0, "aiTitle", 240) }
 END { if (f != "") emit() }
@@ -403,40 +403,75 @@ function emit() { printf "%s\t%d\t%d\t%s\t%s\t%s\n", f, p, r, t, first, branch }
         var offset = 0
         while offset < sessions.count {
             let end = min(sessions.count, offset + 25)
-            var arguments = ["LC_ALL=C", "/usr/bin/awk", awk]
-            arguments.append(contentsOf: sessions[offset ..< end].map(\.path))
-            let result = await exec(
-                command: "/usr/bin/env",
-                arguments: arguments,
-                workingDirectory: project,
-                caller: caller
-            )
-            guard result.ok, result.status == 0 else {
+            let paths = Array(sessions[offset ..< end].map(\.path))
+            let batch = await runAwkDetails(paths: paths, project: project, caller: caller)
+            if batch.ok, batch.status == 0 {
+                apply(batch.stdout, byPath: byPath, sessions: &sessions)
+            } else {
+                // One bad or slow file must not blank the titles of the rest of the batch:
+                // fall back to a per-file pass so only the offending file loses its title.
                 await log(
-                    "agent-sessions: could not read Claude session details: "
-                        + (result.error
-                            ?? (result.stderr.isEmpty
-                                ? "awk exited \(result.status)"
-                                : result.stderr))
+                    "agent-sessions: could not read Claude session details for "
+                        + "\(paths.count) sessions at once (\(failureReason(batch))); "
+                        + "retrying one file at a time"
                 )
-                offset = end
-                continue
-            }
-            for line in result.stdout.split(separator: "\n", omittingEmptySubsequences: false) {
-                let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
-                guard fields.count >= 6,
-                      let index = byPath[String(fields[0])]
-                else { continue }
-                sessions[index].prompts = Int(fields[1]) ?? 0
-                sessions[index].replies = Int(fields[2]) ?? 0
-                sessions[index].title = cleanTitle(
-                    decodeJSONFragment(String(fields[3]))
-                )
-                    ?? cleanTitle(decodeJSONFragment(String(fields[4])))
-                    ?? ""
-                sessions[index].branch = String(fields[5])
+                for path in paths {
+                    let single = await runAwkDetails(
+                        paths: [path],
+                        project: project,
+                        caller: caller
+                    )
+                    guard single.ok, single.status == 0 else {
+                        await log(
+                            "agent-sessions: could not read Claude session details: "
+                                + "\(path) (\(failureReason(single)))"
+                        )
+                        continue
+                    }
+                    apply(single.stdout, byPath: byPath, sessions: &sessions)
+                }
             }
             offset = end
+        }
+    }
+
+    private static func runAwkDetails(
+        paths: [String],
+        project: String,
+        caller: ClaudeSessionsIntentCaller
+    ) async -> ClaudeProcessResult {
+        var arguments = ["LC_ALL=C", "/usr/bin/awk", awk]
+        arguments.append(contentsOf: paths)
+        return await exec(
+            command: "/usr/bin/env",
+            arguments: arguments,
+            workingDirectory: project,
+            caller: caller
+        )
+    }
+
+    private static func failureReason(_ result: ClaudeProcessResult) -> String {
+        result.error ?? (result.stderr.isEmpty ? "awk exited \(result.status)" : result.stderr)
+    }
+
+    private static func apply(
+        _ output: String,
+        byPath: [String: Int],
+        sessions: inout [ClaudeSessionRecord]
+    ) {
+        for line in output.split(separator: "\n", omittingEmptySubsequences: false) {
+            let fields = line.split(separator: "\t", omittingEmptySubsequences: false)
+            guard fields.count >= 6,
+                  let index = byPath[String(fields[0])]
+            else { continue }
+            sessions[index].prompts = Int(fields[1]) ?? 0
+            sessions[index].replies = Int(fields[2]) ?? 0
+            sessions[index].title = cleanTitle(
+                decodeJSONFragment(String(fields[3]))
+            )
+                ?? cleanTitle(decodeJSONFragment(String(fields[4])))
+                ?? ""
+            sessions[index].branch = String(fields[5])
         }
     }
 
