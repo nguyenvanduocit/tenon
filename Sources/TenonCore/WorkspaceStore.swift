@@ -125,6 +125,13 @@ public final class WorkspaceStore {
         updateRecentWorkspaceIdentity(id)
     }
 
+    /// Shows or hides a workspace in the sidebar's main list. The workspace's tabs, panes,
+    /// and live resources are never touched by this call — only `Workspace.visibility`
+    /// changes, exactly like `setWorkspaceAppearance` changes only presentation.
+    public func setVisibility(_ id: UUID, to visibility: WorkspaceVisibility) {
+        apply { $0.setVisibility(id, to: visibility) }
+    }
+
     public func newTab(content: SlotContent? = nil) {
         let resolved = content ?? newTabContentProvider()
         recordRecent(
@@ -471,6 +478,14 @@ public extension PluginHost {
         case .workspaceIdentityChanged(let workspace):
             return (
                 "workspace.identity-changed",
+                .object([
+                    "workspaceId": .string(workspace.uuidString),
+                ])
+            )
+
+        case .workspaceVisibilityChanged(let workspace):
+            return (
+                "workspace.visibility-changed",
                 .object([
                     "workspaceId": .string(workspace.uuidString),
                 ])

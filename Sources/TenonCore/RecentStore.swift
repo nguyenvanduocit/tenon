@@ -266,7 +266,8 @@ extension WorkspaceEvent {
         case .workspaceAdded(let workspace),
              .workspaceRemoved(let workspace),
              .workspaceSelected(let workspace),
-             .workspaceIdentityChanged(let workspace):
+             .workspaceIdentityChanged(let workspace),
+             .workspaceVisibilityChanged(let workspace):
             return workspace
         case .workspaceMoved(let workspace, _, _):
             return workspace

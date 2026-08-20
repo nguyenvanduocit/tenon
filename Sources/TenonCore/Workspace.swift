@@ -169,6 +169,14 @@ public struct Tab: Equatable, Identifiable, Sendable {
     }
 }
 
+/// Whether a workspace appears in the sidebar's main catalog list. `.background` keeps
+/// every live resource running — it is a list-membership fact, never a resource action.
+/// Sleep, which does free resources, has no domain-model state at all (see `SurfacePool`).
+public enum WorkspaceVisibility: Equatable, Sendable {
+    case visible
+    case background
+}
+
 public struct Workspace: Equatable, Identifiable, Sendable {
     public let id: UUID
     public internal(set) var name: String
@@ -176,6 +184,8 @@ public struct Workspace: Equatable, Identifiable, Sendable {
     /// How this workspace is marked and tinted. Presentation only: `id` is the identity, so
     /// customising this never disturbs the tree below it. See `WorkspaceIdentity.swift`.
     public internal(set) var appearance: WorkspaceAppearance
+    /// Whether this workspace appears in the sidebar's main list. See `WorkspaceVisibility`.
+    public internal(set) var visibility: WorkspaceVisibility
     public internal(set) var tabs: [Tab]
     public internal(set) var activeTabID: UUID
 
@@ -184,6 +194,7 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         name: String,
         path: URL,
         appearance: WorkspaceAppearance = .default,
+        visibility: WorkspaceVisibility = .visible,
         tabs: [Tab],
         activeTabID: UUID
     ) {
@@ -196,6 +207,7 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         self.name = name
         self.path = path
         self.appearance = appearance
+        self.visibility = visibility
         self.tabs = tabs
         self.activeTabID = activeTabID
     }
@@ -205,6 +217,7 @@ public struct Workspace: Equatable, Identifiable, Sendable {
         name: String,
         path: URL,
         appearance: WorkspaceAppearance = .default,
+        visibility: WorkspaceVisibility = .visible,
         content: SlotContent = .terminal,
         sizing: NewPaneSizing = .unlimited
     ) {
@@ -214,6 +227,7 @@ public struct Workspace: Equatable, Identifiable, Sendable {
             name: name,
             path: path,
             appearance: appearance,
+            visibility: visibility,
             tabs: [tab],
             activeTabID: tab.id
         )
@@ -276,6 +290,9 @@ public enum WorkspaceEvent: Equatable, Sendable {
     /// A workspace's name, mark, or tint changed. Nothing below it moved — this is the one
     /// workspace fact that leaves every tab, pane, and selection exactly where it was.
     case workspaceIdentityChanged(UUID)
+    /// A workspace's sidebar visibility changed. Its tabs, panes, and live resources are
+    /// untouched — this is the same shape as `workspaceIdentityChanged`, one level over.
+    case workspaceVisibilityChanged(UUID)
     /// A workspace took a different place in the catalog's sidebar order. Its tabs, panes,
     /// identity, and active selection are unchanged.
     case workspaceMoved(workspace: UUID, from: Int, to: Int)
@@ -519,6 +536,46 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         workspaces[index].name = WorkspaceName.derived(for: workspaces[index].path)
         workspaces[index].appearance = .default
         return [.workspaceIdentityChanged(id)]
+    }
+
+    /// Shows or hides a workspace in the sidebar's main list without touching any of its
+    /// live resources. At least one `.visible` workspace must remain — mirrors
+    /// `removeWorkspace`'s guard — and backgrounding the active workspace reselects a
+    /// neighbor exactly like `removeWorkspace` does, because the single main window always
+    /// needs a visible workspace to show (`WS-A-001`).
+    @discardableResult
+    public mutating func setVisibility(
+        _ id: UUID,
+        to visibility: WorkspaceVisibility
+    ) -> [WorkspaceEvent] {
+        guard let index = workspaces.firstIndex(where: { $0.id == id }),
+              workspaces[index].visibility != visibility
+        else { return [] }
+
+        if visibility == .background {
+            let remainingVisible = workspaces.contains {
+                $0.id != id && $0.visibility == .visible
+            }
+            guard remainingVisible else { return [] }
+        }
+
+        workspaces[index].visibility = visibility
+        var events: [WorkspaceEvent] = [.workspaceVisibilityChanged(id)]
+
+        if visibility == .background, activeWorkspaceID == id,
+           let neighbor = workspaces.first(where: { $0.visibility == .visible && $0.id != id })
+        {
+            activeWorkspaceID = neighbor.id
+            events.append(.workspaceSelected(neighbor.id))
+            if let tab = neighbor.activeTab {
+                events.append(.tabSelected(tab: tab.id, workspace: neighbor.id))
+                if let slotID = tab.activeSlotID {
+                    events.append(.slotFocused(slot: slotID, tab: tab.id, workspace: neighbor.id))
+                }
+            }
+        }
+
+        return events
     }
 
     @discardableResult
