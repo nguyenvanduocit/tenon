@@ -31,15 +31,13 @@ final class TabContextPlacementTests: XCTestCase {
         )
     }
 
-    /// Reproduces the operator-reported "This space is no longer available" dead end: a
-    /// workspace's *sole* tab keeps existing with zero slots once its last pane closes —
-    /// `closeTab`'s own invariant refuses to remove a workspace's last tab
-    /// (`Workspace.swift:656`, "the workspace's required final tab remains as its empty
-    /// structural placeholder") — but `scopedPane` answers a live, still-visible tab exactly
-    /// like an unknown one. `ShellTabStrip.send(_:onTab:)` reads that `nil` as "refuse", so
-    /// every command in that tab's own right-click menu — including "New Terminal" — fails
-    /// against a tab the operator is looking straight at.
-    func testATabEmptiedToTheWorkspacesLastPaneResolvesToNothingEvenThoughItStillExists() {
+    /// Answers the operator-reported "This space is no longer available" dead end: closing
+    /// the last pane of a workspace's *sole* tab leaves that tab showing its own Empty slot
+    /// (T-193), so `scopedPane` has a real pane to name and every command in the tab's own
+    /// right-click menu — "New Terminal" first among them — lands where the operator
+    /// clicked. `scopedPane` refusing a live, visible tab was only ever a symptom of the tab
+    /// being left with zero panes; the tab now always holds one.
+    func testATabEmptiedToTheWorkspacesLastPaneShowsItsEmptyStateAndStaysAddressable() throws {
         var catalog = WorkspaceCatalog(
             path: FileManager.default.temporaryDirectory,
             content: .terminal
@@ -56,13 +54,15 @@ final class TabContextPlacementTests: XCTestCase {
             "the tab must survive its last pane closing — it is the workspace's only tab"
         )
         XCTAssertEqual(
-            catalog.activeWorkspace?.tabs[0].slots,
-            [],
-            "the surviving tab must actually be empty, or this proves nothing"
+            catalog.activeWorkspace?.tabs[0].slots.map(\.content),
+            [.empty],
+            "the surviving tab holds one Empty slot, not zero panes"
         )
-        XCTAssertNil(
+        let placeholderID = try XCTUnwrap(catalog.activeWorkspace?.tabs[0].slots.first?.id)
+        XCTAssertEqual(
             TabContextPlacement.scopedPane(in: catalog, tabID: tab.id),
-            "today's behavior: a real, visible, empty tab reads exactly like a closed one"
+            placeholderID,
+            "the menu's commands resolve to the Empty slot the operator is looking at"
         )
         XCTAssertEqual(
             TabContextPlacement.owningWorkspace(in: catalog, tabID: tab.id),

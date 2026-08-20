@@ -110,11 +110,23 @@ final class EmptyPaneSearchTests: XCTestCase {
         )
     }
 
+    /// A tab holding no panes at all is restored state since T-193 — closing a pane leaves
+    /// an `.empty` one behind — so the fixture is built the way `WorkspaceCatalogStore`
+    /// decodes one (`WorkspaceCatalogStore.swift:355`) rather than through a close. The
+    /// `.emptyTab` placement this pins still serves exactly that tab.
     func testATypedCommandInAnEmptyTabAddsThePaneItRunsIn() throws {
         let root = FileManager.default.temporaryDirectory
-        let store = WorkspaceStore(catalog: WorkspaceCatalog(path: root, content: .empty))
-        let openingPaneID = try XCTUnwrap(store.catalog.activeSlotID)
-        store.closeSlot(openingPaneID)
+        let emptyTab = Tab(slots: [], activeSlotID: nil)
+        let workspace = Workspace(
+            name: "Empty",
+            path: root,
+            tabs: [emptyTab],
+            activeTabID: emptyTab.id
+        )
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        ))
         XCTAssertEqual(store.catalog.activeTab?.slots.count, 0, "the tab is genuinely empty")
         let pool = SurfacePool(backendName: "Stub") { _, _ in StubTerminalSurface() }
 

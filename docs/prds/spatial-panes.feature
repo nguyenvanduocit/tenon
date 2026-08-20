@@ -166,19 +166,36 @@ Feature: Arrange live panes without losing identity, focus, or attention
       And the tab keeps a valid active pane
 
     @req-sp-fr-006 @close @empty-tab
-    Scenario: Closing the final pane closes its tab when another tab survives
+    Scenario: Closing the final pane keeps its tab showing an Empty slot
       Given a workspace contains several tabs
       And one tab contains exactly one pane
       When that pane is closed
-      Then that tab is removed
-      And a surviving tab becomes active with its remembered active pane
+      Then that tab remains present and selected
+      And it holds one Empty slot filling the grid, under a new pane identity, focused
+      And the other tabs keep their own remembered active pane
 
     @req-sp-fr-006 @close @empty-tab @last-tab
     Scenario: Closing the final pane of the workspace's only tab keeps the required tab
       Given the workspace's only tab contains exactly one pane
       When that pane is closed
-      Then the tab remains present with no panes
-      And the tab has no active pane
+      Then the tab remains present holding one Empty slot filling the grid
+      And that Empty slot is the tab's active pane
+      And a command chosen from that tab's own context menu resolves to it
+
+    @req-sp-fr-006 @close @empty-tab @cross-tab
+    Scenario: Only a pane that moves away closes the tab it emptied
+      Given a workspace contains several tabs
+      And one tab contains exactly one pane
+      When that pane is moved to another tab
+      Then that tab is removed
+      And a surviving tab becomes active with its remembered active pane
+
+    @req-sp-fr-006 @close @empty-tab @launcher
+    Scenario: Abandoning the only launcher reservation in a tab leaves the tab alone
+      Given a tab's only pane is an untouched launcher reservation
+      When the operator abandons it without choosing content
+      Then the tab remains present with that Empty slot unchanged
+      And nothing is published, because nothing changed
 
     @req-sp-fr-007 @duplicate
     Scenario: Duplicate creates a separate pane showing the clicked content

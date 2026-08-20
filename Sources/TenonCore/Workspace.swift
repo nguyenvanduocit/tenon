@@ -749,6 +749,11 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     /// Removes an untouched launcher reservation without asking neighbouring panes to
     /// absorb it. The surrounding geometry therefore returns to the exact pre-click
     /// layout instead of expanding as an ordinary pane close would.
+    ///
+    /// A reservation that is the tab's only pane is a no-op (T-193): backing out of the
+    /// launcher abandons the *choice*, not the tab holding it, and the tab is already
+    /// showing exactly what abandoning it should leave behind — this Empty slot. There is
+    /// nothing to remove, nothing to reflow, and nothing to publish.
     @discardableResult
     public mutating func discardEmptySlot(
         _ id: UUID,
@@ -760,6 +765,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 guard let slotIndex = tab.slots.firstIndex(where: { $0.id == id }),
                       tab.slots[slotIndex].content == .empty
                 else { continue }
+                guard tab.slots.count > 1 else { return [] }
 
                 var slots = tab.slots
                 slots.remove(at: slotIndex)
@@ -776,7 +782,6 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 var events: [WorkspaceEvent] = [
                     .slotClosed(slot: id, tab: tab.id, workspace: workspaceID),
                 ]
-                events.append(contentsOf: closeTabIfEmpty(tab.id, in: workspaceID))
                 if let activeSlotID,
                    activeSlotID != tab.activeSlotID,
                    activeWorkspaceID == workspaceID,
@@ -948,6 +953,19 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         ]
     }
 
+    /// Closes a pane. When it was the tab's last one, the tab stays and takes a fresh
+    /// `.empty` pane over the whole grid (T-193).
+    ///
+    /// Closing every pane in a tab is the operator clearing the tab, not deleting it, so
+    /// the tab keeps its place in the strip, its number, and the selection — and shows the
+    /// same Empty slot a launcher reservation shows. Only a pane *moving* out closes the
+    /// tab it emptied, because there the operator did name a destination for it.
+    ///
+    /// The departing pane still leaves through `removeSlot` and still publishes
+    /// `.slotClosed`, so every teardown consumer — surface pool, plugin resource
+    /// ownership, terminal job termination — runs exactly as before. The placeholder is a
+    /// separate, newly-identified pane arriving after it, never the closed pane's identity
+    /// reused with different content.
     @discardableResult
     public mutating func closeSlot(
         _ id: UUID,
@@ -955,6 +973,7 @@ public struct WorkspaceCatalog: Equatable, Sendable {
     ) -> [WorkspaceEvent] {
         guard let location = activeTabLocation else { return [] }
         let tab = workspaces[location.workspace].tabs[location.tab]
+        let wasTheTabsLastSlot = tab.slots.count == 1 && tab.slots[0].id == id
         guard let removal = removeSlot(id, at: location, sizing: sizing) else { return [] }
 
         let activeSlotID = removal.activeSlotID
@@ -970,7 +989,22 @@ public struct WorkspaceCatalog: Equatable, Sendable {
                 workspace: workspaceID
             ))
         }
-        events.append(contentsOf: closeTabIfEmpty(tab.id, in: workspaceID))
+        if wasTheTabsLastSlot {
+            let placeholder = WorkspaceSlot(rect: fullGridRect, content: .empty)
+            workspaces[location.workspace].tabs[location.tab].slots = [placeholder]
+            workspaces[location.workspace].tabs[location.tab].activeSlotID = placeholder.id
+            events.append(.slotOpened(
+                slot: placeholder.id,
+                tab: tab.id,
+                workspace: workspaceID
+            ))
+            events.append(.slotFocused(
+                slot: placeholder.id,
+                tab: tab.id,
+                workspace: workspaceID
+            ))
+            return events
+        }
         if let activeSlotID, activeSlotID != tab.activeSlotID {
             events.append(.slotFocused(
                 slot: activeSlotID,
@@ -1544,9 +1578,12 @@ public struct WorkspaceCatalog: Equatable, Sendable {
         )
     }
 
-    /// Collapse a tab whose last pane just left through a pane-level mutation. The
-    /// workspace's required final tab remains as its empty structural placeholder;
-    /// `closeTab` owns that invariant and the neighboring-tab selection events.
+    /// Collapse a tab whose last pane just **moved** to another tab. A move is the one
+    /// departure that names somewhere else for the pane to be, so the tab it emptied is
+    /// residue; a close or an abandoned reservation leaves the tab standing with an
+    /// `.empty` pane instead (T-193). The workspace's required final tab remains as its
+    /// empty structural placeholder; `closeTab` owns that invariant and the
+    /// neighboring-tab selection events.
     private mutating func closeTabIfEmpty(
         _ tabID: UUID,
         in workspaceID: UUID

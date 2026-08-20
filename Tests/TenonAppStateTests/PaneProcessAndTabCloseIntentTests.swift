@@ -172,7 +172,20 @@ final class PaneProcessAndTabCloseIntentTests: XCTestCase {
 
     // MARK: - workspace.pane.close.v2
 
-    func testPaneCloseAlsoClosesItsEmptyTabWhenAnotherTabSurvives() async throws {
+    /// `workspace.pane.close.v2` closes the pane it was scoped to and nothing else (T-193).
+    /// The tab it emptied stays, holding one `.empty` pane, because a close names no other
+    /// destination for the work — only a cross-tab *move* does, and only that closes the
+    /// tab it emptied. The provider's own success guard reads "`closingPaneID` is gone",
+    /// which the fresh placeholder identity satisfies (`WorkspaceIntentProvider.swift:552`).
+    ///
+    /// **Open, deliberately not decided here:** the 2026-08-13 decision row minted `.v2`
+    /// precisely because *adding* this tab removal "changes observable side-effect meaning,
+    /// so same-major evolution is forbidden". Removing it again is the same kind of change,
+    /// which argues for a `.v3`; that reaches `CoreIntentName.swift`,
+    /// `CoreCommandsPlugin.swift`, `plugins/core-commands/manifest.json` and three design
+    /// docs, none of them in T-193's claimed file set. Recorded in `spatial-panes.prd.md`'s
+    /// decision log for an owner to settle.
+    func testPaneCloseLeavesItsEmptiedTabStandingWithAnEmptyPane() async throws {
         let store = WorkspaceStore()
         let closingTabID = try XCTUnwrap(store.catalog.activeTab?.id)
         let closingPaneID = try XCTUnwrap(store.catalog.activeSlotID)
@@ -188,8 +201,17 @@ final class PaneProcessAndTabCloseIntentTests: XCTestCase {
             )
         )
 
-        XCTAssertEqual(store.catalog.activeWorkspace?.tabs.map(\.id), [survivingTabID])
+        XCTAssertEqual(
+            store.catalog.activeWorkspace?.tabs.map(\.id),
+            [closingTabID, survivingTabID],
+            "closing a pane removes that pane, never the tab holding it"
+        )
         XCTAssertNil(store.catalog.slot(id: closingPaneID))
+        let emptied = try XCTUnwrap(
+            store.catalog.activeWorkspace?.tabs.first { $0.id == closingTabID }
+        )
+        XCTAssertEqual(emptied.slots.map(\.content), [.empty])
+        XCTAssertEqual(emptied.activeSlotID, emptied.slots.first?.id)
     }
 }
 

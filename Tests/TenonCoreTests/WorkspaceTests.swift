@@ -315,10 +315,15 @@ final class WorkspaceCatalogTests: XCTestCase {
         XCTAssertTrue(discarded.contains { if case .slotClosed(slot: reservedID, tab: _, workspace: _) = $0 { return true }; return false })
     }
 
-    func testDiscardOnlyEmptyReservationClosesItsTabWhenAnotherTabSurvives() throws {
+    /// Backing out of a `+` launcher is abandoning a *choice*, not the tab holding it
+    /// (T-193). The tab is already showing the Empty slot the reservation is, so there is
+    /// nothing left to do and nothing to publish — even with another tab standing by to
+    /// receive focus.
+    func testDiscardOnlyEmptyReservationIsANoOpAndKeepsShowingEmptyState() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath, content: .empty)
         let reservedTabID = try XCTUnwrap(catalog.activeTab?.id)
         let reservedSlotID = try XCTUnwrap(catalog.activeSlotID)
+        let reservedSlots = try XCTUnwrap(catalog.activeTab).slots
         catalog.newTab()
         let survivingTabID = try XCTUnwrap(catalog.activeTab?.id)
 
@@ -327,11 +332,17 @@ final class WorkspaceCatalogTests: XCTestCase {
             restoringFocusTo: nil
         )
 
-        XCTAssertEqual(catalog.activeWorkspace?.tabs.map(\.id), [survivingTabID])
-        XCTAssertTrue(events.contains(.tabClosed(
-            tab: reservedTabID,
-            workspace: catalog.activeWorkspaceID
-        )))
+        XCTAssertEqual(
+            catalog.activeWorkspace?.tabs.map(\.id),
+            [reservedTabID, survivingTabID],
+            "abandoning the reservation must leave the tab that held it standing"
+        )
+        let reserved = try XCTUnwrap(
+            catalog.activeWorkspace?.tabs.first { $0.id == reservedTabID }
+        )
+        XCTAssertEqual(reserved.slots, reservedSlots, "the Empty slot survives, unchanged")
+        XCTAssertEqual(reserved.activeSlotID, reservedSlotID)
+        XCTAssertEqual(events, [], "nothing changed, so nothing is published")
     }
 
     func testAddSlotAtExactRectRejectsOverlapAndUndersizedTargets() {
@@ -422,10 +433,13 @@ final class WorkspaceCatalogTests: XCTestCase {
         )))
     }
 
+    /// A tab with no panes at all is restored state, not something a mutation produces:
+    /// since T-193 close and discard both leave an `.empty` pane behind, and a move closes
+    /// the tab. `WorkspaceCatalogStore` still decodes a slotless tab (`:355`) and
+    /// `WorkspaceStageView` still draws one (`:71`), so the fixture is built the way the
+    /// decoder builds it rather than through a close that no longer empties anything.
     func testAddSlotToEmptyTabRestoresOneFullGridSlot() throws {
-        var catalog = WorkspaceCatalog(name: "One", path: projectPath)
-        let originalID = try XCTUnwrap(catalog.activeSlotID)
-        catalog.closeSlot(originalID)
+        var catalog = makeCatalog(slots: [], activeSlotID: nil)
         let tabID = try XCTUnwrap(catalog.activeTab?.id)
 
         catalog.addSlot(
@@ -505,7 +519,12 @@ final class WorkspaceCatalogTests: XCTestCase {
         XCTAssertEqual(catalog.activeTab, before)
     }
 
-    func testCloseSlotUsesSmartAbsorptionAndClosesTabAfterItsLastSlot() throws {
+    /// Closing panes down to none is the operator saying "clear this tab", not "delete this
+    /// tab" (T-193). The last close therefore mints a fresh `.empty` placeholder over the
+    /// whole grid — the same Empty slot a launcher reservation shows — and the tab stays
+    /// exactly where it was in the strip, still selected. Only a pane *moving* out closes
+    /// the tab it emptied.
+    func testCloseSlotUsesSmartAbsorptionAndShowsEmptyStateAfterItsLastSlot() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let sourceTabID = try XCTUnwrap(catalog.activeTab?.id)
         let leftID = try XCTUnwrap(catalog.activeSlotID)
@@ -527,25 +546,73 @@ final class WorkspaceCatalogTests: XCTestCase {
         let events = catalog.closeSlot(leftID)
 
         tab = try XCTUnwrap(catalog.activeTab)
-        XCTAssertEqual(tab.id, survivingTabID)
-        XCTAssertFalse(catalog.activeWorkspace!.tabs.contains { $0.id == sourceTabID })
+        XCTAssertEqual(
+            tab.id,
+            sourceTabID,
+            "the emptied tab stays selected — nothing closed, so nothing to select past"
+        )
+        XCTAssertTrue(
+            catalog.activeWorkspace!.tabs.contains { $0.id == sourceTabID },
+            "closing the final pane must never remove the tab it emptied"
+        )
+        let placeholderID = try XCTUnwrap(tab.activeSlotID)
+        XCTAssertNotEqual(placeholderID, leftID, "the placeholder is a fresh pane identity")
+        XCTAssertEqual(tab.slots, [
+            WorkspaceSlot(id: placeholderID, rect: fullGrid, content: .empty),
+        ])
+        XCTAssertEqual(
+            catalog.activeWorkspace!.tabs.first { $0.id == survivingTabID }?.activeSlotID,
+            survivingSlotID,
+            "the other tab is untouched by a close in this one"
+        )
         XCTAssertEqual(events, [
             .slotClosed(
                 slot: leftID,
                 tab: sourceTabID,
                 workspace: catalog.activeWorkspaceID
             ),
-            .tabClosed(tab: sourceTabID, workspace: catalog.activeWorkspaceID),
-            .tabSelected(tab: survivingTabID, workspace: catalog.activeWorkspaceID),
+            .slotOpened(
+                slot: placeholderID,
+                tab: sourceTabID,
+                workspace: catalog.activeWorkspaceID
+            ),
             .slotFocused(
-                slot: survivingSlotID,
-                tab: survivingTabID,
+                slot: placeholderID,
+                tab: sourceTabID,
                 workspace: catalog.activeWorkspaceID
             ),
         ])
     }
 
-    func testCloseLastSlotInOnlyTabKeepsTheRequiredTabAsEmpty() throws {
+    /// The placeholder answers the tab, not the pane it replaced: a sole pane the operator
+    /// had narrowed still leaves an Empty slot filling the whole grid.
+    func testTheEmptyStateLeftByAClosedFinalPaneFillsTheGrid() throws {
+        let narrowID = UUID()
+        var catalog = makeCatalog(
+            slots: [
+                WorkspaceSlot(
+                    id: narrowID,
+                    rect: GridRect(x: 0, y: 0, width: 4, height: 12),
+                    content: .terminal
+                ),
+            ],
+            activeSlotID: narrowID
+        )
+
+        catalog.closeSlot(narrowID)
+
+        let tab = try XCTUnwrap(catalog.activeTab)
+        let placeholderID = try XCTUnwrap(tab.activeSlotID)
+        XCTAssertEqual(tab.slots, [
+            WorkspaceSlot(id: placeholderID, rect: fullGrid, content: .empty),
+        ])
+    }
+
+    /// The workspace's only tab takes the same answer as any other tab (T-193): one
+    /// `.empty` pane, focused. It used to be left holding zero panes — a tab the operator
+    /// could see but no command could address, pinned by
+    /// `TabContextPlacementTests.testATabEmptiedToTheWorkspacesLastPaneShowsItsEmptyStateAndStaysAddressable`.
+    func testCloseLastSlotInOnlyTabKeepsTheTabShowingAnEmptySlot() throws {
         var catalog = WorkspaceCatalog(name: "One", path: projectPath)
         let tabID = try XCTUnwrap(catalog.activeTab?.id)
         let slotID = try XCTUnwrap(catalog.activeSlotID)
@@ -553,11 +620,24 @@ final class WorkspaceCatalogTests: XCTestCase {
         let events = catalog.closeSlot(slotID)
 
         XCTAssertEqual(catalog.activeWorkspace?.tabs.map(\.id), [tabID])
-        XCTAssertTrue(try XCTUnwrap(catalog.activeTab).slots.isEmpty)
-        XCTAssertNil(catalog.activeSlotID)
+        let placeholderID = try XCTUnwrap(catalog.activeSlotID)
+        XCTAssertNotEqual(placeholderID, slotID, "the placeholder is a fresh pane identity")
+        XCTAssertEqual(try XCTUnwrap(catalog.activeTab).slots, [
+            WorkspaceSlot(id: placeholderID, rect: fullGrid, content: .empty),
+        ])
         XCTAssertEqual(events, [
             .slotClosed(
                 slot: slotID,
+                tab: tabID,
+                workspace: catalog.activeWorkspaceID
+            ),
+            .slotOpened(
+                slot: placeholderID,
+                tab: tabID,
+                workspace: catalog.activeWorkspaceID
+            ),
+            .slotFocused(
+                slot: placeholderID,
                 tab: tabID,
                 workspace: catalog.activeWorkspaceID
             ),

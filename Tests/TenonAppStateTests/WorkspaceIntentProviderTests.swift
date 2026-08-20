@@ -547,13 +547,26 @@ final class WorkspaceIntentProviderTests: XCTestCase {
         )
     }
 
+    /// A tab holding no panes at all is restored state since T-193 — closing a pane leaves
+    /// an `.empty` one behind — so the fixture is built the way `WorkspaceCatalogStore`
+    /// decodes one (`WorkspaceCatalogStore.swift:355`) rather than through a close. What is
+    /// pinned is unchanged: opening content into such a tab fills it and opens no tab.
     func testOpeningIntoAnEmptyTabAddsItsFirstPaneAndNeverOpensATab() async throws {
-        let store = WorkspaceStore()
+        let emptyTab = Tab(slots: [], activeSlotID: nil)
+        let workspace = Workspace(
+            name: "Empty",
+            path: FileManager.default.temporaryDirectory,
+            tabs: [emptyTab],
+            activeTabID: emptyTab.id
+        )
+        let store = WorkspaceStore(catalog: WorkspaceCatalog(
+            workspaces: [workspace],
+            activeWorkspaceID: workspace.id
+        ))
         let bindings = try WorkspaceIntentProvider(store: store).bindings()
         let tabID = try XCTUnwrap(store.catalog.activeTab?.id)
         let workspaceID = store.catalog.activeWorkspaceID
         let tabs = try XCTUnwrap(store.catalog.activeWorkspace?.tabs.count)
-        store.closeActiveSlot()
         XCTAssertEqual(store.catalog.activeTab?.slots, [])
 
         _ = try successReply(
