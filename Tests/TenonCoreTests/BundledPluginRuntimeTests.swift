@@ -171,6 +171,109 @@ final class BundledPluginRuntimeTests: XCTestCase {
         _ = await runtime.shutdown(timeout: 1)
     }
 
+    /// `testShutdownDeadlineReportsANonCooperativeEventPump` above proves shutdown can detect a
+    /// wedged callback. This proves ordinary use does not recover from one while the app keeps
+    /// running: `BlockingEventGate.wait()` is a bare `withCheckedContinuation` with no
+    /// cancellation handler — the exact shape `IntentDispatcher.resolveCallerConsent`'s own
+    /// comment calls out as needing an explicit deadline race, since `Task.cancel()` alone
+    /// cannot make it return. Before `callbackTimeout` bounded `consume`, a view-open callback
+    /// in that shape held the generation's one serial pump open forever, silently — no log
+    /// line, no phase change — which is exactly what two independently-reported, unrelated
+    /// plugin panes (file-explorer, claude-sessions) showed live: a spinner that never settles
+    /// and zero application-log evidence. The wrapping `Task` below (not an inline `await`)
+    /// is what keeps this test itself bounded regardless of whether the fix is present.
+    func testAWedgedViewOpenCallbackFailsTheGenerationInsteadOfHangingForever() async throws {
+        let pluginID: PluginID = "dev.example.wedged-open"
+        let gate = BlockingEventGate()
+        let program = BundledPluginProgram(
+            id: pluginID,
+            subscribedEvents: [],
+            providedIntents: [],
+            viewCallbacks: [
+                "tree": BundledPluginViewCallbacks(
+                    open: { _, _ in
+                        await gate.wait()
+                        return .empty
+                    }
+                ),
+            ],
+            activate: { _ in
+                BundledPluginContribution(
+                    viewRegistrations: [
+                        BundledPluginViewRegistration(
+                            viewID: "tree",
+                            title: "Tree",
+                            instanced: true
+                        ),
+                    ],
+                    viewBodies: []
+                )
+            },
+            receiveEvent: { _, _, _ in nil },
+            invokeIntent: { envelope, _ in
+                throw PluginRuntimeError.providerHandlerUnavailable(envelope.name)
+            }
+        )
+        let manifest = try PluginManifest(
+            id: pluginID,
+            name: "wedged-open",
+            version: "1.0.0",
+            runtime: .bundledSwift
+        )
+        let runtime = BundledPluginRuntimeActor(
+            configuration: PluginRuntimeConfiguration(
+                manifest: manifest,
+                directory: FileManager.default.temporaryDirectory,
+                intents: PluginRuntimeIntentBridge(
+                    send: { _ in Self.unavailableResult() },
+                    list: { .array([]) }
+                ),
+                callbackTimeout: 0.05
+            ),
+            program: program
+        )
+
+        _ = try await runtime.start()
+
+        let outcome = CallbackOutcomeBox()
+        Task {
+            do {
+                try await runtime.openViewInstance(viewID: "tree", instanceID: "stuck-pane")
+                await outcome.record(.success(()))
+            } catch {
+                await outcome.record(.failure(error))
+            }
+        }
+
+        var settled = false
+        for _ in 0 ..< 400 {
+            if await outcome.hasResult {
+                settled = true
+                break
+            }
+            try? await Task.sleep(for: .milliseconds(5))
+        }
+        XCTAssertTrue(
+            settled,
+            "a view-open callback that never returns must not hang the generation forever"
+        )
+        let failed = await outcome.isFailure
+        XCTAssertTrue(
+            failed,
+            "the bound must surface as a thrown failure, not a silent success"
+        )
+
+        let failedSnapshot = await runtime.snapshot()
+        XCTAssertEqual(
+            failedSnapshot.phase,
+            .failed,
+            "the generation must fail visibly rather than staying active with a wedged pump"
+        )
+
+        await gate.release()
+        _ = await runtime.shutdown(timeout: 1)
+    }
+
     func testCompiledWorkspaceStatusKeepsPluginLifecycleAndEventBoundary() async throws {
         let directory = Self.pluginsRoot.appendingPathComponent("workspace-status")
         let manifest = try PluginLoader.loadManifest(at: directory)
@@ -365,5 +468,24 @@ private actor BlockingEventGate {
         let pending = continuation
         continuation = nil
         pending?.resume()
+    }
+}
+
+/// Captures the outcome of a call made from an unstructured `Task` so a test can poll it with
+/// its own bounded loop instead of `await`-ing the call inline — the only way to keep a test
+/// bounded when the call under test might not yet honor any deadline.
+private actor CallbackOutcomeBox {
+    private var result: Result<Void, Error>?
+
+    var hasResult: Bool { result != nil }
+
+    var isFailure: Bool {
+        guard case .failure = result else { return false }
+        return true
+    }
+
+    func record(_ value: Result<Void, Error>) {
+        guard result == nil else { return }
+        result = value
     }
 }

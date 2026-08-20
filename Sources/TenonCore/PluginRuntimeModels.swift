@@ -272,6 +272,10 @@ public struct PluginRuntimeConfiguration: Sendable {
     public let onStateChange: StateChange
     public let publishEvent: PublishEvent
     public let startupTimeout: TimeInterval
+    /// The ceiling on one compiled program's callback — event, view select/submit/open/close —
+    /// run on the generation's single serial pump. A handler stuck past this bound fails the
+    /// generation instead of holding every later pane's callback behind it forever.
+    public let callbackTimeout: TimeInterval
 
     public init(
         manifest: PluginManifest,
@@ -282,7 +286,8 @@ public struct PluginRuntimeConfiguration: Sendable {
         persistStorage: @escaping PersistStorage = { _, _ in },
         onStateChange: @escaping StateChange = { _ in },
         publishEvent: @escaping PublishEvent = { _, _ in },
-        startupTimeout: TimeInterval = 2
+        startupTimeout: TimeInterval = 2,
+        callbackTimeout: TimeInterval = 10
     ) {
         self.manifest = manifest
         self.directory = directory
@@ -293,6 +298,7 @@ public struct PluginRuntimeConfiguration: Sendable {
         self.onStateChange = onStateChange
         self.publishEvent = publishEvent
         self.startupTimeout = startupTimeout
+        self.callbackTimeout = callbackTimeout
     }
 }
 
@@ -420,6 +426,7 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
     case bundledSwiftImplementationUnavailable(PluginID)
     case invalidStartupTimeout(TimeInterval)
     case startupTimedOut(TimeInterval)
+    case callbackTimedOut(kind: String, timeout: TimeInterval)
     case runtimeStopped
     case providerHandlerUnavailable(IntentID)
     case providerHandlerFailed(String)
@@ -450,6 +457,8 @@ public enum PluginRuntimeError: Error, Sendable, Equatable, CustomStringConverti
             "invalid plugin startup timeout: \(timeout)"
         case let .startupTimedOut(timeout):
             "plugin activation exceeded startup timeout: \(timeout)s"
+        case let .callbackTimedOut(kind, timeout):
+            "compiled \(kind) callback exceeded callback timeout: \(timeout)s"
         case .runtimeStopped:
             "plugin runtime is stopped"
         case let .providerHandlerUnavailable(intentID):

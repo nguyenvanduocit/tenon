@@ -193,6 +193,32 @@ private final class BundledPluginPumpCompletion: Sendable {
     }
 }
 
+/// Resolves a `runBounded` race exactly once, from whichever of the real handler or the
+/// timeout settles first — same "first writer wins" shape as `IntentDispatcher`'s caller-
+/// consent wait (`resolveCallerConsent`), which the module doc there names as the invariant a
+/// confirmation nobody answers must still respect.
+private actor CallbackTimeoutGate {
+    private var continuation: CheckedContinuation<BundledPluginContribution?, Error>?
+    private var settledResult: Result<BundledPluginContribution?, Error>?
+
+    func wait() async throws -> BundledPluginContribution? {
+        if let settledResult {
+            return try settledResult.get()
+        }
+        return try await withCheckedThrowingContinuation { continuation in
+            self.continuation = continuation
+        }
+    }
+
+    func resume(with result: Result<BundledPluginContribution?, Error>) {
+        guard settledResult == nil else { return }
+        settledResult = result
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(with: result)
+    }
+}
+
 final actor BundledPluginRuntimeActor: PluginHostRuntime {
     nonisolated let manifest: PluginManifest
     nonisolated let directory: URL
@@ -469,7 +495,7 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
             return
         }
         do {
-            if let next = try await run(callback) {
+            if let next = try await runBounded(callback) {
                 guard phase == .active else {
                     finishLifecycleReply(
                         for: callback,
@@ -541,6 +567,41 @@ final actor BundledPluginRuntimeActor: PluginHostRuntime {
             }
             return try await handler(key.instanceID, context)
         }
+    }
+
+    /// Races `run(callback)` against `configuration.callbackTimeout` on an unstructured `Task`,
+    /// not a `TaskGroup`: a `TaskGroup` still awaits its cancelled child before its scope can
+    /// return, so it cannot bound a handler stuck in a bare continuation that ignores
+    /// cancellation — exactly the shape a plugin's own `context.intents.send` bottoms out in
+    /// wherever the dispatcher does not wire an `onCancel` handler to it. An unstructured `Task`
+    /// has no such scope to wait on; a handler that loses the race is abandoned, not awaited,
+    /// which is what actually bounds this call.
+    private func runBounded(
+        _ callback: BundledPluginCallback
+    ) async throws -> BundledPluginContribution? {
+        let timeout = configuration.callbackTimeout
+        let gate = CallbackTimeoutGate()
+        Task { [weak self] in
+            guard let self else { return }
+            do {
+                let result = try await self.run(callback)
+                await gate.resume(with: .success(result))
+            } catch {
+                await gate.resume(with: .failure(error))
+            }
+        }
+        Task {
+            try? await Task.sleep(for: .seconds(max(0, timeout)))
+            await gate.resume(
+                with: .failure(
+                    PluginRuntimeError.callbackTimedOut(
+                        kind: callback.kind,
+                        timeout: timeout
+                    )
+                )
+            )
+        }
+        return try await gate.wait()
     }
 
     private func failForCallbackOverflow() async {

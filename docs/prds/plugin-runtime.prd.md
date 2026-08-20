@@ -216,6 +216,7 @@ VoiceOver, focus, semantic color, and non-color-only status.
 | `PRT-FR-047` | A plugin **MUST** be able to declare that a timer, watcher, or process stream belongs to one view instance, and the host **MUST** retire that resource when the instance closes — whether or not the plugin's own close handler ran. Omitting the declaration **MUST** keep the pre-existing lifetime, which is the plugin generation. | shipped | `@req-prt-fr-047` |
 | `PRT-FR-048` | Runtime language **MUST NOT** change plugin identity, authority, mechanism, enablement, contribution, or retirement semantics. `bundled-swift` **MUST** resolve by exact `PluginID` only from bundled-trust inventory, expose no typed host application service, stage every manifest provider before activation, and fail when the compiled implementation is absent; manifests without `runtime` remain JavaScript. | shipped | `@req-prt-fr-048` |
 | `PRT-FR-045` | Permission UX **MUST** be installation-scoped and low friction: trusted bundled/development provenance auto-grants declared capability policy; explicitly enabled local code is reviewed once at enablement or material manifest expansion; unchanged ordinary operations **MUST NOT** repeatedly prompt, while truly sensitive/irreversible actions **MAY** retain per-operation confirmation. | planned/partial | `@req-prt-fr-045` |
+| `PRT-FR-049` | A compiled program's callback — event delivery, view select/submit/open/close — **MUST** be bounded by a configured callback timeout while it runs on the generation's one shared serial pump; a handler that exceeds it **MUST** fail the generation visibly rather than hold every later pane's callback behind it, unreported, for the rest of the app session. | shipped | `@req-prt-fr-049` |
 
 ### Non-functional requirements
 
@@ -273,6 +274,7 @@ uses Tenon's design system. Source ownership begins in `plugin-host`, `plugin-se
 | 045/NFR-013 | bundled standing consent, installation fingerprints, cross-launch consent (FR-046) and the operator's Permissions switch are the base; consolidated local enable/authority review remains product-policy work | planned/partial; optimize developer velocity without bypassing declared boundaries |
 | 046 | `PolicyEngine` standing-consent writer/restore, `StandingConsentStore`, `StandingConsentPersistenceTests`, `StandingConsentStoreTests` | shipped |
 | 048 | `TenonBundledPlugins`, runtime-kind manifest decoding, bundled-trust admission, shipped/native runtime and lifecycle tests | shipped for intent/event/status plugins; native view interaction ports remain follow-up work |
+| 049 | `BundledPluginRuntimeActor.runBounded`, `PluginRuntimeConfiguration.callbackTimeout`, `BundledPluginRuntimeTests.testAWedgedViewOpenCallbackFailsTheGenerationInsteadOfHangingForever` | shipped |
 
 Rollout for FR-041 must define process host protocol, capability token, parent-death behavior,
 Seatbelt or equivalent profile, crash/restart policy, migration of contributions/resources, and a
@@ -313,6 +315,26 @@ is what `PRT-FR-006` and `PRT-FR-022` were written to prevent. `PRT-FR-022`'s un
 wording is superseded to name the override. What the switch does **not** touch is the rest of
 `PRT-FR-020`: declared use, audience, capability, scope, and provider eligibility are still
 evaluated on every invocation.
+
+T-192 (2026-08-19) names a gap `PRT-FR-037`'s shutdown deadline does not cover: while a generation
+is `.active`, `BundledPluginRuntimeActor.consume` ran every callback — event, view select/submit/
+open/close — inline on the generation's one serial pump with no bound of its own. A handler stuck
+in a bare `withCheckedContinuation` with no `onCancel` handler (the exact shape `IntentDispatcher`'s
+`resolveCallerConsent` names as needing an explicit deadline race) wedged that pump forever: every
+later pane's callback for that plugin queued behind it and never ran, silently — no log line, no
+phase change, `.active` never became `.failed`. Two independently reported, unrelated panes
+(`dev.tenon.file-explorer`, `dev.tenon.claude-sessions`) hit this live, each opened at the same
+moment as its owning workspace/tab/pane — plausibly the race window that first wedges the shared
+`workspace.pane.owner.v1` call their `open` handlers both make first. `PRT-FR-049` bounds every
+callback with `configuration.callbackTimeout`, racing it on an unstructured `Task` rather than a
+`TaskGroup` — a `TaskGroup` still awaits its cancelled child before its scope returns, so it cannot
+bound a handler that ignores cancellation, which `activateWithinTimeout`'s existing `TaskGroup`
+pattern already could not have guaranteed against this exact shape either. A handler that loses the
+race is abandoned, not awaited; losing it fails the generation the same visible way callback-mailbox
+overflow already does. Full recovery — spinning up a fresh generation after a compiled plugin fails
+— remains out of scope: compiled plugins have no hot-reload path today, so the operator still needs
+to relaunch the app to get that one plugin back, which this fix does not change. What it changes is
+whether the failure is ever visible.
 
 ## 9. Verification receipts and change history
 

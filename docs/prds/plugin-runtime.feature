@@ -149,7 +149,15 @@ Feature: Run declared plugins with bounded authority and generation-owned lifeti
       Then its runtime is javascript
       And its main.js entrypoint remains required
 
-  Rule: JavaScript receives one closed public vocabulary
+  Rule: A generation's callback pump cannot be wedged open forever
+
+    @req-prt-fr-049 @callback-timeout
+    Scenario: A view-open callback that never returns fails the generation instead of hanging it
+      Given a compiled program's view-open handler awaits a continuation nothing will ever resume
+      When the host invokes that view instance's open callback
+      Then the call fails once the configured callback timeout elapses
+      And the generation's phase becomes failed instead of staying active with a wedged pump
+      And no later callback for that generation is left queued behind the wedged one forever
 
     @req-prt-fr-010 @req-prt-nfr-004 @global-scope
     Scenario: Runtime globals expose no ambient native bridge or console
