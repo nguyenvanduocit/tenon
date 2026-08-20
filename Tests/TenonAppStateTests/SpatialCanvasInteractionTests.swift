@@ -2640,7 +2640,7 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         XCTAssertEqual(card.displayedTitle, namedBefore)
     }
 
-    func testWorkspaceIdentifierClipboardWritesOnlyTheRawUUID() {
+    func testWorkspaceIdentifierClipboardWritesTheTabDeepLink() {
         let id = UUID()
         let pasteboard = NSPasteboard(
             name: NSPasteboard.Name("dev.tenon.tests.identifier.\(UUID().uuidString)")
@@ -2648,7 +2648,22 @@ final class SpatialCanvasInteractionTests: XCTestCase {
         defer { pasteboard.clearContents() }
 
         XCTAssertTrue(WorkspaceIdentifierClipboard.copy(tabID: id, to: pasteboard))
-        XCTAssertEqual(pasteboard.string(forType: .string), id.uuidString)
+        XCTAssertEqual(pasteboard.string(forType: .string), WorkspaceDeepLink.url(tabID: id))
+    }
+
+    func testWorkspaceIdentifierClipboardWritesThePaneDeepLink() {
+        let tabID = UUID()
+        let paneID = UUID()
+        let pasteboard = NSPasteboard(
+            name: NSPasteboard.Name("dev.tenon.tests.identifier.\(UUID().uuidString)")
+        )
+        defer { pasteboard.clearContents() }
+
+        XCTAssertTrue(WorkspaceIdentifierClipboard.copy(tabID: tabID, paneID: paneID, to: pasteboard))
+        XCTAssertEqual(
+            pasteboard.string(forType: .string),
+            WorkspaceDeepLink.url(tabID: tabID, paneID: paneID)
+        )
     }
 
     func testHeaderContextMenuSplitTargetsTheClickedSlotNotTheActiveOne() throws {
